@@ -1,5 +1,7 @@
 # Temporal Verifier
 
+[![CI](https://github.com/vmware-research/temporal-verifier/actions/workflows/build.yml/badge.svg)](https://github.com/vmware-research/temporal-verifier/actions/workflows/build.yml)
+
 ## Overview
 
 An experimental framework for temporal verification based on
