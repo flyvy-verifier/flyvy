@@ -1,10 +1,8 @@
 # Contributing to temporal-verifier
 
-_NOTE: This is a template document that requires editing before it is ready to use!_
-
 We welcome contributions from the community and first want to thank you for taking the time to contribute!
 
-Please familiarize yourself with the [Code of Conduct](https://github.com/vmware/.github/blob/main/CODE_OF_CONDUCT.md) before contributing.
+Please familiarize yourself with the [Code of Conduct](https://github.com/vmware-research/temporal-verifier/blob/main/CODE_OF_CONDUCT.md) before contributing.
 
 Before you start working with temporal-verifier, please read our [Developer Certificate of Origin](https://cla.vmware.com/dco). All contributions to this repository must be signed as described on that page. Your signature certifies that you wrote the patch or have the right to pass it on as an open-source patch.
 
@@ -22,12 +20,8 @@ We welcome many different types of contributions and not all of them need a Pull
 
 ## Getting started
 
-_TO BE EDITED: This section explains how to build the project from source, including Development Environment Setup, Build, Run and Test._
-
-_Provide information about how someone can find your project, get set up, build the code, test it, and submit a pull request successfully without having to ask any questions. Also include common errors people run into, or useful scripts they should run._
-
-_List any tests that the contributor should run / or testing processes to follow before submitting. Describe any automated and manual checks performed by reviewers._
-
+* Please see the [README](https://github.com/vmware-research/temporal-verifier/blob/main/README.md) for instructions on how to build this project.
+* If you're contributing code, please make sure that the project builds and passes all tests with your changes.
 
 ## Contribution Flow
 
@@ -54,21 +48,6 @@ Before submitting your pull request, we advise you to use the following:
 
 For specifics on what to include in your report, please follow the guidelines in the issue and pull request templates when available.
 
-_TO BE EDITED: Add additional information if needed._
-
-
 ## Ask for Help
 
-_TO BE EDITED: Provide information about the channels you use to communicate (i.e. Slack, IRC, Discord, etc)_
-
-The best way to reach us with a question when contributing is to ask on:
-
-* The original GitHub issue
-* The developer mailing list
-* Our Slack channel
-
-
-## Additional Resources
-
-_Optional_
-
+The best way to reach us with a question when contributing is to ask on the original GitHub issue, or open a new issue.
