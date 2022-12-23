@@ -1,0 +1,28 @@
+---
+source: src/solver/verify.rs
+expression: "z3_verify(&m).expect_err(\"verification should fail\")"
+---
+fails:
+  - loc:
+      start: 192
+      end: 204
+    reason: FirstOrder
+    error:
+      Sat:
+        universes:
+          thread:
+            - thread!val!0
+        symbols:
+          p:
+            - - x!0
+            - Atom:
+                S: "false"
+          q:
+            - []
+            - Atom:
+                S: "false"
+          t0:
+            - []
+            - Atom:
+                S: thread!val!0
+

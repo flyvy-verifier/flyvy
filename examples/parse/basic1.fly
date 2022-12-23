@@ -1,0 +1,15 @@
+# Copyright 2022 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+mutable p: bool
+mutable q: bool
+
+assume !p & !q & (always p'=(p|q) & q'=q)
+assert always !p
+proof {
+    invariant !p
+    invariant !q
+    # invariant $l2s_w. p
+}
+
+# we don't allow this: forall x:t1. exists x:t2. p(x:t1, x:t2)

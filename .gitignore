@@ -1,3 +1,10 @@
 # Files to ignore
 
 *~
+/pegviz.html
+*.smt2
+
+
+# Added by cargo
+
+/target

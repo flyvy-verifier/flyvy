@@ -1,0 +1,12 @@
+# Copyright 2022 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort thread
+
+mutable p(thread): bool
+immutable q: bool
+immutable t0: thread
+
+assume forall t:thread. p(t) -> q
+assume !q
+assert p(t0)

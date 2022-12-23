@@ -1,0 +1,30 @@
+---
+source: src/solver/verify.rs
+expression: "z3_verify(&m).expect_err(\"verification should fail\")"
+---
+fails:
+  - loc:
+      start: 176
+      end: 192
+    reason: NotInductive
+    error:
+      Sat:
+        universes: {}
+        symbols:
+          p:
+            - []
+            - Atom:
+                S: "false"
+          "p'":
+            - []
+            - Atom:
+                S: "true"
+          q:
+            - []
+            - Atom:
+                S: "true"
+          "q'":
+            - []
+            - Atom:
+                S: "true"
+

@@ -1,0 +1,30 @@
+[package]
+name = "temporal-verifier"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+trace = ["peg/trace"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.0.29", features = ["derive"] }
+codespan-reporting = "0.11.1"
+eyre = "0.6.8"
+im = "15.1.0"
+lazy_static = "1.4.0"
+peg = "0.8.1"
+regex = "1.7.0"
+serde = { version = "1.0.151", features = ["derive"] }
+thiserror = "1.0.37"
+walkdir = "2.3.2"
+
+[dev-dependencies]
+insta = { version = "1.22.0", features = ["yaml", "redactions"] }
+
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3

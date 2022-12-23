@@ -1,0 +1,13 @@
+# Copyright 2022 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort A
+
+immutable p(A): bool
+immutable q(A, A): bool
+immutable a0: A
+
+assume forall a:A. q(a, a)
+assume forall a:A. p(a) -> exists b:A. q(a, b)
+assume p(a0)
+assert forall a:A b:A. q(a, b) -> a = b

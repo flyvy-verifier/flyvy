@@ -1,0 +1,18 @@
+---
+source: tests/test_examples.rs
+expression: stderr
+---
+verification errors:
+error: assertion failure
+   ┌─ examples/fail/relations.fly:13:1
+   │
+13 │ assert forall a:A b:A. q(a, b) -> a = b
+   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     universe A: A!val!0 A!val!1 A!val!2 A!val!3
+     a0 = A!val!0
+     p = (lambda (x!0) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3))))
+     q = (lambda (x!0 x!1) (or (and (= x!0 A!val!2) (not (= x!0 A!val!3)) (= x!1 A!val!2) (not (= x!1 A!val!3))) (and (not (= x!0 A!val!0)) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (not (= x!1 A!val!0)) (not (= x!1 A!val!2)) (not (= x!1 A!val!3))) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!3)) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!0) (not (= x!1 A!val!2)) (not (= x!1 A!val!3))) (and (not (= x!0 A!val!0)) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!2) (not (= x!1 A!val!3))) (and (= x!0 A!val!3) (= x!1 A!val!3))))
+
+
