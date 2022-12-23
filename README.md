@@ -1,22 +1,31 @@
-# temporal-verifier
+# Temporal Verifier
 
 ## Overview
 
+An experimental framework for temporal verification based on
+first-order linear-time temporal logic. Our goal is to express
+transition systems in first-order logic and verify temporal
+correctness properties, including safety and liveness.
+
 ## Try it out
+
+`cargo run -- examples/fail/basic.fly`
 
 ### Prerequisites
 
-* Prereq 1
-* Prereq 2
-* Prereq 3
+You'll need Rust (for example, through `rustup`) and a recent version of [Z3](https://github.com/Z3Prover/z3).
 
 ### Build & Run
 
-1. Step 1
-2. Step 2
-3. Step 3
+1. `cargo build`
+2. `cargo test` to run tests
+3. `cargo run -- <file.fly>` will run the verifier on an input file
 
 ## Documentation
+
+Run `cargo doc` to generate the low-level API documentation. Currently there
+isn't much documentation for the language itself, but you can look at the
+examples under `examples/`.
 
 ## Contributing
 
@@ -27,3 +36,8 @@ as an open-source patch. For more detailed information, refer to [CONTRIBUTING.m
 
 ## License
 
+Copyright 2022 VMware, Inc.
+
+SPDX-License-Identifier: BSD-2-Clause
+
+See [NOTICE](NOTICE) and [LICENSE](LICENSE).
