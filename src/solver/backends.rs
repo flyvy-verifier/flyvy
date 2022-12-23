@@ -1,7 +1,6 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#![allow(dead_code)] // TODO: remove
 #![allow(clippy::needless_return)]
 use std::{
     collections::{HashMap, HashSet},
@@ -43,6 +42,15 @@ impl GenericBackend {
             solver_type,
             bin: bin.to_string(),
         }
+    }
+}
+
+fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
+    match sort {
+        Sort::Bool => 2,
+        Sort::Id(s) => *universes
+            .get(s)
+            .unwrap_or_else(|| panic!("unknown sort {s}")),
     }
 }
 
@@ -97,9 +105,9 @@ impl Backend for &GenericBackend {
             let mut shape = rel
                 .args
                 .iter()
-                .map(|sort| universe[sort.id().unwrap()])
+                .map(|sort| sort_cardinality(&universe, sort))
                 .collect::<Vec<usize>>();
-            shape.push(universe[rel.typ.id().unwrap()]);
+            shape.push(sort_cardinality(&universe, &rel.typ));
             let interp = Interpretation::new(&shape, |args: &[Element]| -> Element {
                 // get the arguments as terms, based on model.universes
                 let args = zip(args, &rel.args)

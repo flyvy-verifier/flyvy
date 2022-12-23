@@ -1,24 +1,23 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use std::collections::HashMap;
+
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use serde::Serialize;
 
 use super::{
-    conf::{Backend, SolverConf},
-    models::{parse_model, Model},
+    backends::GenericBackend,
     safety::InvariantAssertion,
-    sexp,
+    solver::{Backend, Solver},
 };
 use crate::{
     fly::{
         printer,
+        semantics::Model,
         syntax::{Module, Signature, Span, Term, ThmStmt},
     },
-    smtlib::{
-        proc::{SatResp, SmtProc},
-        sexp::{app, atom_i, atom_s, sexp_l, Sexp},
-    },
+    smtlib::proc::SatResp,
     term::FirstOrder,
 };
 
@@ -55,7 +54,10 @@ impl AssertionFailure {
             .with_message(msg)
             .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
-                QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
+                // TODO: replace debug print of model with something pretty
+                // (will probably require a signature to be required in
+                // AssertionFailure)
+                QueryError::Sat(model) => format!("counter example:\n{model:?}"),
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
             }])
     }
@@ -72,165 +74,112 @@ impl SolveError {
     }
 }
 
-struct Context {
-    solver: SmtProc,
-    backend: Backend,
-}
-
-impl Context {
-    fn new(solver: SmtProc, backend: Backend) -> Self {
-        Context { solver, backend }
-    }
-
-    /// Emit encoding of signature, with mutable function unrolled to depth
-    /// `unroll` (for example, 1 will emit each mutable function twice - one
-    /// unprimed and one primed).
-    fn signature(&mut self, s: &Signature, unroll: usize) {
-        for sort in &s.sorts {
-            self.solver
-                .send(&app("declare-sort", [sexp::sort(sort), atom_i(0)]));
-        }
-        for r in &s.relations {
-            self.solver.send(&app(
-                "declare-fun",
-                [
-                    atom_s(&r.name),
-                    sexp_l(r.args.iter().map(sexp::sort)),
-                    sexp::sort(&r.typ),
-                ],
-            ));
-            if r.mutable {
-                for n_primes in 1..=unroll {
-                    let name = &r.name;
-                    self.solver.send(&app(
-                        "declare-fun",
-                        [
-                            atom_s(format!("{name}{}", "'".repeat(n_primes))),
-                            sexp_l(r.args.iter().map(sexp::sort)),
-                            sexp::sort(&r.typ),
-                        ],
-                    ));
-                }
-            }
-        }
-    }
-
-    fn assume(&mut self, t: &Term) {
-        self.solver.send(&app("assert", [sexp::term(t)]));
-    }
-
-    fn assumes<'a, I>(&'a mut self, ts: I)
-    where
-        I: IntoIterator,
-        I::IntoIter: Iterator<Item = &'a Term>,
-    {
-        for t in ts.into_iter() {
-            self.assume(t)
-        }
-    }
-
-    fn parse_sat(&self, sat: SatResp<Sexp>) -> Result<(), QueryError> {
-        match sat {
-            SatResp::Unsat => Ok(()),
-            SatResp::Sat { model } => Err(QueryError::Sat(parse_model(self.backend, &model))),
-            SatResp::Unknown(reason) => Err(QueryError::Unknown(reason)),
-        }
-    }
-
-    /// Try to prove t and return an error if it does not hold.
-    ///
-    /// Consumes self because this leaves the solver in an unusable state.
-    fn assert_one(mut self, t: &Term) -> Result<(), QueryError> {
-        let e = sexp::negated_term(t);
-        self.solver.send(&app("assert", [e]));
-        let sat = self
-            .solver
-            .check_sat_model()
-            .expect("could not check assertion");
-        self.parse_sat(sat)
-    }
+pub struct SolverConf {
+    pub backend: GenericBackend,
+    pub tee: Option<String>,
 }
 
 impl SolverConf {
-    fn new_ctx(&self, sig: &Signature, unrolling: usize) -> Context {
-        let mut ctx = Context::new(self.launch(), self.backend);
-        ctx.signature(sig, unrolling);
-        ctx
+    fn solver(&self, sig: &Signature, n_states: usize) -> Solver<&GenericBackend> {
+        // TODO: failures to start the solver should be bubbled up to user nicely
+        Solver::new(sig, n_states, &self.backend, self.tee.clone()).expect("could not start solver")
     }
+}
 
-    fn verify_separate(&self, m: &Module) -> Result<(), SolveError> {
-        // assumptions/assertions so far
-        let mut assumes: Vec<&Term> = vec![];
-        let mut errors = SolveError::default();
-        for step in &m.statements {
-            match step {
-                ThmStmt::Assume(e) => assumes.push(e),
-                ThmStmt::Assert(pf) => {
-                    if let Some(n) = FirstOrder::unrolling(&pf.assert.x) {
-                        let mut ctx = self.new_ctx(&m.signature, n);
-                        ctx.assumes(assumes.iter().copied());
-                        ctx.solver
-                            .comment_with(|| format!("assert {}", printer::term(&pf.assert.x)));
-                        // this runs the solver and terminates the instance
-                        if let Err(cex) = ctx.assert_one(&pf.assert.x) {
-                            errors.push(AssertionFailure {
-                                loc: pf.assert.span,
-                                reason: FailureType::FirstOrder,
-                                error: cex,
-                            });
-                        }
-                    } else if let Ok(assert) =
-                        InvariantAssertion::for_assert(&assumes, &pf.assert.x)
-                    {
-                        {
-                            let inv_assert = assert.inv_assertion();
-                            let mut ctx = self.new_ctx(&m.signature, 0);
-                            ctx.solver.comment_with(|| {
-                                format!("init implies: {}", printer::term(&assert.inv))
-                            });
-                            if let Err(cex) = ctx.assert_one(&inv_assert.0) {
-                                errors.push(AssertionFailure {
-                                    loc: pf.assert.span,
-                                    reason: FailureType::InitInv,
-                                    error: cex,
-                                })
-                            }
-                        }
-                        {
-                            let next_assert = assert.next_assertion();
-                            let mut ctx = self.new_ctx(&m.signature, 1);
-                            ctx.solver.comment_with(|| {
-                                format!("inductive: {}", printer::term(&assert.inv))
-                            });
-                            if let Err(cex) = ctx.assert_one(&next_assert.0) {
-                                errors.push(AssertionFailure {
-                                    loc: pf.assert.span,
-                                    reason: FailureType::NotInductive,
-                                    error: cex,
-                                })
-                            }
-                        }
-                    } else {
+fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryError> {
+    solver.assert(&Term::negate(t));
+    let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+    match resp {
+        SatResp::Sat { .. } => {
+            let states = solver.get_model();
+            // TODO: need a way to report traces rather than just single models
+            let s0 = states.into_iter().next().unwrap();
+            Err(QueryError::Sat(s0))
+        }
+        SatResp::Unsat => Ok(()),
+        SatResp::Unknown(m) => Err(QueryError::Unknown(m)),
+    }
+}
+
+fn verify_firstorder(
+    conf: &SolverConf,
+    sig: &Signature,
+    n: usize,
+    assumes: &[&Term],
+    assert: &Term,
+) -> Result<(), QueryError> {
+    let mut solver =
+        Solver::new(sig, n, &conf.backend, conf.tee.clone()).expect("could not start solver");
+    for assume in assumes {
+        solver.assert(assume);
+    }
+    solver.comment_with(|| format!("assert {}", printer::term(assert)));
+    verify_term(&mut solver, assert.clone())
+}
+
+pub fn verify(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
+    // assumptions/assertions so far
+    let mut assumes: Vec<&Term> = vec![];
+    let mut errors = SolveError::default();
+    for step in &m.statements {
+        match step {
+            ThmStmt::Assume(e) => assumes.push(e),
+            ThmStmt::Assert(pf) => {
+                if let Some(n) = FirstOrder::unrolling(&pf.assert.x) {
+                    let res = verify_firstorder(conf, &m.signature, n + 1, &assumes, &pf.assert.x);
+                    if let Err(cex) = res {
                         errors.push(AssertionFailure {
                             loc: pf.assert.span,
-                            error: QueryError::Unknown("unsupported".to_string()),
-                            reason: FailureType::Unsupported,
-                        })
+                            reason: FailureType::FirstOrder,
+                            error: cex,
+                        });
                     }
-                    // for future assertions, treat this assertion as an assumption
-                    assumes.push(&pf.assert.x);
+                } else if let Ok(assert) = InvariantAssertion::for_assert(&assumes, &pf.assert.x) {
+                    {
+                        let inv_assert = assert.inv_assertion();
+                        let mut solver = conf.solver(&m.signature, 2);
+                        solver.comment_with(|| {
+                            format!("init implies: {}", printer::term(&assert.inv))
+                        });
+                        let res = verify_term(&mut solver, inv_assert.0);
+                        if let Err(cex) = res {
+                            errors.push(AssertionFailure {
+                                loc: pf.assert.span,
+                                reason: FailureType::InitInv,
+                                error: cex,
+                            })
+                        }
+                    }
+                    {
+                        let next_assert = assert.next_assertion();
+                        let mut solver = conf.solver(&m.signature, 2);
+                        solver
+                            .comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
+                        let res = verify_term(&mut solver, next_assert.0);
+                        if let Err(cex) = res {
+                            errors.push(AssertionFailure {
+                                loc: pf.assert.span,
+                                reason: FailureType::NotInductive,
+                                error: cex,
+                            })
+                        }
+                    }
+                } else {
+                    errors.push(AssertionFailure {
+                        loc: pf.assert.span,
+                        error: QueryError::Unknown("unsupported".to_string()),
+                        reason: FailureType::Unsupported,
+                    })
                 }
+                // for future assertions, treat this assertion as an assumption
+                assumes.push(&pf.assert.x);
             }
         }
-        if errors.fails.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
     }
-
-    pub fn verify(&self, m: &Module) -> Result<(), SolveError> {
-        self.verify_separate(m)
+    if errors.fails.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
@@ -240,10 +189,10 @@ mod tests {
 
     use crate::{
         fly::{self, syntax::Module},
-        solver::conf::{Backend, SolverConf},
+        solver::backends::{GenericBackend, SolverType},
     };
 
-    use super::SolveError;
+    use super::{verify, SolveError, SolverConf};
 
     fn z3_verify(m: &Module) -> Result<(), SolveError> {
         // optionally override Z3 command
@@ -251,11 +200,10 @@ mod tests {
             .map(|val| val.to_string_lossy().to_string())
             .unwrap_or("z3".to_string());
         let conf = SolverConf {
+            backend: GenericBackend::new(SolverType::Z3, &z3_cmd),
             tee: None,
-            backend: Backend::Z3,
-            solver_bin: z3_cmd,
         };
-        conf.verify(m)
+        verify(&conf, m)
     }
 
     #[test]

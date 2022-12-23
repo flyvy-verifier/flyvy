@@ -16,7 +16,10 @@ use temporal_verifier::{
         printer,
         syntax::{self, parse_error_diagonistic},
     },
-    solver::conf::{Backend, SolverConf},
+    solver::{
+        backends::{self, GenericBackend},
+        verify::{verify, SolverConf},
+    },
 };
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -89,10 +92,10 @@ fn solver_default_bin(t: SolverType) -> &'static str {
 }
 
 fn get_solver_conf(args: &Args) -> SolverConf {
-    let backend = match args.solver {
-        SolverType::Z3 => Backend::Z3,
-        SolverType::Cvc | SolverType::Cvc5 => Backend::Cvc5,
-        SolverType::Cvc4 => Backend::Cvc4,
+    let backend_type = match args.solver {
+        SolverType::Z3 => backends::SolverType::Z3,
+        SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
+        SolverType::Cvc4 => backends::SolverType::Cvc4,
     };
     let solver_bin = env_path_fallback(
         // TODO: allow command-line override, which would be Some here
@@ -100,18 +103,17 @@ fn get_solver_conf(args: &Args) -> SolverConf {
         solver_env_var(args.solver),
         solver_default_bin(args.solver),
     );
-    let tee = if let Some(path) = &args.smt_file {
-        Some(path.clone())
+    let tee: Option<String> = if let Some(path) = &args.smt_file {
+        Some(path.to_string_lossy().to_string())
     } else if args.smt {
         let path = PathBuf::from(&args.file).with_extension("smt2");
-        Some(path)
+        Some(path.to_string_lossy().to_string())
     } else {
         None
     };
     SolverConf {
+        backend: GenericBackend::new(backend_type, &solver_bin),
         tee,
-        backend,
-        solver_bin,
     }
 }
 
@@ -148,7 +150,7 @@ fn main() {
         return;
     }
 
-    let r = conf.verify(&m);
+    let r = verify(&conf, &m);
     match r {
         Ok(()) => println!("verifies!"),
         Err(err) => {

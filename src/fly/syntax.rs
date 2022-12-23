@@ -100,7 +100,7 @@ impl Term {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize)]
 pub enum Sort {
     Bool,
     Id(String),
@@ -129,7 +129,7 @@ impl fmt::Display for Sort {
 
 // TODO(oded): rename Relation to Function
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct RelationDecl {
     pub mutable: bool,
     pub name: String,
@@ -137,7 +137,7 @@ pub struct RelationDecl {
     pub typ: Sort,
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct Signature {
     /// sorts shouldn't contain Bool, it should contain only uninterpreted sorts
     pub sorts: Vec<Sort>,

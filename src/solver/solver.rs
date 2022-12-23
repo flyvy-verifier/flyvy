@@ -1,7 +1,6 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#![allow(dead_code)] // TODO: remove
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -46,7 +45,7 @@ pub struct FOModel {
 ///
 /// The Backend makes it possible to parse and return models in the compact
 /// representation of `semantics::Model`.
-pub struct Solver<B: Backend> {
+pub struct Solver<B> {
     proc: SmtProc,
     signature: Signature,
     n_states: usize,
@@ -89,14 +88,19 @@ impl<B: Backend> Solver<B> {
             proc.send(&app("declare-sort", [sexp::sort(sort), atom_i(0)]));
         }
         for r in &sig.relations {
-            proc.send(&app(
-                "declare-fun",
-                [
-                    atom_s(&r.name),
-                    sexp_l(r.args.iter().map(sexp::sort)),
-                    sexp::sort(&r.typ),
-                ],
-            ));
+            // immutable symbols are always declared once
+            if !r.mutable {
+                proc.send(&app(
+                    "declare-fun",
+                    [
+                        atom_s(&r.name),
+                        sexp_l(r.args.iter().map(sexp::sort)),
+                        sexp::sort(&r.typ),
+                    ],
+                ));
+            }
+            // mutable symbols are declared according to n_states (or not at all
+            // if n_states=0)
             if r.mutable {
                 for n_primes in 0..n_states {
                     let name = &r.name;

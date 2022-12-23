@@ -10,9 +10,6 @@ error: assertion failure
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
-     universe A: A!val!0 A!val!1 A!val!2 A!val!3
-     a0 = A!val!0
-     p = (lambda (x!0) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3))))
-     q = (lambda (x!0 x!1) (or (and (= x!0 A!val!2) (not (= x!0 A!val!3)) (= x!1 A!val!2) (not (= x!1 A!val!3))) (and (not (= x!0 A!val!0)) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (not (= x!1 A!val!0)) (not (= x!1 A!val!2)) (not (= x!1 A!val!3))) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!3)) (and (= x!0 A!val!0) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!0) (not (= x!1 A!val!2)) (not (= x!1 A!val!3))) (and (not (= x!0 A!val!0)) (not (= x!0 A!val!2)) (not (= x!0 A!val!3)) (= x!1 A!val!2) (not (= x!1 A!val!3))) (and (= x!0 A!val!3) (= x!1 A!val!3))))
+     Model { signature: Signature { sorts: [Id("A")], relations: [RelationDecl { mutable: false, name: "p", args: [Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "q", args: [Id("A"), Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "a0", args: [], typ: Id("A") }] }, universe: [4], interp: [Interpretation { shape: [4, 2], data: [0, 0, 0, 0] }, Interpretation { shape: [4, 4, 2], data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, Interpretation { shape: [4], data: [0] }] }
 
 

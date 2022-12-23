@@ -9,20 +9,38 @@ fails:
     reason: FirstOrder
     error:
       Sat:
-        universes:
-          thread:
-            - thread!val!0
-        symbols:
-          p:
-            - - x!0
-            - Atom:
-                S: "false"
-          q:
-            - []
-            - Atom:
-                S: "false"
-          t0:
-            - []
-            - Atom:
-                S: thread!val!0
+        signature:
+          sorts:
+            - Id: thread
+          relations:
+            - mutable: true
+              name: p
+              args:
+                - Id: thread
+              typ: Bool
+            - mutable: false
+              name: q
+              args: []
+              typ: Bool
+            - mutable: false
+              name: t0
+              args: []
+              typ:
+                Id: thread
+        universe:
+          - 1
+        interp:
+          - shape:
+              - 1
+              - 2
+            data:
+              - 0
+          - shape:
+              - 2
+            data:
+              - 0
+          - shape:
+              - 1
+            data:
+              - 0
 

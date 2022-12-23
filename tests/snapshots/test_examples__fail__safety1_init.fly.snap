@@ -10,8 +10,6 @@ error: init does not imply invariant
    │ ^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
-     
-     p = true
-     q = false
+     Model { signature: Signature { sorts: [], relations: [RelationDecl { mutable: true, name: "p", args: [], typ: Bool }, RelationDecl { mutable: true, name: "q", args: [], typ: Bool }] }, universe: [], interp: [Interpretation { shape: [2], data: [0] }, Interpretation { shape: [2], data: [0] }] }
 
 

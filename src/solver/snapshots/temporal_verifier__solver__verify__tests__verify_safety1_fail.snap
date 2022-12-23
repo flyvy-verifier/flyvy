@@ -9,22 +9,25 @@ fails:
     reason: NotInductive
     error:
       Sat:
-        universes: {}
-        symbols:
-          p:
-            - []
-            - Atom:
-                S: "false"
-          "p'":
-            - []
-            - Atom:
-                S: "true"
-          q:
-            - []
-            - Atom:
-                S: "true"
-          "q'":
-            - []
-            - Atom:
-                S: "true"
+        signature:
+          sorts: []
+          relations:
+            - mutable: true
+              name: p
+              args: []
+              typ: Bool
+            - mutable: true
+              name: q
+              args: []
+              typ: Bool
+        universe: []
+        interp:
+          - shape:
+              - 2
+            data:
+              - 0
+          - shape:
+              - 2
+            data:
+              - 0
 

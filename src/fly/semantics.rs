@@ -1,8 +1,9 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#![allow(dead_code)]
 use std::iter::zip;
+
+use serde::Serialize;
 
 use super::syntax::{Signature, Sort};
 
@@ -16,7 +17,7 @@ pub type Universe = Vec<usize>;
 
 /// An interpretation gives the complete value of a function for a
 /// finite-cardinality universe.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Interpretation {
     /// The type of this function, given as the cardinality first of all the
     /// inputs and finally the cardinality of the output.
@@ -51,6 +52,7 @@ impl Interpretation {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Model {
     // TODO(oded): to optimize, make things Rc<_> (_ = Signature, Universe, and Interpretation)
     pub signature: Signature,

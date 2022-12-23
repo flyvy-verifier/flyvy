@@ -1,7 +1,6 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#![allow(dead_code)] // still working on integrating this
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -10,8 +9,6 @@ use thiserror::Error;
 use regex::Regex;
 
 use crate::smtlib::sexp::{atom_s, sexp_l, Atom, Sexp};
-
-use super::conf::Backend;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Model {
@@ -263,12 +260,4 @@ pub(crate) fn parse_cvc(model: &Sexp, version5: bool) -> Model {
         }
     }
     Model { universes, symbols }
-}
-
-pub fn parse_model(backend: Backend, model: &Sexp) -> Model {
-    match backend {
-        Backend::Z3 { .. } => parse_z3(model),
-        Backend::Cvc4 { .. } => parse_cvc(model, false),
-        Backend::Cvc5 { .. } => parse_cvc(model, true),
-    }
 }
