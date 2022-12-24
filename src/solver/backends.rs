@@ -86,8 +86,8 @@ impl Backend for &GenericBackend {
     ) -> FOModel {
         let model = match self.solver_type {
             SolverType::Z3 => models::parse_z3(model),
-            SolverType::Cvc4 => models::parse_cvc(model, true),
-            SolverType::Cvc5 => models::parse_cvc(model, false),
+            SolverType::Cvc4 => models::parse_cvc(model, false),
+            SolverType::Cvc5 => models::parse_cvc(model, true),
         };
 
         let universe: HashMap<String, usize> = model
@@ -143,7 +143,10 @@ impl Backend for &GenericBackend {
                     }
                     Sort::Id(sort) => {
                         let elements = &model.universes[sort];
-                        let res_idx = elements.iter().position(|x| x == res).unwrap();
+                        let res_idx = elements
+                            .iter()
+                            .position(|x| x == res)
+                            .unwrap_or_else(|| panic!("unknown {sort} element {res}"));
                         return res_idx as Element;
                     }
                 }

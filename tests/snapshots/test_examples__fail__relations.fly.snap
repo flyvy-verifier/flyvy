@@ -10,6 +10,6 @@ error: assertion failure
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
-     Model { signature: Signature { sorts: [Id("A")], relations: [RelationDecl { mutable: false, name: "p", args: [Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "q", args: [Id("A"), Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "a0", args: [], typ: Id("A") }] }, universe: [4], interp: [Interpretation { shape: [4, 2], data: [0, 0, 0, 0] }, Interpretation { shape: [4, 4, 2], data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, Interpretation { shape: [4], data: [0] }] }
+     Model { signature: Signature { sorts: [Id("A")], relations: [RelationDecl { mutable: false, name: "p", args: [Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "q", args: [Id("A"), Id("A")], typ: Bool }, RelationDecl { mutable: false, name: "a0", args: [], typ: Id("A") }] }, universe: [4], interp: [Interpretation { shape: [4, 2], data: [0, 0, 1, 0] }, Interpretation { shape: [4, 4, 2], data: [1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1] }, Interpretation { shape: [4], data: [2] }] }
 
 

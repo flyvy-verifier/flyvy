@@ -3,6 +3,7 @@
 
 use std::iter::zip;
 
+use itertools::Itertools;
 use serde::Serialize;
 
 use super::syntax::{Signature, Sort};
@@ -41,10 +42,28 @@ impl Interpretation {
 
     /// Create a new interpretation of a given shape based on a function, by
     /// calling the function on all possible input tuple
-    pub fn new(shape: &Vec<usize>, _f: impl Fn(&[Element]) -> Element) -> Self {
-        let size = shape[..shape.len() - 1].iter().product();
-        let data: Vec<Element> = vec![0; size];
-        // TODO: use https://docs.rs/itertools/latest/itertools/trait.Itertools.html#method.cartesian_product to implement it (cargo add itertools)
+    pub fn new(shape: &Vec<usize>, f: impl Fn(&[Element]) -> Element) -> Self {
+        let args = &shape[..shape.len() - 1];
+        let ret_card = shape[shape.len() - 1];
+        // wrap f just to add this assertion
+        let f = |args: &[Element]| -> Element {
+            let y = f(args);
+            assert!(y < ret_card, "interpretation is out-of-bounds at {args:?}");
+            y
+        };
+        // NOTE: multi_cartesian_product has a bug and doesn't produce the empty
+        // tuple for an empty iterator
+        // (https://github.com/rust-itertools/itertools/issues/337). Therefore
+        // we need to handle this as a special case
+        let data = if args.is_empty() {
+            vec![f(&[])]
+        } else {
+            args.iter()
+                .map(|&card| (0..card).collect::<Vec<Element>>())
+                .multi_cartesian_product()
+                .map(|args| f(&args))
+                .collect()
+        };
         Self {
             shape: shape.clone(),
             data,
@@ -162,5 +181,32 @@ mod tests {
         };
 
         model.wf();
+    }
+
+    #[test]
+    fn test_interp_new() {
+        let interp = Interpretation::new(&vec![3], |_| 2);
+        assert_eq!(interp.get(&[]), 2);
+        assert_eq!(interp.data, vec![2]);
+
+        let interp = Interpretation::new(&vec![3, 2, 4], |es| es[0] + es[1]);
+        for i in 0..3 {
+            for j in 0..2 {
+                assert_eq!(interp.get(&[i, j]), i + j, "wrong value at {i}, {j}");
+            }
+        }
+
+        let interp = Interpretation::new(&vec![3, 2, 4, 7], |es| es[0] + es[1] * es[2]);
+        for i in 0..3 {
+            for j in 0..2 {
+                for k in 0..4 {
+                    assert_eq!(
+                        interp.get(&[i, j, k]),
+                        i + j * k,
+                        "wrong value at {i}, {j}, {k}"
+                    );
+                }
+            }
+        }
     }
 }

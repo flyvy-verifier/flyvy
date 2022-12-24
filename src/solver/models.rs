@@ -114,6 +114,10 @@ pub fn smt_eval(e: &Sexp) -> Result<Atom, EvalError> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let v = args.iter().any(|x| *x);
                 Ok(bool_atom(v))
+            } else if head == "not" || head == "!" {
+                assert_eq!(args.len(), 1);
+                let x = eval_bool(args[0])?;
+                Ok(bool_atom(!x))
             } else if head == "as" {
                 // type cast (basically ignored)
                 smt_eval(args[0])
@@ -246,18 +250,16 @@ pub(crate) fn parse_cvc(model: &Sexp, version5: bool) -> Model {
     }
     let mut universes = HashMap::new();
     for (sort, card) in universe_cardinalities.into_iter() {
-        if version4 {
-            let elements: Vec<String> = (0..card)
-                .map(|i| {
-                    if version4 {
-                        format!("uc_{sort}_{i}")
-                    } else {
-                        format!("{sort}_{i}")
-                    }
-                })
-                .collect();
-            universes.insert(sort, elements);
-        }
+        let elements: Vec<String> = (0..card)
+            .map(|i| {
+                if version4 {
+                    format!("@uc_{sort}_{i}")
+                } else {
+                    format!("@{sort}_{i}")
+                }
+            })
+            .collect();
+        universes.insert(sort, elements);
     }
     Model { universes, symbols }
 }
