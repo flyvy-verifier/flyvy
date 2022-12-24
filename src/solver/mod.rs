@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 pub mod backends;
+mod imp;
 mod models;
-mod safety;
 mod sexp;
-pub mod solver;
-pub mod verify;
+pub use imp::{Backend, FOModel, Solver};

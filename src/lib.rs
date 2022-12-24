@@ -5,3 +5,4 @@ pub mod fly;
 mod smtlib;
 pub mod solver;
 mod term;
+pub mod verify;

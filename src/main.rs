@@ -16,10 +16,8 @@ use temporal_verifier::{
         printer,
         syntax::{self, parse_error_diagonistic},
     },
-    solver::{
-        backends::{self, GenericBackend},
-        verify::{verify, SolverConf},
-    },
+    solver::backends::{self, GenericBackend},
+    verify::{verify_module, SolverConf},
 };
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -150,7 +148,7 @@ fn main() {
         return;
     }
 
-    let r = verify(&conf, &m);
+    let r = verify_module(&conf, &m);
     match r {
         Ok(()) => println!("verifies!"),
         Err(err) => {

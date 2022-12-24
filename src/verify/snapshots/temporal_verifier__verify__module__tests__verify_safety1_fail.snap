@@ -1,5 +1,5 @@
 ---
-source: src/solver/verify.rs
+source: src/verify/module.rs
 expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:

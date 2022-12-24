@@ -3,73 +3,17 @@
 
 use std::collections::HashMap;
 
-use codespan_reporting::diagnostic::{Diagnostic, Label};
-use serde::Serialize;
-
-use super::{
-    backends::GenericBackend,
-    safety::InvariantAssertion,
-    solver::{Backend, Solver},
-};
+use super::error::{AssertionFailure, FailureType, QueryError, SolveError};
+use super::safety::InvariantAssertion;
 use crate::{
     fly::{
         printer,
-        semantics::Model,
-        syntax::{Module, Signature, Span, Term, ThmStmt},
+        syntax::{Module, Signature, Term, ThmStmt},
     },
     smtlib::proc::SatResp,
+    solver::{backends::GenericBackend, Backend, Solver},
     term::FirstOrder,
 };
-
-#[derive(Debug, Copy, Clone, Serialize, PartialEq, Eq)]
-pub enum FailureType {
-    FirstOrder,
-    InitInv,
-    NotInductive,
-    Unsupported,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub enum QueryError {
-    Sat(Model),
-    Unknown(String),
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct AssertionFailure {
-    loc: Span,
-    reason: FailureType,
-    pub error: QueryError,
-}
-
-impl AssertionFailure {
-    pub fn diagnostic<FileId>(&self, file_id: FileId) -> Diagnostic<FileId> {
-        let msg = match self.reason {
-            FailureType::FirstOrder => "assertion failure",
-            FailureType::InitInv => "init does not imply invariant",
-            FailureType::NotInductive => "invariant is not inductive",
-            FailureType::Unsupported => "unsupported assertion",
-        };
-        Diagnostic::error()
-            .with_message(msg)
-            .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
-            .with_notes(vec![match &self.error {
-                QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
-                QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
-            }])
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
-pub struct SolveError {
-    pub fails: Vec<AssertionFailure>,
-}
-
-impl SolveError {
-    fn push(&mut self, e: AssertionFailure) {
-        self.fails.push(e);
-    }
-}
 
 pub struct SolverConf {
     pub backend: GenericBackend,
@@ -114,7 +58,7 @@ fn verify_firstorder(
     verify_term(&mut solver, assert.clone())
 }
 
-pub fn verify(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
+pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
     // assumptions/assertions so far
     let mut assumes: Vec<&Term> = vec![];
     let mut errors = SolveError::default();
@@ -189,7 +133,7 @@ mod tests {
         solver::backends::{GenericBackend, SolverType},
     };
 
-    use super::{verify, SolveError, SolverConf};
+    use super::{verify_module, SolveError, SolverConf};
 
     fn z3_verify(m: &Module) -> Result<(), SolveError> {
         // optionally override Z3 command
@@ -200,7 +144,7 @@ mod tests {
             backend: GenericBackend::new(SolverType::Z3, &z3_cmd),
             tee: None,
         };
-        verify(&conf, m)
+        verify_module(&conf, m)
     }
 
     #[test]

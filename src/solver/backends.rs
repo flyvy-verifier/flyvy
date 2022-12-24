@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     models::{self, smt_eval, subst},
-    solver::{Backend, FOModel},
+    {Backend, FOModel},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
