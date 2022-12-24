@@ -1,6 +1,11 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! A custom s-expression data type and parsing.
+//!
+//! This implementation supports comments as part of the grammar, since they are
+//! needed to fully parse the models returned by for example CVC5.
+
 use std::fmt;
 
 use peg::str::LineCol;
