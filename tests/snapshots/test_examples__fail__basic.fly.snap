@@ -10,6 +10,8 @@ error: assertion failure
    │ ^^^^^^^^^^^^
    │
    = counter example:
-     Model { signature: Signature { sorts: [Id("thread")], relations: [RelationDecl { mutable: true, name: "p", args: [Id("thread")], typ: Bool }, RelationDecl { mutable: false, name: "q", args: [], typ: Bool }, RelationDecl { mutable: false, name: "t0", args: [], typ: Id("thread") }] }, universe: [1], interp: [Interpretation { shape: [1, 2], data: [0] }, Interpretation { shape: [2], data: [0] }, Interpretation { shape: [1], data: [0] }] }
+     p(@thread_0) = false
+     q = false
+     t0 = @thread_0
 
 

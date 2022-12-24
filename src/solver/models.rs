@@ -16,36 +16,6 @@ pub struct Model {
     pub symbols: HashMap<String, (Vec<String>, Sexp)>,
 }
 
-impl Model {
-    pub fn fmt(&self) -> String {
-        let universes = {
-            let mut lines = vec![];
-            for (sort, elements) in &self.universes {
-                let mut elements = elements.clone();
-                elements.sort();
-                lines.push(format!("universe {sort}: {}", elements.join(" ")))
-            }
-            lines.sort();
-            lines.join("\n")
-        };
-
-        let symbols = {
-            let mut lines = vec![];
-            for (r, (binders, val)) in &self.symbols {
-                if binders.is_empty() {
-                    lines.push(format!("{r} = {val}"));
-                } else {
-                    let binders = binders.iter().map(|b| b.to_string()).collect::<Vec<_>>();
-                    lines.push(format!("{r} = (lambda ({}) {val})", binders.join(" ")));
-                }
-            }
-            lines.sort();
-            lines.join("\n")
-        };
-        format!("{universes}\n{symbols}")
-    }
-}
-
 #[derive(Debug, Error)]
 #[error("eval error: {0}")]
 pub struct EvalError(String);

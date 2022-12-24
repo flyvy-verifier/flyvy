@@ -54,10 +54,7 @@ impl AssertionFailure {
             .with_message(msg)
             .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
-                // TODO: replace debug print of model with something pretty
-                // (will probably require a signature to be required in
-                // AssertionFailure)
-                QueryError::Sat(model) => format!("counter example:\n{model:?}"),
+                QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
             }])
     }

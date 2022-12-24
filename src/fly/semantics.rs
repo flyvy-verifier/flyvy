@@ -1,12 +1,13 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use std::fmt::Write;
 use std::iter::zip;
 
 use itertools::Itertools;
 use serde::Serialize;
 
-use super::syntax::{Signature, Sort};
+use super::syntax::{RelationDecl, Signature, Sort};
 
 /// Element is an integer type for representing members of a universe within an
 /// interpretation.
@@ -105,6 +106,57 @@ impl Model {
                 assert_eq!(interp.shape[j], self.universe[k]);
             }
         }
+    }
+
+    fn fmt_sort(typ: &Sort, idx: usize) -> String {
+        match typ {
+            Sort::Bool => {
+                if idx == 0 {
+                    "false".to_string()
+                } else {
+                    "true".to_string()
+                }
+            }
+            Sort::Id(s) => format!("@{s}_{idx}"),
+        }
+    }
+
+    fn fmt_rel(&self, decl: &RelationDecl, interp: &Interpretation) -> String {
+        let mut lines = vec![];
+        let arg_shape = &interp.shape[..interp.shape.len() - 1];
+        let args_list = if arg_shape.is_empty() {
+            vec![vec![]]
+        } else {
+            arg_shape
+                .iter()
+                .map(|&card| (0..card).collect::<Vec<Element>>())
+                .multi_cartesian_product()
+                .collect()
+        };
+        for args in args_list {
+            let name = &decl.name;
+            let args_s = zip(&decl.args, args.iter())
+                .map(|(typ, &idx)| Self::fmt_sort(typ, idx))
+                .collect::<Vec<_>>();
+            let args_s = if args_s.is_empty() {
+                "".to_string()
+            } else {
+                format!("({})", args_s.join(","))
+            };
+            let ret_s = Self::fmt_sort(&decl.typ, interp.get(&args));
+            lines.push(format!("{name}{args_s} = {ret_s}"));
+        }
+        lines.join("\n")
+    }
+
+    /// Print a model in a format suitable for display to the user.
+    pub fn fmt(&self) -> String {
+        let mut w = String::new();
+        for (rel, interp) in zip(&self.signature.relations, &self.interp) {
+            let rel_s = self.fmt_rel(rel, interp);
+            _ = writeln!(&mut w, "{rel_s}");
+        }
+        w
     }
 }
 

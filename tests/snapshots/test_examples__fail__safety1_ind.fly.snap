@@ -10,6 +10,7 @@ error: invariant is not inductive
    │ ^^^^^^^^^^^^^^^^
    │
    = counter example:
-     Model { signature: Signature { sorts: [], relations: [RelationDecl { mutable: true, name: "p", args: [], typ: Bool }, RelationDecl { mutable: true, name: "q", args: [], typ: Bool }] }, universe: [], interp: [Interpretation { shape: [2], data: [0] }, Interpretation { shape: [2], data: [1] }] }
+     p = false
+     q = true
 
 
