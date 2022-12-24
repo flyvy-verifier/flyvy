@@ -108,6 +108,16 @@ impl Model {
         }
     }
 
+    pub fn new(sig: &Signature, universe: &Universe, interp: Vec<Interpretation>) -> Self {
+        let model = Self {
+            signature: sig.clone(),
+            universe: universe.clone(),
+            interp,
+        };
+        model.wf();
+        model
+    }
+
     fn fmt_sort(typ: &Sort, idx: usize) -> String {
         match typ {
             Sort::Bool => {

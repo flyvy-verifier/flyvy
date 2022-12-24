@@ -41,7 +41,7 @@ pub struct FOModel {
 }
 
 /// A Solver provides an interface to a running SMT solver, allowing interaction
-/// with it using [`fly::syntax::Term`]'s.
+/// with it using [`crate::fly::syntax::Term`]'s.
 ///
 /// The Backend makes it possible to parse and return models in the compact
 /// representation of `semantics::Model`.
@@ -259,11 +259,7 @@ impl FOModel {
                     self.interp[&relation].clone()
                 })
                 .collect::<Vec<_>>();
-            let model = Model {
-                signature: signature.clone(),
-                universe: universe.clone(),
-                interp,
-            };
+            let model = Model::new(signature, &universe, interp);
             states.push(model);
         }
         states
