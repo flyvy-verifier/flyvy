@@ -138,10 +138,7 @@ impl<B: Backend> Solver<B> {
 
     /// The `assumptions` map should map indicator variables to whether they
     /// should be assumed true or false.
-    pub fn check_sat(
-        &mut self,
-        assumptions: HashMap<Term, bool>,
-    ) -> Result<SatResp<()>, SolverError> {
+    pub fn check_sat(&mut self, assumptions: HashMap<Term, bool>) -> Result<SatResp, SolverError> {
         if cfg!(debug_assertions) {
             for assumption in assumptions.keys() {
                 assert!(

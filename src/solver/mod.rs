@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 pub mod backends;
-pub mod conf;
 mod models;
 mod safety;
 mod sexp;

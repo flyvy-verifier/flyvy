@@ -31,12 +31,11 @@ pub struct SmtProc {
 
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
 ///
-/// For sat, this enum includes the counter-example, and for unknown it returns
-/// the reason the solver provides.
+/// For unknown it also returns the reason the solver provides.
 #[derive(Debug, Clone)]
-pub enum SatResp<Model> {
-    /// The query is satisfiable, with a counter-example given by model.
-    Sat { model: Model },
+pub enum SatResp {
+    /// The query is satisfiable.
+    Sat,
     /// The query is unsatisfiable (and thus negated assertions are valid).
     Unsat,
     /// Unknown whether the query is sat or unsat. The reason is the one given
@@ -45,29 +44,6 @@ pub enum SatResp<Model> {
     /// This can happen to a timeout or limitations of quantifier instantiation
     /// heuristics, for example.
     Unknown(String),
-}
-
-impl<M> SatResp<M> {
-    /// Converts a `&SatResp<M>` to a `SatResp<&M>`.
-    pub fn as_ref(&self) -> SatResp<&M> {
-        match self {
-            SatResp::Sat { model } => SatResp::Sat { model },
-            SatResp::Unsat => SatResp::Unsat,
-            SatResp::Unknown(reason) => SatResp::Unknown(reason.to_string()),
-        }
-    }
-
-    /// Map over the model in a sat response.
-    pub fn map<M2, F>(self, f: F) -> SatResp<M2>
-    where
-        F: FnOnce(M) -> M2,
-    {
-        match self {
-            SatResp::Sat { model } => SatResp::Sat { model: f(model) },
-            SatResp::Unsat => SatResp::Unsat,
-            SatResp::Unknown(reason) => SatResp::Unknown(reason),
-        }
-    }
 }
 
 #[derive(Error, Debug)]
@@ -299,12 +275,12 @@ impl SmtProc {
         }
     }
 
-    fn parse_sat(&mut self, resp: &str) -> SatResp<()> {
+    fn parse_sat(&mut self, resp: &str) -> SatResp {
         if resp == "unsat" {
             return SatResp::Unsat;
         }
         if resp == "sat" {
-            return SatResp::Sat { model: () };
+            return SatResp::Sat;
         }
         if resp == "unknown" {
             let reason = self
@@ -317,13 +293,13 @@ impl SmtProc {
 
     /// Send the solver `(check-sat)`. For unknown gets a reason, but does not
     /// call `(get-model)` for sat.
-    pub fn check_sat(&mut self) -> Result<SatResp<()>> {
+    pub fn check_sat(&mut self) -> Result<SatResp> {
         self.send(&app("check-sat", []));
         let resp = self.get_response(|s| s.to_string())?;
         Ok(self.parse_sat(&resp))
     }
 
-    pub fn check_sat_assuming(&mut self, assumptions: &[Sexp]) -> Result<SatResp<()>> {
+    pub fn check_sat_assuming(&mut self, assumptions: &[Sexp]) -> Result<SatResp> {
         self.send(&app(
             "check-sat-assuming",
             vec![sexp_l(assumptions.to_vec())],
@@ -344,22 +320,6 @@ impl SmtProc {
         } else {
             panic!("malformed get-unsat-assumptions response: {sexp}")
         }
-    }
-
-    /// Send the solver `(check-sat)` and parse its model or reason unknown if
-    /// appropriate.
-    pub fn check_sat_model(&mut self) -> Result<SatResp<Sexp>> {
-        let sat = self.check_sat()?;
-        let sat = match sat {
-            SatResp::Sat { .. } => {
-                self.send(&app("get-model", []));
-                let model = self.get_sexp()?;
-                SatResp::Sat { model }
-            }
-            SatResp::Unsat => SatResp::Unsat,
-            SatResp::Unknown(s) => SatResp::Unknown(s),
-        };
-        Ok(sat)
     }
 
     /// A marker for determining end of solver response.
