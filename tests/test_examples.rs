@@ -9,6 +9,8 @@ use std::{
 
 use walkdir::WalkDir;
 
+const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
+
 fn get_tests(dir: &str) -> Vec<PathBuf> {
     WalkDir::new(format!("examples/{dir}"))
         .sort_by_file_name()
@@ -30,30 +32,37 @@ fn path_test_name(path: &Path) -> String {
 
 #[test]
 fn success() {
-    for path in get_tests("success") {
-        let out = Command::new("./target/debug/temporal-verifier")
-            .arg("--color=never")
-            .arg(path.as_os_str())
-            .output()
-            .expect("could not run verifier");
-        assert!(
-            out.status.success(),
-            "verification failed for {}",
-            path.display()
-        );
+    for solver in SOLVERS_TO_TEST {
+        for path in get_tests("success") {
+            println!("Running {} with {solver}", path.display());
+            let out = Command::new("./target/debug/temporal-verifier")
+                .arg("--color=never")
+                .arg(format!("--solver={solver}"))
+                .arg(path.as_os_str())
+                .output()
+                .expect("could not run verifier");
+            assert!(
+                out.status.success(),
+                "verification failed for {} with {solver}",
+                path.display()
+            );
+        }
     }
 }
 
 #[test]
 fn failing_snapshot() {
-    for path in get_tests("fail") {
-        println!("{}", path.display());
-        let out = Command::new("./target/debug/temporal-verifier")
-            .arg("--color=never")
-            .arg(path.as_os_str())
-            .output()
-            .expect("could not run verifier");
-        let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
-        insta::assert_display_snapshot!(path_test_name(&path), stderr);
+    for solver in SOLVERS_TO_TEST {
+        for path in get_tests("fail") {
+            println!("Running {} with {solver}", path.display());
+            let out = Command::new("./target/debug/temporal-verifier")
+                .arg("--color=never")
+                .arg(format!("--solver={solver}"))
+                .arg(path.as_os_str())
+                .output()
+                .expect("could not run verifier");
+            let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
+            insta::assert_display_snapshot!([&path_test_name(&path), solver].join("."), stderr);
+        }
     }
 }

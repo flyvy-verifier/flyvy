@@ -15,7 +15,7 @@ correctness properties, including safety and liveness.
 
 ### Prerequisites
 
-You'll need Rust (for example, through `rustup`) and a recent version of [Z3](https://github.com/Z3Prover/z3).
+You'll need Rust (for example, through `rustup`) and recent versions of [Z3](https://github.com/Z3Prover/z3), [CVC4](https://cvc4.github.io/), and [cvc5](https://cvc5.github.io/).
 
 ### Build & Run
 
