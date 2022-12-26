@@ -21,8 +21,8 @@ pub struct InvariantAssertion {
 
 #[derive(Error, Debug)]
 pub enum InvariantError {
-    #[error("assertion is not of the form (forall p)")]
-    NotForall,
+    #[error("assertion is not of the form (always p)")]
+    NotSafety,
 }
 
 impl InvariantAssertion {
@@ -30,7 +30,7 @@ impl InvariantAssertion {
     pub fn for_assert(assumes: &[&Term], assert: &Term) -> Result<Self, InvariantError> {
         let inv = match assert {
             Term::UnaryOp(Always, p) => *p.clone(),
-            _ => return Err(InvariantError::NotForall),
+            _ => return Err(InvariantError::NotSafety),
         };
 
         let mut init: Vec<Term> = vec![];
