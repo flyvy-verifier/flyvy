@@ -1,0 +1,13 @@
+# Copyright 2022 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+mutable p: bool
+mutable q: bool
+
+assume !p & !q
+assume always p'=(p|q) & q'=q
+assert always !p
+proof {
+    invariant !p
+    invariant !q
+}

@@ -66,6 +66,7 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
         match step {
             ThmStmt::Assume(e) => assumes.push(e),
             ThmStmt::Assert(pf) => {
+                let proof_invariants: Vec<&Term> = pf.invariants.iter().map(|s| &s.x).collect();
                 if let Some(n) = FirstOrder::unrolling(&pf.assert.x) {
                     let res = verify_firstorder(conf, &m.signature, n + 1, &assumes, &pf.assert.x);
                     if let Err(cex) = res {
@@ -75,7 +76,9 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                             error: cex,
                         });
                     }
-                } else if let Ok(assert) = InvariantAssertion::for_assert(&assumes, &pf.assert.x) {
+                } else if let Ok(assert) =
+                    InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
+                {
                     {
                         // check initiation (init implies invariant)
                         let mut solver = conf.solver(&m.signature, 1);

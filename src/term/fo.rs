@@ -80,6 +80,8 @@ impl FirstOrder {
 
     /// Returns the number of nested primes in `t`, or None if term is not
     /// first-order.
+    // TODO(oded): change this so 1 means no primes, 2 means 1 prime, and 0
+    // means no mutable symbols mentioned.
     pub fn unrolling(t: &Term) -> Option<usize> {
         match unrolling(t) {
             Unrolling::Finite(n) => Some(n),

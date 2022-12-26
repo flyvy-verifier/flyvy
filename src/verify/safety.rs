@@ -15,32 +15,39 @@ use crate::{
 pub struct InvariantAssertion {
     init: Term,
     next: Term,
-    known_invs: Term,
+    assumed_inv: Term,
     pub inv: Term,
+    proof_invs: Vec<Term>,
 }
 
 #[derive(Error, Debug)]
 pub enum InvariantError {
     #[error("assertion is not of the form (always p)")]
     NotSafety,
+    #[error("proof invariant is not a well-formed single-state fomula")]
+    BadProofInvariant,
 }
 
 impl InvariantAssertion {
     /// Construct an invariant assertion to represent a temporal assertion.
-    pub fn for_assert(assumes: &[&Term], assert: &Term) -> Result<Self, InvariantError> {
+    pub fn for_assert(
+        assumes: &[&Term],
+        assert: &Term,
+        proof_invs: &[&Term],
+    ) -> Result<Self, InvariantError> {
         let inv = match assert {
             Term::UnaryOp(Always, p) => *p.clone(),
             _ => return Err(InvariantError::NotSafety),
         };
 
         let mut init: Vec<Term> = vec![];
-        let mut known_invs: Vec<Term> = vec![];
+        let mut assumed_invs: Vec<Term> = vec![];
         let mut next: Vec<Term> = vec![];
 
         for &t in assumes {
             if let Term::UnaryOp(Always, t) = t {
                 match FirstOrder::unrolling(t) {
-                    Some(0) => known_invs.push(*t.clone()),
+                    Some(0) => assumed_invs.push(*t.clone()),
                     Some(1) => next.push(*t.clone()),
                     _ => (), // drop
                 }
@@ -49,17 +56,31 @@ impl InvariantAssertion {
             }
         }
 
+        for &t in proof_invs {
+            if FirstOrder::unrolling(t) != Some(0) {
+                // TODO(oded): better error reporting
+                return Err(InvariantError::BadProofInvariant);
+            }
+        }
+
         Ok(Self {
             init: Term::and(init),
             next: Term::and(next),
-            known_invs: Term::and(known_invs),
+            assumed_inv: Term::and(assumed_invs),
             inv,
+            proof_invs: proof_invs.iter().map(|&t| t.clone()).collect(),
         })
     }
 
+    fn inductive_invariant(&self) -> Term {
+        let mut invs = vec![self.inv.clone()];
+        invs.extend(self.proof_invs.iter().map(|t| t.clone()));
+        Term::and(invs)
+    }
+
     pub fn initiation(&self) -> FirstOrder {
-        let lhs = Term::and(vec![self.init.clone(), self.known_invs.clone()]);
-        let rhs = self.inv.clone();
+        let lhs = Term::and(vec![self.init.clone(), self.assumed_inv.clone()]);
+        let rhs = self.inductive_invariant();
         FirstOrder::new(Term::implies(lhs, rhs))
     }
 
@@ -71,12 +92,12 @@ impl InvariantAssertion {
         // symbols were resolved once, so that at each occurrence of a function
         // it was easy to look it up.
         let lhs = Term::and(vec![
-            self.inv.clone(),
+            self.inductive_invariant(),
             self.next.clone(),
-            self.known_invs.clone(),
-            Next::prime(&self.known_invs),
+            self.assumed_inv.clone(),
+            Next::prime(&self.assumed_inv),
         ]);
-        let rhs = Next::prime(&self.inv);
+        let rhs = Next::prime(&self.inductive_invariant());
         FirstOrder::new(Term::implies(lhs, rhs))
     }
 }
