@@ -123,6 +123,8 @@ impl Model {
         model
     }
 
+    // ODED: I would change this function signature to:
+    // fn fmt_element(sort: &Sort, element: Element) -> String
     fn fmt_sort(typ: &Sort, idx: usize) -> String {
         match typ {
             Sort::Bool => {
@@ -165,6 +167,7 @@ impl Model {
     }
 
     /// Print a model in a format suitable for display to the user.
+    // ODED: I think we should also print the universe here
     pub fn fmt(&self) -> String {
         let mut w = String::new();
         for (rel, interp) in zip(&self.signature.relations, &self.interp) {

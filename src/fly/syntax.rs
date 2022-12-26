@@ -38,12 +38,16 @@ pub enum Quantifier {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Binder {
     pub name: String,
+    // ODED: I would rename typ to sort, here and elsewhere
+    // ODED: not sure if we should have Option here until we have type inference
     pub typ: Option<Sort>,
 }
 
+// ODED: maybe Term should be Copy? (see test_eval in semantics.rs)
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum Term {
     Id(String),
+    // ODED: I think we should have App(String, Vec<Term>), since we're not high-order (yet)
     App(Box<Term>, Vec<Term>),
     UnaryOp(UOp, Box<Term>),
     BinOp(BinOp, Box<Term>, Box<Term>),
@@ -202,6 +206,7 @@ pub struct Module {
     pub statements: Vec<ThmStmt>,
 }
 
+// ODED: I would move the parser to parser.rs
 peg::parser! {
 
 grammar parser() for str {
