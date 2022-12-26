@@ -1,13 +1,18 @@
 // Copyright 2022 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::fmt::Write;
 use std::iter::zip;
+use std::{collections::HashMap, fmt::Write};
 
 use itertools::Itertools;
 use serde::Serialize;
 
-use super::syntax::{RelationDecl, Signature, Sort};
+use super::syntax::{BinOp, NOp, Quantifier, RelationDecl, Signature, Sort, Term, UOp};
+
+use BinOp::*;
+use NOp::*;
+use Quantifier::*;
+use UOp::*;
 
 /// Element is an integer type for representing members of a universe within an
 /// interpretation.
@@ -168,11 +173,156 @@ impl Model {
         }
         w
     }
+
+    /// Evaluate a term to a model element. Also depends on an assignment to
+    /// logical variables.
+    ///
+    /// * None defaults to the empty assignment.
+    /// * The assignment is unsorted, and so is the return value of this
+    ///   function.
+    pub fn eval(&self, t: &Term, assignment: Option<&HashMap<String, Element>>) -> Element {
+        match t {
+            // TODO(oded): Id("true") and Id("false") should probably be separate constructors
+            Term::Id(name) if name == "false" => 0,
+            Term::Id(name) if name == "true" => 1,
+            Term::Id(name) if assignment.is_some() && assignment.unwrap().contains_key(name) => {
+                assignment.unwrap()[name]
+            }
+            Term::Id(name) => {
+                let i = self.signature.relation_idx(name);
+                assert!(
+                    self.signature.relations[i].args.is_empty(),
+                    "tried to eval non-nullary function {name}"
+                );
+                self.interp[i].get(&[])
+            }
+            Term::App(f, args) => {
+                let args: Vec<Element> = args.iter().map(|x| self.eval(x, assignment)).collect();
+                // ODED: is `&**f` really the right/idomatic thing here?
+                match &**f {
+                    Term::Id(name) => self.interp[self.signature.relation_idx(&name)].get(&args),
+                    _ => panic!("tried to apply {f}"),
+                }
+            }
+            Term::UnaryOp(Not, t) => {
+                let v = self.eval(t, assignment);
+                assert!(v == 0 || v == 1);
+                1 - v
+            }
+            Term::BinOp(Equals | Iff, lhs, rhs) => {
+                let lhs = self.eval(lhs, assignment);
+                let rhs = self.eval(rhs, assignment);
+                if lhs == rhs {
+                    1
+                } else {
+                    0
+                }
+            }
+            Term::BinOp(NotEquals, lhs, rhs) => {
+                // TODO(oded): make this work: self.eval(&Term::UnaryOp(Not, Term::BinOp(Equals, lhs), rhs))
+                let lhs = self.eval(lhs, assignment);
+                let rhs = self.eval(rhs, assignment);
+                if lhs == rhs {
+                    0
+                } else {
+                    1
+                }
+            }
+            Term::BinOp(Implies, lhs, rhs) => {
+                // TODO(oded): make this work: self.eval(&Term::UnaryOp(Not, Term::BinOp(Equals, lhs), rhs))
+                let lhs = self.eval(lhs, assignment);
+                let rhs = self.eval(rhs, assignment);
+                if lhs <= rhs {
+                    1
+                } else {
+                    0
+                }
+            }
+            Term::NAryOp(And, ts) => {
+                let res = ts.iter().all(|t| self.eval(t, assignment) == 1);
+                if res {
+                    1
+                } else {
+                    0
+                }
+            }
+            Term::NAryOp(Or, ts) => {
+                let res = ts.iter().any(|t| self.eval(t, assignment) == 1);
+                if res {
+                    1
+                } else {
+                    0
+                }
+            }
+            Term::Ite { cond, then, else_ } => {
+                if self.eval(cond, assignment) == 1 {
+                    self.eval(then, assignment)
+                } else {
+                    self.eval(else_, assignment)
+                }
+            }
+            Term::Quantified {
+                quantifier: _,
+                binders,
+                body,
+            } if binders.is_empty() => self.eval(body, assignment),
+            Term::Quantified {
+                quantifier,
+                binders,
+                body,
+            } => {
+                assert!(!binders.is_empty());
+                let shape: Vec<usize> = binders
+                    .iter()
+                    .map(|b| {
+                        self.cardinality(
+                            b.typ.as_ref().expect("cannot evaluate unsorted quantifer"),
+                        )
+                    })
+                    .collect();
+                let names: Vec<&String> = binders.iter().map(|b| &b.name).collect();
+                let mut assignment_ = match assignment {
+                    Some(a) => a.clone(),
+                    None => HashMap::new(),
+                };
+                let mut iter = shape
+                    .iter()
+                    .map(|&card| (0..card).collect::<Vec<Element>>())
+                    .multi_cartesian_product()
+                    .map(|elements| {
+                        for (name, element) in zip(&names, elements) {
+                            // ODED: does this make sense? updating the
+                            // assignment inside the lambda? and the
+                            // name.to_string()?
+                            assignment_.insert(name.to_string(), element);
+                        }
+                        self.eval(body, Some(&assignment_)) == 1
+                    });
+                let result = match quantifier {
+                    Forall => iter.all(|x| x),
+                    Exists => iter.any(|x| x),
+                };
+                // TODO(oded): make a bool_to_element function (and also bool_from_element)
+                if result {
+                    1
+                } else {
+                    0
+                }
+            }
+            Term::UnaryOp(Always | Eventually | Prime, _) => panic!("tried to eval {t}"),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::fly::syntax::{RelationDecl, Signature, Sort};
+    use crate::fly::{
+        semantics::Element,
+        syntax::{
+            BinOp::*, Binder, NOp::*, Quantifier::*, RelationDecl, Signature, Sort, Term, Term::*,
+            UOp::*,
+        },
+    };
 
     use super::{Interpretation, Model, Universe};
 
@@ -269,6 +419,207 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_eval() {
+        let typ = |n: usize| Sort::Id(format!("T{n}"));
+
+        let sig = Signature {
+            sorts: vec![typ(1), typ(2)],
+            relations: vec![
+                RelationDecl {
+                    mutable: true,
+                    name: "r1".to_string(),
+                    args: vec![typ(2), typ(1)],
+                    typ: Sort::Bool,
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "r2".to_string(),
+                    args: vec![typ(1)],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c1".to_string(),
+                    args: vec![],
+                    typ: typ(1),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c2".to_string(),
+                    args: vec![],
+                    typ: typ(2),
+                },
+            ],
+        };
+
+        // T1 has cardinality 2, T2 has cardinality 3
+        let universe: Universe = vec![2, 3];
+
+        // r1 is of type (T2, T1) -> bool
+        let r1_interp = Interpretation {
+            shape: vec![3, 2, 2],
+            data: vec![0, 1, 1, 0, 1, 0],
+        };
+
+        // r2 is of type (T1) -> T2
+        let r2_interp = Interpretation {
+            shape: vec![2, 3],
+            data: vec![1, 2],
+        };
+
+        // c1 is of type T1
+        let c1_interp = Interpretation {
+            shape: vec![2],
+            data: vec![1],
+        };
+
+        // c2 is of type T2
+        let c2_interp = Interpretation {
+            shape: vec![3],
+            data: vec![2],
+        };
+
+        let model = Model {
+            signature: sig,
+            universe,
+            interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
+        };
+
+        model.wf();
+
+        println!("model is:\n{}\n", model.fmt());
+
+        let f = Id("false".to_string());
+        let t = Id("true".to_string());
+        let r1 = Id("r1".to_string());
+        let r2 = Id("r2".to_string());
+        let c1 = Id("c1".to_string());
+        let c2 = Id("c2".to_string());
+
+        let e = |t| model.eval(t, None);
+        let b = |t: &Term| Box::new(t.clone());
+        let ite = |cond, then, else_| Ite {
+            cond: b(cond),
+            then: b(then),
+            else_: b(else_),
+        };
+
+        let mut tests: Vec<(Term, Element)> = vec![];
+
+        // Testing using bool
+        tests.append(&mut vec![
+            // true and false
+            (f.clone(), 0),
+            (t.clone(), 1),
+            // UnaryOp: Not
+            (UnaryOp(Not, b(&f)), 1),
+            (UnaryOp(Not, b(&t)), 0),
+            // BinOp: Equals
+            (BinOp(Equals, b(&f), b(&f)), 1),
+            (BinOp(Equals, b(&f), b(&t)), 0),
+            (BinOp(Equals, b(&t), b(&f)), 0),
+            (BinOp(Equals, b(&t), b(&t)), 1),
+            // BinOp: NotEquals
+            (BinOp(NotEquals, b(&f), b(&f)), 0),
+            (BinOp(NotEquals, b(&f), b(&t)), 1),
+            (BinOp(NotEquals, b(&t), b(&f)), 1),
+            (BinOp(NotEquals, b(&t), b(&t)), 0),
+            // BinOp: Implies
+            (BinOp(Implies, b(&f), b(&f)), 1),
+            (BinOp(Implies, b(&f), b(&t)), 1),
+            (BinOp(Implies, b(&t), b(&f)), 0),
+            (BinOp(Implies, b(&t), b(&t)), 1),
+            // BinOp: Iff,
+            (BinOp(Iff, b(&f), b(&f)), 1),
+            (BinOp(Iff, b(&f), b(&t)), 0),
+            (BinOp(Iff, b(&t), b(&f)), 0),
+            (BinOp(Iff, b(&t), b(&t)), 1),
+            // NAryOp: And
+            (NAryOp(And, vec![]), 1),
+            (NAryOp(And, vec![f.clone()]), 0),
+            (NAryOp(And, vec![t.clone()]), 1),
+            (NAryOp(And, vec![f.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![f.clone(), t.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), t.clone()]), 1),
+            (NAryOp(And, vec![f.clone(), f.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![f.clone(), f.clone(), t.clone()]), 0),
+            (NAryOp(And, vec![f.clone(), t.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![f.clone(), t.clone(), t.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), f.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), f.clone(), t.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), t.clone(), f.clone()]), 0),
+            (NAryOp(And, vec![t.clone(), t.clone(), t.clone()]), 1),
+            // NAryOp: Or
+            (NAryOp(Or, vec![]), 0),
+            (NAryOp(Or, vec![f.clone()]), 0),
+            (NAryOp(Or, vec![t.clone()]), 1),
+            (NAryOp(Or, vec![f.clone(), f.clone()]), 0),
+            (NAryOp(Or, vec![f.clone(), t.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), f.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), t.clone()]), 1),
+            (NAryOp(Or, vec![f.clone(), f.clone(), f.clone()]), 0),
+            (NAryOp(Or, vec![f.clone(), f.clone(), t.clone()]), 1),
+            (NAryOp(Or, vec![f.clone(), t.clone(), f.clone()]), 1),
+            (NAryOp(Or, vec![f.clone(), t.clone(), t.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), f.clone(), f.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), f.clone(), t.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), t.clone(), f.clone()]), 1),
+            (NAryOp(Or, vec![t.clone(), t.clone(), t.clone()]), 1),
+            // Ite
+            (ite(&f, &f, &f), 0),
+            (ite(&f, &f, &t), 1),
+            (ite(&f, &t, &f), 0),
+            (ite(&f, &t, &t), 1),
+            (ite(&t, &f, &f), 0),
+            (ite(&t, &f, &t), 0),
+            (ite(&t, &t, &f), 1),
+            (ite(&t, &t, &t), 1),
+            // Quantified: Forall
+            (
+                Quantified {
+                    quantifier: Forall,
+                    binders: vec![Binder {
+                        name: "x".to_string(),
+                        typ: Some(Sort::Bool),
+                    }],
+                    body: Box::new(Id("x".to_string())),
+                },
+                0,
+            ),
+            // Quantified: Exists
+            (
+                Quantified {
+                    quantifier: Exists,
+                    binders: vec![Binder {
+                        name: "x".to_string(),
+                        typ: Some(Sort::Bool),
+                    }],
+                    body: Box::new(Id("x".to_string())),
+                },
+                1,
+            ),
+        ]);
+
+        // Testing of constants and relations
+        tests.append(&mut vec![
+            (c1.clone(), 1),
+            (c2.clone(), 2),
+            //
+            (BinOp(Equals, b(&c1), b(&c1)), 1),
+            (BinOp(NotEquals, b(&c1), b(&c1)), 0),
+            //
+            (App(b(&r1), vec![c2.clone(), c1.clone()]), 0),
+            (App(b(&r2), vec![c1.clone()]), 2),
+        ]);
+
+        for (t, v) in tests.iter() {
+            println!("evaluating {t} (expecting {v})");
+            assert_eq!(&e(t), v, "evaluating {} should give {}", t, v);
         }
     }
 }
