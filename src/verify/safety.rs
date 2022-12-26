@@ -57,13 +57,13 @@ impl InvariantAssertion {
         })
     }
 
-    pub fn inv_assertion(&self) -> FirstOrder {
+    pub fn initiation(&self) -> FirstOrder {
         let lhs = Term::and(vec![self.init.clone(), self.known_invs.clone()]);
         let rhs = self.inv.clone();
         FirstOrder::new(Term::implies(lhs, rhs))
     }
 
-    pub fn next_assertion(&self) -> FirstOrder {
+    pub fn consecution(&self) -> FirstOrder {
         // TODO: note that in this process we will generate p' even when p is immutable.
         //
         // Fixing this requires some stage (either the prime processing or the

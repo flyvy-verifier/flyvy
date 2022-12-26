@@ -77,12 +77,12 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                     }
                 } else if let Ok(assert) = InvariantAssertion::for_assert(&assumes, &pf.assert.x) {
                     {
-                        let inv_assert = assert.inv_assertion();
-                        let mut solver = conf.solver(&m.signature, 2);
+                        // check initiation (init implies invariant)
+                        let mut solver = conf.solver(&m.signature, 1);
                         solver.comment_with(|| {
                             format!("init implies: {}", printer::term(&assert.inv))
                         });
-                        let res = verify_term(&mut solver, inv_assert.0);
+                        let res = verify_term(&mut solver, assert.initiation().0);
                         if let Err(cex) = res {
                             errors.push(AssertionFailure {
                                 loc: pf.assert.span,
@@ -92,11 +92,11 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                         }
                     }
                     {
-                        let next_assert = assert.next_assertion();
+                        // check consecution (transitions preserve invariant)
                         let mut solver = conf.solver(&m.signature, 2);
                         solver
                             .comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
-                        let res = verify_term(&mut solver, next_assert.0);
+                        let res = verify_term(&mut solver, assert.consecution().0);
                         if let Err(cex) = res {
                             errors.push(AssertionFailure {
                                 loc: pf.assert.span,
