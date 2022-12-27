@@ -38,6 +38,10 @@ enum ColorOutput {
 #[derive(clap::Parser, Debug)]
 #[command(about, long_about=None)]
 struct Args {
+    #[arg(long)]
+    /// Apply Houdini to supplied proof invariants
+    houdini: bool,
+
     #[arg(value_enum, long, default_value_t = SolverType::Z3)]
     /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
     solver: SolverType,
@@ -148,7 +152,7 @@ fn main() {
         return;
     }
 
-    let r = verify_module(&conf, &m);
+    let r = verify_module(&conf, &m, args.houdini);
     match r {
         Ok(()) => println!("verifies!"),
         Err(err) => {
