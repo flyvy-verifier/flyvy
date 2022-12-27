@@ -190,7 +190,10 @@ fn relation_decl(decl: &RelationDecl) -> String {
     let args = if decl.args.is_empty() {
         "".to_string()
     } else {
-        decl.args.iter().map(sort).collect::<Vec<_>>().join(", ")
+        format!(
+            "({})",
+            decl.args.iter().map(sort).collect::<Vec<_>>().join(", ")
+        )
     };
     let typ = sort(&decl.typ);
     format!(
