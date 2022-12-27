@@ -51,6 +51,27 @@ fn success() {
 }
 
 #[test]
+fn houdini_success() {
+    for solver in SOLVERS_TO_TEST {
+        for path in get_tests("success") {
+            println!("Running Houdini on {} with {solver}", path.display());
+            let out = Command::new("./target/debug/temporal-verifier")
+                .arg("--color=never")
+                .arg(format!("--solver={solver}"))
+                .arg("--houdini")
+                .arg(path.as_os_str())
+                .output()
+                .expect("could not run verifier");
+            assert!(
+                out.status.success(),
+                "verification failed for {} with {solver}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn failing_snapshot() {
     for solver in SOLVERS_TO_TEST {
         for path in get_tests("fail") {
@@ -63,6 +84,27 @@ fn failing_snapshot() {
                 .expect("could not run verifier");
             let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
             insta::assert_display_snapshot!([&path_test_name(&path), solver].join("."), stderr);
+        }
+    }
+}
+
+#[test]
+fn houdini_failing_snapshot() {
+    for solver in SOLVERS_TO_TEST {
+        for path in get_tests("fail") {
+            println!("Running Houdini on {} with {solver}", path.display());
+            let out = Command::new("./target/debug/temporal-verifier")
+                .arg("--color=never")
+                .arg(format!("--solver={solver}"))
+                .arg("--houdini")
+                .arg(path.as_os_str())
+                .output()
+                .expect("could not run verifier");
+            let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
+            insta::assert_display_snapshot!(
+                [&path_test_name(&path), solver, "houdini"].join("."),
+                stderr
+            );
         }
     }
 }

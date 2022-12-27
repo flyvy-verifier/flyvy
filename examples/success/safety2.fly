@@ -1,0 +1,15 @@
+# Copyright 2022 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+mutable x: bool
+mutable y: bool
+mutable z: bool
+
+
+assume x & y & z
+assume always x'=(x&y) & y'=(y&z) & z'=z
+assert always x
+proof {
+    invariant y
+    invariant z
+}
