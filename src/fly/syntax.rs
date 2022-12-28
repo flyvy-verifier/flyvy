@@ -215,7 +215,7 @@ grammar parser() for str {
     use UOp::*;
     use Quantifier::*;
 
-    rule ident_start() = ['a'..='z' | 'A'..='Z']
+    rule ident_start() = ['a'..='z' | 'A'..='Z' | '_']
     rule ident_char() = ident_start() / ['0'..='9']
     pub(super) rule ident() -> String
     = s:$(quiet!{ident_start() ident_char()*} / expected!("identifier"))
@@ -364,6 +364,8 @@ mod tests {
     fn test_ident() {
         assert_eq!(ident("hello"), Ok("hello".to_string()));
         assert_eq!(ident("a"), Ok("a".to_string()));
+        assert_eq!(ident("hello_world"), Ok("hello_world".to_string()));
+        assert_eq!(ident("_allowed"), Ok("_allowed".to_string()));
         assert!(ident("1up").is_err());
     }
 
