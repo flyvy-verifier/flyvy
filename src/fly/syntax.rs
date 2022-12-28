@@ -235,7 +235,7 @@ grammar parser() for str {
 
     pub(super) rule term() -> Term = precedence!{
         q:("forall" { Forall } / "exists" { Exists }) __
-            binders:(binder() ** _) _ "." _ body:@
+            binders:(binder() ** (_ "," _)) _ "." _ body:@
         { Term::Quantified {
             quantifier: q,
             binders,
@@ -451,9 +451,12 @@ proof {
     #[test]
     fn test_quantifiers() {
         term("forall x. x = y").unwrap();
-        term("forall x:t y:t. x = y").unwrap();
-        term("forall x:t y:t. x = y | y != x").unwrap();
+        term("forall x:t, y:t. x = y").unwrap();
+        term("forall x:t,y:t. x = y").unwrap();
+        term("forall x:t , y:t. x = y").unwrap();
+        term("forall x:t, y:t. x = y | y != x").unwrap();
         term("forall (x : t). x").unwrap();
+        term("forall (x : t),(y:t). x = y").unwrap();
 
         assert_eq!(
             term("forall x. x = y & exists z. x = z").unwrap(),
@@ -461,8 +464,8 @@ proof {
         );
 
         assert_eq!(
-            term("forall (x : t) (y : t2). f(x) & f(y)").unwrap(),
-            term("forall x:t y:t2 . f(x) & f(y)").unwrap(),
+            term("forall (x : t), (y : t2). f(x) & f(y)").unwrap(),
+            term("forall x:t, y:t2 . f(x) & f(y)").unwrap(),
         );
     }
 }

@@ -111,7 +111,7 @@ pub fn term(t: &Term) -> String {
                 Quantifier::Forall => "forall",
                 Quantifier::Exists => "exists",
             };
-            let binders = binders.iter().map(binder).collect::<Vec<_>>().join(" ");
+            let binders = binders.iter().map(binder).collect::<Vec<_>>().join(", ");
             format!("{quantifier} {binders}. {}", term(body))
         }
     }
@@ -158,7 +158,7 @@ mod tests {
         let e = parse("a | b | c & d | e");
         assert_eq!(parse(&term(&e)), e);
 
-        insta::assert_display_snapshot!(reprint("forall x:t1 y:t2. f(x, y)"), @"forall x:t1 y:t2. f(x, y)");
+        insta::assert_display_snapshot!(reprint("forall x:t1, y:t2. f(x, y)"), @"forall x:t1, y:t2. f(x, y)");
     }
 
     #[test]
