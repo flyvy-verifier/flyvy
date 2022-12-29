@@ -19,6 +19,13 @@ fn binder(b: &Binder) -> Sexp {
 }
 
 fn term_primes(t: &Term, num_primes: usize) -> Sexp {
+    if !matches!(t, Term::UnaryOp(UOp::Prime, _) | Term::Id(_)) {
+        assert_eq!(
+            num_primes, 0,
+            "by the time we convert to smtlib, the only primes allowed are over identifiers (t={t})"
+        );
+        // TODO(oded): simplify the conversion based on this assumption
+    }
     let term = |t: &Term| term_primes(t, num_primes);
     match t {
         Term::Id(s) => atom_s(format!("{s}{}", "'".repeat(num_primes))),
@@ -30,7 +37,14 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
         Term::UnaryOp(op, arg) => {
             match op {
                 UOp::Not => app("not", vec![term(arg)]),
-                UOp::Prime => term_primes(arg, num_primes + 1),
+                UOp::Prime => {
+                    assert!(
+                        matches!(**arg, Term::UnaryOp(UOp::Prime, _) | Term::Id(_)),
+                       "by the time we convert to smtlib, the only primes allowed are over identifiers (t={t})",
+                    );
+                    // TODO(oded): simplify the conversion based on this assumption
+                    term_primes(arg, num_primes + 1)
+                }
                 // TODO: temporal stuff should be eliminated before here
                 UOp::Always | UOp::Eventually => {
                     panic!("attempt to encode a temporal formula for smt")

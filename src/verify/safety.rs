@@ -65,7 +65,7 @@ impl InvariantAssertion {
 
         Ok(Self {
             init: Term::and(init),
-            next: Term::and(next),
+            next: Next::normalize(&Term::and(next)),
             assumed_inv: Term::and(assumed_invs),
             inv,
             proof_invs: proof_invs.iter().map(|&t| t.clone()).collect(),
