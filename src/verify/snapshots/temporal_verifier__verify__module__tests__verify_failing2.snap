@@ -4,8 +4,8 @@ expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
   - loc:
-      start: 192
-      end: 204
+      start: 197
+      end: 209
     reason: FirstOrder
     error:
       Sat:

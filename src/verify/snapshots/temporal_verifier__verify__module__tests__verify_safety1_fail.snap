@@ -4,8 +4,8 @@ expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
   - loc:
-      start: 176
-      end: 192
+      start: 181
+      end: 197
     reason: NotInductive
     error:
       Sat:
