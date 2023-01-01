@@ -38,7 +38,7 @@ as an open-source patch. For more detailed information, refer to [CONTRIBUTING.m
 
 ## License
 
-Copyright 2022 VMware, Inc.
+Copyright 2022-2023 VMware, Inc.
 
 SPDX-License-Identifier: BSD-2-Clause
 

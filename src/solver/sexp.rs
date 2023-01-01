@@ -1,4 +1,4 @@
-// Copyright 2022 VMware, Inc.
+// Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
 use crate::fly::syntax::{BinOp, Binder, NOp, Quantifier, Sort, Term, UOp};
