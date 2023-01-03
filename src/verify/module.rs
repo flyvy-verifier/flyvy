@@ -94,11 +94,11 @@ pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(),
     let run_houdini = |pf: &Proof, assert: &InvariantAssertion| {
         let mut invs = vec![&assert.inv];
         invs.extend(assert.proof_invs.iter());
-        println!("Running Houdinig, candidate invariants are:");
+        println!("Running Houdini, candidate invariants are:");
         for &p in &invs {
             println!("    {p}")
         }
-        println!("");
+        println!();
 
         {
             // filter based on initiation
@@ -138,16 +138,13 @@ pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(),
                     }
                 }
             }
-            invs = invs
-                .into_iter()
-                .filter(|q| !not_implied.contains(q))
-                .collect();
+            invs.retain(|q| !not_implied.contains(q));
         }
         println!("Candidate invariants are:");
         for &p in &invs {
             println!("    {p}")
         }
-        println!("");
+        println!();
 
         // compute fixed point
         println!("Computing fixed point:");
@@ -194,15 +191,12 @@ pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(),
                 println!("Fixed point reached");
                 break;
             }
-            invs = invs
-                .into_iter()
-                .filter(|q| !not_implied.contains(q))
-                .collect();
+            invs.retain(|q| !not_implied.contains(q));
             println!("Candidate invariants are:");
             for &p in &invs {
                 println!("    {p}")
             }
-            println!("");
+            println!();
         }
         if invs.is_empty() || invs[0] != &assert.inv {
             return Err(AssertionFailure {
@@ -235,9 +229,9 @@ pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(),
                     InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
                 {
                     let res = if houdini {
-                        run_houdini(&pf, &assert)
+                        run_houdini(pf, &assert)
                     } else {
-                        check_invariant(&pf, &assert)
+                        check_invariant(pf, &assert)
                     };
                     if res.is_err() {
                         errors.push(res.err().unwrap())

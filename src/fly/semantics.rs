@@ -203,7 +203,7 @@ impl Model {
                 let args: Vec<Element> = args.iter().map(|x| self.eval(x, assignment)).collect();
                 // ODED: is `&**f` really the right/idomatic thing here?
                 match &**f {
-                    Term::Id(name) => self.interp[self.signature.relation_idx(&name)].get(&args),
+                    Term::Id(name) => self.interp[self.signature.relation_idx(name)].get(&args),
                     _ => panic!("tried to apply {f}"),
                 }
             }
@@ -426,6 +426,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::redundant_clone)]
     fn test_eval() {
         let typ = |n: usize| Sort::Id(format!("T{n}"));
 
@@ -514,7 +515,7 @@ mod tests {
         let mut tests: Vec<(Term, Element)> = vec![];
 
         // Testing using bool
-        tests.append(&mut vec![
+        tests.extend(vec![
             // true and false
             (f.clone(), 0),
             (t.clone(), 1),
@@ -609,7 +610,7 @@ mod tests {
         ]);
 
         // Testing of constants and relations
-        tests.append(&mut vec![
+        tests.extend(vec![
             (c1.clone(), 1),
             (c2.clone(), 2),
             //
@@ -622,7 +623,7 @@ mod tests {
 
         for (t, v) in tests.iter() {
             println!("evaluating {t} (expecting {v})");
-            assert_eq!(&e(t), v, "evaluating {} should give {}", t, v);
+            assert_eq!(&e(t), v, "evaluating {t} should give {v}");
         }
     }
 }

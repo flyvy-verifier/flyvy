@@ -74,7 +74,7 @@ impl InvariantAssertion {
 
     fn inductive_invariant(&self) -> Term {
         let mut invs = vec![self.inv.clone()];
-        invs.extend(self.proof_invs.iter().map(|t| t.clone()));
+        invs.extend(self.proof_invs.iter().cloned());
         Term::and(invs)
     }
 
