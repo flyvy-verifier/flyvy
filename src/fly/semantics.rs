@@ -221,18 +221,11 @@ impl Model {
                     0
                 }
             }
-            Term::BinOp(NotEquals, lhs, rhs) => {
-                // TODO(oded): make this work: self.eval(&Term::UnaryOp(Not, Term::BinOp(Equals, lhs), rhs))
-                let lhs = self.eval(lhs, assignment);
-                let rhs = self.eval(rhs, assignment);
-                if lhs == rhs {
-                    0
-                } else {
-                    1
-                }
-            }
+            Term::BinOp(NotEquals, lhs, rhs) => self.eval(
+                &Term::negate(Term::BinOp(Equals, lhs.clone(), rhs.clone())),
+                assignment,
+            ),
             Term::BinOp(Implies, lhs, rhs) => {
-                // TODO(oded): make this work: self.eval(&Term::UnaryOp(Not, Term::BinOp(Equals, lhs), rhs))
                 let lhs = self.eval(lhs, assignment);
                 let rhs = self.eval(rhs, assignment);
                 if lhs <= rhs {
@@ -284,10 +277,7 @@ impl Model {
                     })
                     .collect();
                 let names: Vec<&String> = binders.iter().map(|b| &b.name).collect();
-                let mut assignment_ = match assignment {
-                    Some(a) => a.clone(),
-                    None => HashMap::new(),
-                };
+                let mut assignment_ = assignment.cloned().unwrap_or_default();
                 let mut iter = shape
                     .iter()
                     .map(|&card| (0..card).collect::<Vec<Element>>())
