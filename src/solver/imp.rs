@@ -131,8 +131,14 @@ impl<B: Backend> Solver<B> {
 
     /// Get an indicator variable uniquely determined by `name`.
     pub fn get_indicator(&mut self, name: &str) -> Term {
-        let ind = format!("@ind@{name}");
-        self.indicators.insert(ind.clone());
+        let ind = format!("__ind@{name}");
+        // if this is a new indicator variable, declare it in the solver
+        if self.indicators.insert(ind.clone()) {
+            self.proc.send(&app(
+                "declare-const",
+                vec![atom_s(ind.clone()), atom_s("Bool")],
+            ));
+        }
         Term::Id(ind)
     }
 
@@ -170,22 +176,73 @@ impl<B: Backend> Solver<B> {
         }
     }
 
-    /// After a sat response to check_sat or check_sat_assuming, produce a trace
-    /// of models, one per state. Each model interprets all of the symbols in
-    /// the signature.
-    pub fn get_model(&mut self) -> Vec<Model> {
+    fn get_fo_model(&mut self) -> FOModel {
         let model = self
             .proc
             .send_with_reply(&app("get-model", []))
             .expect("could not get model");
-        let fo_model = self
-            .backend
-            .parse(&self.signature, self.n_states, &self.indicators, &model);
+        self.backend
+            .parse(&self.signature, self.n_states, &self.indicators, &model)
+    }
+
+    /// After a sat response to check_sat or check_sat_assuming, produce a trace
+    /// of models, one per state. Each model interprets all of the symbols in
+    /// the signature.
+    pub fn get_model(&mut self) -> Vec<Model> {
+        let fo_model = self.get_fo_model();
         fo_model.into_trace(&self.signature, self.n_states)
     }
 
+    fn with_universe_card(&mut self, univ: &str, card: usize) -> Option<FOModel> {
+        // (exists ((x0 univ) ... (xn univ)) (forall ((x univ)) (or (= x x1) ... (= x xn))))
+        self.proc
+            .comment_with(|| format!("check if {univ} can have cardinality {card}"));
+        let univ: Sexp = atom_s(univ);
+        let exists_binders =
+            sexp_l((0..card).map(|n| sexp_l([atom_s(format!("x{n}")), univ.clone()])));
+        let forall_binder = sexp_l([sexp_l([atom_s("x"), univ.clone()])]);
+        let disjuncts = (0..card).map(|n| app("=", [atom_s("x"), atom_s(format!("x{n}"))]));
+        let forall = app("forall", [forall_binder, app("or", disjuncts)]);
+        let ind = match self.get_indicator(&format!("{univ}_card_{card}")) {
+            Term::Id(s) => s,
+            _ => unreachable!(),
+        };
+        let univ_card = app("exists", vec![exists_binders, forall]);
+        self.proc
+            .send(&app("assert", [app("=>", [atom_s(&ind), univ_card])]));
+        let resp = self
+            .proc
+            .check_sat_assuming(&[atom_s(&ind)])
+            .unwrap_or_else(|err| panic!("internal error in cardinality check: {err}"));
+        match resp {
+            SatResp::Sat => {
+                // make sure future queries use this minimized cardinality
+                let model = self.get_fo_model();
+                self.proc.send(&app("assert", [atom_s(&ind)]));
+                Some(model)
+            }
+            SatResp::Unsat => None,
+            SatResp::Unknown(err) => panic!("could not check cardinality (unknown): {err}"),
+        }
+    }
+
+    fn minimize_card(&mut self, model: &mut FOModel, univ: &str) {
+        let card = *model.universe.get(univ).unwrap_or(&1);
+        for new_card in 1..=card {
+            if let Some(new_model) = self.with_universe_card(univ, new_card) {
+                *model = new_model;
+                return;
+            }
+        }
+    }
+
     pub fn get_minimal_model(&mut self) -> Vec<Model> {
-        todo!()
+        let mut model = self.get_fo_model();
+        let universes = self.signature.sorts.clone();
+        for univ in universes {
+            self.minimize_card(&mut model, univ.id().unwrap());
+        }
+        model.into_trace(&self.signature, self.n_states)
     }
 
     /// Returns an unsat core as a set of indicator variables (a subset of the
@@ -243,7 +300,10 @@ impl FOModel {
             .iter()
             .map(|s| {
                 if let Sort::Id(s) = s {
-                    self.universe[s]
+                    *self
+                        .universe
+                        .get(s)
+                        .unwrap_or_else(|| panic!("unknown sort {s} in model"))
                 } else {
                     panic!("unexpected sort in signature")
                 }
