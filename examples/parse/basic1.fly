@@ -1,6 +1,8 @@
 # Copyright 2022-2023 VMware, Inc.
 # SPDX-License-Identifier: BSD-2-Clause
 
+# TEST -- print
+
 mutable p: bool
 mutable q: bool
 

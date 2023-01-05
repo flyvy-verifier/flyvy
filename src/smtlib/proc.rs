@@ -140,10 +140,17 @@ pub struct CvcConf {
 
 impl CvcConf {
     fn default_args() -> Vec<String> {
-        vec!["-q", "--no-interactive", "--lang", "smt2", "--incremental"]
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect()
+        vec![
+            "-q",
+            "--no-interactive",
+            "--lang",
+            "smt2",
+            "--incremental",
+            "--seed=1",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
     }
 
     fn default_options() -> Vec<(String, String)> {

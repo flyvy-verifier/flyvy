@@ -1,0 +1,14 @@
+---
+source: tests/test_examples.rs
+expression: stdout
+---
+mutable p: bool
+mutable q: bool
+
+assume !p & !q & (always p' = (p | q) & q' = q)
+assert always !p
+proof {
+  invariant !p
+  invariant !q
+}
+
