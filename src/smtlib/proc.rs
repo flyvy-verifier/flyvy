@@ -26,7 +26,6 @@ pub struct SmtProc {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     tee: Option<File>,
-    cmd: SolverCmd,
 }
 
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
@@ -109,7 +108,8 @@ impl Z3Conf {
             args: vec![],
             options: vec![],
         };
-        cmd.args(vec!["-in", "-smt2", "model.completion=true"]);
+        cmd.args(["-in", "-smt2"]);
+        cmd.arg("model.completion=true");
         cmd.option("model.completion", "true");
         let mut conf = Self(cmd);
         conf.timeout_ms(10000);
@@ -177,10 +177,14 @@ impl CvcConf {
     /// Enable finite model finding with mbqi.
     pub fn finite_models(&mut self) {
         self.cmd.arg("--finite-model-find");
+        self.cmd.option("finite-model-find", "true");
         if self.version5 {
             self.cmd.args(["--mbqi", "--fmf-mbqi=fmc"]);
+            self.cmd.option("mbqi", "true");
+            self.cmd.option("fmf-mbqi", "fmc")
         } else {
-            self.cmd.arg("--mbqi=fmc");
+            self.cmd.arg("mbqi=fmc");
+            self.cmd.option("mbqi", "fmc");
         }
     }
 
@@ -196,7 +200,11 @@ impl Drop for SmtProc {
 }
 
 impl SmtProc {
-    pub fn new(mut cmd: SolverCmd) -> Result<Self> {
+    /// Create a new SMT process by running a solver.
+    ///
+    /// The optional `tee` argument redirects all SMT output to a file, for
+    /// debugging purposes.
+    pub fn new(mut cmd: SolverCmd, tee: Option<&Path>) -> Result<Self> {
         cmd.option("produce-models", "true");
         cmd.option("produce-unsat-assumptions", "true");
         let mut child = Command::new(OsStr::new(&cmd.cmd))
@@ -206,39 +214,40 @@ impl SmtProc {
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(SolverError::from)?;
+        let tee = match tee {
+            Some(path) => {
+                let mut f = Self::tee(path)?;
+                _ = writeln!(&mut f, ";; {}", cmd.cmdline());
+                Some(f)
+            }
+            None => None,
+        };
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut proc = Self {
             child,
             stdin,
             stdout,
-            cmd: cmd.clone(),
-            tee: None,
+            tee,
         };
         for (option, val) in &cmd.options {
             proc.send(&app(
                 "set-option",
-                vec![atom_s(format!(":{option}")), atom_s(val)],
+                [atom_s(format!(":{option}")), atom_s(val)],
             ));
         }
         Ok(proc)
     }
 
-    /// Direct all SMT-LIB input to a new file at `path` while also sending to
-    /// the solver process.
-    pub fn tee<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        if self.tee.is_some() {
-            panic!("attempt to tee solver twice");
-        }
-        let mut f = OpenOptions::new()
+    /// Create the tee file.
+    fn tee<P: AsRef<Path>>(path: P) -> Result<File> {
+        let f = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(path)
             .map_err(SolverError::from)?;
-        _ = writeln!(f, ";; {}", self.cmd.cmdline());
-        self.tee = Some(f);
-        Ok(())
+        Ok(f)
     }
 
     /// Low-level API to send the solver a command as an s-expression. This
@@ -397,7 +406,7 @@ mod tests {
     #[test]
     fn test_check_sat_z3() {
         let z3 = Z3Conf::new("z3").done();
-        let mut solver = SmtProc::new(z3).unwrap();
+        let mut solver = SmtProc::new(z3, None).unwrap();
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         assert!(
             matches!(response, SatResp::Sat { .. }),
@@ -408,7 +417,7 @@ mod tests {
     #[test]
     fn test_get_model_z3() {
         let z3 = Z3Conf::new("z3").done();
-        let mut solver = SmtProc::new(z3).unwrap();
+        let mut solver = SmtProc::new(z3, None).unwrap();
         solver.send(&app("declare-const", [atom_s("a"), atom_s("Bool")]));
 
         let e = parse("(assert (and a (not a)))").unwrap();

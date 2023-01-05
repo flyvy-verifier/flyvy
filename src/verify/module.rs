@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use super::error::{AssertionFailure, FailureType, QueryError, SolveError};
 use super::safety::InvariantAssertion;
@@ -19,13 +20,14 @@ use crate::{
 
 pub struct SolverConf {
     pub backend: GenericBackend,
-    pub tee: Option<String>,
+    pub tee: Option<PathBuf>,
 }
 
 impl SolverConf {
     fn solver(&self, sig: &Signature, n_states: usize) -> Solver<&GenericBackend> {
         // TODO: failures to start the solver should be bubbled up to user nicely
-        Solver::new(sig, n_states, &self.backend, self.tee.clone()).expect("could not start solver")
+        Solver::new(sig, n_states, &self.backend, self.tee.as_deref())
+            .expect("could not start solver")
     }
 }
 
@@ -34,6 +36,7 @@ fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryE
     let resp = solver.check_sat(HashMap::new()).expect("error in solver");
     match resp {
         SatResp::Sat { .. } => {
+            // TODO: should be configurable whether to minimize or not
             let states = solver.get_minimal_model();
             // TODO: need a way to report traces rather than just single models
             let s0 = states.into_iter().next().unwrap();
@@ -52,7 +55,7 @@ fn verify_firstorder(
     assert: &Term,
 ) -> Result<(), QueryError> {
     let mut solver =
-        Solver::new(sig, n, &conf.backend, conf.tee.clone()).expect("could not start solver");
+        Solver::new(sig, n, &conf.backend, conf.tee.as_deref()).expect("could not start solver");
     for assume in assumes {
         solver.assert(assume);
     }

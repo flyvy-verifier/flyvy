@@ -105,11 +105,11 @@ fn get_solver_conf(args: &Args) -> SolverConf {
         solver_env_var(args.solver),
         solver_default_bin(args.solver),
     );
-    let tee: Option<String> = if let Some(path) = &args.smt_file {
-        Some(path.to_string_lossy().to_string())
+    let tee: Option<PathBuf> = if let Some(path) = &args.smt_file {
+        Some(path.to_path_buf())
     } else if args.smt {
         let path = PathBuf::from(&args.file).with_extension("smt2");
-        Some(path.to_string_lossy().to_string())
+        Some(path)
     } else {
         None
     };

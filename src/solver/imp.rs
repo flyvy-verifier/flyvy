@@ -1,7 +1,10 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
     fly::{
@@ -63,13 +66,10 @@ impl<B: Backend> Solver<B> {
         signature: &Signature,
         n_states: usize,
         backend: B,
-        tee: Option<String>,
+        tee: Option<&Path>,
     ) -> Result<Self, SolverError> {
         let signature = signature.clone();
-        let mut proc = SmtProc::new(backend.get_cmd())?;
-        if let Some(p) = tee {
-            proc.tee(p)?;
-        }
+        let mut proc = SmtProc::new(backend.get_cmd(), tee)?;
         Self::send_signature(&mut proc, &signature, n_states);
         Ok(Self {
             proc,
