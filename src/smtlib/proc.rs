@@ -26,7 +26,7 @@ pub struct SmtProc {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     tee: Option<File>,
-    cmdline: String,
+    cmd: SolverCmd,
 }
 
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
@@ -60,6 +60,7 @@ type Result<T> = std::result::Result<T, SolverError>;
 pub struct SolverCmd {
     pub cmd: String,
     pub args: Vec<String>,
+    pub options: Vec<(String, String)>,
 }
 
 impl SolverCmd {
@@ -74,6 +75,11 @@ impl SolverCmd {
     {
         self.args
             .extend(args.into_iter().map(|s| s.as_ref().to_string()));
+    }
+
+    fn option<S: AsRef<str>>(&mut self, name: &str, val: S) {
+        self.options
+            .push((name.to_string(), val.as_ref().to_string()));
     }
 
     fn cmdline(&self) -> String {
@@ -101,8 +107,10 @@ impl Z3Conf {
         let mut cmd = SolverCmd {
             cmd: cmd.to_string(),
             args: vec![],
+            options: vec![],
         };
         cmd.args(vec!["-in", "-smt2", "model.completion=true"]);
+        cmd.option("model.completion", "true");
         let mut conf = Self(cmd);
         conf.timeout_ms(10000);
         conf
@@ -110,10 +118,12 @@ impl Z3Conf {
 
     pub fn model_compact(&mut self) {
         self.0.arg("model.compact=true");
+        self.0.option("model.compact", "true");
     }
 
     pub fn timeout_ms(&mut self, ms: usize) {
         self.0.arg(format!("timeout={ms}"));
+        self.0.option("timeout", format!("{ms}"));
     }
 
     /// Get the final command to run the solver.
@@ -136,10 +146,15 @@ impl CvcConf {
             .collect()
     }
 
+    fn default_options() -> Vec<(String, String)> {
+        vec![("incremental".to_string(), "true".to_string())]
+    }
+
     pub fn new_cvc4(cmd: &str) -> Self {
         let cmd = SolverCmd {
             cmd: cmd.to_string(),
             args: Self::default_args(),
+            options: Self::default_options(),
         };
         Self {
             version5: false,
@@ -151,6 +166,7 @@ impl CvcConf {
         let cmd = SolverCmd {
             cmd: cmd.to_string(),
             args: Self::default_args(),
+            options: Self::default_options(),
         };
         Self {
             version5: true,
@@ -180,10 +196,11 @@ impl Drop for SmtProc {
 }
 
 impl SmtProc {
-    pub fn new(cmd: SolverCmd) -> Result<Self> {
-        let cmdline = cmd.cmdline();
+    pub fn new(mut cmd: SolverCmd) -> Result<Self> {
+        cmd.option("produce-models", "true");
+        cmd.option("produce-unsat-assumptions", "true");
         let mut child = Command::new(OsStr::new(&cmd.cmd))
-            .args(cmd.args.into_iter().map(OsString::from))
+            .args(cmd.args.iter().map(OsString::from))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -195,17 +212,15 @@ impl SmtProc {
             child,
             stdin,
             stdout,
-            cmdline,
+            cmd: cmd.clone(),
             tee: None,
         };
-        proc.send(&app(
-            "set-option",
-            vec![atom_s(":produce-models"), atom_s("true")],
-        ));
-        proc.send(&app(
-            "set-option",
-            vec![atom_s(":produce-unsat-assumptions"), atom_s("true")],
-        ));
+        for (option, val) in &cmd.options {
+            proc.send(&app(
+                "set-option",
+                vec![atom_s(format!(":{option}")), atom_s(val)],
+            ));
+        }
         Ok(proc)
     }
 
@@ -221,7 +236,7 @@ impl SmtProc {
             .truncate(true)
             .open(path)
             .map_err(SolverError::from)?;
-        _ = writeln!(f, ";; {}", self.cmdline);
+        _ = writeln!(f, ";; {}", self.cmd.cmdline());
         self.tee = Some(f);
         Ok(())
     }
