@@ -34,13 +34,33 @@ enum ColorOutput {
     Always,
 }
 
+#[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
+enum Command {
+    Verify {
+        #[arg(long)]
+        /// Run Houdini on supplied invariants
+        houdini: bool,
+        /// File name for a .fly file
+        file: String,
+    },
+    Print {
+        /// File name for a .fly file
+        file: String,
+    },
+}
+
+impl Command {
+    fn file(&self) -> &str {
+        match self {
+            Command::Verify { houdini: _, file } => file,
+            Command::Print { file } => file,
+        }
+    }
+}
+
 #[derive(clap::Parser, Debug)]
 #[command(about, long_about=None)]
 pub struct App {
-    #[arg(long)]
-    /// Apply Houdini to supplied proof invariants
-    houdini: bool,
-
     #[arg(value_enum, long, default_value_t = SolverType::Z3)]
     /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
     solver: SolverType,
@@ -58,12 +78,9 @@ pub struct App {
     /// NO_COLOR=true.
     color: ColorOutput,
 
-    #[arg(long)]
-    /// Parse and print the file back
-    print: bool,
-
-    /// File name for a .fly file
-    file: String,
+    #[command(subcommand)]
+    /// Command to run
+    command: Command,
 }
 
 fn env_path_fallback(path: &Option<String>, var: &str, fallback: &str) -> String {
@@ -108,7 +125,7 @@ impl App {
         let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {
             Some(path.to_path_buf())
         } else if self.smt {
-            let path = PathBuf::from(&self.file).with_extension("smt2");
+            let path = PathBuf::from(self.command.file()).with_extension("smt2");
             Some(path)
         } else {
             None
@@ -120,8 +137,8 @@ impl App {
     }
 
     pub fn exec(self) {
-        let file = fs::read_to_string(&self.file).expect("could not read input file");
-        let files = SimpleFile::new(&self.file, &file);
+        let file = fs::read_to_string(self.command.file()).expect("could not read input file");
+        let files = SimpleFile::new(self.command.file(), &file);
 
         let writer = StandardStream::stderr(match &self.color {
             ColorOutput::Never => ColorChoice::Never,
@@ -145,23 +162,26 @@ impl App {
             }
         };
 
-        if self.print {
-            println!("{}", printer::fmt(&m));
-            return;
-        }
+        match self.command {
+            Command::Print { .. } => {
+                println!("{}", printer::fmt(&m));
+            }
+            Command::Verify { houdini, .. } => {
+                let r = verify_module(&conf, &m, houdini);
+                match r {
+                    Ok(()) => println!("verifies!"),
+                    Err(err) => {
+                        eprintln!("verification errors:");
 
-        let r = verify_module(&conf, &m, self.houdini);
-        match r {
-            Ok(()) => println!("verifies!"),
-            Err(err) => {
-                eprintln!("verification errors:");
+                        for fail in &err.fails {
+                            let diagnostic = fail.diagnostic(());
+                            terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
+                                .unwrap();
+                        }
 
-                for fail in &err.fails {
-                    let diagnostic = fail.diagnostic(());
-                    terminal::emit(&mut writer.lock(), &config, &files, &diagnostic).unwrap();
+                        process::exit(1);
+                    }
                 }
-
-                process::exit(1);
             }
         }
     }

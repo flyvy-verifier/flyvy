@@ -33,6 +33,7 @@ fn path_test_name(path: &Path) -> String {
 fn verifier(solver: &str) -> Command {
     let mut cmd = Command::new("./target/debug/temporal-verifier");
     cmd.arg("--color=never").arg(format!("--solver={solver}"));
+    cmd.arg("verify");
     cmd
 }
 
@@ -60,7 +61,6 @@ fn houdini_success() {
         for path in get_tests("success") {
             println!("Running Houdini on {} with {solver}", path.display());
             let out = verifier(solver)
-                .arg("--houdini")
                 .arg(&path)
                 .output()
                 .expect("could not run verifier");
