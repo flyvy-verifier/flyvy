@@ -280,14 +280,18 @@ impl<B: Backend> Solver<B> {
         assumptions
     }
 
-    pub fn get_minimal_unsat_core(&mut self) -> Vec<Term> {
-        todo!()
+    #[allow(dead_code)]
+    pub fn get_minimal_unsat_core(&mut self) -> HashMap<Term, bool> {
+        eprintln!("unsat code minimization is not yet implemented");
+        self.get_unsat_core()
     }
 
+    #[allow(dead_code)]
     pub fn push(&mut self) {
         self.proc.send(&app("push", []));
     }
 
+    #[allow(dead_code)]
     pub fn pop(&mut self) {
         self.proc.send(&app("pop", []));
     }

@@ -337,6 +337,7 @@ impl SmtProc {
     ///
     /// Fails if the previous command wasn't a check_sat or check_sat_assuming
     /// that returned sat.
+    #[allow(dead_code)]
     pub fn get_unsat_assumptions(&mut self) -> Result<Vec<Sexp>> {
         let sexp = self.send_with_reply(&app("get-unsat-assumptions", vec![]))?;
         if let Sexp::List(ss) = sexp {

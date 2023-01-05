@@ -52,6 +52,7 @@ pub enum Term {
     UnaryOp(UOp, Box<Term>),
     BinOp(BinOp, Box<Term>, Box<Term>),
     NAryOp(NOp, Vec<Term>),
+    #[allow(dead_code)]
     Ite {
         cond: Box<Term>,
         then: Box<Term>,

@@ -140,10 +140,6 @@ impl Sexp {
             None
         })
     }
-
-    pub fn is_comment(&self) -> bool {
-        matches!(self, Sexp::Comment(_))
-    }
 }
 
 peg::parser! {
