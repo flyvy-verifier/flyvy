@@ -183,7 +183,7 @@ impl CvcConf {
             self.cmd.option("mbqi", "true");
             self.cmd.option("fmf-mbqi", "fmc")
         } else {
-            self.cmd.arg("mbqi=fmc");
+            self.cmd.arg("--mbqi=fmc");
             self.cmd.option("mbqi", "fmc");
         }
     }
