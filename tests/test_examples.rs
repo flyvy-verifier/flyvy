@@ -30,15 +30,19 @@ fn path_test_name(path: &Path) -> String {
         .to_string()
 }
 
+fn verifier(solver: &str) -> Command {
+    let mut cmd = Command::new("./target/debug/temporal-verifier");
+    cmd.arg("--color=never").arg(format!("--solver={solver}"));
+    cmd
+}
+
 #[test]
 fn success() {
     for solver in SOLVERS_TO_TEST {
         for path in get_tests("success") {
             println!("Running {} with {solver}", path.display());
-            let out = Command::new("./target/debug/temporal-verifier")
-                .arg("--color=never")
-                .arg(format!("--solver={solver}"))
-                .arg(path.as_os_str())
+            let out = verifier(solver)
+                .arg(&path)
                 .output()
                 .expect("could not run verifier");
             assert!(
@@ -55,11 +59,9 @@ fn houdini_success() {
     for solver in SOLVERS_TO_TEST {
         for path in get_tests("success") {
             println!("Running Houdini on {} with {solver}", path.display());
-            let out = Command::new("./target/debug/temporal-verifier")
-                .arg("--color=never")
-                .arg(format!("--solver={solver}"))
+            let out = verifier(solver)
                 .arg("--houdini")
-                .arg(path.as_os_str())
+                .arg(&path)
                 .output()
                 .expect("could not run verifier");
             assert!(
@@ -76,10 +78,8 @@ fn failing_snapshot() {
     for solver in SOLVERS_TO_TEST {
         for path in get_tests("fail") {
             println!("Running {} with {solver}", path.display());
-            let out = Command::new("./target/debug/temporal-verifier")
-                .arg("--color=never")
-                .arg(format!("--solver={solver}"))
-                .arg(path.as_os_str())
+            let out = verifier(solver)
+                .arg(&path)
                 .output()
                 .expect("could not run verifier");
             let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
@@ -93,9 +93,7 @@ fn houdini_failing_snapshot() {
     for solver in SOLVERS_TO_TEST {
         for path in get_tests("fail") {
             println!("Running Houdini on {} with {solver}", path.display());
-            let out = Command::new("./target/debug/temporal-verifier")
-                .arg("--color=never")
-                .arg(format!("--solver={solver}"))
+            let out = verifier(solver)
                 .arg("--houdini")
                 .arg(path.as_os_str())
                 .output()
