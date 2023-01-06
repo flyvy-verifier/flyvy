@@ -2,9 +2,9 @@
 expect_fail = false
 all_solvers = true
 args = ["verify"]
-#
-#[[tests]]
-#expect_fail = false
-#all_solvers = true
-#name = "houdini"
-#args = ["verify", "--houdini"]
+
+[[tests]]
+expect_fail = false
+all_solvers = true
+name = "houdini"
+args = ["verify", "--houdini"]

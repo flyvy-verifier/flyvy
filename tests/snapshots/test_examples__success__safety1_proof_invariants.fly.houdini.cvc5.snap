@@ -1,0 +1,25 @@
+---
+source: tests/test_examples.rs
+expression: stdout
+---
+Running Houdini, candidate invariants are:
+    !p
+    !p
+    !q
+
+Checking initiation:
+    Checking !p
+    Checking !p
+    Checking !q
+Candidate invariants are:
+    !p
+    !p
+    !q
+
+Computing fixed point:
+    Checking !p
+    Checking !p
+    Checking !q
+Fixed point reached
+verifies!
+

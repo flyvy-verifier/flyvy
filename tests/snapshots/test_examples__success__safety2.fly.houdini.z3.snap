@@ -1,0 +1,25 @@
+---
+source: tests/test_examples.rs
+expression: stdout
+---
+Running Houdini, candidate invariants are:
+    x
+    y
+    z
+
+Checking initiation:
+    Checking x
+    Checking y
+    Checking z
+Candidate invariants are:
+    x
+    y
+    z
+
+Computing fixed point:
+    Checking x
+    Checking y
+    Checking z
+Fixed point reached
+verifies!
+

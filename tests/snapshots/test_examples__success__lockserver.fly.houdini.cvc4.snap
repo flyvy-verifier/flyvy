@@ -1,0 +1,53 @@
+---
+source: tests/test_examples.rs
+expression: stdout
+---
+Running Houdini, candidate invariants are:
+    forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+    forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+    forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
+    forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
+    forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+    forall N:node. !(grant_msg(N) & server_holds_lock)
+    forall N:node. !(holds_lock(N) & server_holds_lock)
+    forall N:node. !(unlock_msg(N) & server_holds_lock)
+
+Checking initiation:
+    Checking forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
+    Checking forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
+    Checking forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+    Checking forall N:node. !(grant_msg(N) & server_holds_lock)
+    Checking forall N:node. !(holds_lock(N) & server_holds_lock)
+    Checking forall N:node. !(unlock_msg(N) & server_holds_lock)
+Candidate invariants are:
+    forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+    forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+    forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
+    forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
+    forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+    forall N:node. !(grant_msg(N) & server_holds_lock)
+    forall N:node. !(holds_lock(N) & server_holds_lock)
+    forall N:node. !(unlock_msg(N) & server_holds_lock)
+
+Computing fixed point:
+    Checking forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. grant_msg(N1) & grant_msg(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. unlock_msg(N1) & unlock_msg(N2) -> N1 = N2
+    Checking forall N1:node, N2:node. !(holds_lock(N1) & grant_msg(N2))
+    Checking forall N1:node, N2:node. !(holds_lock(N1) & unlock_msg(N2))
+    Checking forall N1:node, N2:node. !(grant_msg(N1) & unlock_msg(N2))
+    Checking forall N:node. !(grant_msg(N) & server_holds_lock)
+    Checking forall N:node. !(holds_lock(N) & server_holds_lock)
+    Checking forall N:node. !(unlock_msg(N) & server_holds_lock)
+Fixed point reached
+verifies!
+
