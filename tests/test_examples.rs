@@ -179,7 +179,7 @@ impl Test {
                 .map(|solver| {
                     let mut test = self.clone();
                     test.cfg.all_solvers = false;
-                    test.cfg.args.insert(0, format!("--solver={solver}"));
+                    test.cfg.args.push(format!("--solver={solver}"));
                     test.cfg.append_to_name(solver);
                     test
                 })

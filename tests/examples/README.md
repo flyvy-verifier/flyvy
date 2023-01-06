@@ -12,7 +12,7 @@ For example, we can test that verification fails on a single file with CVC5 by
 adding a line:
 
 ```
-# TEST --expect-fail -- --solver=cvc5 verify
+# TEST --expect-fail verify --solver=cvc5
 ```
 
 Note that `--expect-fail` is an option for the testing infrastructure itself,
@@ -24,7 +24,7 @@ Similarly, we could configure the same test for a whole directory by adding a
 ```
 [[tests]]
 expect_fail = true
-args = ["--solver=cvc5", "verify"]
+args = ["verify", "--solver=cvc5"]
 ```
 
 Both forms of configuration support multiple tests, either with multiple `#

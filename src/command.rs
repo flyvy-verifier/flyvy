@@ -11,6 +11,7 @@ use crate::{
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
 };
+use clap::Args;
 use codespan_reporting::{
     files::SimpleFile,
     term::{
@@ -34,33 +35,8 @@ enum ColorOutput {
     Always,
 }
 
-#[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
-enum Command {
-    Verify {
-        #[arg(long)]
-        /// Run Houdini on supplied invariants
-        houdini: bool,
-        /// File name for a .fly file
-        file: String,
-    },
-    Print {
-        /// File name for a .fly file
-        file: String,
-    },
-}
-
-impl Command {
-    fn file(&self) -> &str {
-        match self {
-            Command::Verify { houdini: _, file } => file,
-            Command::Print { file } => file,
-        }
-    }
-}
-
-#[derive(clap::Parser, Debug)]
-#[command(about, long_about=None)]
-pub struct App {
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct VerifyArgs {
     #[arg(value_enum, long, default_value_t = SolverType::Z3)]
     /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
     solver: SolverType,
@@ -73,6 +49,35 @@ pub struct App {
     /// Output smt2 file alongside input file
     smt: bool,
 
+    #[arg(long)]
+    /// Run Houdini on supplied invariants
+    houdini: bool,
+
+    /// File name for a .fly file
+    file: String,
+}
+
+#[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
+enum Command {
+    Verify(VerifyArgs),
+    Print {
+        /// File name for a .fly file
+        file: String,
+    },
+}
+
+impl Command {
+    fn file(&self) -> &str {
+        match self {
+            Command::Verify(VerifyArgs { file, .. }) => file,
+            Command::Print { file, .. } => file,
+        }
+    }
+}
+
+#[derive(clap::Parser, Debug)]
+#[command(about, long_about=None)]
+pub struct App {
     #[arg(value_enum, long, default_value_t = ColorOutput::Auto)]
     /// Control color output. Auto disables colors with TERM=dumb or
     /// NO_COLOR=true.
@@ -109,7 +114,7 @@ fn solver_default_bin(t: SolverType) -> &'static str {
     }
 }
 
-impl App {
+impl VerifyArgs {
     fn get_solver_conf(&self) -> SolverConf {
         let backend_type = match &self.solver {
             SolverType::Z3 => backends::SolverType::Z3,
@@ -125,7 +130,7 @@ impl App {
         let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {
             Some(path.to_path_buf())
         } else if self.smt {
-            let path = PathBuf::from(self.command.file()).with_extension("smt2");
+            let path = PathBuf::from(&self.file).with_extension("smt2");
             Some(path)
         } else {
             None
@@ -135,7 +140,9 @@ impl App {
             tee,
         }
     }
+}
 
+impl App {
     pub fn exec(self) {
         let file = fs::read_to_string(self.command.file()).expect("could not read input file");
         let files = SimpleFile::new(self.command.file(), &file);
@@ -151,8 +158,6 @@ impl App {
             ..Default::default()
         };
 
-        let conf = self.get_solver_conf();
-
         let m = match syntax::parse(&file) {
             Ok(v) => v,
             Err(err) => {
@@ -166,7 +171,8 @@ impl App {
             Command::Print { .. } => {
                 println!("{}", printer::fmt(&m));
             }
-            Command::Verify { houdini, .. } => {
+            Command::Verify(ref args @ VerifyArgs { houdini, .. }) => {
+                let conf = args.get_solver_conf();
                 let r = verify_module(&conf, &m, houdini);
                 match r {
                     Ok(()) => println!("verifies!"),
