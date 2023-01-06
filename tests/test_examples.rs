@@ -120,29 +120,21 @@ fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
 }
 
 fn get_tests() -> Vec<Test> {
-    // first find in-file tests
-    let file_tests = WalkDir::new("examples/")
+    WalkDir::new("examples/")
         .sort_by_file_name()
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|entry| {
-            entry.file_type().is_file() && entry.path().extension() == Some(OsStr::new("fly"))
+        .filter(|entry| entry.file_type().is_file())
+        .flat_map(|entry| {
+            if entry.path().ends_with("tests.toml") {
+                get_toml_tests(entry.path())
+            } else if entry.path().extension() == Some(OsStr::new("fly")) {
+                get_file_tests(entry.path())
+            } else {
+                vec![]
+            }
         })
-        .flat_map(|entry| get_file_tests(entry.path()));
-    let dir_tests = WalkDir::new("examples/")
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|entry| entry.path().ends_with("tests.toml"))
-        .flat_map(|entry| get_toml_tests(entry.path()));
-    file_tests.chain(dir_tests).collect()
-}
-
-fn path_test_name(path: &Path) -> String {
-    path.strip_prefix("examples")
-        .unwrap()
-        .to_string_lossy()
-        .to_string()
+        .collect()
 }
 
 fn verifier() -> Command {
@@ -153,14 +145,19 @@ fn verifier() -> Command {
 
 impl Test {
     fn test_name(&self) -> String {
-        let path = path_test_name(&self.path);
+        let path = self
+            .path
+            .strip_prefix("examples")
+            .unwrap()
+            .to_string_lossy();
         if let Some(name) = &self.cfg.name {
             format!("{path}.{name}")
         } else {
-            path
+            path.to_string()
         }
     }
 
+    /// Turn all_solvers=true into separate Test structs.
     fn normalize(&self) -> Vec<Self> {
         if self.cfg.all_solvers {
             SOLVERS_TO_TEST
@@ -201,7 +198,6 @@ impl Test {
                     "verifier succeeded but expected failure"
                 );
             } else {
-                eprintln!("{}", self.cfg);
                 if !out.status.success() {
                     eprintln!("{}", String::from_utf8(out.stderr).unwrap());
                     assert!(out.status.success(), "verifier should succeed");
