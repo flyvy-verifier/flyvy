@@ -21,7 +21,7 @@ You'll need Rust (for example, through `rustup`) and recent versions of [Z3](htt
 
 1. `cargo build`
 2. `cargo test` to run tests
-3. `cargo run -- <file.fly>` will run the verifier on an input file
+3. `cargo run -- verify <file.fly>` will run the verifier on an input file
 
 ## Documentation
 
