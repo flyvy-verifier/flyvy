@@ -73,7 +73,8 @@ impl Next {
 
 #[cfg(test)]
 mod tests {
-    use crate::fly::syntax::{parse_term, Term};
+    use crate::fly::parser::parse_term;
+    use crate::fly::syntax::Term;
 
     use super::Next;
 

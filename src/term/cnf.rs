@@ -85,7 +85,8 @@ impl Cnf {
 
 #[cfg(test)]
 mod tests {
-    use crate::fly::syntax::{parse_term, NOp, Term};
+    use crate::fly::parser::parse_term;
+    use crate::fly::syntax::{NOp, Term};
 
     use super::{cnf, Cnf};
 

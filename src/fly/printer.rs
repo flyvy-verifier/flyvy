@@ -137,7 +137,7 @@ impl fmt::Display for Term {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fly::syntax::parse_term;
+    use crate::fly::parser::parse_term;
 
     fn parse(s: &str) -> Term {
         parse_term(s).expect("invalid term in test")

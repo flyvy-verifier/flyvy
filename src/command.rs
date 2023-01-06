@@ -4,10 +4,7 @@
 use std::{env, fs, path::PathBuf, process};
 
 use crate::{
-    fly::{
-        printer,
-        syntax::{self, parse_error_diagonistic},
-    },
+    fly::{self, parser::parse_error_diagonistic, printer},
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
 };
@@ -158,7 +155,7 @@ impl App {
             ..Default::default()
         };
 
-        let m = match syntax::parse(&file) {
+        let m = match fly::parse(&file) {
             Ok(v) => v,
             Err(err) => {
                 let diagnostic = parse_error_diagonistic((), &err);
