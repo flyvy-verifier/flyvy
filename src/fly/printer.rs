@@ -219,6 +219,25 @@ fn signature(sig: &Signature) -> String {
     format!("{sorts}{relations}")
 }
 
+fn def_binder(binder: &Binder) -> String {
+    format!("{}: {}", &binder.name, sort(binder.typ.as_ref().unwrap()))
+}
+
+fn def(def: &Definition) -> String {
+    let binders = def
+        .binders
+        .iter()
+        .map(def_binder)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret_typ = sort(&def.ret_typ);
+    let body = term(&def.body);
+    format!(
+        "def {name}({binders}) -> {ret_typ} {{\n  {body}\n}}",
+        name = &def.name
+    )
+}
+
 fn proof(p: &Proof) -> String {
     let assert = format!("assert {}", term(&p.assert.x));
     let invariants = p
@@ -239,13 +258,19 @@ fn thm_stmt(s: &ThmStmt) -> String {
 
 fn module(m: &Module) -> String {
     let sig = signature(&m.signature);
+    let defs = m
+        .defs
+        .iter()
+        .map(|d| format!("{}\n\n", def(d)))
+        .collect::<Vec<_>>()
+        .join("");
     let stmts = m
         .statements
         .iter()
         .map(thm_stmt)
         .collect::<Vec<_>>()
         .join("\n");
-    format!("{sig}\n{stmts}")
+    format!("{sig}\n{defs}{stmts}")
 }
 
 pub fn fmt(m: &Module) -> String {

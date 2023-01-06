@@ -107,6 +107,20 @@ grammar parser() for str {
         relations,
      } }
 
+     rule def_binder() -> Binder
+     = name:ident() _ ":" _ typ:sort() { Binder { name, typ: Some(typ) } }
+
+     rule def_binders() -> Vec<Binder>
+     = "(" _ args:(def_binder() ** (_ "," _)) _ ")" { args }
+
+     rule def() -> Definition
+     = "def" __ name:ident() _ binders:def_binders() _ "->" _ ret_typ:sort() _
+       "{" _ body:term() _ "}"
+     { Definition { name, binders, ret_typ, body } }
+
+     rule defs() -> Vec<Definition>
+     = newline_separated(<def()>)
+
      rule assume_stmt() -> ThmStmt
      = "assume" __ t:term() { ThmStmt::Assume(t) }
 
@@ -128,9 +142,9 @@ grammar parser() for str {
      = newline_separated(<stmt()>)
 
      rule module0() -> Module
-     = _ sig:signature() _ thm:stmts() _
+     = _ sig:signature() _ defs:defs() _ thm:stmts() _
        { Module{
-          signature: sig, statements: thm,
+          signature: sig, defs, statements: thm,
          } }
 
       pub rule module() -> Module = traced(<module0()>)

@@ -225,6 +225,14 @@ impl Signature {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Definition {
+    pub name: String,
+    pub binders: Vec<Binder>,
+    pub ret_typ: Sort,
+    pub body: Term,
+}
+
 /// A Span records a span of text in the source code, for error reporting.
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize)]
 pub struct Span {
@@ -253,5 +261,6 @@ pub enum ThmStmt {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Module {
     pub signature: Signature,
+    pub defs: Vec<Definition>,
     pub statements: Vec<ThmStmt>,
 }
