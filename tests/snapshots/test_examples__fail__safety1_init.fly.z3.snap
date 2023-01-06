@@ -1,0 +1,16 @@
+---
+source: tests/test_examples.rs
+expression: stderr
+---
+verification errors:
+error: init does not imply invariant
+   ┌─ examples/fail/safety1_init.fly:10:1
+   │
+10 │ assert always !p & !q
+   │ ^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     p = true
+     q = false
+
+

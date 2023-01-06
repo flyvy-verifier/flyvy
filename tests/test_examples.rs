@@ -171,7 +171,7 @@ impl Test {
                     if let Some(name) = test.cfg.name {
                         test.cfg.name = Some(format!("{name}.{solver}"));
                     } else {
-                        test.cfg.name = Some("solver".to_string());
+                        test.cfg.name = Some(solver.to_string());
                     }
                     test
                 })
