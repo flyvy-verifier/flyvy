@@ -283,7 +283,8 @@ mod tests {
 
     #[test]
     fn test_verify_failing2() {
-        let file = fs::read_to_string("examples/fail/basic.fly").expect("could not read input");
+        let file =
+            fs::read_to_string("tests/examples/fail/basic.fly").expect("could not read input");
         let m = fly::parse(&file).expect("parse error");
         insta::assert_yaml_snapshot!(z3_verify(&m).expect_err("verification should fail"), {
             ".fails[].error.symbols" => insta::sorted_redaction(),
@@ -293,15 +294,15 @@ mod tests {
     #[test]
     fn test_verify_safety1() {
         let file =
-            fs::read_to_string("examples/success/safety1.fly").expect("could not read input");
+            fs::read_to_string("tests/examples/success/safety1.fly").expect("could not read input");
         let m = fly::parse(&file).expect("parse error");
         assert_eq!(z3_verify(&m), Ok(()));
     }
 
     #[test]
     fn test_verify_safety1_fail() {
-        let file =
-            fs::read_to_string("examples/fail/safety1_ind.fly").expect("could not read input");
+        let file = fs::read_to_string("tests/examples/fail/safety1_ind.fly")
+            .expect("could not read input");
         let m = fly::parse(&file).expect("parse error");
         insta::assert_yaml_snapshot!(z3_verify(&m).expect_err("verification should fail"), {
             ".fails[].error.symbols" => insta::sorted_redaction(),

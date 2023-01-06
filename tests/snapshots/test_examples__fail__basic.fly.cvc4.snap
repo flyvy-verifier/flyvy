@@ -1,10 +1,12 @@
 ---
 source: tests/test_examples.rs
-expression: stderr
+expression: combined_stdout_stderr
 ---
+
+======== STDERR: ===========
 verification errors:
 error: assertion failure
-   ┌─ examples/fail/basic.fly:12:1
+   ┌─ tests/examples/fail/basic.fly:12:1
    │
 12 │ assert p(t0)
    │ ^^^^^^^^^^^^

@@ -1,10 +1,12 @@
 ---
 source: tests/test_examples.rs
-expression: stderr
+expression: combined_stdout_stderr
 ---
+
+======== STDERR: ===========
 verification errors:
 error: init does not imply invariant
-   ┌─ examples/fail/safety1_proof_invariants.fly:11:1
+   ┌─ tests/examples/fail/safety1_proof_invariants.fly:11:1
    │
 11 │ assert always !p
    │ ^^^^^^^^^^^^^^^^

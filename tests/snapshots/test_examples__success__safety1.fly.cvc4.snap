@@ -1,6 +1,8 @@
 ---
 source: tests/test_examples.rs
-expression: stdout
+expression: combined_stdout_stderr
 ---
 verifies!
+
+======== STDERR: ===========
 

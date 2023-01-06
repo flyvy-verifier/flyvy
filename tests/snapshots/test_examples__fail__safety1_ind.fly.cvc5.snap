@@ -1,10 +1,12 @@
 ---
 source: tests/test_examples.rs
-expression: stderr
+expression: combined_stdout_stderr
 ---
+
+======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ examples/fail/safety1_ind.fly:10:1
+   ┌─ tests/examples/fail/safety1_ind.fly:10:1
    │
 10 │ assert always !p
    │ ^^^^^^^^^^^^^^^^

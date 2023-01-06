@@ -1,6 +1,6 @@
 ---
 source: tests/test_examples.rs
-expression: stdout
+expression: combined_stdout_stderr
 ---
 Running Houdini, candidate invariants are:
     !q & !p
@@ -14,4 +14,6 @@ Computing fixed point:
     Checking !q & !p
 Fixed point reached
 verifies!
+
+======== STDERR: ===========
 

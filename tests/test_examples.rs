@@ -65,6 +65,7 @@ struct Tests {
 #[derive(Debug, Clone)]
 struct Test {
     path: PathBuf,
+    root_dir: PathBuf,
     cfg: TestCfg,
 }
 
@@ -75,7 +76,7 @@ impl Display for Test {
 }
 
 /// Get tests specified as TEST lines
-fn get_file_tests(path: &Path) -> Vec<Test> {
+fn get_file_tests(root_dir: &Path, path: &Path) -> Vec<Test> {
     let f = File::open(path).expect("could not open test file");
     let f = io::BufReader::new(f);
     f.lines()
@@ -86,6 +87,7 @@ fn get_file_tests(path: &Path) -> Vec<Test> {
                 let args = args.chain(test_line.split(' '));
                 Test {
                     path: path.to_path_buf(),
+                    root_dir: root_dir.to_path_buf(),
                     cfg: TestCfg::try_parse_from(args).unwrap_or_else(|err| {
                         eprintln!("could not parse TEST line:");
                         eprintln!("# TEST {test_line}");
@@ -97,7 +99,7 @@ fn get_file_tests(path: &Path) -> Vec<Test> {
         .collect()
 }
 
-fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
+fn get_toml_tests(root_dir: &Path, toml_file: &Path) -> Vec<Test> {
     let f = fs::read_to_string(toml_file).expect("could not open config file");
     let tests: Tests =
         toml::from_str(&f).unwrap_or_else(|err| panic!("could not parse toml file: {err}"));
@@ -112,6 +114,7 @@ fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
                 .iter()
                 .map(|cfg| Test {
                     path: entry.path(),
+                    root_dir: root_dir.to_path_buf(),
                     cfg: cfg.clone(),
                 })
                 .collect::<Vec<_>>()
@@ -119,17 +122,18 @@ fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
         .collect()
 }
 
-fn get_tests() -> Vec<Test> {
-    WalkDir::new("examples/")
+fn get_tests(root_dir: &str) -> Vec<Test> {
+    let root_dir = Path::new(root_dir);
+    WalkDir::new(root_dir)
         .sort_by_file_name()
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|entry| entry.file_type().is_file())
         .flat_map(|entry| {
             if entry.path().ends_with("tests.toml") {
-                get_toml_tests(entry.path())
+                get_toml_tests(root_dir, entry.path())
             } else if entry.path().extension() == Some(OsStr::new("fly")) {
-                get_file_tests(entry.path())
+                get_file_tests(root_dir, entry.path())
             } else {
                 vec![]
             }
@@ -147,7 +151,7 @@ impl Test {
     fn test_name(&self) -> String {
         let path = self
             .path
-            .strip_prefix("examples")
+            .strip_prefix(&self.root_dir)
             .unwrap()
             .to_string_lossy();
         if let Some(name) = &self.cfg.name {
@@ -189,29 +193,36 @@ impl Test {
                 .arg(&self.path)
                 .output()
                 .expect("could not run verifier");
+            let stdout = String::from_utf8(out.stdout).expect("non-utf8 output");
+            let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
+            let combined_stdout_stderr =
+                format!("{stdout}\n======== STDERR: ===========\n{stderr}");
+            insta::assert_display_snapshot!(self.test_name(), combined_stdout_stderr);
 
             if self.cfg.expect_fail {
-                let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
-                insta::assert_display_snapshot!(self.test_name(), stderr);
                 assert!(
                     !out.status.success(),
                     "verifier succeeded but expected failure"
                 );
-            } else {
-                if !out.status.success() {
-                    eprintln!("{}", String::from_utf8(out.stderr).unwrap());
-                    assert!(out.status.success(), "verifier should succeed");
-                }
-                let stdout = String::from_utf8(out.stdout).expect("non-utf8 output");
-                insta::assert_display_snapshot!(self.test_name(), stdout);
+            } else if !out.status.success() {
+                eprintln!("{stderr}");
+                assert!(out.status.success(), "verifier should succeed");
             }
         }
     }
 }
 
 #[test]
-fn examples() {
-    for test in get_tests() {
+fn test_small_examples() {
+    for test in get_tests("tests/examples") {
+        println!("# TEST {test}");
+        test.run();
+    }
+}
+
+#[test]
+fn test_larger_examples() {
+    for test in get_tests("examples") {
         println!("# TEST {test}");
         test.run();
     }

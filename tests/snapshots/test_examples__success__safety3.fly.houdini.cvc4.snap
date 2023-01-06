@@ -1,6 +1,6 @@
 ---
 source: tests/test_examples.rs
-expression: stdout
+expression: combined_stdout_stderr
 ---
 Running Houdini, candidate invariants are:
     x
@@ -18,4 +18,6 @@ Computing fixed point:
     Checking y
 Fixed point reached
 verifies!
+
+======== STDERR: ===========
 
