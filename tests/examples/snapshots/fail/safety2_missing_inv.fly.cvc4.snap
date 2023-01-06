@@ -1,0 +1,20 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/safety2_missing_inv.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+verification errors:
+error: invariant is not inductive
+   ┌─ tests/examples/fail/safety2_missing_inv.fly:11:1
+   │
+11 │ assert always x
+   │ ^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     x = true
+     y = true
+     z = false
+
+

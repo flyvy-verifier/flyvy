@@ -75,7 +75,6 @@ struct Tests {
 #[derive(Debug, Clone)]
 struct Test {
     path: PathBuf,
-    root_dir: PathBuf,
     cfg: TestCfg,
 }
 
@@ -86,7 +85,7 @@ impl Display for Test {
 }
 
 /// Get tests specified as TEST lines
-fn get_file_tests(root_dir: &Path, path: &Path) -> Vec<Test> {
+fn get_file_tests(path: &Path) -> Vec<Test> {
     let f = File::open(path).expect("could not open test file");
     let f = io::BufReader::new(f);
     f.lines()
@@ -97,7 +96,6 @@ fn get_file_tests(root_dir: &Path, path: &Path) -> Vec<Test> {
                 let args = args.chain(test_line.split(' '));
                 Test {
                     path: path.to_path_buf(),
-                    root_dir: root_dir.to_path_buf(),
                     cfg: TestCfg::try_parse_from(args).unwrap_or_else(|err| {
                         eprintln!("could not parse TEST line:");
                         eprintln!("# TEST {test_line}");
@@ -109,7 +107,7 @@ fn get_file_tests(root_dir: &Path, path: &Path) -> Vec<Test> {
         .collect()
 }
 
-fn get_toml_tests(root_dir: &Path, toml_file: &Path) -> Vec<Test> {
+fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
     let f = fs::read_to_string(toml_file).expect("could not open config file");
     let tests: Tests =
         toml::from_str(&f).unwrap_or_else(|err| panic!("could not parse toml file: {err}"));
@@ -124,7 +122,6 @@ fn get_toml_tests(root_dir: &Path, toml_file: &Path) -> Vec<Test> {
                 .iter()
                 .map(|cfg| Test {
                     path: entry.path(),
-                    root_dir: root_dir.to_path_buf(),
                     cfg: cfg.clone(),
                 })
                 .collect::<Vec<_>>()
@@ -142,9 +139,9 @@ fn get_tests(root_dir: &str) -> HashMap<PathBuf, Vec<Test>> {
         .filter(|entry| entry.file_type().is_file())
         .flat_map(|entry| {
             if entry.path().ends_with("tests.toml") {
-                get_toml_tests(root_dir, entry.path())
+                get_toml_tests(entry.path())
             } else if entry.path().extension() == Some(OsStr::new("fly")) {
-                get_file_tests(root_dir, entry.path())
+                get_file_tests(entry.path())
             } else {
                 vec![]
             }
@@ -167,11 +164,7 @@ fn verifier() -> Command {
 
 impl Test {
     fn test_name(&self) -> String {
-        let path = self
-            .path
-            .strip_prefix(&self.root_dir)
-            .unwrap()
-            .to_string_lossy();
+        let path = self.path.file_name().unwrap().to_string_lossy();
         if let Some(name) = &self.cfg.name {
             format!("{path}.{name}")
         } else {
@@ -234,7 +227,17 @@ fn test_dir(root_dir: &str) {
                 test.cfg.append_to_name(&format!("{n}"));
             }
             println!("# TEST {test}");
-            test.run();
+            let test_path = test.path.parent().unwrap().strip_prefix(root_dir).unwrap();
+            insta::with_settings!(
+                {
+                    description => format!("{test}"),
+                    prepend_module_to_snapshot => false,
+                    // The initial .. is needed because this path is relative to
+                    // where this test is
+                    snapshot_path => Path::new("..").join(root_dir).join("snapshots").join(test_path),
+                },
+                { test.run(); }
+            )
         }
     }
 }

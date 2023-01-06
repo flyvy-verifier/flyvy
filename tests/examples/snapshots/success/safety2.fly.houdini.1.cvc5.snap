@@ -1,0 +1,28 @@
+---
+source: tests/test_examples.rs
+description: "--all-solvers --name=houdini.1 -- verify --houdini tests/examples/success/safety2.fly"
+expression: combined_stdout_stderr
+---
+Running Houdini, candidate invariants are:
+    x
+    y
+    z
+
+Checking initiation:
+    Checking x
+    Checking y
+    Checking z
+Candidate invariants are:
+    x
+    y
+    z
+
+Computing fixed point:
+    Checking x
+    Checking y
+    Checking z
+Fixed point reached
+verifies!
+
+======== STDERR: ===========
+

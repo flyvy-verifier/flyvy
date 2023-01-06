@@ -1,0 +1,19 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers --name=1 -- verify tests/examples/fail/safety1_proof_invariants.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+verification errors:
+error: init does not imply invariant
+   ┌─ tests/examples/fail/safety1_proof_invariants.fly:11:1
+   │
+11 │ assert always !p
+   │ ^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     p = false
+     q = false
+
+

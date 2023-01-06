@@ -1,0 +1,20 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/basic.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+verification errors:
+error: assertion failure
+   ┌─ tests/examples/fail/basic.fly:12:1
+   │
+12 │ assert p(t0)
+   │ ^^^^^^^^^^^^
+   │
+   = counter example:
+     p(@thread_0) = false
+     q = false
+     t0 = @thread_0
+
+
