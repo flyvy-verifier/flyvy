@@ -109,7 +109,6 @@ impl Z3Conf {
             options: vec![],
         };
         cmd.args(["-in", "-smt2"]);
-        cmd.arg("model.completion=true");
         cmd.option("model.completion", "true");
         let mut conf = Self(cmd);
         conf.timeout_ms(10000);
@@ -117,12 +116,10 @@ impl Z3Conf {
     }
 
     pub fn model_compact(&mut self) {
-        self.0.arg("model.compact=true");
         self.0.option("model.compact", "true");
     }
 
     pub fn timeout_ms(&mut self, ms: usize) {
-        self.0.arg(format!("timeout={ms}"));
         self.0.option("timeout", format!("{ms}"));
     }
 
@@ -140,21 +137,16 @@ pub struct CvcConf {
 
 impl CvcConf {
     fn default_args() -> Vec<String> {
-        vec![
-            "-q",
-            "--no-interactive",
-            "--lang",
-            "smt2",
-            "--incremental",
-            "--seed=1",
-        ]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect()
+        vec!["-q", "--no-interactive", "--lang", "smt2"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     fn default_options() -> Vec<(String, String)> {
-        vec![("incremental".to_string(), "true".to_string())]
+        [("incremental", "true"), ("seed", "1")]
+            .map(|(opt, v)| (opt.to_owned(), v.to_owned()))
+            .to_vec()
     }
 
     pub fn new_cvc4(cmd: &str) -> Self {
