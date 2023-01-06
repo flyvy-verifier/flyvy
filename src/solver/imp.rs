@@ -9,7 +9,7 @@ use std::{
 use crate::{
     fly::{
         semantics::{Interpretation, Model, Universe},
-        syntax::{Signature, Sort, Term},
+        syntax::{Binder, Signature, Sort, Term},
     },
     smtlib::{
         proc::{SatResp, SmtProc, SolverCmd, SolverError},
@@ -193,32 +193,48 @@ impl<B: Backend> Solver<B> {
         fo_model.into_trace(&self.signature, self.n_states)
     }
 
-    fn with_universe_card(&mut self, univ: &str, card: usize) -> Option<FOModel> {
+    fn with_universe_card(
+        &mut self,
+        assumptions: &mut Vec<Term>,
+        univ: &str,
+        card: usize,
+    ) -> Option<FOModel> {
         // (exists ((x0 univ) ... (xn univ)) (forall ((x univ)) (or (= x x1) ... (= x xn))))
         self.proc
             .comment_with(|| format!("check if {univ} can have cardinality {card}"));
-        let univ: Sexp = atom_s(univ);
-        let exists_binders =
-            sexp_l((0..card).map(|n| sexp_l([atom_s(format!("x{n}")), univ.clone()])));
-        let forall_binder = sexp_l([sexp_l([atom_s("x"), univ.clone()])]);
-        let disjuncts = (0..card).map(|n| app("=", [atom_s("x"), atom_s(format!("x{n}"))]));
-        let forall = app("forall", [forall_binder, app("or", disjuncts)]);
-        let ind = match self.get_indicator(&format!("{univ}_card_{card}")) {
-            Term::Id(s) => s,
-            _ => unreachable!(),
-        };
-        let univ_card = app("exists", vec![exists_binders, forall]);
-        self.proc
-            .send(&app("assert", [app("=>", [atom_s(&ind), univ_card])]));
+
+        let ind = self.get_indicator(&format!("{univ}_card_{card}"));
+
+        let univ: Option<Sort> = Some(Sort::new(univ));
+
+        let univ_card =
+            Term::exists(
+                (0..card).map(|n| Binder {
+                    name: format!("x{n}"),
+                    typ: univ.clone(),
+                }),
+                Term::forall(
+                    [Binder {
+                        name: "x".to_string(),
+                        typ: univ.clone(),
+                    }],
+                    Term::or((0..card).map(|n| {
+                        Term::equals(Term::Id("x".to_string()), Term::Id(format!("x{n}")))
+                    })),
+                ),
+            );
+        self.assert(&Term::implies(ind.clone(), univ_card));
+        let mut new_assumptions = assumptions.iter().map(sexp::term).collect::<Vec<_>>();
+        new_assumptions.push(sexp::term(&ind));
         let resp = self
             .proc
-            .check_sat_assuming(&[atom_s(&ind)])
+            .check_sat_assuming(&new_assumptions)
             .unwrap_or_else(|err| panic!("internal error in cardinality check: {err}"));
         match resp {
             SatResp::Sat => {
-                // make sure future queries use this minimized cardinality
                 let model = self.get_fo_model();
-                self.proc.send(&app("assert", [atom_s(&ind)]));
+                // make sure future queries use this minimized cardinality
+                assumptions.push(ind);
                 Some(model)
             }
             SatResp::Unsat => None,
@@ -226,10 +242,10 @@ impl<B: Backend> Solver<B> {
         }
     }
 
-    fn minimize_card(&mut self, model: &mut FOModel, univ: &str) {
+    fn minimize_card(&mut self, assumptions: &mut Vec<Term>, model: &mut FOModel, univ: &str) {
         let card = *model.universe.get(univ).unwrap_or(&1);
         for new_card in 1..=card {
-            if let Some(new_model) = self.with_universe_card(univ, new_card) {
+            if let Some(new_model) = self.with_universe_card(assumptions, univ, new_card) {
                 *model = new_model;
                 return;
             }
@@ -237,10 +253,11 @@ impl<B: Backend> Solver<B> {
     }
 
     pub fn get_minimal_model(&mut self) -> Vec<Model> {
+        let mut assumptions = vec![];
         let mut model = self.get_fo_model();
         let universes = self.signature.sorts.clone();
         for univ in universes {
-            self.minimize_card(&mut model, univ.id().unwrap());
+            self.minimize_card(&mut assumptions, &mut model, univ.id().unwrap());
         }
         model.into_trace(&self.signature, self.n_states)
     }

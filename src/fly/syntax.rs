@@ -87,7 +87,12 @@ impl Term {
         Self::NAryOp(op, vec![lhs, rhs]).flatten_nary()
     }
 
-    pub fn and(mut ts: Vec<Term>) -> Self {
+    pub fn and<I>(ts: I) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Term>,
+    {
+        let mut ts: Vec<Term> = ts.into_iter().collect();
         if ts.is_empty() {
             return Term::Id("true".to_string());
         } else if ts.len() == 1 {
@@ -96,12 +101,54 @@ impl Term {
         Self::NAryOp(NOp::And, ts)
     }
 
+    pub fn or<I>(ts: I) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Term>,
+    {
+        let mut ts: Vec<Term> = ts.into_iter().collect();
+        if ts.is_empty() {
+            return Term::Id("false".to_string());
+        } else if ts.len() == 1 {
+            return ts.pop().unwrap();
+        }
+        Self::NAryOp(NOp::Or, ts)
+    }
+
     pub fn implies(lhs: Term, rhs: Term) -> Self {
         Self::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs))
     }
 
+    pub fn equals(lhs: Term, rhs: Term) -> Self {
+        Self::BinOp(BinOp::Equals, Box::new(lhs), Box::new(rhs))
+    }
+
     pub fn negate(t: Term) -> Self {
         Self::UnaryOp(UOp::Not, Box::new(t))
+    }
+
+    pub fn exists<I>(binders: I, body: Term) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Binder>,
+    {
+        Self::Quantified {
+            quantifier: Quantifier::Exists,
+            binders: binders.into_iter().collect(),
+            body: Box::new(body),
+        }
+    }
+
+    pub fn forall<I>(binders: I, body: Term) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Binder>,
+    {
+        Self::Quantified {
+            quantifier: Quantifier::Forall,
+            binders: binders.into_iter().collect(),
+            body: Box::new(body),
+        }
     }
 }
 
@@ -112,6 +159,10 @@ pub enum Sort {
 }
 
 impl Sort {
+    pub fn new<S: AsRef<str>>(s: S) -> Self {
+        Self::Id(s.as_ref().to_string())
+    }
+
     /// Get the name of this sort if it's a user-declared sort, or None for the
     /// built-in Bool.
     pub fn id(&self) -> Option<&str> {
