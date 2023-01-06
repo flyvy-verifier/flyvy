@@ -1,6 +1,0 @@
----
-source: tests/test_examples.rs
-expression: stdout
----
-verifies!
-

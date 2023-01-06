@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     fmt::Display,
     fs::{self, File},
@@ -35,6 +36,15 @@ struct TestCfg {
     /// Arguments to be passed to the verifier.
     #[arg(last = true)]
     args: Vec<String>,
+}
+
+impl TestCfg {
+    fn append_to_name(&mut self, s: &str) {
+        self.name = match &self.name {
+            Some(name) => Some(format!("{name}.{s}")),
+            None => Some(s.to_string()),
+        };
+    }
 }
 
 impl Display for TestCfg {
@@ -122,9 +132,10 @@ fn get_toml_tests(root_dir: &Path, toml_file: &Path) -> Vec<Test> {
         .collect()
 }
 
-fn get_tests(root_dir: &str) -> Vec<Test> {
+/// Get tests recursively under a root directory, keyed by their file path.
+fn get_tests(root_dir: &str) -> HashMap<PathBuf, Vec<Test>> {
     let root_dir = Path::new(root_dir);
-    WalkDir::new(root_dir)
+    let tests = WalkDir::new(root_dir)
         .sort_by_file_name()
         .into_iter()
         .filter_map(|e| e.ok())
@@ -137,8 +148,15 @@ fn get_tests(root_dir: &str) -> Vec<Test> {
             } else {
                 vec![]
             }
-        })
-        .collect()
+        });
+    let mut path_tests = HashMap::new();
+    for test in tests {
+        path_tests
+            .entry(test.path.clone())
+            .or_insert_with(Vec::new)
+            .push(test);
+    }
+    path_tests
 }
 
 fn verifier() -> Command {
@@ -169,11 +187,7 @@ impl Test {
                     let mut test = self.clone();
                     test.cfg.all_solvers = false;
                     test.cfg.args.insert(0, format!("--solver={solver}"));
-                    if let Some(name) = test.cfg.name {
-                        test.cfg.name = Some(format!("{name}.{solver}"));
-                    } else {
-                        test.cfg.name = Some(solver.to_string());
-                    }
+                    test.cfg.append_to_name(solver);
                     test
                 })
                 .to_vec()
@@ -212,18 +226,25 @@ impl Test {
     }
 }
 
-#[test]
-fn test_small_examples() {
-    for test in get_tests("tests/examples") {
-        println!("# TEST {test}");
-        test.run();
+fn test_dir(root_dir: &str) {
+    for (_, tests) in get_tests(root_dir) {
+        for (n, mut test) in tests.into_iter().enumerate() {
+            // ensure test names are unique by appending an index
+            if n >= 1 {
+                test.cfg.append_to_name(&format!("{n}"));
+            }
+            println!("# TEST {test}");
+            test.run();
+        }
     }
 }
 
 #[test]
+fn test_small_examples() {
+    test_dir("tests/examples")
+}
+
+#[test]
 fn test_larger_examples() {
-    for test in get_tests("examples") {
-        println!("# TEST {test}");
-        test.run();
-    }
+    test_dir("examples")
 }
