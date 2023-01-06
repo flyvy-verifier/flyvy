@@ -68,6 +68,10 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
             }
         }
         Term::Ite { cond, then, else_ } => app("ite", vec![term(cond), term(then), term(else_)]),
+        Term::Let { binder, val, body } => app(
+            "let",
+            [sexp_l([atom_s(&binder.name), term(val)]), term(body)],
+        ),
         Term::Quantified {
             quantifier,
             binders,

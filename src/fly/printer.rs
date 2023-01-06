@@ -15,7 +15,8 @@ fn precedence(t: &Term) -> usize {
         } => 0,
         BinOp(Implies | Iff, _, _) => 10,
         UnaryOp(Always | Eventually, _) => 20,
-        Ite { .. } => 30,
+        // TODO: fairly arbitrary placement for Let
+        Ite { .. } | Let { .. } => 30,
         NAryOp(And, _) => 40,
         NAryOp(Or, _) => 50,
         BinOp(Equals | NotEquals, _, _) => 60,
@@ -101,6 +102,16 @@ pub fn term(t: &Term) -> String {
             let then = parens(precedence(t) >= precedence(then), term(then));
             let else_ = parens(precedence(t) > precedence(else_), term(else_));
             format!("if {cond} then {then} else {else_}")
+        }
+        Term::Let {
+            binder: b,
+            val,
+            body,
+        } => {
+            let binder = binder(b);
+            let val = parens(precedence(t) >= precedence(val), term(val));
+            let body = parens(precedence(t) >= precedence(body), term(body));
+            format!("let {binder} = {val} in {body}",)
         }
         Term::Quantified {
             quantifier,
