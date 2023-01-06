@@ -38,7 +38,6 @@ fn with_next(t: &Term, bound: im::HashSet<String>, next: usize) -> Term {
             then: go_box(then),
             else_: go_box(else_),
         },
-        Term::Let { .. } => unimplemented!("let bindings are not supported here"),
         Term::Quantified {
             quantifier,
             binders,

@@ -257,12 +257,6 @@ impl Model {
                     self.eval(else_, assignment)
                 }
             }
-            Term::Let { binder, val, body } => {
-                let val = self.eval(val, assignment);
-                let mut assignment = assignment.unwrap_or(&HashMap::new()).clone();
-                assignment.insert(binder.name.clone(), val);
-                self.eval(body, Some(&assignment))
-            }
             Term::Quantified {
                 quantifier: _,
                 binders,

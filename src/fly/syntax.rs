@@ -61,12 +61,6 @@ pub enum Term {
         binders: Vec<Binder>,
         body: Box<Term>,
     },
-    /// let (binder) = (val) in (body)
-    Let {
-        binder: Binder,
-        val: Box<Term>,
-        body: Box<Term>,
-    },
 }
 
 impl Term {

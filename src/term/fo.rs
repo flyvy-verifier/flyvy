@@ -68,7 +68,6 @@ fn unrolling(t: &Term) -> Unrolling {
         Term::BinOp(_, lhs, rhs) => unrolling(lhs) & unrolling(rhs),
         Term::NAryOp(_, ts) => max_unrolling(ts),
         Term::Ite { cond, then, else_ } => unrolling(cond) & unrolling(then) & unrolling(else_),
-        Term::Let { val, body, .. } => unrolling(val) & unrolling(body),
         Term::Quantified { body, .. } => unrolling(body),
     }
 }
