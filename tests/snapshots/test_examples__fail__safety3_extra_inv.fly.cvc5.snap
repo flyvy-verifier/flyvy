@@ -4,9 +4,9 @@ expression: stderr
 ---
 verification errors:
 error: invariant is not inductive
-   ┌─ examples/fail/safety3_extra_inv.fly:11:1
+   ┌─ examples/fail/safety3_extra_inv.fly:13:1
    │
-11 │ assert always x
+13 │ assert always x
    │ ^^^^^^^^^^^^^^^
    │
    = counter example:

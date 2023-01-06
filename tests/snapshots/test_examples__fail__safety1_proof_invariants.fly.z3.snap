@@ -4,13 +4,13 @@ expression: stderr
 ---
 verification errors:
 error: init does not imply invariant
-  ┌─ examples/fail/safety1_proof_invariants.fly:9:1
-  │
-9 │ assert always !p
-  │ ^^^^^^^^^^^^^^^^
-  │
-  = counter example:
-    p = false
-    q = false
+   ┌─ examples/fail/safety1_proof_invariants.fly:11:1
+   │
+11 │ assert always !p
+   │ ^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     p = false
+     q = false
 
 
