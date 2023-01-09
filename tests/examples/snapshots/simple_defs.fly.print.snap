@@ -1,0 +1,28 @@
+---
+source: tests/test_examples.rs
+description: "--name=print -- print tests/examples/simple_defs.fly"
+expression: combined_stdout_stderr
+---
+sort thread
+mutable p(thread): bool
+mutable q: bool
+immutable t0: thread
+
+def init() -> bool {
+  q
+}
+
+def next() -> bool {
+  q' = q
+}
+
+assume init
+assume next
+assume !q
+assert p(t0)
+proof {
+
+}
+
+======== STDERR: ===========
+

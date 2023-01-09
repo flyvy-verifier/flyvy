@@ -1,0 +1,24 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+# TEST --name=print -- print
+# TEST --name=inline -- inline
+
+sort thread
+
+mutable p(thread): bool
+mutable q(thread): bool
+immutable t0: thread
+
+def pq(t: thread) -> bool {
+  p(t) & q(t)
+}
+
+def next() -> bool {
+  (exists t. pq(t)) & pq(t)' = pq(t) | t = t0
+}
+
+assume init
+assume next()
+assume !q
+assert p(t0)

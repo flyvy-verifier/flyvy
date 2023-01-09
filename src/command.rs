@@ -61,6 +61,10 @@ enum Command {
         /// File name for a .fly file
         file: String,
     },
+    Inline {
+        /// File name for a .fly file
+        file: String,
+    },
 }
 
 impl Command {
@@ -68,6 +72,7 @@ impl Command {
         match self {
             Command::Verify(VerifyArgs { file, .. }) => file,
             Command::Print { file, .. } => file,
+            Command::Inline { file, .. } => file,
         }
     }
 }
@@ -185,6 +190,11 @@ impl App {
                         process::exit(1);
                     }
                 }
+            }
+            Command::Inline { .. } => {
+                let mut m = m;
+                m.inline_defs();
+                println!("{}", printer::fmt(&m));
             }
         }
     }
