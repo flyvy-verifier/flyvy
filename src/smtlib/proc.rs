@@ -435,4 +435,17 @@ mod tests {
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
     }
+
+    #[test]
+    fn test_spawn_many() {
+        let z3 = Z3Conf::new("z3").done();
+        // launching z3 is slow on macos so don't spawn too many
+        #[cfg(target_os = "macos")]
+        let num_iters = 200;
+        #[cfg(not(target_os = "macos"))]
+        let num_iters = 1000;
+        for _ in 0..num_iters {
+            let _ = SmtProc::new(z3.clone(), None).unwrap();
+        }
+    }
 }
