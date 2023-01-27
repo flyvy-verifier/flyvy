@@ -390,6 +390,15 @@ impl SmtProc {
         _ = writeln!(self.stdin, "(exit)");
         _ = self.stdin.flush();
         _ = self.child.kill();
+        let wait_time = std::time::Duration::from_millis(10);
+        for _ in 0..100 {
+            let join = self.child.try_wait().expect("could not wait for child");
+            if join.is_some() {
+                return;
+            }
+            std::thread::sleep(wait_time);
+        }
+        panic!("could not wait for solver to properly terminate");
     }
 }
 
