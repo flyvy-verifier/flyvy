@@ -50,9 +50,9 @@ grammar parser() for str {
         { Term::UnaryOp(op, Box::new(x)) }
 
         --
-        x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
-        --
         x:(@) _ "|" _ y:@ { Term::nary(Or, x, y) }
+        --
+        x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
         --
         x:(@) _ "=" _ y:@ { Term::BinOp(Equals, Box::new(x), Box::new(y)) }
         x:(@) _ "!=" _ y:@ { Term::BinOp(NotEquals, Box::new(x), Box::new(y)) }
@@ -202,6 +202,9 @@ mod tests {
         assert_eq!(term("(p & q) & r").unwrap(), term("p & q & r").unwrap());
         assert_eq!(term("p & (q & r)").unwrap(), term("p & q & r").unwrap());
         assert_eq!(term("p | (q | r)").unwrap(), term("(p | q) | r").unwrap());
+
+        // precedence of & and |
+        assert_eq!(term("a | b & c").unwrap(), term("a | (b & c)").unwrap());
 
         // always is treated as an atomic keyword
         assert_ne!(term("alwaysx").unwrap(), term("always x").unwrap());

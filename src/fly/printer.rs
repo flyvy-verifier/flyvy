@@ -16,8 +16,8 @@ fn precedence(t: &Term) -> usize {
         BinOp(Implies | Iff, _, _) => 10,
         UnaryOp(Always | Eventually, _) => 20,
         Ite { .. } => 30,
-        NAryOp(And, _) => 40,
-        NAryOp(Or, _) => 50,
+        NAryOp(Or, _) => 40,
+        NAryOp(And, _) => 50,
         BinOp(Equals | NotEquals, _, _) => 60,
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
@@ -145,9 +145,13 @@ mod tests {
 
     #[test]
     fn test_printer_nary() {
-        insta::assert_display_snapshot!(reprint("a & b & c | d & e"), @"a & b & c | d & e");
-        insta::assert_display_snapshot!(reprint("a & b & (c | d) & e"), @"a & b & c | d & e");
-        insta::assert_display_snapshot!(reprint("a | b | c & d | e"), @"a | b | c & d | e");
+        for s in [
+            "a & b & c | d & e",
+            "a & b & (c | d) & e",
+            "a | b | c & d | e",
+        ] {
+            assert_eq!(reprint(s), s, "{s} did not roundtrip through printer");
+        }
     }
 
     #[test]
