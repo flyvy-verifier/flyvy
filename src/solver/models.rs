@@ -3,7 +3,7 @@
 
 use lazy_static::lazy_static;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, iter};
 use thiserror::Error;
 
 use regex::Regex;
@@ -19,15 +19,6 @@ pub struct Model {
 #[derive(Debug, Error)]
 #[error("eval error: {0}")]
 pub struct EvalError(String);
-
-fn eval_bool(e: &Sexp) -> Result<bool, EvalError> {
-    let a = smt_eval(e)?;
-    match a {
-        Atom::S(s) if s == "true" => Ok(true),
-        Atom::S(s) if s == "false" => Ok(false),
-        _ => Err(EvalError(format!("unexpected bool: {a}"))),
-    }
-}
 
 fn bool_atom(b: bool) -> Atom {
     let v = if b { "true" } else { "false" };
@@ -50,65 +41,6 @@ pub fn subst(repl: &[(&String, Sexp)], e: &Sexp) -> Sexp {
         assert_eq!(old, None, "duplicate replacement for {name} in subst");
     }
     subst_hashmap(&repl_map, e)
-}
-
-/// Evaluate an SMT expression, reducing constants with known semantics. Fails
-/// if this does not result in an Atom.
-pub fn smt_eval(e: &Sexp) -> Result<Atom, EvalError> {
-    match e {
-        Sexp::Atom(a) => Ok(a.clone()),
-        Sexp::Comment(_) => Err(EvalError("comment".to_string())),
-        Sexp::List(ss) => {
-            let ss = ss
-                .iter()
-                .filter(|s| !matches!(s, Sexp::Comment(_)))
-                .collect::<Vec<_>>();
-            if ss.is_empty() {
-                return Err(EvalError("empty list".to_string()));
-            }
-            let head = ss[0]
-                .atom_s()
-                .ok_or(EvalError(format!("unexpected function {}", ss[0])))?;
-            let args = &ss[1..];
-            if head == "and" {
-                let args = args
-                    .iter()
-                    .map(|s| eval_bool(s))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let v = args.iter().all(|x| *x);
-                Ok(bool_atom(v))
-            } else if head == "or" {
-                let args = args
-                    .iter()
-                    .map(|s| eval_bool(s))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let v = args.iter().any(|x| *x);
-                Ok(bool_atom(v))
-            } else if head == "not" || head == "!" {
-                assert_eq!(args.len(), 1);
-                let x = eval_bool(args[0])?;
-                Ok(bool_atom(!x))
-            } else if head == "as" {
-                // type cast (basically ignored)
-                smt_eval(args[0])
-            } else if head == "=" {
-                assert_eq!(args.len(), 2);
-                let lhs = smt_eval(args[0])?;
-                let rhs = smt_eval(args[1])?;
-                Ok(bool_atom(lhs == rhs))
-            } else if head == "ite" {
-                assert_eq!(args.len(), 3);
-                let cond = eval_bool(args[0])?;
-                if cond {
-                    smt_eval(args[1])
-                } else {
-                    smt_eval(args[2])
-                }
-            } else {
-                Err(EvalError(format!("unexpected function {head}")))
-            }
-        }
-    }
 }
 
 fn parse_binders(binders: &Sexp) -> Vec<String> {
@@ -232,4 +164,86 @@ pub(crate) fn parse_cvc(model: &Sexp, version5: bool) -> Model {
         universes.insert(sort, elements);
     }
     Model { universes, symbols }
+}
+
+impl Model {
+    fn eval_bool(&self, e: &Sexp) -> Result<bool, EvalError> {
+        let a = self.smt_eval(e)?;
+        match a {
+            Atom::S(s) if s == "true" => Ok(true),
+            Atom::S(s) if s == "false" => Ok(false),
+            _ => Err(EvalError(format!("unexpected bool: {a}"))),
+        }
+    }
+
+    /// Evaluate an SMT expression, reducing constants with known semantics. Fails
+    /// if this does not result in an Atom.
+    pub fn smt_eval(&self, e: &Sexp) -> Result<Atom, EvalError> {
+        match e {
+            Sexp::Atom(a) => Ok(a.clone()),
+            Sexp::Comment(_) => Err(EvalError("comment".to_string())),
+            Sexp::List(ss) => {
+                let ss = ss
+                    .iter()
+                    .filter(|s| !matches!(s, Sexp::Comment(_)))
+                    .collect::<Vec<_>>();
+                if ss.is_empty() {
+                    return Err(EvalError("empty list".to_string()));
+                }
+                let head = ss[0].atom_s().ok_or(EvalError(format!(
+                    "unexpected function {} (non-atom)",
+                    ss[0]
+                )))?;
+                let args = &ss[1..];
+                if head == "and" {
+                    let args = args
+                        .iter()
+                        .map(|s| self.eval_bool(s))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let v = args.iter().all(|x| *x);
+                    Ok(bool_atom(v))
+                } else if head == "or" {
+                    let args = args
+                        .iter()
+                        .map(|s| self.eval_bool(s))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let v = args.iter().any(|x| *x);
+                    Ok(bool_atom(v))
+                } else if head == "not" || head == "!" {
+                    assert_eq!(args.len(), 1);
+                    let x = self.eval_bool(args[0])?;
+                    Ok(bool_atom(!x))
+                } else if head == "as" {
+                    // type cast (basically ignored)
+                    self.smt_eval(args[0])
+                } else if head == "=" {
+                    assert_eq!(args.len(), 2);
+                    let lhs = self.smt_eval(args[0])?;
+                    let rhs = self.smt_eval(args[1])?;
+                    Ok(bool_atom(lhs == rhs))
+                } else if head == "ite" {
+                    assert_eq!(args.len(), 3);
+                    let cond = self.eval_bool(args[0])?;
+                    if cond {
+                        self.smt_eval(args[1])
+                    } else {
+                        self.smt_eval(args[2])
+                    }
+                } else if self.symbols.contains_key(head) {
+                    let (binders, body) = &self.symbols[head];
+                    assert_eq!(
+                        binders.len(),
+                        args.len(),
+                        "wrong number of arguments to {head}"
+                    );
+                    let repl: Vec<(&String, Sexp)> = iter::zip(binders, args.iter().cloned())
+                        .map(|(name, e)| (name, e.clone()))
+                        .collect();
+                    self.smt_eval(&subst(&repl, &body))
+                } else {
+                    Err(EvalError(format!("unexpected function {head}")))
+                }
+            }
+        }
+    }
 }
