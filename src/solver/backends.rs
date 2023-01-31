@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    models::{self, smt_eval, subst},
+    models::{self, subst},
     {Backend, FOModel},
 };
 
@@ -97,11 +97,15 @@ impl Backend for &GenericBackend {
             .collect();
 
         let mut interps = HashMap::new();
-        for (symbol, (binders, body)) in model.symbols {
-            if indicators.contains(&symbol) {
+        // TODO(tej): this should iterate over the signature rather than the
+        // model, since the model might define auxilliary functions that are not
+        // needed. In the process we need to check for models of primed symbols
+        // as well.
+        for (symbol, (binders, body)) in &model.symbols {
+            if indicators.contains(symbol) {
                 continue;
             }
-            let rel = sig.relation_decl(&symbol);
+            let rel = sig.relation_decl(symbol);
             let mut shape = rel
                 .args
                 .iter()
@@ -128,7 +132,8 @@ impl Backend for &GenericBackend {
                     .collect::<Vec<_>>();
                 let repl = zip(binders.iter(), args).collect::<Vec<_>>();
                 let body = subst(&repl, &body);
-                let e = smt_eval(&body)
+                let e = model
+                    .smt_eval(&body)
                     .unwrap_or_else(|err| panic!("could not interpret {}: {err}", &rel.name));
                 let res = e.s().expect("unhandled evaluation result");
                 match &rel.typ {
@@ -151,7 +156,7 @@ impl Backend for &GenericBackend {
                     }
                 }
             });
-            interps.insert(symbol, interp);
+            interps.insert(symbol.clone(), interp);
         }
 
         FOModel {
