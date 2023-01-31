@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: ["main"]
   pull_request:
 
 env:
@@ -20,7 +21,7 @@ jobs:
     env:
       Z3_VERSION: "4.11.2"
       CVC4_BINARY_URL: "https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt"
-      CVC5_BINARY_URL: "https://github.com/cvc5/cvc5/releases/latest/download/cvc5-Linux"  # this is the latest release
+      CVC5_BINARY_URL: "https://github.com/cvc5/cvc5/releases/latest/download/cvc5-Linux" # this is the latest release
     steps:
       - uses: actions/checkout@v3
       - name: Install Z3
@@ -28,21 +29,21 @@ jobs:
           wget -nv https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-2.31.zip
           unzip z3-${Z3_VERSION}-x64-glibc-2.31.zip
           echo `pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin >> $GITHUB_PATH
-      - run: z3 --version  # make sure z3 is installed
+      - run: z3 --version # make sure z3 is installed
       - name: Install CVC4
         run: |
           mkdir cvc4
           wget -nv -O cvc4/cvc4 ${CVC4_BINARY_URL}
           chmod +x cvc4/cvc4
           echo `pwd`/cvc4 >> $GITHUB_PATH
-      - run: cvc4 --version  # make sure cvc4 is installed
+      - run: cvc4 --version # make sure cvc4 is installed
       - name: Install CVC5
         run: |
           mkdir cvc5
           wget -nv -O cvc5/cvc5 ${CVC5_BINARY_URL}
           chmod +x cvc5/cvc5
           echo `pwd`/cvc5 >> $GITHUB_PATH
-      - run: cvc5 --version  # make sure cvc5 is installed
+      - run: cvc5 --version # make sure cvc5 is installed
       - name: Install toolchain ${{ matrix.toolchain }}
         run: |
           rustup set auto-self-update disable
