@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use std::fmt;
+use itertools::Itertools;
 
 use serde::Serialize;
 
@@ -223,6 +224,90 @@ impl Signature {
             .position(|x| x.name == name)
             .unwrap_or_else(|| panic!("invalid relation {name}"))
     }
+
+    /// Compute all terms up to a certain nesting depth (optional), using the given variable names.
+    /// If include_eq is true, include equality terms between any two same-sorted, non-Bool terms.
+    /// 
+    /// Both sorted_vars and the returned vector match self.sorts w.r.t sorted indices, and have an extra final entry for the Bool sort.
+    #[allow(dead_code)]
+    pub fn terms_by_sort(&self, sorted_vars: &[Vec<String>], mut depth: Option<usize>, include_eq: bool) -> Vec<Vec<Term>> {
+        let sort_idx = |sort: &Sort| -> usize {
+            match sort {
+                Sort::Bool => self.sorts.len(),
+                _ => self.sort_idx(sort)
+            }
+        };
+
+        let mut terms = vec![vec![]; self.sorts.len() + 1];
+        let mut new_terms = vec![vec![]; self.sorts.len() + 1];
+
+        // Generate sorted variables.
+        for (i, names) in sorted_vars.iter().enumerate() {
+            for name in names {
+                new_terms[i].push(Term::Id(name.clone()));
+            }
+        }
+
+        // Generate constants.
+        for rel_decl in &self.relations {
+            if rel_decl.args.len() == 0 {
+                new_terms[sort_idx(&rel_decl.typ)].push(Term::Id(rel_decl.name.clone()));
+            }
+        }
+
+        // Generated terms up to the given nesting depth, or until no new terms can be generated.
+        while !new_terms.iter().all(|v| v.is_empty()) && depth.unwrap_or(1) > 0 {
+            if let Some(n) = depth { depth = Some(n - 1); }
+
+            let mut new_new_terms = vec![vec![]; self.sorts.len() + 1];
+            for rel_decl in &self.relations {
+                if rel_decl.args.len() == 0 { continue; }
+
+                for new_ind in (0..rel_decl.args.len()).map(|_| [false, true]).multi_cartesian_product() {
+                    // Only generate terms where at least one argument is a newly generated term,
+                    // to make sure each term is generated exactly once.
+                    if !new_ind.iter().any(|&x| x) { continue; }
+                    
+                    let mut arg_terms = vec![];
+                    for i in 0..rel_decl.args.len() {
+                        if new_ind[i] {
+                            arg_terms.push(&new_terms[sort_idx(&rel_decl.args[i])]);
+                        } else {
+                            arg_terms.push(&terms[sort_idx(&rel_decl.args[i])]);
+                        }
+                    }
+
+                    if !arg_terms.iter().any(|v| v.is_empty()) {
+                        for args in arg_terms.iter().map(|&t| t.iter()).multi_cartesian_product() {
+                            let term_vec = args.iter().map(|&x| x.clone()).collect();
+                            new_new_terms[sort_idx(&rel_decl.typ)].push(Term::App(Box::new(Term::Id(rel_decl.name.clone())), term_vec));
+                        }
+                    }
+                }
+            }
+
+            for (i, ts) in new_terms.iter_mut().enumerate() {
+                terms[i].append(ts);
+            }
+            new_terms = new_new_terms
+        }
+
+        for (i, vt) in new_terms.iter_mut().enumerate() {
+            terms[i].append(vt);
+        }
+
+        // Generate equality terms.
+        if include_eq {
+            let mut eq_terms = vec![];
+            for i in 0..self.sorts.len() {
+                eq_terms.append(&mut terms[i].iter().combinations(2).map(|v|
+                    Term::BinOp(BinOp::Equals, Box::new(v[0].clone()), Box::new(v[1].clone()))).collect());
+            }
+            terms[self.sorts.len()].append(&mut eq_terms);
+        }
+
+        terms
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -263,4 +348,194 @@ pub struct Module {
     pub signature: Signature,
     pub defs: Vec<Definition>,
     pub statements: Vec<ThmStmt>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::vec;
+
+    use super::{Signature, RelationDecl, Sort};
+    use crate::fly::parser::parse_term;
+
+    #[test]
+    fn test_terms_by_sort() {
+        let typ = |n: usize| Sort::Id(format!("T{n}"));
+
+        let mut sig = Signature {
+            sorts: vec![typ(1), typ(2)],
+            relations: vec![
+                RelationDecl {
+                    mutable: true,
+                    name: "c1".to_string(),
+                    args: vec![],
+                    typ: typ(1),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c2".to_string(),
+                    args: vec![],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "f12".to_string(),
+                    args: vec![typ(1)],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "f21".to_string(),
+                    args: vec![typ(2)],
+                    typ: typ(1),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "r".to_string(),
+                    args: vec![typ(2), typ(1)],
+                    typ: Sort::Bool,
+                },
+            ],
+        };
+
+        let sorted_vars = vec![
+            vec!["a1".to_string(), "a2".to_string()],
+            vec!["b".to_string()]
+        ];
+
+        let mut terms = sig.terms_by_sort(&sorted_vars, Some(0), true);
+        assert_eq!(terms, vec![
+            vec![
+                parse_term("a1").expect("parser error"),
+                parse_term("a2").expect("parser error"),
+                parse_term("c1").expect("parser error"),
+            ],
+            vec![
+                parse_term("b").expect("parser error"),
+                parse_term("c2").expect("parser error"),
+            ],
+            vec![
+                parse_term("a1=a2").expect("parser error"),
+                parse_term("a1=c1").expect("parser error"),
+                parse_term("a2=c1").expect("parser error"),
+                parse_term("b=c2").expect("parser error"),
+            ]
+        ]);
+
+        terms = sig.terms_by_sort(&sorted_vars, Some(2), false);
+        assert_eq!(terms, vec![
+            vec![
+                parse_term("a1").expect("parser error"),
+                parse_term("a2").expect("parser error"),
+                parse_term("c1").expect("parser error"),
+                parse_term("f21(b)").expect("parser error"),
+                parse_term("f21(c2)").expect("parser error"),
+                parse_term("f21(f12(a1))").expect("parser error"),
+                parse_term("f21(f12(a2))").expect("parser error"),
+                parse_term("f21(f12(c1))").expect("parser error"),
+            ],
+            vec![
+                parse_term("b").expect("parser error"),
+                parse_term("c2").expect("parser error"),
+                parse_term("f12(a1)").expect("parser error"),
+                parse_term("f12(a2)").expect("parser error"),
+                parse_term("f12(c1)").expect("parser error"),
+                parse_term("f12(f21(b))").expect("parser error"),
+                parse_term("f12(f21(c2))").expect("parser error"),
+            ],
+            vec![
+                parse_term("r(b, a1)").expect("parser error"),
+                parse_term("r(b, a2)").expect("parser error"),
+                parse_term("r(b, c1)").expect("parser error"),
+                parse_term("r(c2, a1)").expect("parser error"),
+                parse_term("r(c2, a2)").expect("parser error"),
+                parse_term("r(c2, c1)").expect("parser error"),
+
+                parse_term("r(b, f21(b))").expect("parser error"),
+                parse_term("r(b, f21(c2))").expect("parser error"),
+                parse_term("r(c2, f21(b))").expect("parser error"),
+                parse_term("r(c2, f21(c2))").expect("parser error"),
+
+                parse_term("r(f12(a1), a1)").expect("parser error"),
+                parse_term("r(f12(a1), a2)").expect("parser error"),
+                parse_term("r(f12(a1), c1)").expect("parser error"),
+                parse_term("r(f12(a2), a1)").expect("parser error"),
+                parse_term("r(f12(a2), a2)").expect("parser error"),
+                parse_term("r(f12(a2), c1)").expect("parser error"),
+                parse_term("r(f12(c1), a1)").expect("parser error"),
+                parse_term("r(f12(c1), a2)").expect("parser error"),
+                parse_term("r(f12(c1), c1)").expect("parser error"),
+
+                parse_term("r(f12(a1), f21(b))").expect("parser error"),
+                parse_term("r(f12(a1), f21(c2))").expect("parser error"),
+                parse_term("r(f12(a2), f21(b))").expect("parser error"),
+                parse_term("r(f12(a2), f21(c2))").expect("parser error"),
+                parse_term("r(f12(c1), f21(b))").expect("parser error"),
+                parse_term("r(f12(c1), f21(c2))").expect("parser error"),
+            ]
+        ]);
+
+        sig = Signature {
+            sorts: vec![typ(1), typ(2)],
+            relations: vec![
+                RelationDecl {
+                    mutable: true,
+                    name: "c1".to_string(),
+                    args: vec![],
+                    typ: typ(1),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c2".to_string(),
+                    args: vec![],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "f12".to_string(),
+                    args: vec![typ(1)],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "r".to_string(),
+                    args: vec![typ(2), typ(1)],
+                    typ: Sort::Bool,
+                },
+            ],
+        };
+
+        terms = sig.terms_by_sort(&sorted_vars, None, false);
+        assert_eq!(terms, vec![
+            vec![
+                parse_term("a1").expect("parser error"),
+                parse_term("a2").expect("parser error"),
+                parse_term("c1").expect("parser error"),
+            ],
+            vec![
+                parse_term("b").expect("parser error"),
+                parse_term("c2").expect("parser error"),
+                parse_term("f12(a1)").expect("parser error"),
+                parse_term("f12(a2)").expect("parser error"),
+                parse_term("f12(c1)").expect("parser error"),
+            ],
+            vec![
+                parse_term("r(b, a1)").expect("parser error"),
+                parse_term("r(b, a2)").expect("parser error"),
+                parse_term("r(b, c1)").expect("parser error"),
+                parse_term("r(c2, a1)").expect("parser error"),
+                parse_term("r(c2, a2)").expect("parser error"),
+                parse_term("r(c2, c1)").expect("parser error"),
+
+                parse_term("r(f12(a1), a1)").expect("parser error"),
+                parse_term("r(f12(a1), a2)").expect("parser error"),
+                parse_term("r(f12(a1), c1)").expect("parser error"),
+                parse_term("r(f12(a2), a1)").expect("parser error"),
+                parse_term("r(f12(a2), a2)").expect("parser error"),
+                parse_term("r(f12(a2), c1)").expect("parser error"),
+                parse_term("r(f12(c1), a1)").expect("parser error"),
+                parse_term("r(f12(c1), a2)").expect("parser error"),
+                parse_term("r(f12(c1), c1)").expect("parser error"),
+            ]
+        ]);
+    }
 }
