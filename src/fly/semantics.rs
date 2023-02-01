@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt::Write};
 use itertools::Itertools;
 use serde::Serialize;
 
-use super::syntax::{BinOp, NOp, Quantifier, RelationDecl, Signature, Sort, Term, UOp};
+use super::syntax::{BinOp, NOp, Quantifier, RelationDecl, Signature, Sort, Term, UOp, Binder};
 
 use BinOp::*;
 use NOp::*;
@@ -21,6 +21,9 @@ pub type Element = usize;
 /// A universe maps each sort (in the order of the Signature) to its number of
 /// elements in an interpretation.
 pub type Universe = Vec<usize>;
+
+/// An assignment maps the names of Id terms to elements of a model.
+pub type Assignment = HashMap<String, Element>;
 
 /// An interpretation gives the complete value of a function for a
 /// finite-cardinality universe.
@@ -303,6 +306,82 @@ impl Model {
                 }
             }
             Term::UnaryOp(Always | Eventually | Prime, _) => panic!("tried to eval {t}"),
+        }
+    }
+
+    /// Negate the necessary terms in order to make all given terms hold
+    /// on the model and the given assignment.
+    pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: Option<&Assignment>) {
+        for i in 0..terms.len() {
+            if self.eval(&terms[i], assignment) == 0 {
+                terms[i] = Term::negate(terms[i].clone());
+            }
+        }
+    }
+
+    /// Represent the model as a term.
+    #[allow(dead_code)]
+    pub fn to_term(&self) -> Term {
+        let sort_cnt = self.signature.sorts.len();
+
+        let mut exists_vars: Vec<Vec<String>> = vec![];
+        let mut univ_vars: Vec<String> = vec![];
+        let mut exists_binders: Vec<Binder> = vec![];
+        let mut assignment: Assignment = Assignment::new();
+        for i in 0..sort_cnt {
+            if let Sort::Id(sort_name) = &self.signature.sorts[i] {
+                // EDEN: We should use some convention so the names here will not be available for use elsewhere.
+                exists_vars.push((0..self.universe[i]).map(|j| format!("{}_{}", sort_name.clone(), j)).collect());
+                univ_vars.push(format!("{}_{}", sort_name.clone(), self.universe[i]));
+                for (j, name) in exists_vars[i].iter().enumerate() {
+                    assignment.insert(name.clone(), j);
+                    exists_binders.push(Binder { name: name.clone(), typ: Some(self.signature.sorts[i].clone()) });
+                }
+            } else {
+                panic!("Bool sort in signature.")
+            }
+        }
+
+        // Get depth=1 terms (without inequalities).
+        let mut terms = self.signature.terms_by_sort(&exists_vars, Some(1), false);
+        self.flip_to_sat(&mut terms[sort_cnt], Some(&assignment));
+
+        for i in 0..sort_cnt {
+            let mut new_terms = vec![];
+            // Note that the first self.universe[i] terms of sort i are exist_vars[i].
+            // Add inequalities for exists_vars of sort i.
+            for v in (0..self.universe[i]).combinations(2) {
+                new_terms.push(
+                    Term::BinOp(BinOp::NotEquals, Box::new(terms[i][v[0]].clone()), Box::new(terms[i][v[1]].clone())));
+            }
+            // Add equalities for the other terms of sort i.
+            for j in self.universe[i]..terms[i].len() {
+                let elem = self.eval(&terms[i][j], Some(&assignment));
+                new_terms.push(
+                    Term::BinOp(
+                        BinOp::Equals,
+                        Box::new(terms[i][j].clone()),
+                        Box::new(terms[i][elem].clone())));
+            }
+            // Add size constraint for sort i.
+            new_terms.push(Term::Quantified { 
+                quantifier: Quantifier::Forall,
+                binders: vec![Binder { name: univ_vars[i].clone(), typ: Some(self.signature.sorts[i].clone())}],
+                body: Box::new(Term::NAryOp(NOp::Or,
+                    (0..self.universe[i]).map(|j| 
+                        Term::BinOp(
+                            BinOp::Equals,
+                            Box::new(Term::Id(univ_vars[i].clone())),
+                            Box::new(Term::Id(exists_vars[i][j].clone())))).collect()))
+            });
+            // Add the above to the Bool terms.
+            terms[sort_cnt].append(&mut new_terms);
+        }
+
+        Term::Quantified {
+            quantifier: Quantifier::Exists,
+            binders: exists_binders,
+            body: Box::new(Term::NAryOp(NOp::And, terms.pop().unwrap()))
         }
     }
 }
@@ -615,5 +694,213 @@ mod tests {
             println!("evaluating {t} (expecting {v})");
             assert_eq!(&e(t), v, "evaluating {t} should give {v}");
         }
+    }
+
+    #[test]
+    fn test_to_term() {
+        let typ = |n: usize| Sort::Id(format!("T{n}"));
+
+        let sig = Signature {
+            sorts: vec![typ(1), typ(2)],
+            relations: vec![
+                RelationDecl {
+                    mutable: true,
+                    name: "r1".to_string(),
+                    args: vec![typ(2), typ(1)],
+                    typ: Sort::Bool,
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "r2".to_string(),
+                    args: vec![typ(1)],
+                    typ: typ(2),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c1".to_string(),
+                    args: vec![],
+                    typ: typ(1),
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: "c2".to_string(),
+                    args: vec![],
+                    typ: typ(2),
+                },
+            ],
+        };
+
+        // FIRST MODEL
+
+        // T1 has cardinality 2, T2 has cardinality 3
+        let universe: Universe = vec![2, 3];
+
+        // r1 is of type (T2, T1) -> bool
+        let r1_interp = Interpretation {
+            shape: vec![3, 2, 2],
+            data: vec![0, 1, 1, 0, 1, 0],
+        };
+
+        // r2 is of type (T1) -> T2
+        let r2_interp = Interpretation {
+            shape: vec![2, 3],
+            data: vec![1, 2],
+        };
+
+        // c1 is of type T1
+        let c1_interp = Interpretation {
+            shape: vec![2],
+            data: vec![1],
+        };
+
+        // c2 is of type T2
+        let c2_interp = Interpretation {
+            shape: vec![3],
+            data: vec![2],
+        };
+
+        let fst_model = Model {
+            signature: sig.clone(),
+            universe,
+            interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
+        };
+
+        // SECOND MODEL -- SAME SIZE AS FIRST, DIFFERENT INTERPS
+
+        // T1 has cardinality 2, T2 has cardinality 3
+        let universe: Universe = vec![2, 3];
+
+        // r1 is of type (T2, T1) -> bool
+        let r1_interp = Interpretation {
+            shape: vec![3, 2, 2],
+            data: vec![0, 0, 1, 1, 1, 0],
+        };
+
+        // r2 is of type (T1) -> T2
+        let r2_interp = Interpretation {
+            shape: vec![2, 3],
+            data: vec![2, 1],
+        };
+
+        // c1 is of type T1
+        let c1_interp = Interpretation {
+            shape: vec![2],
+            data: vec![1],
+        };
+
+        // c2 is of type T2
+        let c2_interp = Interpretation {
+            shape: vec![3],
+            data: vec![2],
+        };
+
+        let snd_model = Model {
+            signature: sig.clone(),
+            universe,
+            interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
+        };
+
+        // THIRD MODEL -- DIFFERENT SIZE FROM FIRST, EXTENDED INTERPS
+
+        // T1 has cardinality 2, T2 has cardinality 3
+        let universe: Universe = vec![3, 3];
+
+        // r1 is of type (T2, T1) -> bool
+        let r1_interp = Interpretation {
+            shape: vec![3, 3, 2],
+            data: vec![0, 1, 1, 0, 1, 0, 0, 1, 0],
+        };
+
+        // r2 is of type (T1) -> T2
+        let r2_interp = Interpretation {
+            shape: vec![3, 3],
+            data: vec![1, 2, 1],
+        };
+
+        // c1 is of type T1
+        let c1_interp = Interpretation {
+            shape: vec![3],
+            data: vec![1],
+        };
+
+        // c2 is of type T2
+        let c2_interp = Interpretation {
+            shape: vec![3],
+            data: vec![2],
+        };
+
+        let thr_model = Model {
+            signature: sig.clone(),
+            universe,
+            interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
+        };
+
+        // FOURTH MODEL -- ISOMORPHIC TO FIRST
+
+        // T1 has cardinality 2, T2 has cardinality 3
+        let universe: Universe = vec![2, 3];
+
+        // r1 is of type (T2, T1) -> bool
+        let r1_interp = Interpretation {
+            shape: vec![3, 2, 2],
+            data: vec![1, 0, 0, 1, 0, 1],
+        };
+
+        // r2 is of type (T1) -> T2
+        let r2_interp = Interpretation {
+            shape: vec![2, 3],
+            data: vec![2, 1],
+        };
+
+        // c1 is of type T1
+        let c1_interp = Interpretation {
+            shape: vec![2],
+            data: vec![0],
+        };
+
+        // c2 is of type T2
+        let c2_interp = Interpretation {
+            shape: vec![3],
+            data: vec![2],
+        };
+
+        let fth_model = Model {
+            signature: sig,
+            universe,
+            interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
+        };
+
+
+        fst_model.wf();
+        snd_model.wf();
+        thr_model.wf();
+        fth_model.wf();
+
+        let fst_as_term = fst_model.to_term();
+        let snd_as_term = snd_model.to_term();
+        let thr_as_term = thr_model.to_term();
+        let fth_as_term = fth_model.to_term();
+
+        assert_ne!(fst_as_term, fth_as_term);
+
+        assert_eq!(fst_model.eval(&fst_as_term, None), 1);
+        assert_eq!(fst_model.eval(&snd_as_term, None), 0);
+        assert_eq!(fst_model.eval(&thr_as_term, None), 0);
+        assert_eq!(fst_model.eval(&fth_as_term, None), 1);
+
+        assert_eq!(snd_model.eval(&fst_as_term, None), 0);
+        assert_eq!(snd_model.eval(&snd_as_term, None), 1);
+        assert_eq!(snd_model.eval(&thr_as_term, None), 0);
+        assert_eq!(snd_model.eval(&fth_as_term, None), 0);
+
+        assert_eq!(thr_model.eval(&fst_as_term, None), 0);
+        assert_eq!(thr_model.eval(&snd_as_term, None), 0);
+        assert_eq!(thr_model.eval(&thr_as_term, None), 1);
+        assert_eq!(thr_model.eval(&fth_as_term, None), 0);
+
+        assert_eq!(fth_model.eval(&fst_as_term, None), 1);
+        assert_eq!(fth_model.eval(&snd_as_term, None), 0);
+        assert_eq!(fth_model.eval(&thr_as_term, None), 0);
+        assert_eq!(fth_model.eval(&fth_as_term, None), 1);
     }
 }
