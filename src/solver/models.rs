@@ -25,17 +25,17 @@ fn bool_atom(b: bool) -> Atom {
     Atom::S(v.to_string())
 }
 
-fn subst_hashmap(repl: &HashMap<&String, &Sexp>, e: &Sexp) -> Sexp {
+fn subst_hashmap(repl: &HashMap<&str, &Sexp>, e: &Sexp) -> Sexp {
     match e {
         Sexp::Atom(Atom::I(_)) | Sexp::Comment(_) => e.clone(),
-        Sexp::Atom(Atom::S(s)) => repl.get(s).cloned().unwrap_or(e).clone(),
+        Sexp::Atom(Atom::S(s)) => repl.get(s.as_str()).cloned().unwrap_or(e).clone(),
         Sexp::List(ss) => Sexp::List(ss.iter().map(|e| subst_hashmap(repl, e)).collect()),
     }
 }
 
 /// Parallel substitution into an sexp.
-pub fn subst(repl: &[(&String, Sexp)], e: &Sexp) -> Sexp {
-    let mut repl_map: HashMap<&String, &Sexp> = HashMap::new();
+pub fn subst(repl: &[(&str, Sexp)], e: &Sexp) -> Sexp {
+    let mut repl_map: HashMap<&str, &Sexp> = HashMap::new();
     for (name, e) in repl {
         let old = repl_map.insert(name, e);
         assert_eq!(old, None, "duplicate replacement for {name} in subst");
@@ -229,6 +229,22 @@ impl Model {
                     } else {
                         self.smt_eval(args[2])
                     }
+                } else if head == "let" {
+                    // (let ((x1 e1) (x2 e2)) e)
+                    assert_eq!(args.len(), 2);
+                    let binders = args[0]
+                        .list()
+                        .expect("let argument should be a list of binders");
+                    let repl: Vec<(&str, Sexp)> = binders
+                        .iter()
+                        .map(|binder| {
+                            let (name, e) = binder.app().expect("unexpected binder");
+                            assert_eq!(e.len(), 1, "unexpected binder val");
+                            (name, e[0].clone())
+                        })
+                        .collect();
+                    let e = subst(&repl, args[1]);
+                    self.smt_eval(&e)
                 } else if self.symbols.contains_key(head) {
                     let (binders, body) = &self.symbols[head];
                     assert_eq!(
@@ -236,8 +252,8 @@ impl Model {
                         args.len(),
                         "wrong number of arguments to {head}"
                     );
-                    let repl: Vec<(&String, Sexp)> = iter::zip(binders, args.iter().cloned())
-                        .map(|(name, e)| (name, e.clone()))
+                    let repl: Vec<(&str, Sexp)> = iter::zip(binders, args.iter().cloned())
+                        .map(|(name, e)| (name.as_str(), e.clone()))
                         .collect();
                     self.smt_eval(&subst(&repl, &body))
                 } else {
