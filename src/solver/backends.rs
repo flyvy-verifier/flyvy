@@ -130,7 +130,7 @@ impl Backend for &GenericBackend {
                         }
                     })
                     .collect::<Vec<_>>();
-                let repl = zip(binders.iter(), args).collect::<Vec<_>>();
+                let repl = zip(binders.iter().map(|s| s.as_str()), args).collect::<Vec<_>>();
                 let body = subst(&repl, &body);
                 let e = model
                     .smt_eval(&body)

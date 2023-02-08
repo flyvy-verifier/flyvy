@@ -1,0 +1,24 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail -- verify examples/consensus.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+verification errors:
+error: invariant is not inductive
+   ┌─ examples/consensus.fly:40:1
+   │
+40 │ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
+   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     member(@node_0,@quorum_0) = true
+     vote_request_msg(@node_0,@node_0) = false
+     voted(@node_0) = false
+     vote_msg(@node_0,@node_0) = false
+     votes(@node_0,@node_0) = false
+     leader(@node_0) = false
+     decided(@node_0,@value_0) = false
+
+
