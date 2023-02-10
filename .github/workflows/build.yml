@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
+  # no CI on pull request (already on runs on all branches)
 
 env:
   CARGO_TERM_COLOR: always

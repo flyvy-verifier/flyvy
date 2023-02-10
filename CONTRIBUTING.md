@@ -6,6 +6,41 @@ Please familiarize yourself with the [Code of Conduct](https://github.com/vmware
 
 Before you start working with temporal-verifier, please read our [Developer Certificate of Origin](https://cla.vmware.com/dco). All contributions to this repository must be signed as described on that page. Your signature certifies that you wrote the patch or have the right to pass it on as an open-source patch.
 
+## TLDR: Must-haves for every commit pushed to this repository
+
+* Do not push to `main` without asking. Instead, use a branch and create a pull request.
+* Every commit must be signed (see above). Use `git -s` or otherwise add `Signed-off-by: Your Name <your@email.com>` to the last line of each Git commit message.
+* Every code file in the repository must start with a two-line copyright notice:
+  ```rust
+  // Copyright 2022-2023 VMware, Inc.
+  // SPDX-License-Identifier: BSD-2-Clause
+  ```
+  or
+  ```python
+  # Copyright 2022-2023 VMware, Inc.
+  # SPDX-License-Identifier: BSD-2-Clause
+  ```
+* Commit messages should generally follow this [style guide](http://chris.beams.io/posts/git-commit/). In short:
+  * Use a short summary title, and add a longer body if needed.
+  * Use imperative style ("Fix bug" and not "Fixed bug", "Fixes bug", or "Bugfix"). The title should read like "if you apply it, this commit will ..." or "after applying this commit, the code will...".  
+  * Keep the title short, GitHub truncates at 72 charachters.
+  * The blank line separating the title from the body is critical (unless you omit the body entirely).
+  * The blank line before the `Signed-off-by` is also critical.
+  
+   Here's an example:
+  ```
+  Use short title with capital letter and without period
+  
+  A longer paragraph can explain more (but it's not always needed).
+  * Maybe a bullet point
+  * Or two
+  
+  Another paragraph can be used if needed.
+  * But multiple small commits are preferred over a large commits
+
+  Signed-off-by: Your Name <your@email.com>
+  ```
+
 ## Ways to contribute
 
 We welcome many different types of contributions and not all of them need a Pull request. Contributions may include:
