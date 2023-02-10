@@ -229,7 +229,6 @@ impl Signature {
     /// If include_eq is true, include equality terms between any two same-sorted, non-Bool terms.
     /// 
     /// Both sorted_vars and the returned vector match self.sorts w.r.t sorted indices, and have an extra final entry for the Bool sort.
-    #[allow(dead_code)]
     pub fn terms_by_sort(&self, sorted_vars: &[Vec<String>], mut depth: Option<usize>, include_eq: bool) -> Vec<Vec<Term>> {
         let sort_idx = |sort: &Sort| -> usize {
             match sort {

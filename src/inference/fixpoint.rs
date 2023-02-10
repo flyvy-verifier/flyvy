@@ -1,0 +1,118 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
+use std::rc::Rc;
+
+use crate::{
+    verify::SolverConf,
+    fly::{
+        syntax::Module,
+        semantics::Model
+    },
+    inference::{
+        pdnf::PDNF,
+        basics::{FOModule, Frame, input_cfg}
+    },
+};
+
+/// Run a simple fixpoint algorithm on the configured lemma domain.
+pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj: bool) {
+    let fo = Rc::new(FOModule::new(m, disj));
+
+    println!("Axioms:");
+    for a in fo.axioms.iter() {
+        println!("    {}", a);
+    }
+    println!("Initial states:");
+    for a in fo.inits.iter() {
+        println!("    {}", a);
+    }
+    println!("Transitions:");
+    for a in fo.transitions.iter() {
+        println!("    {}", a);
+    }
+    println!();
+
+    let (cfg, kpdnf, kpdnf_lit) = input_cfg(&m.signature);
+    let cfg = Rc::new(cfg);
+    
+    let mut frame = Frame::new(
+        vec![cfg.quantify_false(PDNF::get_false(kpdnf, kpdnf_lit))],
+        fo.clone(), cfg.clone(), conf.clone()
+    );
+    let mut frame_t = frame.to_terms();
+    let mut models: Vec<Model> = vec![];
+
+    let print = |frame: &Frame<_>, s: &String| {
+        println!("[{}, {}] {}",
+            frame.len(), frame.len_weakened(), s);
+    };
+
+    let atoms = cfg.atoms(&m.signature);
+    println!();
+    println!("Atoms in configuration: {}", atoms.len());
+    println!();
+
+    // Begin by overapproximating the initial states.
+    let mut i_init = (0, 0);
+    while let Some(model) = frame.get_cex_init(Some(&mut i_init)) {
+        print(&frame, &"CTI found, type=initial".to_string());
+        frame.weaken(&model,  |_| true,  &atoms, Some(i_init));
+        if extend_models {
+            models.push(model);
+        }
+        print(&frame, &"Frame weakened".to_string());
+    }
+
+    loop {
+        // Handle transition CTI's.
+        let mut i_trans = (0, 0);
+        loop {
+            let mut i_extend = (0, 0);
+            while !models.is_empty() {
+                if let Some(model) = frame.get_cex_extend(&models[0], Some(&mut i_extend)) {
+                    print(&frame, &"CTI found, type=extended".to_string());
+                    frame.weaken(&model,  |_| true, &atoms, Some(i_extend));
+                    models.push(model);
+                    print(&frame, &"Frame weakened".to_string());
+                } else {
+                    models.remove(0);
+                    i_extend = (0, 0);
+                }
+            }
+
+            if let Some((_, model)) = frame.get_cex_trans(&frame_t, Some(&mut i_trans)) {
+                print(&frame, &"CTI found, type=transition".to_string());
+                frame.weaken(&model, |_| true, &atoms, Some(i_trans));
+                if extend_models {
+                    models.push(model);
+                }
+                print(&frame, &"Frame weakened".to_string());
+            } else {
+                break;
+            }
+        }
+
+        // Once CTI's are exhausted, update the frame to with weakened lemmas.
+        if !frame.update(true) {
+            break;
+        }
+
+        frame_t = frame.to_terms();
+
+        print(&frame, &"Frame updated".to_string());
+
+        // Verify safety of updated frame.
+        if fo.trans_safe_cex(&conf, &frame_t).is_some() {
+            println!();
+            println!("Frame is unsafe! Aborting.");
+            return;
+        }
+    }
+
+    println!();
+    println!("Fixpoint:");
+    for lemma in &frame_t {
+        println!("    {}", lemma);
+    }
+}

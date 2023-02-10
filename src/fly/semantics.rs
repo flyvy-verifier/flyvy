@@ -320,7 +320,6 @@ impl Model {
     }
 
     /// Represent the model as a term.
-    #[allow(dead_code)]
     pub fn to_term(&self) -> Term {
         let sort_cnt = self.signature.sorts.len();
 
