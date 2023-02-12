@@ -20,6 +20,9 @@ Before you start working with temporal-verifier, please read our [Developer Cert
   # Copyright 2022-2023 VMware, Inc.
   # SPDX-License-Identifier: BSD-2-Clause
   ```
+* Before creating a commit, make sure the following tests pass (these are run by CI on GitHub, so the commit will get a :x: if they don't):
+  * `cargo test`
+  * `cargo fmt --check` (We use `cargo fmt` to format all rust code.)
 * Commit messages should generally follow this [style guide](http://chris.beams.io/posts/git-commit/). In short:
   * Use a short summary title, and add a longer body if needed.
   * Use imperative style ("Fix bug" and not "Fixed bug", "Fixes bug", or "Bugfix"). The title should read like "if you apply it, this commit will ..." or "after applying this commit, the code will...".  
@@ -75,7 +78,7 @@ We follow the GitHub workflow and you can find more details on the [GitHub flow 
 
 Before submitting your pull request, we advise you to use the following:
 
-1. Check if your code changes will pass both code linting checks and unit tests.
+1. Check if your code changes will pass both code linting and format checks (`cargo fmt --check`) and unit and regression tests (`cargo test`).
 2. Ensure your commit messages are descriptive. We follow the conventions on [How to Write a Git Commit Message](http://chris.beams.io/posts/git-commit/). Be sure to include any related GitHub issue references in the commit message. See [GFM syntax](https://guides.github.com/features/mastering-markdown/#GitHub-flavored-markdown) for referencing issues and commits.
 3. Check the commits and commits messages and ensure they are free from typos.
 
