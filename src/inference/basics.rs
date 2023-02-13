@@ -1,21 +1,21 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::collections::HashMap;
 use itertools::Itertools;
-use std::io::Write;
+use std::collections::HashMap;
 use std::io::BufRead;
+use std::io::Write;
 use std::rc::Rc;
 
 use crate::{
-    verify::{SolverConf},
     fly::{
-        syntax::{Term, Module, ThmStmt, UOp, NOp, Signature, Quantifier, Sort},
-        semantics::Model
+        semantics::Model,
+        syntax::{Module, NOp, Quantifier, Signature, Sort, Term, ThmStmt, UOp},
     },
+    inference::lemma::{Lemma, LemmaQF, QuantifierConfig},
+    smtlib::proc::SatResp,
     term::{FirstOrder, Next},
-    inference::lemma::{QuantifierConfig, Lemma, LemmaQF},
-    smtlib::proc::SatResp
+    verify::SolverConf,
 };
 
 /// A first-order module is represented using first-order formulas,
@@ -28,14 +28,18 @@ pub struct FOModule {
     pub inits: Vec<Term>,
     pub transitions: Vec<Term>,
     pub safeties: Vec<Term>,
-    disj: bool
+    disj: bool,
 }
 
 impl FOModule {
     pub fn new(m: &Module, disj: bool) -> Self {
         let mut fo = FOModule {
             signature: m.signature.clone(),
-            axioms: vec![], inits: vec![], transitions: vec![], safeties: vec![], disj
+            axioms: vec![],
+            inits: vec![],
+            transitions: vec![],
+            safeties: vec![],
+            disj,
         };
 
         for statement in &m.statements {
@@ -47,10 +51,10 @@ impl FOModule {
                         match FirstOrder::unrolling(t) {
                             Some(0) => fo.axioms.push(t.as_ref().clone()),
                             Some(1) => fo.transitions.push(Next::normalize(t.as_ref())),
-                            _ => ()
+                            _ => (),
                         }
                     }
-                },
+                }
                 ThmStmt::Assert(pf) => {
                     if let Term::UnaryOp(UOp::Always, t) = &pf.assert.x {
                         if FirstOrder::unrolling(t) == Some(0) {
@@ -76,28 +80,37 @@ impl FOModule {
             SatResp::Sat => {
                 let mut states = solver.get_minimal_model();
                 assert_eq!(states.len(), 1);
-                
+
                 return Some(states.remove(0));
             }
             SatResp::Unsat => None,
-            SatResp::Unknown(_) => panic!()
+            SatResp::Unknown(_) => panic!(),
         }
     }
 
     pub fn trans_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<(Model, Model)> {
         let disj_trans = if self.disj {
-            self.transitions.iter()
+            self.transitions
+                .iter()
                 .map(|t| match t {
                     Term::NAryOp(NOp::Or, args) => args.iter().collect_vec(),
-                    _ => vec![t]
-                }).multi_cartesian_product().collect_vec()
-            } else {
-               vec![self.transitions.iter().collect_vec()]
-            };
-        
+                    _ => vec![t],
+                })
+                .multi_cartesian_product()
+                .collect_vec()
+        } else {
+            vec![self.transitions.iter().collect_vec()]
+        };
+
         for trans in disj_trans {
             let mut solver = conf.solver(&self.signature, 2);
-            for a in self.axioms.iter().chain(self.safeties.iter()).chain(hyp.iter()).chain(trans.into_iter()) {
+            for a in self
+                .axioms
+                .iter()
+                .chain(self.safeties.iter())
+                .chain(hyp.iter())
+                .chain(trans.into_iter())
+            {
                 solver.assert(a);
             }
             for a in self.axioms.iter() {
@@ -110,11 +123,11 @@ impl FOModule {
                 SatResp::Sat => {
                     let states = solver.get_minimal_model();
                     assert_eq!(states.len(), 2);
-                    
+
                     return Some(states.into_iter().collect_tuple().unwrap());
                 }
                 SatResp::Unsat => (),
-                SatResp::Unknown(_) => panic!()
+                SatResp::Unknown(_) => panic!(),
             }
         }
 
@@ -145,21 +158,28 @@ pub struct Frame<T: LemmaQF> {
     entries: Vec<FrameEntry<T>>,
     fo: Rc<FOModule>,
     cfg: Rc<QuantifierConfig>,
-    conf: Rc<SolverConf>
+    conf: Rc<SolverConf>,
 }
 
 impl<T: LemmaQF> Frame<T> {
-    pub fn new(lemmas: Vec<Lemma<T>>, fo: Rc<FOModule>, cfg: Rc<QuantifierConfig>, conf: Rc<SolverConf>) -> Self {
+    pub fn new(
+        lemmas: Vec<Lemma<T>>,
+        fo: Rc<FOModule>,
+        cfg: Rc<QuantifierConfig>,
+        conf: Rc<SolverConf>,
+    ) -> Self {
         Frame {
-            entries: lemmas.into_iter().map(|lemma|
-                FrameEntry {
+            entries: lemmas
+                .into_iter()
+                .map(|lemma| FrameEntry {
                     lemma: lemma.clone(),
                     weakened: vec![lemma],
-                    progress: false }
-            ).collect_vec(),
+                    progress: false,
+                })
+                .collect_vec(),
             fo,
             cfg,
-            conf
+            conf,
         }
     }
 
@@ -169,13 +189,20 @@ impl<T: LemmaQF> Frame<T> {
     }
 
     /// Get a counter-example to induction which extends a specific model.
-    pub fn get_cex_extend(&mut self, model: &Model, start_at: Option<&mut (usize, usize)>) -> Option<Model> {
+    pub fn get_cex_extend(
+        &mut self,
+        model: &Model,
+        start_at: Option<&mut (usize, usize)>,
+    ) -> Option<Model> {
         let hyp = vec![model.to_term()];
         let mut default_start = (0, 0);
         let i = start_at.unwrap_or(&mut default_start);
         while i.0 < self.entries.len() {
             while i.1 < self.entries[i.0].weakened.len() {
-                if let Some(models) = self.fo.trans_cex(&self.conf, &hyp, &self.entries[i.0].weakened[i.1].to_term()) {
+                if let Some(models) =
+                    self.fo
+                        .trans_cex(&self.conf, &hyp, &self.entries[i.0].weakened[i.1].to_term())
+                {
                     return Some(models.1);
                 }
 
@@ -195,7 +222,10 @@ impl<T: LemmaQF> Frame<T> {
         let i = start_at.unwrap_or(&mut default_start);
         while i.0 < self.entries.len() {
             while i.1 < self.entries[i.0].weakened.len() {
-                if let Some(model) = self.fo.init_cex(&self.conf, &self.entries[i.0].weakened[i.1].to_term()) {
+                if let Some(model) = self
+                    .fo
+                    .init_cex(&self.conf, &self.entries[i.0].weakened[i.1].to_term())
+                {
                     return Some(model);
                 }
 
@@ -210,12 +240,20 @@ impl<T: LemmaQF> Frame<T> {
     }
 
     /// Get a counter-example to induction which is a transition from the current frame.
-    pub fn get_cex_trans(&mut self, frame: &[Term], start_at: Option<&mut (usize, usize)>) -> Option<(Model, Model)> {
+    pub fn get_cex_trans(
+        &mut self,
+        frame: &[Term],
+        start_at: Option<&mut (usize, usize)>,
+    ) -> Option<(Model, Model)> {
         let mut default_start = (0, 0);
         let i = start_at.unwrap_or(&mut default_start);
         while i.0 < self.entries.len() {
             while i.1 < self.entries[i.0].weakened.len() {
-                if let Some(models) = self.fo.trans_cex(&self.conf, frame, &self.entries[i.0].weakened[i.1].to_term()) {
+                if let Some(models) = self.fo.trans_cex(
+                    &self.conf,
+                    frame,
+                    &self.entries[i.0].weakened[i.1].to_term(),
+                ) {
                     return Some(models);
                 }
 
@@ -228,10 +266,16 @@ impl<T: LemmaQF> Frame<T> {
 
         None
     }
-    
+
     /// Weaken the frame to satisfy a model.
-    pub fn weaken<F>(&mut self, model: &Model, filter: F, atoms: &[Term], start_at: Option<(usize, usize)>) 
-        where F: Fn(&Lemma<T>) -> bool
+    pub fn weaken<F>(
+        &mut self,
+        model: &Model,
+        filter: F,
+        atoms: &[Term],
+        start_at: Option<(usize, usize)>,
+    ) where
+        F: Fn(&Lemma<T>) -> bool,
     {
         let mut i = start_at.unwrap_or((0, 0));
         while i.0 < self.entries.len() {
@@ -245,9 +289,14 @@ impl<T: LemmaQF> Frame<T> {
                     // since the lemmas are maintained so that there will never be
                     // a lemma which subsumes another.
                     new_lemmas.retain(&filter);
-                    new_lemmas.retain(|new_lemma|
-                        !self.entries.iter().map(|e| &e.weakened).flatten().any(|l| l.subsumes(new_lemma))
-                    );
+                    new_lemmas.retain(|new_lemma| {
+                        !self
+                            .entries
+                            .iter()
+                            .map(|e| &e.weakened)
+                            .flatten()
+                            .any(|l| l.subsumes(new_lemma))
+                    });
                     self.entries[i.0].weakened.append(&mut new_lemmas);
                 } else {
                     i.1 += 1;
@@ -271,14 +320,17 @@ impl<T: LemmaQF> Frame<T> {
                 match self.entries[i].weakened.len() {
                     0 => {
                         updated = true;
-                    },
+                    }
                     1 => {
                         self.entries[i].lemma = self.entries[i].weakened[0].clone();
                         self.entries[i].progress = false;
                         updated = true;
-                    },
-                    _ => if increasing && prog_index.is_none() { // || self.entries[i].weakened.len() < self.entries[prog_index.unwrap()].weakened.len() {
-                        prog_index = Some(i);
+                    }
+                    _ => {
+                        if increasing && prog_index.is_none() {
+                            // || self.entries[i].weakened.len() < self.entries[prog_index.unwrap()].weakened.len() {
+                            prog_index = Some(i);
+                        }
                     }
                 }
             }
@@ -296,7 +348,7 @@ impl<T: LemmaQF> Frame<T> {
                 self.entries.push(FrameEntry {
                     lemma: w.clone(),
                     weakened: vec![w],
-                    progress: false
+                    progress: false,
                 });
             }
             updated = true;
@@ -328,7 +380,14 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
 
     print!("Prefix length: ");
     stdout.flush().unwrap();
-    let length = stdin.lock().lines().next().unwrap().unwrap().parse::<usize>().unwrap();
+    let length = stdin
+        .lock()
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
 
     println!();
 
@@ -342,7 +401,7 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
             "*" => None,
             "F" => Some(Quantifier::Forall),
             "E" => Some(Quantifier::Exists),
-            _ => panic!("Invalid quantifier entered.")
+            _ => panic!("Invalid quantifier entered."),
         });
 
         let sort = Sort::Id(parts.next().unwrap().to_string());
@@ -359,13 +418,37 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
 
     print!("k-pDNF # of cubes: ");
     stdout.flush().unwrap();
-    kpdnf = stdin.lock().lines().next().unwrap().unwrap().parse::<usize>().unwrap();
+    kpdnf = stdin
+        .lock()
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
 
     println!();
 
     print!("k-pDNF # of literals: ");
     stdout.flush().unwrap();
-    kpdnf_lit = stdin.lock().lines().next().unwrap().unwrap().parse::<usize>().unwrap();
+    kpdnf_lit = stdin
+        .lock()
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
 
-    ( QuantifierConfig { quantifiers, sorts, names, depth: None, include_eq: true }, kpdnf, Some(kpdnf_lit) )
+    (
+        QuantifierConfig {
+            quantifiers,
+            sorts,
+            names,
+            depth: None,
+            include_eq: true,
+        },
+        kpdnf,
+        Some(kpdnf_lit),
+    )
 }

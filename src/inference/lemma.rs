@@ -3,26 +3,24 @@
 
 //! Handle lemmas used in inference.
 
-use itertools::Itertools;
 use crate::{
-    fly::{
-        syntax::*, semantics::*
-    },
-    term::subst::*
+    fly::{semantics::*, syntax::*},
+    term::subst::*,
 };
+use itertools::Itertools;
 
 impl Term {
     /// Negate a term by removing the outer UOp::Not, or adding one.
     pub fn flip(&self) -> Term {
         match self {
             Term::UnaryOp(UOp::Not, t) => t.as_ref().clone(),
-            _ => Term::UnaryOp(UOp::Not, Box::new(self.clone()))
+            _ => Term::UnaryOp(UOp::Not, Box::new(self.clone())),
         }
     }
 }
 
 /// LemmaQF defines the functionality of the quantifier-free part of a lemma,
-/// 
+///
 pub trait LemmaQF: Clone {
     /// Check whether one LemmaQF subsumes another.
     /// The subsumption relation is assumed to respect semantic consequence;
@@ -52,22 +50,26 @@ pub struct QuantifierConfig {
     // TODO: Add EPR coercion indication
     // pub epr: bool,
     pub depth: Option<usize>,
-    pub include_eq: bool
+    pub include_eq: bool,
 }
 
 impl QuantifierConfig {
     /// Wrap the quantifier-free part of a lemma with the "strongest" possible quantification
     /// in the quantifier configuration. When applied to quantifier-free `false`, this yields
     /// the strongest possible Lemma w.r.t subsumption.
-    pub fn quantify_false<T: LemmaQF>(&self, lemma_qf: T) -> Lemma<T>{
+    pub fn quantify_false<T: LemmaQF>(&self, lemma_qf: T) -> Lemma<T> {
         Lemma::<T> {
-            quantifiers: self.quantifiers.iter().map(|q| match q {
-                Some(Quantifier::Exists) => Quantifier::Exists,
-                _ => Quantifier::Forall,
-            }).collect(),
+            quantifiers: self
+                .quantifiers
+                .iter()
+                .map(|q| match q {
+                    Some(Quantifier::Exists) => Quantifier::Exists,
+                    _ => Quantifier::Forall,
+                })
+                .collect(),
             sorts: self.sorts.clone(),
             names: self.names.clone(),
-            lemma_qf: lemma_qf
+            lemma_qf: lemma_qf,
         }
     }
 
@@ -78,7 +80,10 @@ impl QuantifierConfig {
             sorted_vars[signature.sort_idx(&self.sorts[i])].append(&mut self.names[i].clone());
         }
 
-        signature.terms_by_sort(&sorted_vars, self.depth, self.include_eq).pop().unwrap()
+        signature
+            .terms_by_sort(&sorted_vars, self.depth, self.include_eq)
+            .pop()
+            .unwrap()
     }
 }
 
@@ -88,7 +93,7 @@ pub struct Lemma<T: LemmaQF> {
     quantifiers: Vec<Quantifier>,
     sorts: Vec<Sort>,
     names: Vec<Vec<String>>,
-    lemma_qf: T
+    lemma_qf: T,
 }
 
 /// Insert a lemma into a Vec of lemmas only if it isn't subsumed by another,
@@ -100,7 +105,7 @@ pub fn insert_lemma<T: LemmaQF>(lemma_vec: &mut Vec<Lemma<T>>, lemma: Lemma<T>) 
     }
 }
 
-pub fn merge_lemmas<T: LemmaQF>(mut v1: Vec<Lemma<T>>, mut v2: Vec<Lemma<T>>) -> Vec<Lemma<T>>{
+pub fn merge_lemmas<T: LemmaQF>(mut v1: Vec<Lemma<T>>, mut v2: Vec<Lemma<T>>) -> Vec<Lemma<T>> {
     v1.retain(|l1| !v2.iter().any(|l2| l2.subsumes(l1)));
     v2.retain(|l2| !v1.iter().any(|l1| l1.subsumes(l2)));
     v1.append(&mut v2);
@@ -119,10 +124,14 @@ impl<T: LemmaQF> Lemma<T> {
         for i in (0..self.quantifiers.len()).rev() {
             term = Term::Quantified {
                 quantifier: self.quantifiers[i],
-                binders: self.names[i].iter().map(|n| Binder {
-                    name: n.clone(), typ: Some(self.sorts[i].clone())
-                }).collect(),
-                body: Box::new(term)
+                binders: self.names[i]
+                    .iter()
+                    .map(|n| Binder {
+                        name: n.clone(),
+                        typ: Some(self.sorts[i].clone()),
+                    })
+                    .collect(),
+                body: Box::new(term),
             }
         }
 
@@ -135,12 +144,13 @@ impl<T: LemmaQF> Lemma<T> {
         // Check whether lemmas have the same quantifiers, while allowing a universal
         // quantifier in `self` to be existential in `other`.
         if {
-            self.quantifiers.len() != other.quantifiers.len() ||
-            (0..self.quantifiers.len()).any(|i| {
-                self.sorts[i] != other.sorts[i] ||
-                self.names[i].len() != other.names[i].len() ||
-                (self.quantifiers[i] == Quantifier::Exists && other.quantifiers[i] == Quantifier::Forall)
-            })
+            self.quantifiers.len() != other.quantifiers.len()
+                || (0..self.quantifiers.len()).any(|i| {
+                    self.sorts[i] != other.sorts[i]
+                        || self.names[i].len() != other.names[i].len()
+                        || (self.quantifiers[i] == Quantifier::Exists
+                            && other.quantifiers[i] == Quantifier::Forall)
+                })
         } {
             return false;
         }
@@ -161,11 +171,20 @@ impl<T: LemmaQF> Lemma<T> {
             substs = new_substs;
         }
 
-        substs.iter().any(|s| self.lemma_qf.substitute(s).subsumes(&other.lemma_qf))
+        substs
+            .iter()
+            .any(|s| self.lemma_qf.substitute(s).subsumes(&other.lemma_qf))
     }
 
     /// Recursively weaken lemma according to a model and a quantifier configuration.
-    fn weaken_rec(&self, model: &Model, cfg: &QuantifierConfig, atoms: &[Term], assignment: &Assignment, index: usize) -> Vec<Self> {
+    fn weaken_rec(
+        &self,
+        model: &Model,
+        cfg: &QuantifierConfig,
+        atoms: &[Term],
+        assignment: &Assignment,
+        index: usize,
+    ) -> Vec<Self> {
         let mut weakened: Vec<Self> = vec![];
 
         // Base case: quantifier-free weakening.
@@ -175,39 +194,46 @@ impl<T: LemmaQF> Lemma<T> {
             model.flip_to_sat(&mut terms, Some(assignment));
 
             for qf in self.lemma_qf.weaken(terms).into_iter() {
-                insert_lemma(&mut weakened, Lemma {
-                    quantifiers: vec![],
-                    sorts: vec![],
-                    names: vec![],
-                    lemma_qf: qf
-                });
+                insert_lemma(
+                    &mut weakened,
+                    Lemma {
+                        quantifiers: vec![],
+                        sorts: vec![],
+                        names: vec![],
+                        lemma_qf: qf,
+                    },
+                );
             }
 
-            return weakened
+            return weakened;
         }
-        
+
         let mut base_lemma = self.clone();
         base_lemma.quantifiers.remove(0);
         base_lemma.sorts.remove(0);
         base_lemma.names.remove(0);
 
         // Recursion: univeral quantification case.
-        if self.quantifiers[0] == Quantifier::Forall && 
-                (cfg.quantifiers[index] == None || cfg.quantifiers[index] == Some(Quantifier::Forall)) {
+        if self.quantifiers[0] == Quantifier::Forall
+            && (cfg.quantifiers[index] == None
+                || cfg.quantifiers[index] == Some(Quantifier::Forall))
+        {
             weakened.push(base_lemma.clone());
             let mut new_assignment = assignment.clone();
-            let asgn_iter =
-                (0..cfg.names[index].len())
+            let asgn_iter = (0..cfg.names[index].len())
                 .map(|_| 0..model.universe[model.signature.sort_idx(&cfg.sorts[index])])
                 .multi_cartesian_product();
             for es in asgn_iter {
                 for i in 0..es.len() {
                     new_assignment.insert(cfg.names[index][i].clone(), es[i]);
                 }
-                
+
                 let mut new_weakened: Vec<Self> = vec![];
                 for lemma in weakened.iter() {
-                    new_weakened = merge_lemmas(new_weakened, lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1));
+                    new_weakened = merge_lemmas(
+                        new_weakened,
+                        lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1),
+                    );
                 }
 
                 weakened = new_weakened;
@@ -227,16 +253,17 @@ impl<T: LemmaQF> Lemma<T> {
         // Recursion: existential quantification case.
         if cfg.quantifiers[index] == None || cfg.quantifiers[index] == Some(Quantifier::Exists) {
             let mut new_assignment = assignment.clone();
-            let asgn_iter =
-                (0..cfg.names[index].len())
+            let asgn_iter = (0..cfg.names[index].len())
                 .map(|_| 0..model.universe[model.signature.sort_idx(&cfg.sorts[index])])
                 .multi_cartesian_product();
             for es in asgn_iter {
                 for i in 0..es.len() {
                     new_assignment.insert(cfg.names[index][i].clone(), es[i]);
                 }
-                
-                for mut lemma in base_lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1) {
+
+                for mut lemma in
+                    base_lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1)
+                {
                     lemma.quantifiers.insert(0, Quantifier::Exists);
                     lemma.sorts.insert(0, cfg.sorts[index].clone());
                     lemma.names.insert(0, cfg.names[index].clone());
@@ -249,7 +276,12 @@ impl<T: LemmaQF> Lemma<T> {
     }
 
     /// Weaken lemma according to a model and a quantifier configuration.
-    pub fn weaken(&self, model: &Model, cfg: &QuantifierConfig, atoms: Option<&[Term]>) -> Vec<Self> {
+    pub fn weaken(
+        &self,
+        model: &Model,
+        cfg: &QuantifierConfig,
+        atoms: Option<&[Term]>,
+    ) -> Vec<Self> {
         if let Some(atoms_v) = atoms {
             self.weaken_rec(model, cfg, atoms_v, &Assignment::new(), 0)
         } else {
@@ -271,9 +303,12 @@ mod tests {
         let cfg: QuantifierConfig = QuantifierConfig {
             quantifiers: vec![None, None],
             sorts: vec![typ(1), typ(3)],
-            names: vec![vec!["x11".to_string()], vec!["x31".to_string(), "x32".to_string()]],
+            names: vec![
+                vec!["x11".to_string()],
+                vec!["x31".to_string(), "x32".to_string()],
+            ],
             depth: None,
-            include_eq: true
+            include_eq: true,
         };
 
         let sig = Signature {

@@ -4,15 +4,12 @@
 use std::rc::Rc;
 
 use crate::{
-    verify::SolverConf,
-    fly::{
-        syntax::Module,
-        semantics::Model
-    },
+    fly::{semantics::Model, syntax::Module},
     inference::{
+        basics::{input_cfg, FOModule, Frame},
         pdnf::PDNF,
-        basics::{FOModule, Frame, input_cfg}
     },
+    verify::SolverConf,
 };
 
 /// Run a simple fixpoint algorithm on the configured lemma domain.
@@ -35,17 +32,18 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
 
     let (cfg, kpdnf, kpdnf_lit) = input_cfg(&m.signature);
     let cfg = Rc::new(cfg);
-    
+
     let mut frame = Frame::new(
         vec![cfg.quantify_false(PDNF::get_false(kpdnf, kpdnf_lit))],
-        fo.clone(), cfg.clone(), conf.clone()
+        fo.clone(),
+        cfg.clone(),
+        conf.clone(),
     );
     let mut frame_t = frame.to_terms();
     let mut models: Vec<Model> = vec![];
 
     let print = |frame: &Frame<_>, s: &String| {
-        println!("[{}, {}] {}",
-            frame.len(), frame.len_weakened(), s);
+        println!("[{}, {}] {}", frame.len(), frame.len_weakened(), s);
     };
 
     let atoms = cfg.atoms(&m.signature);
@@ -57,7 +55,7 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
     let mut i_init = (0, 0);
     while let Some(model) = frame.get_cex_init(Some(&mut i_init)) {
         print(&frame, &"CTI found, type=initial".to_string());
-        frame.weaken(&model,  |_| true,  &atoms, Some(i_init));
+        frame.weaken(&model, |_| true, &atoms, Some(i_init));
         if extend_models {
             models.push(model);
         }
@@ -72,7 +70,7 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
             while !models.is_empty() {
                 if let Some(model) = frame.get_cex_extend(&models[0], Some(&mut i_extend)) {
                     print(&frame, &"CTI found, type=extended".to_string());
-                    frame.weaken(&model,  |_| true, &atoms, Some(i_extend));
+                    frame.weaken(&model, |_| true, &atoms, Some(i_extend));
                     models.push(model);
                     print(&frame, &"Frame weakened".to_string());
                 } else {

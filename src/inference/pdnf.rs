@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use crate::{
+    fly::syntax::{BinOp, NOp, Term, UOp},
     inference::lemma::LemmaQF,
-    fly::syntax::{Term, UOp, BinOp, NOp},
-    term::subst::{Substitution, substitute_qf}
+    term::subst::{substitute_qf, Substitution},
 };
 
 /// A pDNF is a disjunction of literals and cubes, with some limit on the number
@@ -14,13 +14,18 @@ pub struct PDNF {
     n_cubes: usize,
     n_literals: Option<usize>,
     literals: Vec<Term>,
-    cubes: Vec<Vec<Term>>
+    cubes: Vec<Vec<Term>>,
 }
 
 impl PDNF {
     /// Get a pDNF formula which is equivalent to false.
     pub fn get_false(n_cubes: usize, n_literals: Option<usize>) -> Self {
-        PDNF { n_cubes, n_literals, literals: vec![], cubes: vec![] }
+        PDNF {
+            n_cubes,
+            n_literals,
+            literals: vec![],
+            cubes: vec![],
+        }
     }
 
     /// Add a literal to the pDNF, if limit not reached.
@@ -33,14 +38,16 @@ impl PDNF {
 
         let mut literals = vec![literal];
         let mut pdnf = self.clone();
-        
+
         while let Some(literal) = literals.pop() {
             if pdnf.literals.contains(&literal) {
                 continue;
             }
 
             let neg_lit = literal.flip();
-            if pdnf.literals.contains(&neg_lit) || (pdnf.n_literals.is_some() && pdnf.literals.len() >= pdnf.n_literals.unwrap()) {
+            if pdnf.literals.contains(&neg_lit)
+                || (pdnf.n_literals.is_some() && pdnf.literals.len() >= pdnf.n_literals.unwrap())
+            {
                 return None;
             }
 
@@ -64,15 +71,19 @@ impl PDNF {
     /// Add a cube to the pDNF. (Ignores cube limit -- see `PDNF.weaken`.)
     fn add_cube(&self, mut cube: Vec<Term>) -> Option<PDNF> {
         if cube.iter().any(|t| self.literals.contains(t)) {
-            return Some(self.clone())
+            return Some(self.clone());
         }
 
         cube.retain(|t| !self.literals.contains(&t.flip()));
 
-        if self.cubes.iter().any(|c| c.iter().all(|t| cube.contains(t))){
+        if self
+            .cubes
+            .iter()
+            .any(|c| c.iter().all(|t| cube.contains(t)))
+        {
             return Some(self.clone());
         }
-        
+
         match cube.len() {
             0 => None,
             1 => self.add_literal(cube.pop().unwrap()),
@@ -88,7 +99,12 @@ impl PDNF {
     // For testing. No correctness checks are performed.
     #[allow(dead_code)]
     fn from_dnf(n_cubes: usize, n_literals: Option<usize>, t: &Term) -> Self {
-        let mut pdnf = PDNF { n_cubes, n_literals, literals: vec![], cubes: vec![] };
+        let mut pdnf = PDNF {
+            n_cubes,
+            n_literals,
+            literals: vec![],
+            cubes: vec![],
+        };
         if let Term::NAryOp(NOp::Or, v_or) = t {
             for c in v_or {
                 if let Term::NAryOp(NOp::And, v_and) = c {
@@ -120,13 +136,14 @@ impl LemmaQF for PDNF {
     // such that c is a superset of c'.
     fn subsumes(&self, other: &Self) -> bool {
         assert_eq!(self.n_cubes, other.n_cubes);
-        self.literals.iter().all(|t| other.literals.contains(t)) &&
-        self.cubes.iter().all(|c| {
-            c.iter().any(|t| other.literals.contains(t)) ||
-            other.cubes.iter().any(|c_other| {
-                c_other.iter().all(|t| c.contains(t))
+        self.literals.iter().all(|t| other.literals.contains(t))
+            && self.cubes.iter().all(|c| {
+                c.iter().any(|t| other.literals.contains(t))
+                    || other
+                        .cubes
+                        .iter()
+                        .any(|c_other| c_other.iter().all(|t| c.contains(t)))
             })
-        })
     }
 
     fn weaken(&self, cube: Vec<Term>) -> Vec<Self> {
@@ -134,7 +151,7 @@ impl LemmaQF for PDNF {
         let pdnf;
         match self.add_cube(cube.into_iter().collect()) {
             Some(p) => pdnf = p,
-            None => return vec![]
+            None => return vec![],
         }
 
         if pdnf.cubes.len() <= self.n_cubes {
@@ -154,8 +171,12 @@ impl LemmaQF for PDNF {
             }
 
             // Weaken by intersecting a cube.
-            for j in i+1..=self.n_cubes {
-                let intersection = pdnf.cubes[i].iter().filter(|&t| pdnf.cubes[j].contains(t)).cloned().collect();
+            for j in i + 1..=self.n_cubes {
+                let intersection = pdnf.cubes[i]
+                    .iter()
+                    .filter(|&t| pdnf.cubes[j].contains(t))
+                    .cloned()
+                    .collect();
                 if let Some(p) = pdnf.add_cube(intersection) {
                     weakened.push(p);
                 }
@@ -167,21 +188,36 @@ impl LemmaQF for PDNF {
 
     fn substitute(&self, substitution: &Substitution) -> Self {
         PDNF {
-            n_cubes: self.n_cubes, n_literals: self.n_literals,
-            literals: self.literals.iter().map(|t| substitute_qf(t, substitution)).collect(),
-            cubes: self.cubes.iter().map(|c| c.iter().map(|t| substitute_qf(t, substitution)).collect()).collect()
+            n_cubes: self.n_cubes,
+            n_literals: self.n_literals,
+            literals: self
+                .literals
+                .iter()
+                .map(|t| substitute_qf(t, substitution))
+                .collect(),
+            cubes: self
+                .cubes
+                .iter()
+                .map(|c| c.iter().map(|t| substitute_qf(t, substitution)).collect())
+                .collect(),
         }
     }
-    
+
     fn to_term(&self) -> Term {
         let mut or_terms: Vec<Term> = self.literals.iter().cloned().collect();
-        or_terms.append(&mut self.cubes.iter().map(|c| {
-            if c.is_empty() {
-                Term::Id("true".to_string())
-            } else {
-                Term::NAryOp(NOp::And, c.iter().cloned().collect())
-            }
-        }).collect());
+        or_terms.append(
+            &mut self
+                .cubes
+                .iter()
+                .map(|c| {
+                    if c.is_empty() {
+                        Term::Id("true".to_string())
+                    } else {
+                        Term::NAryOp(NOp::And, c.iter().cloned().collect())
+                    }
+                })
+                .collect(),
+        );
 
         if or_terms.is_empty() {
             Term::Id("false".to_string())
@@ -198,14 +234,38 @@ mod tests {
 
     #[test]
     fn test_add_literal_add_cube() {
-        let p1 = PDNF::from_dnf(2, None, &parse_term(&"a | !b | (c & d) | (!d & e & !f & g)").unwrap());
-        let p1_add_nc = PDNF::from_dnf(2, None, &parse_term(&"a | !b | !c | d | (e & !f & g)").unwrap());
+        let p1 = PDNF::from_dnf(
+            2,
+            None,
+            &parse_term(&"a | !b | (c & d) | (!d & e & !f & g)").unwrap(),
+        );
+        let p1_add_nc = PDNF::from_dnf(
+            2,
+            None,
+            &parse_term(&"a | !b | !c | d | (e & !f & g)").unwrap(),
+        );
         let p1_add_nd = PDNF::from_dnf(2, None, &parse_term(&"a | !b | c | !d").unwrap());
-        let p1_add_e_nf = PDNF::from_dnf(2, None, &parse_term(&"a | !b | (c & d) | (e & !f)").unwrap());
+        let p1_add_e_nf = PDNF::from_dnf(
+            2,
+            None,
+            &parse_term(&"a | !b | (c & d) | (e & !f)").unwrap(),
+        );
 
-        let p2 = PDNF::from_dnf(3, None, &parse_term(&"a | !b | (c & d) | (!d & c)").unwrap());
-        let p2_add_nd_ne = PDNF::from_dnf(3, None, &parse_term(&"a | !b | (c & d) | (!d & c) | (!d & !e)").unwrap());
-        let p3 = PDNF::from_dnf(3, None, &parse_term(&"a | !b | (c & d) | (!d & e) | (!d & !e)").unwrap());
+        let p2 = PDNF::from_dnf(
+            3,
+            None,
+            &parse_term(&"a | !b | (c & d) | (!d & c)").unwrap(),
+        );
+        let p2_add_nd_ne = PDNF::from_dnf(
+            3,
+            None,
+            &parse_term(&"a | !b | (c & d) | (!d & c) | (!d & !e)").unwrap(),
+        );
+        let p3 = PDNF::from_dnf(
+            3,
+            None,
+            &parse_term(&"a | !b | (c & d) | (!d & e) | (!d & !e)").unwrap(),
+        );
 
         let a = parse_term(&"a").unwrap();
         let b = parse_term(&"b").unwrap();
@@ -222,22 +282,51 @@ mod tests {
         assert!(p1.add_literal(c.flip()).unwrap().equiv(&p1_add_nc));
         assert!(p1.add_literal(d.flip()).unwrap().equiv(&p1_add_nd));
 
-        assert!(p1.add_cube(vec![b.flip(), c.clone(), d.clone()].into_iter().collect()).unwrap().equiv(&p1));
-        assert!(p1.add_cube(vec![a.flip(), c.clone(), d.clone()].into_iter().collect()).unwrap().equiv(&p1));
+        assert!(p1
+            .add_cube(vec![b.flip(), c.clone(), d.clone()].into_iter().collect())
+            .unwrap()
+            .equiv(&p1));
+        assert!(p1
+            .add_cube(vec![a.flip(), c.clone(), d.clone()].into_iter().collect())
+            .unwrap()
+            .equiv(&p1));
 
-        assert!(p1.add_cube(vec![b.clone(), c.flip(), a.flip()].into_iter().collect()).unwrap().equiv(&p1_add_nc));
-        assert!(p1.add_cube(vec![b.clone(), e.clone(), f.flip()].into_iter().collect()).unwrap().equiv(&p1_add_e_nf));
+        assert!(p1
+            .add_cube(vec![b.clone(), c.flip(), a.flip()].into_iter().collect())
+            .unwrap()
+            .equiv(&p1_add_nc));
+        assert!(p1
+            .add_cube(vec![b.clone(), e.clone(), f.flip()].into_iter().collect())
+            .unwrap()
+            .equiv(&p1_add_e_nf));
 
-        assert_eq!(p2.add_cube(vec![a.flip(), b.clone(), c.flip()].into_iter().collect()), None);
-        assert_eq!(p3.add_cube(vec![a.flip(), b.clone(), c.flip()].into_iter().collect()), None);
+        assert_eq!(
+            p2.add_cube(vec![a.flip(), b.clone(), c.flip()].into_iter().collect()),
+            None
+        );
+        assert_eq!(
+            p3.add_cube(vec![a.flip(), b.clone(), c.flip()].into_iter().collect()),
+            None
+        );
 
-        assert!(p2.add_cube(vec![a.flip(), d.flip(), e.flip()].into_iter().collect()).unwrap().equiv(&p2_add_nd_ne));
+        assert!(p2
+            .add_cube(vec![a.flip(), d.flip(), e.flip()].into_iter().collect())
+            .unwrap()
+            .equiv(&p2_add_nd_ne));
     }
 
     #[test]
     fn test_subsumes_weaken() {
-        let p1 = PDNF::from_dnf(2, None, &parse_term(&"a | b | (c & d) | (e & f & g)").unwrap());
-        let p2 = PDNF::from_dnf(2, None, &parse_term(&"a | b | d | (!e & f) | (f & g)").unwrap());
+        let p1 = PDNF::from_dnf(
+            2,
+            None,
+            &parse_term(&"a | b | (c & d) | (e & f & g)").unwrap(),
+        );
+        let p2 = PDNF::from_dnf(
+            2,
+            None,
+            &parse_term(&"a | b | d | (!e & f) | (f & g)").unwrap(),
+        );
 
         let c1 = vec![
             parse_term(&"!a").unwrap(),

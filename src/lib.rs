@@ -3,11 +3,11 @@
 
 mod command;
 mod fly;
+mod inference;
 mod smtlib;
 mod solver;
 mod term;
 mod verify;
-mod inference;
 
 #[doc(hidden)]
 pub use command::App;

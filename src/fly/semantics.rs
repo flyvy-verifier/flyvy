@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt::Write};
 use itertools::Itertools;
 use serde::Serialize;
 
-use super::syntax::{BinOp, NOp, Quantifier, RelationDecl, Signature, Sort, Term, UOp, Binder};
+use super::syntax::{BinOp, Binder, NOp, Quantifier, RelationDecl, Signature, Sort, Term, UOp};
 
 use BinOp::*;
 use NOp::*;
@@ -330,11 +330,18 @@ impl Model {
         for i in 0..sort_cnt {
             if let Sort::Id(sort_name) = &self.signature.sorts[i] {
                 // EDEN: We should use some convention so the names here will not be available for use elsewhere.
-                exists_vars.push((0..self.universe[i]).map(|j| format!("{}_{}", sort_name.clone(), j)).collect());
+                exists_vars.push(
+                    (0..self.universe[i])
+                        .map(|j| format!("{}_{}", sort_name.clone(), j))
+                        .collect(),
+                );
                 univ_vars.push(format!("{}_{}", sort_name.clone(), self.universe[i]));
                 for (j, name) in exists_vars[i].iter().enumerate() {
                     assignment.insert(name.clone(), j);
-                    exists_binders.push(Binder { name: name.clone(), typ: Some(self.signature.sorts[i].clone()) });
+                    exists_binders.push(Binder {
+                        name: name.clone(),
+                        typ: Some(self.signature.sorts[i].clone()),
+                    });
                 }
             } else {
                 panic!("Bool sort in signature.")
@@ -350,28 +357,40 @@ impl Model {
             // Note that the first self.universe[i] terms of sort i are exist_vars[i].
             // Add inequalities for exists_vars of sort i.
             for v in (0..self.universe[i]).combinations(2) {
-                new_terms.push(
-                    Term::BinOp(BinOp::NotEquals, Box::new(terms[i][v[0]].clone()), Box::new(terms[i][v[1]].clone())));
+                new_terms.push(Term::BinOp(
+                    BinOp::NotEquals,
+                    Box::new(terms[i][v[0]].clone()),
+                    Box::new(terms[i][v[1]].clone()),
+                ));
             }
             // Add equalities for the other terms of sort i.
             for j in self.universe[i]..terms[i].len() {
                 let elem = self.eval(&terms[i][j], Some(&assignment));
-                new_terms.push(
-                    Term::BinOp(
-                        BinOp::Equals,
-                        Box::new(terms[i][j].clone()),
-                        Box::new(terms[i][elem].clone())));
+                new_terms.push(Term::BinOp(
+                    BinOp::Equals,
+                    Box::new(terms[i][j].clone()),
+                    Box::new(terms[i][elem].clone()),
+                ));
             }
             // Add size constraint for sort i.
-            new_terms.push(Term::Quantified { 
+            new_terms.push(Term::Quantified {
                 quantifier: Quantifier::Forall,
-                binders: vec![Binder { name: univ_vars[i].clone(), typ: Some(self.signature.sorts[i].clone())}],
-                body: Box::new(Term::NAryOp(NOp::Or,
-                    (0..self.universe[i]).map(|j| 
-                        Term::BinOp(
-                            BinOp::Equals,
-                            Box::new(Term::Id(univ_vars[i].clone())),
-                            Box::new(Term::Id(exists_vars[i][j].clone())))).collect()))
+                binders: vec![Binder {
+                    name: univ_vars[i].clone(),
+                    typ: Some(self.signature.sorts[i].clone()),
+                }],
+                body: Box::new(Term::NAryOp(
+                    NOp::Or,
+                    (0..self.universe[i])
+                        .map(|j| {
+                            Term::BinOp(
+                                BinOp::Equals,
+                                Box::new(Term::Id(univ_vars[i].clone())),
+                                Box::new(Term::Id(exists_vars[i][j].clone())),
+                            )
+                        })
+                        .collect(),
+                )),
             });
             // Add the above to the Bool terms.
             terms[sort_cnt].append(&mut new_terms);
@@ -380,7 +399,7 @@ impl Model {
         Term::Quantified {
             quantifier: Quantifier::Exists,
             binders: exists_binders,
-            body: Box::new(Term::NAryOp(NOp::And, terms.pop().unwrap()))
+            body: Box::new(Term::NAryOp(NOp::And, terms.pop().unwrap())),
         }
     }
 }
@@ -868,7 +887,6 @@ mod tests {
             universe,
             interp: vec![r1_interp, r2_interp, c1_interp, c2_interp],
         };
-
 
         fst_model.wf();
         snd_model.wf();

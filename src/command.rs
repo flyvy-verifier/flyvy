@@ -1,14 +1,14 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::{env, fs, path::PathBuf, process};
 use std::rc::Rc;
+use std::{env, fs, path::PathBuf, process};
 
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer},
+    inference::run_fixpoint,
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
-    inference::run_fixpoint,
 };
 use clap::Args;
 use codespan_reporting::{
@@ -181,7 +181,8 @@ impl InferArgs {
         );
 
         SolverConf {
-            backend: GenericBackend::new(backend_type, &solver_bin), tee: None,
+            backend: GenericBackend::new(backend_type, &solver_bin),
+            tee: None,
         }
     }
 }
@@ -236,7 +237,7 @@ impl App {
             Command::Infer(ref args @ InferArgs { .. }) => {
                 let conf = Rc::new(args.get_solver_conf());
                 run_fixpoint(conf, &m, args.extend_models, args.disj);
-            },
+            }
             Command::Inline { .. } => {
                 let mut m = m;
                 m.inline_defs();
