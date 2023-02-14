@@ -68,7 +68,7 @@ impl PDNF {
         return Some(pdnf);
     }
 
-    /// Add a cube to the pDNF. (Ignores cube limit -- see `PDNF.weaken`.)
+    /// Add a cube to the pDNF. (Ignores cube limit -- see [`PDNF::weaken`].)
     fn add_cube(&self, mut cube: Vec<Term>) -> Option<PDNF> {
         if cube.iter().any(|t| self.literals.contains(t)) {
             return Some(self.clone());

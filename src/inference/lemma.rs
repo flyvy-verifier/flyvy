@@ -19,8 +19,15 @@ impl Term {
     }
 }
 
-/// LemmaQF defines the functionality of the quantifier-free part of a lemma,
+/// LemmaQF defines the functionality of the quantifier-free part of a lemma.
+/// An implementation of it should define a subsumption relation between two instances
+/// of Self, as well as a method to weaken an instance of Self to satisfy a quantifier-free
+/// model, represented by the cube of literals that hold on that model.
 ///
+/// For complete description of the subsumption relation and the weakening process,
+/// see the documentation of [`LemmaQF::subsumes`] and [`LemmaQF::weaken`], respectively.
+///
+/// See [`crate::inference::pdnf::PDNF`] for an example implementation of [`LemmaQF`].
 pub trait LemmaQF: Clone {
     /// Check whether one LemmaQF subsumes another.
     /// The subsumption relation is assumed to respect semantic consequence;
@@ -28,12 +35,13 @@ pub trait LemmaQF: Clone {
     /// However, the converse is not ensured.
     fn subsumes(&self, other: &Self) -> bool;
 
-    /// Weaken the LemmaQF so that it would hold on all models satisfying
-    /// the terms in `cube`. Return a Vec of possible weakenings.
+    /// Weaken the LemmaQF so that it would hold on all models satisfying the terms in `cube`.
+    /// Return a Vec of possible weakenings.
+    ///
     /// The weakening process must have the following property:
-    /// If for two instances of LemmaQF, `x` and `y`, it holds that `x.subsumes(&y)`,
-    /// and `cube` subsumes `y`, then there's some `z` in `x.weaken(cube)` such that `z.subsumes(&y)`.
-    /// Moreover, for all `z` in `x.weaken(cube)`, both `x` and `cube` subsume `z`.
+    /// If for two instances of Self, `p` and `q`, it holds that `p.subsumes(&q)`,
+    /// and `cube` implies `q`, then there's some `r` in `p.weaken(cube)` such that `r.subsumes(&q)`.
+    /// Moreover, for all `r` in `p.weaken(cube)`, it holds that `p.subsumes(&r)` and `cube` implies `r`.
     fn weaken(&self, cube: Vec<Term>) -> Vec<Self>;
 
     /// Perform a substitution.
@@ -311,6 +319,7 @@ mod tests {
             include_eq: true,
         };
 
+        // TODO: Generating this data should re-use the parser eventually.
         let sig = Signature {
             sorts: vec![typ(1), typ(2), typ(3)],
             relations: vec![

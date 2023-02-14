@@ -10,7 +10,6 @@ use crate::fly::syntax::Term;
 pub type Substitution = HashMap<String, Term>;
 
 /// Perform a substitution over a quantifier-free term.
-#[allow(dead_code)]
 pub fn substitute_qf(term: &Term, substitution: &Substitution) -> Term {
     match term {
         Term::Id(s) => {
