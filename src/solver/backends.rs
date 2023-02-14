@@ -99,12 +99,13 @@ impl Backend for &GenericBackend {
             .collect();
 
         let mut interps = HashMap::new();
-        // TODO(tej): this should iterate over the signature rather than the
-        // model, since the model might define auxilliary functions that are not
-        // needed. In the process we need to check for models of primed symbols
-        // as well.
         for (symbol, (binders, body)) in &model.symbols {
             if indicators.contains(symbol) {
+                continue;
+            }
+            let symbol_no_primes = symbol.trim_end_matches(|c| c == '\'');
+            // this symbol is not in the signature
+            if !sig.relations.iter().any(|r| r.name == symbol_no_primes) {
                 continue;
             }
             let rel = sig.relation_decl(symbol);
