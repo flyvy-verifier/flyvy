@@ -13,6 +13,8 @@ correctness properties, including safety and liveness.
 
 `cargo run -- verify examples/fail/basic.fly`
 
+`echo -e "1\nF node n1 n2\n0\n3" | cargo run -- infer examples/lockserver.fly`
+
 ### Prerequisites
 
 You'll need Rust (for example, through `rustup`) and recent versions of [Z3](https://github.com/Z3Prover/z3), [CVC4](https://cvc4.github.io/), and [cvc5](https://cvc5.github.io/).
