@@ -63,6 +63,10 @@ struct InferArgs {
     solver: SolverType,
 
     #[arg(long)]
+    /// Output smt2 file alongside input file
+    smt: bool,
+
+    #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
     extend_models: bool,
 
@@ -180,9 +184,16 @@ impl InferArgs {
             solver_default_bin(self.solver),
         );
 
+        let tee = if self.smt {
+            let path = PathBuf::from(&self.file).with_extension("smt2");
+            Some(path)
+        } else {
+            None
+        };
+
         SolverConf {
             backend: GenericBackend::new(backend_type, &solver_bin),
-            tee: None,
+            tee,
         }
     }
 }
