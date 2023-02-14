@@ -328,7 +328,6 @@ impl<T: LemmaQF> Frame<T> {
                     }
                     _ => {
                         if increasing && prog_index.is_none() {
-                            // || self.entries[i].weakened.len() < self.entries[prog_index.unwrap()].weakened.len() {
                             prog_index = Some(i);
                         }
                     }
@@ -342,9 +341,9 @@ impl<T: LemmaQF> Frame<T> {
             self.entries.retain(|e| e.weakened.len() != 0);
         } else if let Some(index) = prog_index {
             let entry = self.entries.remove(index);
-            // println!("    Replacing {} with", &entry.lemma.to_term());
+            println!("    Replacing {} with", &entry.lemma.to_term());
             for w in entry.weakened {
-                // println!("        {}", &w.to_term());
+                println!("        {}", &w.to_term());
                 self.entries.push(FrameEntry {
                     lemma: w.clone(),
                     weakened: vec![w],
