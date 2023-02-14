@@ -11,7 +11,7 @@ correctness properties, including safety and liveness.
 
 ## Try it out
 
-`cargo run -- verify examples/fail/basic.fly`
+`cargo run -- verify examples/lockserver.fly`
 
 ### Prerequisites
 
