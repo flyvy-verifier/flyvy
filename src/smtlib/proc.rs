@@ -390,15 +390,21 @@ impl SmtProc {
         _ = writeln!(self.stdin, "(exit)");
         _ = self.stdin.flush();
         _ = self.child.kill();
-        let wait_time = std::time::Duration::from_millis(10);
-        for _ in 0..100 {
-            let join = self.child.try_wait().expect("could not wait for child");
-            if join.is_some() {
-                return;
-            }
-            std::thread::sleep(wait_time);
-        }
-        panic!("could not wait for solver to properly terminate");
+        _ = self.child.wait();
+
+        // NOTE: the below waits by polling every 10ms; `child.wait()` actually
+        // runs the `wait()` syscall, which cleans up the child process. Without
+        // it, the child becomes a "zombie process" that consumes a pid.
+
+        // let wait_time = std::time::Duration::from_millis(10);
+        // for _ in 0..100 {
+        //     let join = self.child.try_wait().expect("could not wait for child");
+        //     if join.is_some() {
+        //         return;
+        //     }
+        //     std::thread::sleep(wait_time);
+        // }
+        // panic!("could not wait for solver to properly terminate");
     }
 }
 
