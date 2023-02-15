@@ -63,10 +63,6 @@ pub struct SolverCmd {
 }
 
 impl SolverCmd {
-    fn arg<S: AsRef<str>>(&mut self, arg: S) {
-        self.args.push(arg.as_ref().to_string());
-    }
-
     fn args<I, S>(&mut self, args: I)
     where
         I: IntoIterator<Item = S>,
@@ -136,54 +132,47 @@ pub struct CvcConf {
 }
 
 impl CvcConf {
-    fn default_args() -> Vec<String> {
-        vec!["-q", "--no-interactive", "--lang", "smt2"]
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect()
-    }
-
-    fn default_options() -> Vec<(String, String)> {
-        [("incremental", "true"), ("seed", "1")]
-            .map(|(opt, v)| (opt.to_owned(), v.to_owned()))
-            .to_vec()
+    fn new_cvc(cmd: &str, version5: bool) -> Self {
+        let mut cmd = SolverCmd {
+            cmd: cmd.to_string(),
+            args: vec![],
+            options: vec![],
+        };
+        // for CVC4, --lang smt2 is needed when using stdin, but when run on a
+        // file with a .smt2 extension it will automatically use the right input
+        // format.
+        cmd.args(vec!["-q", "--lang", "smt2", "--strict-parsing"]);
+        cmd.option("interactive", "false");
+        cmd.option("incremental", "true");
+        cmd.option("seed", "1");
+        Self { version5, cmd }
     }
 
     pub fn new_cvc4(cmd: &str) -> Self {
-        let cmd = SolverCmd {
-            cmd: cmd.to_string(),
-            args: Self::default_args(),
-            options: Self::default_options(),
-        };
-        Self {
-            version5: false,
-            cmd,
-        }
+        Self::new_cvc(cmd, /*version5*/ false)
     }
 
     pub fn new_cvc5(cmd: &str) -> Self {
-        let cmd = SolverCmd {
-            cmd: cmd.to_string(),
-            args: Self::default_args(),
-            options: Self::default_options(),
-        };
-        Self {
-            version5: true,
-            cmd,
-        }
+        Self::new_cvc(cmd, /*version5*/ true)
     }
 
     /// Enable finite model finding with mbqi.
     pub fn finite_models(&mut self) {
-        self.cmd.arg("--finite-model-find");
         self.cmd.option("finite-model-find", "true");
         if self.version5 {
-            self.cmd.args(["--mbqi", "--fmf-mbqi=fmc"]);
             self.cmd.option("mbqi", "true");
             self.cmd.option("fmf-mbqi", "fmc")
         } else {
-            self.cmd.arg("--mbqi=fmc");
             self.cmd.option("mbqi", "fmc");
+        }
+    }
+
+    /// Enable interleaving enumerative instantiation with other techniques.
+    pub fn interleave_enumerative_instantiation(&mut self) {
+        if self.version5 {
+            self.cmd.option("enum-inst-interleave", "true");
+        } else {
+            self.cmd.option("fs-interleave", "true");
         }
     }
 
@@ -235,6 +224,10 @@ impl SmtProc {
                 [atom_s(format!(":{option}")), atom_s(val)],
             ));
         }
+        // silence a warning from CVC4/CVC5 when run manually without -q
+        // TODO: figure out what a good default logic is (possibly will be
+        // customized to the solver)
+        proc.send(&app("set-logic", vec![atom_s("UFNIA")]));
         Ok(proc)
     }
 

@@ -66,11 +66,13 @@ impl Backend for &GenericBackend {
             SolverType::Cvc4 => {
                 let mut conf = CvcConf::new_cvc4(&self.bin);
                 conf.finite_models();
+                conf.interleave_enumerative_instantiation();
                 conf.done()
             }
             SolverType::Cvc5 => {
                 let mut conf = CvcConf::new_cvc5(&self.bin);
                 conf.finite_models();
+                conf.interleave_enumerative_instantiation();
                 conf.done()
             }
         }
