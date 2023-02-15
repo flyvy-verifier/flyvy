@@ -42,7 +42,7 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
     let mut frame_t = frame.to_terms();
     let mut models: Vec<Model> = vec![];
 
-    let print = |frame: &Frame<_>, s: &String| {
+    let print = |frame: &Frame<_>, s: &str| {
         println!("[{}, {}] {}", frame.len(), frame.len_weakened(), s);
     };
 
@@ -54,12 +54,12 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
     // Begin by overapproximating the initial states.
     let mut i_init = (0, 0);
     while let Some(model) = frame.get_cex_init(Some(&mut i_init)) {
-        print(&frame, &"CTI found, type=initial".to_string());
+        print(&frame, "CTI found, type=initial");
         frame.weaken(&model, |_| true, &atoms, Some(i_init));
         if extend_models {
             models.push(model);
         }
-        print(&frame, &"Frame weakened".to_string());
+        print(&frame, "Frame weakened");
     }
 
     loop {
@@ -69,10 +69,10 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
             let mut i_extend = (0, 0);
             while !models.is_empty() {
                 if let Some(model) = frame.get_cex_extend(&models[0], Some(&mut i_extend)) {
-                    print(&frame, &"CTI found, type=extended".to_string());
+                    print(&frame, "CTI found, type=extended");
                     frame.weaken(&model, |_| true, &atoms, Some(i_extend));
                     models.push(model);
-                    print(&frame, &"Frame weakened".to_string());
+                    print(&frame, "Frame weakened");
                 } else {
                     models.remove(0);
                     i_extend = (0, 0);
@@ -80,12 +80,12 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
             }
 
             if let Some((_, model)) = frame.get_cex_trans(&frame_t, Some(&mut i_trans)) {
-                print(&frame, &"CTI found, type=transition".to_string());
+                print(&frame, "CTI found, type=transition");
                 frame.weaken(&model, |_| true, &atoms, Some(i_trans));
                 if extend_models {
                     models.push(model);
                 }
-                print(&frame, &"Frame weakened".to_string());
+                print(&frame, "Frame weakened");
             } else {
                 break;
             }
@@ -98,7 +98,7 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
 
         frame_t = frame.to_terms();
 
-        print(&frame, &"Frame updated".to_string());
+        print(&frame, "Frame updated");
 
         // Verify safety of updated frame.
         if fo.trans_safe_cex(&conf, &frame_t).is_some() {
