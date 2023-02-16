@@ -6,7 +6,23 @@ Please familiarize yourself with the [Code of Conduct](https://github.com/vmware
 
 Before you start working with temporal-verifier, please read our [Developer Certificate of Origin](https://cla.vmware.com/dco). All contributions to this repository must be signed as described on that page. Your signature certifies that you wrote the patch or have the right to pass it on as an open-source patch.
 
-## TLDR: Must-haves for every commit pushed to this repository
+## Submitting a pull request
+
+* Push your code to a branch on the repository.
+* Create a pull request to merge that branch into `main`.
+* In response to feedback, you can push small commits to the same branch to
+  update the PR; these commits are often easier to review than if you
+  force-push. If a comment is clearly addressed, feel free to mark it as
+  resolved, otherwise leave them to the reviewer as a checklist.
+* If there are merge conflicts, feel free to rebase on top of main, and to
+  squash commits into logical groupings. You can use `git rebase -i origin/main`
+  to do this.
+
+Try to avoid long-lived pull requests, as these lead to more conflicts and get
+harder to review. We aim to merge or close pull requests quickly (say, within a
+month).
+
+## Must-haves for every commit pushed to this repository
 
 * Do not push to `main` without asking. Instead, use a branch and create a pull request.
 * Every commit must be signed (see above). Use `git -s` or otherwise add `Signed-off-by: Your Name <your@email.com>` to the last line of each Git commit message.
@@ -25,19 +41,19 @@ Before you start working with temporal-verifier, please read our [Developer Cert
   * `cargo fmt --check` (We use `cargo fmt` to format all rust code.)
 * Commit messages should generally follow this [style guide](http://chris.beams.io/posts/git-commit/). In short:
   * Use a short summary title, and add a longer body if needed.
-  * Use imperative style ("Fix bug" and not "Fixed bug", "Fixes bug", or "Bugfix"). The title should read like "if you apply it, this commit will ..." or "after applying this commit, the code will...".  
+  * Use imperative style ("Fix bug" and not "Fixed bug", "Fixes bug", or "Bugfix"). The title should read like "if you apply it, this commit will ..." or "after applying this commit, the code will...".
   * Keep the title short, GitHub truncates at 72 charachters.
   * The blank line separating the title from the body is critical (unless you omit the body entirely).
   * The blank line before the `Signed-off-by` is also critical.
-  
+
    Here's an example:
   ```
   Use short title with capital letter and without period
-  
+
   A longer paragraph can explain more (but it's not always needed).
   * Maybe a bullet point
   * Or two
-  
+
   Another paragraph can be used if needed.
   * But multiple small commits are preferred over a large commits
 
