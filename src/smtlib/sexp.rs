@@ -83,13 +83,26 @@ impl fmt::Display for Atom {
     }
 }
 
-impl fmt::Display for Sexp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Sexp {
+    fn estimate_str_len(&self) -> usize {
         match self {
-            Sexp::Atom(s) => write!(f, "{s}"),
-            Sexp::Comment(s) => write!(f, ";{s}"),
+            Sexp::Atom(Atom::I(_)) => 1,
+            Sexp::Atom(Atom::S(s)) => s.len(),
+            Sexp::Comment(s) => 1 + s.len(),
+            Sexp::List(ss) => 2 + ss.len() + ss.iter().map(|s| s.estimate_str_len()).sum::<usize>(),
+        }
+    }
+
+    fn append_to_string(&self, out: &mut String) {
+        match self {
+            Sexp::Atom(s) => out.push_str(&s.to_string()),
+            Sexp::Comment(s) => {
+                out.push(';');
+                out.push_str(s);
+            }
             Sexp::List(ss) => {
-                write!(f, "(")?;
+                out.push('(');
+
                 for (i, s) in ss.iter().enumerate() {
                     let last = i == ss.len() - 1;
                     let this_comment = matches!(s, Sexp::Comment(_));
@@ -100,15 +113,27 @@ impl fmt::Display for Sexp {
                         " "
                     };
                     if this_comment {
-                        write!(f, "\n{s}\n{space}")?;
+                        out.push('\n');
+                        s.append_to_string(out);
+                        out.push('\n');
+                        out.push_str(space);
                     } else {
-                        write!(f, "{s}{space}")?;
+                        s.append_to_string(out);
+                        out.push_str(space);
                     }
                 }
-                write!(f, ")")?;
-                Ok(())
+
+                out.push(')');
             }
         }
+    }
+}
+
+impl fmt::Display for Sexp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = String::with_capacity(self.estimate_str_len());
+        self.append_to_string(&mut s);
+        write!(f, "{s}")
     }
 }
 
