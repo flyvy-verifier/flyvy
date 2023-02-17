@@ -5,7 +5,7 @@ use super::syntax::{Binder, Definition, Module, Proof, Term, ThmStmt};
 fn subst(t: &mut Term, repl: &HashMap<String, &Term>) {
     let go = |t: &mut Term| subst(t, repl);
     match t {
-        Term::Literal(_) => {},
+        Term::Literal(_) => {}
         Term::Id(ref s) => {
             if let Some(&y) = repl.get(s) {
                 *t = y.clone();
@@ -46,7 +46,7 @@ fn inline_def_term(def: &Definition, t: &mut Term) {
     let body = &def.body;
     let go = |t: &mut Term| inline_def_term(def, t);
     match t {
-        Term::Literal(_) => {},
+        Term::Literal(_) => {}
         Term::Id(s) => {
             if s == &def.name {
                 assert_eq!(def.binders.len(), 0, "substitution does not match arity");

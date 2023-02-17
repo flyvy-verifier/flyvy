@@ -64,7 +64,11 @@ grammar parser() for str {
         // note that no space is allowed between relation name and args, so p (q)
         // doesn't parse as a relation call
         t:(@) "(" args:(term() ** (_ "," _)) ")" { Term::App(Box::new(t), args) }
-        s:ident() { Term::Id(s) }
+        s:ident() { match s.as_str() {
+            "false" => Term::Literal(false),
+            "true" => Term::Literal(true),
+            _ => Term::Id(s),
+        } }
         "(" _ t:term() _ ")" { t }
     }
 
