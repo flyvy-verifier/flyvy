@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    env,
     ffi::OsStr,
     fmt::Display,
     fs::{self, File},
@@ -12,10 +13,79 @@ use std::{
 };
 
 use clap::Parser;
+use regex::Regex;
 use serde_derive::Deserialize;
 use walkdir::WalkDir;
 
 const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
+
+fn expected_version(solver: &str) -> &'static str {
+    if solver == "z3" {
+        "Z3 version 4.11.2"
+    } else if solver == "cvc4" {
+        "CVC4 version 1.8"
+    } else if solver == "cvc5" {
+        "cvc5 version 1.0.4"
+    } else {
+        panic!("unexpected solver {solver}")
+    }
+}
+
+fn env_path_fallback(var: &str, fallback: &str) -> String {
+    if let Some(val) = env::var_os(var) {
+        return val.to_string_lossy().into();
+    }
+    fallback.into()
+}
+
+fn get_version(solver: &str) -> String {
+    let bin = if solver == "z3" {
+        env_path_fallback("Z3_BIN", "z3")
+    } else if solver == "cvc5" {
+        env_path_fallback("CVC5_BIN", "cvc5")
+    } else if solver == "cvc4" {
+        env_path_fallback("CVC4_BIN", "cvc4")
+    } else {
+        panic!("unexpected solver {solver}");
+    };
+    let version_out = Command::new(bin).arg("--version").output();
+    let version = match version_out {
+        Ok(out) => String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .next()
+            .expect("no output from --version")
+            .to_string(),
+        Err(_) => format!("({solver} not found)"),
+    };
+    let version_re = Regex::new(r"(Z3|CVC4|cvc5) version [0-9.]*").unwrap();
+    match version_re.captures(&version) {
+        Some(capture) => capture.get(0).unwrap().as_str().to_string(),
+        None => panic!("unexpected --version output"),
+    }
+}
+
+/// Returns true if versions match. On version mismatch, prints the mismatch to
+/// stderr for debugging.
+fn check_version(solver: &str) -> bool {
+    let expected = expected_version(solver);
+    let actual = get_version(solver);
+    if let Some(s) = env::var_os("TEST_STRICT_VERSIONS") {
+        if s == OsStr::new("true") {
+            // cause the test to fail
+            assert_eq!(
+                expected, actual,
+                "installed {solver} version does not match"
+            );
+        }
+    }
+    if expected != actual {
+        eprintln!("solver version mismatch:");
+        eprintln!("  expected: {expected}");
+        eprintln!("  actual: {actual}");
+    }
+    return expected == actual;
+}
 
 #[derive(Deserialize, Debug, Clone, clap::Parser)]
 struct TestCfg {
@@ -44,6 +114,15 @@ impl TestCfg {
             Some(name) => Some(format!("{name}.{s}")),
             None => Some(s.to_string()),
         };
+    }
+
+    fn solver(&self) -> String {
+        for arg in &self.args {
+            if let Some(solver) = arg.strip_prefix("--solver=") {
+                return solver.to_string();
+            }
+        }
+        "z3".to_string()
     }
 }
 
@@ -204,7 +283,10 @@ impl Test {
             let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
             let combined_stdout_stderr =
                 format!("{stdout}\n======== STDERR: ===========\n{stderr}");
-            insta::assert_display_snapshot!(self.test_name(), combined_stdout_stderr);
+
+            if check_version(&self.cfg.solver()) {
+                insta::assert_display_snapshot!(self.test_name(), combined_stdout_stderr);
+            }
 
             if self.cfg.expect_fail {
                 assert!(
