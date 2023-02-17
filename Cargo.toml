@@ -25,6 +25,7 @@ walkdir = "2.3.2"
 
 [dev-dependencies]
 insta = { version = "1.22.0", features = ["yaml", "redactions"] }
+regex = "1.7.0"
 
 [profile.dev.package.insta]
 opt-level = 3

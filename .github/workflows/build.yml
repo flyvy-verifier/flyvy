@@ -6,6 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TEST_STRICT_VERSIONS: true
 
 jobs:
   build:
@@ -20,7 +21,7 @@ jobs:
     env:
       Z3_VERSION: "4.11.2"
       CVC4_BINARY_URL: "https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt"
-      CVC5_BINARY_URL: "https://github.com/cvc5/cvc5/releases/latest/download/cvc5-Linux" # this is the latest release
+      CVC5_BINARY_URL: "https://github.com/cvc5/cvc5/releases/download/cvc5-1.0.4/cvc5-Linux"
     steps:
       - uses: actions/checkout@v3
       - name: Install Z3
@@ -48,5 +49,5 @@ jobs:
           rustup set auto-self-update disable
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal
       - run: cargo build --verbose
-      - run: cargo test --verbose
+      - run: cargo test --verbose -- --nocapture
       - run: cargo fmt --check
