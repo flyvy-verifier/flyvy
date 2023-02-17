@@ -60,7 +60,7 @@ impl Next {
     /// Normalize any occurrences of (p)' to push the prime as deep as possible,
     /// down to terms.
     pub fn normalize(t: &Term) -> Term {
-        let bound = im::hashset! {"true".to_string(), "false".to_string()};
+        let bound = im::hashset! {};
         with_next(t, bound, 0)
     }
 

@@ -188,9 +188,8 @@ impl Model {
     ///   function.
     pub fn eval(&self, t: &Term, assignment: Option<&HashMap<String, Element>>) -> Element {
         match t {
-            // TODO(oded): Id("true") and Id("false") should probably be separate constructors
-            Term::Id(name) if name == "false" => 0,
-            Term::Id(name) if name == "true" => 1,
+            Term::Literal(false) => 0,
+            Term::Literal(true) => 1,
             Term::Id(name) if assignment.is_some() && assignment.unwrap().contains_key(name) => {
                 assignment.unwrap()[name]
             }
@@ -584,8 +583,8 @@ mod tests {
 
         println!("model is:\n{}\n", model.fmt());
 
-        let f = Id("false".to_string());
-        let t = Id("true".to_string());
+        let f = Literal(false);
+        let t = Literal(true);
         let r1 = Id("r1".to_string());
         let r2 = Id("r2".to_string());
         let c1 = Id("c1".to_string());
