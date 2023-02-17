@@ -30,6 +30,7 @@ fn with_next(t: &Term, bound: im::HashSet<String>, next: usize) -> Term {
         Term::App(f, xs) => Term::App(go_box(f), xs.iter().map(go).collect()),
 
         // boring recursive cases
+        Term::Literal(b) => Term::Literal(*b),
         Term::UnaryOp(op, t) => Term::UnaryOp(*op, go_box(t)),
         Term::BinOp(op, lhs, rhs) => Term::BinOp(*op, go_box(lhs), go_box(rhs)),
         Term::NAryOp(op, xs) => Term::NAryOp(*op, xs.iter().map(go).collect()),
