@@ -311,9 +311,9 @@ impl Model {
     /// Negate the necessary terms in order to make all given terms hold
     /// on the model and the given assignment.
     pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: Option<&Assignment>) {
-        for i in 0..terms.len() {
-            if self.eval(&terms[i], assignment) == 0 {
-                terms[i] = Term::negate(terms[i].clone());
+        for term in terms {
+            if self.eval(term, assignment) == 0 {
+                *term = Term::negate(term.clone());
             }
         }
     }

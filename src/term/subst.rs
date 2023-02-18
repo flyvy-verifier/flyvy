@@ -27,18 +27,16 @@ pub fn substitute_qf(term: &Term, substitution: &Substitution) -> Term {
                 .collect(),
         ),
 
-        Term::UnaryOp(op, arg) => {
-            Term::UnaryOp(op.clone(), Box::new(substitute_qf(arg, substitution)))
-        }
+        Term::UnaryOp(op, arg) => Term::UnaryOp(*op, Box::new(substitute_qf(arg, substitution))),
 
         Term::BinOp(op, arg1, arg2) => Term::BinOp(
-            op.clone(),
+            *op,
             Box::new(substitute_qf(arg1, substitution)),
             Box::new(substitute_qf(arg2, substitution)),
         ),
 
         Term::NAryOp(op, args) => Term::NAryOp(
-            op.clone(),
+            *op,
             args.iter()
                 .map(|a| substitute_qf(a, substitution))
                 .collect(),

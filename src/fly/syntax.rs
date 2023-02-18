@@ -255,7 +255,7 @@ impl Signature {
 
         // Generate constants.
         for rel_decl in &self.relations {
-            if rel_decl.args.len() == 0 {
+            if rel_decl.args.is_empty() {
                 new_terms[sort_idx(&rel_decl.typ)].push(Term::Id(rel_decl.name.clone()));
             }
         }
@@ -268,7 +268,7 @@ impl Signature {
 
             let mut new_new_terms = vec![vec![]; self.sorts.len() + 1];
             for rel_decl in &self.relations {
-                if rel_decl.args.len() == 0 {
+                if rel_decl.args.is_empty() {
                     continue;
                 }
 
@@ -320,9 +320,9 @@ impl Signature {
         // Generate equality terms.
         if include_eq {
             let mut eq_terms = vec![];
-            for i in 0..self.sorts.len() {
+            for term in terms.iter().take(self.sorts.len()) {
                 eq_terms.append(
-                    &mut terms[i]
+                    &mut term
                         .iter()
                         .combinations(2)
                         .map(|v| {

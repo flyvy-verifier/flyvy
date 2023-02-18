@@ -81,7 +81,7 @@ impl FOModule {
                 let mut states = solver.get_minimal_model();
                 assert_eq!(states.len(), 1);
 
-                return Some(states.remove(0));
+                Some(states.remove(0))
             }
             SatResp::Unsat => None,
             SatResp::Unknown(_) => panic!(),
@@ -293,8 +293,7 @@ impl<T: LemmaQF> Frame<T> {
                         !self
                             .entries
                             .iter()
-                            .map(|e| &e.weakened)
-                            .flatten()
+                            .flat_map(|e| &e.weakened)
                             .any(|l| l.subsumes(new_lemma))
                     });
                     self.entries[i.0].weakened.append(&mut new_lemmas);
@@ -338,7 +337,7 @@ impl<T: LemmaQF> Frame<T> {
         }
 
         if updated {
-            self.entries.retain(|e| e.weakened.len() != 0);
+            self.entries.retain(|e| !e.weakened.is_empty());
         } else if let Some(index) = prog_index {
             let entry = self.entries.remove(index);
             println!("    Replacing {} with", &entry.lemma.to_term());
@@ -371,8 +370,6 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
     let mut quantifiers = vec![];
     let mut sorts = vec![];
     let mut names = vec![];
-    let kpdnf;
-    let kpdnf_lit;
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -417,7 +414,7 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
 
     print!("k-pDNF # of cubes: ");
     stdout.flush().unwrap();
-    kpdnf = stdin
+    let kpdnf = stdin
         .lock()
         .lines()
         .next()
@@ -430,7 +427,7 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
 
     print!("k-pDNF # of literals: ");
     stdout.flush().unwrap();
-    kpdnf_lit = stdin
+    let kpdnf_lit = stdin
         .lock()
         .lines()
         .next()

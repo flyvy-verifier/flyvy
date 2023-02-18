@@ -77,7 +77,7 @@ impl QuantifierConfig {
                 .collect(),
             sorts: self.sorts.clone(),
             names: self.names.clone(),
-            lemma_qf: lemma_qf,
+            lemma_qf,
         }
     }
 
@@ -151,15 +151,14 @@ impl<T: LemmaQF> Lemma<T> {
     pub fn subsumes(&self, other: &Lemma<T>) -> bool {
         // Check whether lemmas have the same quantifiers, while allowing a universal
         // quantifier in `self` to be existential in `other`.
-        if {
-            self.quantifiers.len() != other.quantifiers.len()
-                || (0..self.quantifiers.len()).any(|i| {
-                    self.sorts[i] != other.sorts[i]
-                        || self.names[i].len() != other.names[i].len()
-                        || (self.quantifiers[i] == Quantifier::Exists
-                            && other.quantifiers[i] == Quantifier::Forall)
-                })
-        } {
+        if self.quantifiers.len() != other.quantifiers.len()
+            || (0..self.quantifiers.len()).any(|i| {
+                self.sorts[i] != other.sorts[i]
+                    || self.names[i].len() != other.names[i].len()
+                    || (self.quantifiers[i] == Quantifier::Exists
+                        && other.quantifiers[i] == Quantifier::Forall)
+            })
+        {
             return false;
         }
 
@@ -170,8 +169,8 @@ impl<T: LemmaQF> Lemma<T> {
             for p in other.names[i].iter().permutations(self.names[i].len()) {
                 new_substs.extend(substs.iter().map(|s| {
                     let mut new_s = s.clone();
-                    for j in 0..p.len() {
-                        new_s.insert(self.names[i][j].clone(), Term::Id(p[j].clone()));
+                    for (j, e) in p.iter().enumerate() {
+                        new_s.insert(self.names[i][j].clone(), Term::Id(e.to_string()));
                     }
                     new_s
                 }));
@@ -223,7 +222,7 @@ impl<T: LemmaQF> Lemma<T> {
 
         // Recursion: univeral quantification case.
         if self.quantifiers[0] == Quantifier::Forall
-            && (cfg.quantifiers[index] == None
+            && (cfg.quantifiers[index].is_none()
                 || cfg.quantifiers[index] == Some(Quantifier::Forall))
         {
             weakened.push(base_lemma.clone());
@@ -232,8 +231,8 @@ impl<T: LemmaQF> Lemma<T> {
                 .map(|_| 0..model.universe[model.signature.sort_idx(&cfg.sorts[index])])
                 .multi_cartesian_product();
             for es in asgn_iter {
-                for i in 0..es.len() {
-                    new_assignment.insert(cfg.names[index][i].clone(), es[i]);
+                for (i, e) in es.iter().enumerate() {
+                    new_assignment.insert(cfg.names[index][i].clone(), *e);
                 }
 
                 let mut new_weakened: Vec<Self> = vec![];
@@ -259,14 +258,14 @@ impl<T: LemmaQF> Lemma<T> {
         }
 
         // Recursion: existential quantification case.
-        if cfg.quantifiers[index] == None || cfg.quantifiers[index] == Some(Quantifier::Exists) {
+        if cfg.quantifiers[index].is_none() || cfg.quantifiers[index] == Some(Quantifier::Exists) {
             let mut new_assignment = assignment.clone();
             let asgn_iter = (0..cfg.names[index].len())
                 .map(|_| 0..model.universe[model.signature.sort_idx(&cfg.sorts[index])])
                 .multi_cartesian_product();
             for es in asgn_iter {
-                for i in 0..es.len() {
-                    new_assignment.insert(cfg.names[index][i].clone(), es[i]);
+                for (i, e) in es.iter().enumerate() {
+                    new_assignment.insert(cfg.names[index][i].clone(), *e);
                 }
 
                 for mut lemma in
