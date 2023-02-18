@@ -211,7 +211,7 @@ impl LemmaQF for PDNF {
                 .iter()
                 .map(|c| {
                     if c.is_empty() {
-                        Term::Id("true".to_string())
+                        Term::Literal(true)
                     } else {
                         Term::NAryOp(NOp::And, c.to_vec())
                     }
@@ -220,7 +220,7 @@ impl LemmaQF for PDNF {
         );
 
         if or_terms.is_empty() {
-            Term::Id("false".to_string())
+            Term::Literal(false)
         } else {
             Term::NAryOp(NOp::Or, or_terms)
         }
