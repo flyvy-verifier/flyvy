@@ -168,3 +168,55 @@ impl Backend for &GenericBackend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, fs};
+
+    use crate::{fly::parser, smtlib::sexp};
+
+    use super::{Backend, GenericBackend, SolverType};
+
+    #[test]
+    #[ignore] // parsing this model takes too long
+    fn test_issue_5_parse_model_with_auxilliary_defs() {
+        let sig = parser::parse_signature(
+            r#"
+        sort node
+        sort quorum
+        sort value
+
+        # constants:
+
+
+        # functions:
+
+
+        # relations:
+        mutable member(node, quorum): bool
+        mutable vote_request_msg(node, node): bool
+        mutable voted(node): bool
+        mutable vote_msg(node, node): bool
+        mutable votes(node, node): bool
+        mutable leader(node): bool
+        mutable decided(node, value): bool
+        "#
+            .trim(),
+        );
+
+        let backend = GenericBackend {
+            solver_type: SolverType::Z3,
+            bin: "z3".to_string(),
+        };
+
+        let model_text =
+            fs::read_to_string("tests/issue_5_model.sexp").expect("could not find model file");
+        let model_sexp = sexp::parse(&model_text).expect("test model does not parse");
+
+        let fo_model = (&backend).parse(&sig, 1, &HashSet::new(), &model_sexp);
+        // a (primed) relation from the signature
+        assert!(fo_model.interp.contains_key("leader'"));
+        // auxilliary definition in Z3's model
+        assert!(!fo_model.interp.contains_key("k!1058"));
+    }
+}
