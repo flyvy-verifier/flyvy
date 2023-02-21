@@ -404,7 +404,7 @@ impl SmtProc {
 #[cfg(test)]
 mod tests {
     use crate::smtlib::{
-        proc::{SatResp, Z3Conf},
+        proc::{CvcConf, SatResp, Z3Conf},
         sexp::{app, atom_s, parse},
     };
     use eyre::Context;
@@ -431,6 +431,26 @@ mod tests {
         let e = parse("(assert (and a (not a)))").unwrap();
         solver.send(&e);
 
+        let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
+        insta::assert_debug_snapshot!(response, @"Unsat");
+    }
+
+    #[test]
+    /// Regression test for issue #14
+    ///
+    /// We tried to pass --strict-parsing by default, which causes CVC5 to
+    /// reject (or b) (it requires 2 or more disjuncts to the or).
+    fn test_cvc5_singleton_or() {
+        let cvc5 = CvcConf::new_cvc5("cvc5").done();
+        let mut solver = if let Ok(solver) = SmtProc::new(cvc5, None) {
+            solver
+        } else {
+            eprintln!("could not find cvc5, skipping test");
+            return;
+        };
+
+        let e = parse("(assert (and (or true) (and false)))").unwrap();
+        solver.send(&e);
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
     }
