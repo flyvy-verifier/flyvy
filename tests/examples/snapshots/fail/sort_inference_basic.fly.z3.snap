@@ -1,0 +1,10 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/sort_inference_basic.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+thread 'main' panicked at 'unexpected binder without sort', src/solver/sexp.rs:16:17
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
