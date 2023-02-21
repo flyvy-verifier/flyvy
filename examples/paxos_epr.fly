@@ -1,3 +1,6 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
 # sorts:
 sort node
 sort value
@@ -47,4 +50,3 @@ proof {
     invariant forall N:node, R2:round, R1:round. one_b(N, R2) & !le(R2, R1) -> left_round(N, R1)
     invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2, R1) & proposal(R2, V2) & V1 != V2 -> (exists N:node. member(N, Q) & left_round(N, R1) & !vote(N, R1, V1))
 }
-
