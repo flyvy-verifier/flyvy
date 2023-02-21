@@ -1,24 +1,17 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use std::fs;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 use temporal_verifier::smtlib::sexp;
 
 pub fn sexp_parse_benchmark(c: &mut Criterion) {
-    let s = black_box(
-        "(and (= (k!1058 x!0) node!val!13)
-             (= x!1 quorum!val!2)
-             (not (= x!1 quorum!val!4))
-             (not (= x!1 quorum!val!5)))",
-    );
-    c.bench_function("sexp::parse", |b| b.iter(|| sexp::parse(s)));
+    let s = fs::read_to_string("tests/issue_5_model.sexp").expect("could not open sexp file");
+    c.bench_function("sexp::parse", |b| b.iter(|| sexp::parse(&s)));
 }
 
 pub fn sexp_to_string_benchmark(c: &mut Criterion) {
-    let s = sexp::parse(
-        "(and (= (k!1058 x!0) node!val!13)
-             (= x!1 quorum!val!2)
-             (not (= x!1 quorum!val!4))
-             (not (= x!1 quorum!val!5)))",
-    )
-    .unwrap();
+    let sexp_str =
+        fs::read_to_string("tests/issue_5_model.sexp").expect("could not open sexp file");
+    let s = sexp::parse(&sexp_str).expect("could not parse sexp");
     c.bench_function("sexp::ToString", |b| b.iter(|| s.to_string()));
 }
 
