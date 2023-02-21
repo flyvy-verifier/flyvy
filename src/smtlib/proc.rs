@@ -141,7 +141,7 @@ impl CvcConf {
         // for CVC4, --lang smt2 is needed when using stdin, but when run on a
         // file with a .smt2 extension it will automatically use the right input
         // format.
-        cmd.args(vec!["-q", "--lang", "smt2", "--strict-parsing"]);
+        cmd.args(vec!["-q", "--lang", "smt2"]);
         cmd.option("interactive", "false");
         cmd.option("incremental", "true");
         cmd.option("seed", "1");
