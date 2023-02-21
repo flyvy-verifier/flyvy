@@ -1,10 +1,12 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use std::rc::Rc;
 use std::{env, fs, path::PathBuf, process};
 
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer},
+    inference::run_fixpoint,
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
 };
@@ -54,9 +56,32 @@ struct VerifyArgs {
     file: String,
 }
 
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct InferArgs {
+    #[arg(value_enum, long, default_value_t = SolverType::Z3)]
+    /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
+    solver: SolverType,
+
+    #[arg(long)]
+    /// Output smt2 file alongside input file
+    smt: bool,
+
+    #[arg(long)]
+    /// Try to extend model traces before looking for CEX in the frame
+    extend_models: bool,
+
+    #[arg(long)]
+    /// Try to decompose the transition relation disjunctively
+    disj: bool,
+
+    /// File name for a .fly file
+    file: String,
+}
+
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
     Verify(VerifyArgs),
+    Infer(InferArgs),
     Print {
         /// File name for a .fly file
         file: String,
@@ -71,6 +96,7 @@ impl Command {
     fn file(&self) -> &str {
         match self {
             Command::Verify(VerifyArgs { file, .. }) => file,
+            Command::Infer(InferArgs { file, .. }) => file,
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
         }
@@ -144,6 +170,34 @@ impl VerifyArgs {
     }
 }
 
+impl InferArgs {
+    fn get_solver_conf(&self) -> SolverConf {
+        let backend_type = match &self.solver {
+            SolverType::Z3 => backends::SolverType::Z3,
+            SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
+            SolverType::Cvc4 => backends::SolverType::Cvc4,
+        };
+        let solver_bin = env_path_fallback(
+            // TODO: allow command-line override, which would be Some here
+            &None,
+            solver_env_var(self.solver),
+            solver_default_bin(self.solver),
+        );
+
+        let tee = if self.smt {
+            let path = PathBuf::from(&self.file).with_extension("smt2");
+            Some(path)
+        } else {
+            None
+        };
+
+        SolverConf {
+            backend: GenericBackend::new(backend_type, &solver_bin),
+            tee,
+        }
+    }
+}
+
 impl App {
     pub fn exec(self) {
         let file = fs::read_to_string(self.command.file()).expect("could not read input file");
@@ -190,6 +244,10 @@ impl App {
                         process::exit(1);
                     }
                 }
+            }
+            Command::Infer(ref args @ InferArgs { .. }) => {
+                let conf = Rc::new(args.get_solver_conf());
+                run_fixpoint(conf, &m, args.extend_models, args.disj);
             }
             Command::Inline { .. } => {
                 let mut m = m;

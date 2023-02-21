@@ -3,6 +3,7 @@
 
 mod command;
 mod fly;
+mod inference;
 mod smtlib;
 mod solver;
 mod term;

@@ -24,7 +24,7 @@ pub struct SolverConf {
 }
 
 impl SolverConf {
-    fn solver(&self, sig: &Signature, n_states: usize) -> Solver<&GenericBackend> {
+    pub fn solver(&self, sig: &Signature, n_states: usize) -> Solver<&GenericBackend> {
         // TODO: failures to start the solver should be bubbled up to user nicely
         Solver::new(sig, n_states, &self.backend, self.tee.as_deref())
             .expect("could not start solver")
