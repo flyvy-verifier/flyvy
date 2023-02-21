@@ -35,7 +35,7 @@ enum ColorOutput {
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
-struct VerifyArgs {
+struct SolverArgs {
     #[arg(value_enum, long, default_value_t = SolverType::Z3)]
     /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
     solver: SolverType,
@@ -47,6 +47,12 @@ struct VerifyArgs {
     #[arg(long)]
     /// Output smt2 file alongside input file
     smt: bool,
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct VerifyArgs {
+    #[command(flatten)]
+    solver: SolverArgs,
 
     #[arg(long)]
     /// Run Houdini on supplied invariants
@@ -58,13 +64,8 @@ struct VerifyArgs {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct InferArgs {
-    #[arg(value_enum, long, default_value_t = SolverType::Z3)]
-    /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
-    solver: SolverType,
-
-    #[arg(long)]
-    /// Output smt2 file alongside input file
-    smt: bool,
+    #[command(flatten)]
+    solver: SolverArgs,
 
     #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
@@ -142,8 +143,8 @@ fn solver_default_bin(t: SolverType) -> &'static str {
     }
 }
 
-impl VerifyArgs {
-    fn get_solver_conf(&self) -> SolverConf {
+impl SolverArgs {
+    fn get_solver_conf(&self, fname: &String) -> SolverConf {
         let backend_type = match &self.solver {
             SolverType::Z3 => backends::SolverType::Z3,
             SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
@@ -158,7 +159,7 @@ impl VerifyArgs {
         let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {
             Some(path.to_path_buf())
         } else if self.smt {
-            let path = PathBuf::from(&self.file).with_extension("smt2");
+            let path = PathBuf::from(fname).with_extension("smt2");
             Some(path)
         } else {
             None
@@ -170,31 +171,15 @@ impl VerifyArgs {
     }
 }
 
+impl VerifyArgs {
+    fn get_solver_conf(&self) -> SolverConf {
+        self.solver.get_solver_conf(&self.file)
+    }
+}
+
 impl InferArgs {
     fn get_solver_conf(&self) -> SolverConf {
-        let backend_type = match &self.solver {
-            SolverType::Z3 => backends::SolverType::Z3,
-            SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
-            SolverType::Cvc4 => backends::SolverType::Cvc4,
-        };
-        let solver_bin = env_path_fallback(
-            // TODO: allow command-line override, which would be Some here
-            &None,
-            solver_env_var(self.solver),
-            solver_default_bin(self.solver),
-        );
-
-        let tee = if self.smt {
-            let path = PathBuf::from(&self.file).with_extension("smt2");
-            Some(path)
-        } else {
-            None
-        };
-
-        SolverConf {
-            backend: GenericBackend::new(backend_type, &solver_bin),
-            tee,
-        }
+        self.solver.get_solver_conf(&self.file)
     }
 }
 
