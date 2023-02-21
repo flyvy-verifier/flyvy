@@ -302,7 +302,7 @@ impl<T: LemmaQF> Lemma<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inference::pdnf::*;
+    use crate::{fly::parser, inference::pdnf::*};
 
     #[test]
     fn test_weaken() {
@@ -319,24 +319,16 @@ mod tests {
             include_eq: true,
         };
 
-        // TODO: Generating this data should re-use the parser eventually.
-        let sig = Signature {
-            sorts: vec![typ(1), typ(2), typ(3)],
-            relations: vec![
-                RelationDecl {
-                    mutable: true,
-                    name: "r".to_string(),
-                    args: vec![typ(1), typ(2), typ(3), typ(3)],
-                    typ: Sort::Bool,
-                },
-                RelationDecl {
-                    mutable: true,
-                    name: "c".to_string(),
-                    args: vec![],
-                    typ: typ(2),
-                },
-            ],
-        };
+        let sig = parser::parse_signature(
+            r#"
+sort T1
+sort T2
+sort T3
+mutable r(T1, T2, T3, T3): bool
+mutable c(): T2
+"#
+            .trim(),
+        );
 
         // First model, has elements x:1 y:2 z:3, c = y and r(x,y,z) = true
         let universe1: Universe = vec![1, 1, 1];

@@ -291,6 +291,12 @@ pub fn parse_term(s: &str) -> Result<Term, String> {
     parser::term(s).map_err(|err| err.to_string())
 }
 
+#[cfg(test)]
+/// Parse a signature. Only used for testing.
+pub fn parse_signature(s: &str) -> Signature {
+    parser::signature(s).expect("invalid signature in test")
+}
+
 /// Parse a fly module, reporting a human-readable error on failure.
 pub fn parse(s: &str) -> Result<Module, ParseError<LineCol>> {
     parser::module(s)
