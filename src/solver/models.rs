@@ -255,7 +255,7 @@ impl Model {
                     let repl: Vec<(&str, Sexp)> = iter::zip(binders, args.iter().cloned())
                         .map(|(name, e)| (name.as_str(), e.clone()))
                         .collect();
-                    self.smt_eval(&subst(&repl, &body))
+                    self.smt_eval(&subst(&repl, body))
                 } else {
                     Err(EvalError(format!("unexpected function {head}")))
                 }

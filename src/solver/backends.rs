@@ -134,7 +134,7 @@ impl Backend for &GenericBackend {
                     })
                     .collect::<Vec<_>>();
                 let repl = zip(binders.iter().map(|s| s.as_str()), args).collect::<Vec<_>>();
-                let body = subst(&repl, &body);
+                let body = subst(&repl, body);
                 let e = model
                     .smt_eval(&body)
                     .unwrap_or_else(|err| panic!("could not interpret {}: {err}", &rel.name));

@@ -30,6 +30,7 @@ fn with_next(t: &Term, bound: im::HashSet<String>, next: usize) -> Term {
         Term::App(f, xs) => Term::App(go_box(f), xs.iter().map(go).collect()),
 
         // boring recursive cases
+        Term::Literal(b) => Term::Literal(*b),
         Term::UnaryOp(op, t) => Term::UnaryOp(*op, go_box(t)),
         Term::BinOp(op, lhs, rhs) => Term::BinOp(*op, go_box(lhs), go_box(rhs)),
         Term::NAryOp(op, xs) => Term::NAryOp(*op, xs.iter().map(go).collect()),
@@ -60,7 +61,7 @@ impl Next {
     /// Normalize any occurrences of (p)' to push the prime as deep as possible,
     /// down to terms.
     pub fn normalize(t: &Term) -> Term {
-        let bound = im::hashset! {"true".to_string(), "false".to_string()};
+        let bound = im::hashset! {};
         with_next(t, bound, 0)
     }
 

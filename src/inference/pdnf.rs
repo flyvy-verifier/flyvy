@@ -10,6 +10,7 @@ use crate::{
 /// A pDNF is a disjunction of literals and cubes, with some limit on the number
 /// of cubes. An optional limit for the number of literals can also be provided.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct PDNF {
     n_cubes: usize,
     n_literals: Option<usize>,
@@ -65,7 +66,7 @@ impl PDNF {
             }
         }
 
-        return Some(pdnf);
+        Some(pdnf)
     }
 
     /// Add a cube to the pDNF. (Ignores cube limit -- see [`PDNF::weaken`].)
@@ -108,13 +109,13 @@ impl PDNF {
         if let Term::NAryOp(NOp::Or, v_or) = t {
             for c in v_or {
                 if let Term::NAryOp(NOp::And, v_and) = c {
-                    pdnf.cubes.push(v_and.iter().cloned().collect());
+                    pdnf.cubes.push(v_and.to_vec());
                 } else {
                     pdnf.literals.push(c.clone());
                 }
             }
         } else if let Term::NAryOp(NOp::And, v_and) = t {
-            pdnf.cubes.push(v_and.iter().cloned().collect());
+            pdnf.cubes.push(v_and.to_vec());
         } else {
             pdnf.literals.push(t.clone());
         }
@@ -127,7 +128,7 @@ impl PDNF {
     /// Return whether the pDNF is subsumption-equivalent to another.
     #[allow(dead_code)]
     fn equiv(&self, other: &Self) -> bool {
-        return self.subsumes(other) && other.subsumes(self);
+        self.subsumes(other) && other.subsumes(self)
     }
 }
 
@@ -148,11 +149,10 @@ impl LemmaQF for PDNF {
 
     fn weaken(&self, cube: Vec<Term>) -> Vec<Self> {
         // Add the new cube.
-        let pdnf;
-        match self.add_cube(cube.into_iter().collect()) {
-            Some(p) => pdnf = p,
+        let pdnf = match self.add_cube(cube.into_iter().collect()) {
+            Some(p) => p,
             None => return vec![],
-        }
+        };
 
         if pdnf.cubes.len() <= self.n_cubes {
             return vec![pdnf];
@@ -204,23 +204,23 @@ impl LemmaQF for PDNF {
     }
 
     fn to_term(&self) -> Term {
-        let mut or_terms: Vec<Term> = self.literals.iter().cloned().collect();
+        let mut or_terms: Vec<Term> = self.literals.to_vec();
         or_terms.append(
             &mut self
                 .cubes
                 .iter()
                 .map(|c| {
                     if c.is_empty() {
-                        Term::Id("true".to_string())
+                        Term::Literal(true)
                     } else {
-                        Term::NAryOp(NOp::And, c.iter().cloned().collect())
+                        Term::NAryOp(NOp::And, c.to_vec())
                     }
                 })
                 .collect(),
         );
 
         if or_terms.is_empty() {
-            Term::Id("false".to_string())
+            Term::Literal(false)
         } else {
             Term::NAryOp(NOp::Or, or_terms)
         }

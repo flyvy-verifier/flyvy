@@ -45,6 +45,7 @@ pub struct Binder {
 // ODED: maybe Term should be Copy? (see test_eval in semantics.rs)
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum Term {
+    Literal(bool),
     Id(String),
     // ODED: I think we should have App(String, Vec<Term>), since we're not high-order (yet)
     App(Box<Term>, Vec<Term>),
@@ -93,7 +94,7 @@ impl Term {
     {
         let mut ts: Vec<Term> = ts.into_iter().collect();
         if ts.is_empty() {
-            return Term::Id("true".to_string());
+            return Term::Literal(true);
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
         }
@@ -107,7 +108,7 @@ impl Term {
     {
         let mut ts: Vec<Term> = ts.into_iter().collect();
         if ts.is_empty() {
-            return Term::Id("false".to_string());
+            return Term::Literal(false);
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
         }
@@ -254,7 +255,7 @@ impl Signature {
 
         // Generate constants.
         for rel_decl in &self.relations {
-            if rel_decl.args.len() == 0 {
+            if rel_decl.args.is_empty() {
                 new_terms[sort_idx(&rel_decl.typ)].push(Term::Id(rel_decl.name.clone()));
             }
         }
@@ -267,7 +268,7 @@ impl Signature {
 
             let mut new_new_terms = vec![vec![]; self.sorts.len() + 1];
             for rel_decl in &self.relations {
-                if rel_decl.args.len() == 0 {
+                if rel_decl.args.is_empty() {
                     continue;
                 }
 
@@ -319,9 +320,9 @@ impl Signature {
         // Generate equality terms.
         if include_eq {
             let mut eq_terms = vec![];
-            for i in 0..self.sorts.len() {
+            for term in terms.iter().take(self.sorts.len()) {
                 eq_terms.append(
-                    &mut terms[i]
+                    &mut term
                         .iter()
                         .combinations(2)
                         .map(|v| {

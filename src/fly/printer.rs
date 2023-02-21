@@ -21,7 +21,7 @@ fn precedence(t: &Term) -> usize {
         BinOp(Equals | NotEquals, _, _) => 60,
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
-        Id(_) | App(_, _) => 1000,
+        Literal(_) | Id(_) | App(_, _) => 1000,
     }
 }
 
@@ -53,6 +53,8 @@ pub fn term(t: &Term) -> String {
     // handling of precedence is based on
     // https://stackoverflow.com/questions/6277747/pretty-print-expression-with-as-few-parentheses-as-possible
     match t {
+        Term::Literal(false) => "false".to_string(),
+        Term::Literal(true) => "true".to_string(),
         Term::Id(i) => i.to_string(),
         Term::App(f, args) => format!(
             "{}({})",

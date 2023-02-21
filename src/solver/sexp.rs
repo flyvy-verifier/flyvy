@@ -28,6 +28,8 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
     }
     let term = |t: &Term| term_primes(t, num_primes);
     match t {
+        Term::Literal(false) => atom_s("false"),
+        Term::Literal(true) => atom_s("true"),
         Term::Id(s) => atom_s(format!("{s}{}", "'".repeat(num_primes))),
         Term::App(f, args) => {
             let head = vec![term(f)].into_iter();
