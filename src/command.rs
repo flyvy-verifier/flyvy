@@ -1,10 +1,10 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::path::Path;
 use std::rc::Rc;
-use std::{env, fs, path::PathBuf, process};
+use std::{fs, path::PathBuf, process};
 
+use crate::solver::solver_path;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer},
     inference::run_fixpoint,
@@ -118,28 +118,11 @@ pub struct App {
     command: Command,
 }
 
-fn env_path_fallback(path: &Option<String>, var: &str, bin: &str) -> String {
+fn env_path_fallback(path: &Option<String>, bin: &str) -> String {
     if let Some(path) = path {
         return path.into();
     }
-    if let Some(val) = env::var_os(var) {
-        return val.to_string_lossy().into();
-    }
-    let src_dir = env!("CARGO_MANIFEST_DIR");
-    let src_bin_path = Path::new(src_dir).join("solvers").join(bin);
-    if src_bin_path.exists() {
-        src_bin_path.to_string_lossy().to_string()
-    } else {
-        bin.into()
-    }
-}
-
-fn solver_env_var(t: SolverType) -> &'static str {
-    match t {
-        SolverType::Z3 => "Z3_BIN",
-        SolverType::Cvc | SolverType::Cvc5 => "CVC5_BIN",
-        SolverType::Cvc4 => "CVC4_BIN",
-    }
+    solver_path(bin)
 }
 
 fn solver_default_bin(t: SolverType) -> &'static str {
@@ -160,7 +143,6 @@ impl SolverArgs {
         let solver_bin = env_path_fallback(
             // TODO: allow command-line override, which would be Some here
             &None,
-            solver_env_var(self.solver),
             solver_default_bin(self.solver),
         );
         let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {

@@ -5,7 +5,7 @@ mod command;
 mod fly;
 mod inference;
 mod smtlib;
-mod solver;
+pub mod solver;
 mod term;
 mod verify;
 

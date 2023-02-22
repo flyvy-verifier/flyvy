@@ -16,6 +16,7 @@ use clap::Parser;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
+use temporal_verifier::solver::solver_path;
 use walkdir::WalkDir;
 
 const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
@@ -55,29 +56,8 @@ fn expected_version(solver: &str) -> String {
     }
 }
 
-fn env_path_fallback(var: &str, bin: &str) -> String {
-    if let Some(val) = env::var_os(var) {
-        return val.to_string_lossy().into();
-    }
-    let src_dir = env!("CARGO_MANIFEST_DIR");
-    let src_bin_path = Path::new(src_dir).join("solvers").join(bin);
-    if src_bin_path.exists() {
-        src_bin_path.to_string_lossy().to_string()
-    } else {
-        bin.into()
-    }
-}
-
 fn get_version(solver: &str) -> String {
-    let bin = if solver == "z3" {
-        env_path_fallback("Z3_BIN", "z3")
-    } else if solver == "cvc5" {
-        env_path_fallback("CVC5_BIN", "cvc5")
-    } else if solver == "cvc4" {
-        env_path_fallback("CVC4_BIN", "cvc4")
-    } else {
-        panic!("unexpected solver {solver}");
-    };
+    let bin = solver_path(solver);
     let version_out = Command::new(bin).arg("--version").output();
     let version = match version_out {
         Ok(out) => String::from_utf8(out.stdout)
