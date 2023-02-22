@@ -1,6 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use std::path::Path;
 use std::rc::Rc;
 use std::{env, fs, path::PathBuf, process};
 
@@ -117,14 +118,20 @@ pub struct App {
     command: Command,
 }
 
-fn env_path_fallback(path: &Option<String>, var: &str, fallback: &str) -> String {
+fn env_path_fallback(path: &Option<String>, var: &str, bin: &str) -> String {
     if let Some(path) = path {
         return path.into();
     }
     if let Some(val) = env::var_os(var) {
         return val.to_string_lossy().into();
     }
-    fallback.into()
+    let src_dir = env!("CARGO_MANIFEST_DIR");
+    let src_bin_path = Path::new(src_dir).join("solvers").join(bin);
+    if src_bin_path.exists() {
+        src_bin_path.to_string_lossy().to_string()
+    } else {
+        bin.into()
+    }
 }
 
 fn solver_env_var(t: SolverType) -> &'static str {

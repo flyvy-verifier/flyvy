@@ -13,29 +13,59 @@ use std::{
 };
 
 use clap::Parser;
+use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
 use walkdir::WalkDir;
 
 const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
 
-fn expected_version(solver: &str) -> &'static str {
+lazy_static! {
+    static ref SOLVER_VERSION_VARS: HashMap<String, String> = {
+        let mut versions = HashMap::new();
+        let re = Regex::new(r#"(.*)_VERSION="(.*)""#).unwrap();
+        for line in fs::read_to_string("etc/solver-versions.sh")
+            .expect("could not find etc/solver-versions.sh")
+            .lines()
+        {
+            if line.starts_with("#") {
+                continue;
+            }
+            let m = re.captures(line).expect("malformed line in versions.sh");
+            let solver = m.get(1).unwrap().as_str();
+            let version = m.get(2).unwrap().as_str();
+            versions.insert(solver.to_string(), version.to_string());
+        }
+        versions
+    };
+}
+
+fn expected_version(solver: &str) -> String {
+    let version = SOLVER_VERSION_VARS
+        .get(&solver.to_uppercase())
+        .expect("unexpected solver {solver} (not in solver/versions.sh)");
     if solver == "z3" {
-        "Z3 version 4.11.2"
+        format!("Z3 version {}", version)
     } else if solver == "cvc4" {
-        "CVC4 version 1.8"
+        format!("CVC4 version {}", version)
     } else if solver == "cvc5" {
-        "cvc5 version 1.0.4"
+        format!("cvc5 version {}", version)
     } else {
         panic!("unexpected solver {solver}")
     }
 }
 
-fn env_path_fallback(var: &str, fallback: &str) -> String {
+fn env_path_fallback(var: &str, bin: &str) -> String {
     if let Some(val) = env::var_os(var) {
         return val.to_string_lossy().into();
     }
-    fallback.into()
+    let src_dir = env!("CARGO_MANIFEST_DIR");
+    let src_bin_path = Path::new(src_dir).join("solvers").join(bin);
+    if src_bin_path.exists() {
+        src_bin_path.to_string_lossy().to_string()
+    } else {
+        bin.into()
+    }
 }
 
 fn get_version(solver: &str) -> String {
