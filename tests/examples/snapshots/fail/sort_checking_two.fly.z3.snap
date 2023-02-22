@@ -1,0 +1,11 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/sort_checking_two.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+thread 'main' panicked at 'unexpected check-sat response (error "line 8 column 41: Sorts s and t are incompatible")
+sat', src/smtlib/proc.rs:314:9
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
