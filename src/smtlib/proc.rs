@@ -49,8 +49,8 @@ pub enum SatResp {
 pub enum SolverError {
     #[error("some io went wrong")]
     Io(#[from] io::Error),
-    #[error("solver unexpectedly exited")]
-    UnexpectedClose,
+    #[error("solver unexpectedly exited:\n{0}")]
+    UnexpectedClose(String),
 }
 
 type Result<T> = std::result::Result<T, SolverError>;
@@ -363,7 +363,7 @@ impl SmtProc {
             // including the newline)
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
-                return Err(SolverError::UnexpectedClose);
+                return Err(SolverError::UnexpectedClose(buf));
             }
             // last line, without the newline
             let last_line = &buf[last_end..last_end + n - 1];
@@ -469,5 +469,15 @@ mod tests {
         for _ in 0..num_iters {
             let _ = SmtProc::new(z3.clone(), None).unwrap();
         }
+    }
+
+    #[test]
+    fn test_cvc5_ill_formed() {
+        let cvc5 = CvcConf::new_cvc5(&solver_path("cvc5")).done();
+        let mut proc = SmtProc::new(cvc5, None).unwrap();
+        let e = parse("(assert (= and or))").unwrap();
+        proc.send(&e);
+        let r = proc.check_sat();
+        insta::assert_display_snapshot!(r.unwrap_err());
     }
 }
