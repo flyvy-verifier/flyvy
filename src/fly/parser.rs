@@ -262,7 +262,7 @@ proof {
 
     #[test]
     fn test_quantifiers() {
-        term("forall x. x = y").unwrap();
+        term("forall x:t. x = y").unwrap();
         term("forall x:t, y:t. x = y").unwrap();
         term("forall x:t,y:t. x = y").unwrap();
         term("forall x:t , y:t. x = y").unwrap();
@@ -271,8 +271,8 @@ proof {
         term("forall (x : t),(y:t). x = y").unwrap();
 
         assert_eq!(
-            term("forall x. x = y & exists z. x = z").unwrap(),
-            term("forall x. (x = y & exists z. x = z)").unwrap(),
+            term("forall x:t. x = y & exists z:t. x = z").unwrap(),
+            term("forall x:t. (x = y & exists z:t. x = z)").unwrap(),
         );
 
         assert_eq!(
