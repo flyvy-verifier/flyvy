@@ -46,7 +46,7 @@ pub fn check(module: &Module) -> Result<(), SortError> {
             Sort::Bool => return Err(SortError::UninterpretedBool),
             Sort::Id(s) => {
                 if !sorts.insert(s.clone()) {
-                    return Err(SortError::RedefinedSort(s.clone()))
+                    return Err(SortError::RedefinedSort(s.clone()));
                 }
             }
         }
@@ -127,7 +127,7 @@ impl Context<'_> {
         let mut names = HashSet::new();
         for binder in binders {
             if !names.insert(binder.name.clone()) {
-                return Err(SortError::RedefinedName(binder.name.clone()))
+                return Err(SortError::RedefinedName(binder.name.clone()));
             }
             check_sort_exists(self, &binder.sort)?;
             self.add_name(binder.name.clone(), (vec![], binder.sort.clone()), true)?;
