@@ -25,7 +25,7 @@ lazy_static! {
     static ref SOLVER_VERSION_VARS: HashMap<String, String> = {
         let mut versions = HashMap::new();
         let re = Regex::new(r#"(.*)_VERSION="(.*)""#).unwrap();
-        for line in fs::read_to_string("etc/solver-versions.sh")
+        for line in fs::read_to_string("tools/solver-versions.sh")
             .expect("could not find etc/solver-versions.sh")
             .lines()
         {
