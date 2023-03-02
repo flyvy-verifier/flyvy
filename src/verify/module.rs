@@ -264,16 +264,16 @@ mod tests {
 
     use crate::{
         fly::{self, syntax::Module},
-        solver::backends::{GenericBackend, SolverType},
+        solver::{
+            backends::{GenericBackend, SolverType},
+            solver_path,
+        },
     };
 
     use super::{verify_module, SolveError, SolverConf};
 
     fn z3_verify(m: &Module) -> Result<(), SolveError> {
-        // optionally override Z3 command
-        let z3_cmd = env::var_os("Z3_BIN")
-            .map(|val| val.to_string_lossy().to_string())
-            .unwrap_or("z3".to_string());
+        let z3_cmd = solver_path("z3");
         let conf = SolverConf {
             backend: GenericBackend::new(SolverType::Z3, &z3_cmd),
             tee: None,

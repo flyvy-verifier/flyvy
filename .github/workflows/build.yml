@@ -11,39 +11,26 @@ env:
 jobs:
   build:
     name: Build and test
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         toolchain:
           - stable
           - nightly
+        os:
+          - ubuntu-latest
+          - macos-latest
       fail-fast: false
-    env:
-      Z3_VERSION: "4.11.2"
-      CVC4_BINARY_URL: "https://github.com/CVC4/CVC4/releases/download/1.8/cvc4-1.8-x86_64-linux-opt"
-      CVC5_BINARY_URL: "https://github.com/cvc5/cvc5/releases/download/cvc5-1.0.4/cvc5-Linux"
     steps:
       - uses: actions/checkout@v3
-      - name: Install Z3
+      - name: Download solvers
         run: |
-          wget -nv https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/z3-${Z3_VERSION}-x64-glibc-2.31.zip
-          unzip z3-${Z3_VERSION}-x64-glibc-2.31.zip
-          echo `pwd`/z3-${Z3_VERSION}-x64-glibc-2.31/bin >> $GITHUB_PATH
-      - run: z3 --version # make sure z3 is installed
-      - name: Install CVC4
+          ./tools/download-solvers.sh
+      - name: Check solver versions
         run: |
-          mkdir cvc4
-          wget -nv -O cvc4/cvc4 ${CVC4_BINARY_URL}
-          chmod +x cvc4/cvc4
-          echo `pwd`/cvc4 >> $GITHUB_PATH
-      - run: cvc4 --version # make sure cvc4 is installed
-      - name: Install CVC5
-        run: |
-          mkdir cvc5
-          wget -nv -O cvc5/cvc5 ${CVC5_BINARY_URL}
-          chmod +x cvc5/cvc5
-          echo `pwd`/cvc5 >> $GITHUB_PATH
-      - run: cvc5 --version # make sure cvc5 is installed
+          ./solvers/z3 --version
+          ./solvers/cvc5 --version | head -1
+          ./solvers/cvc4 --version | head -1
       - name: Install toolchain ${{ matrix.toolchain }}
         run: |
           rustup set auto-self-update disable

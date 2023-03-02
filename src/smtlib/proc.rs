@@ -403,9 +403,12 @@ impl SmtProc {
 
 #[cfg(test)]
 mod tests {
-    use crate::smtlib::{
-        proc::{CvcConf, SatResp, Z3Conf},
-        sexp::{app, atom_s, parse},
+    use crate::{
+        smtlib::{
+            proc::{CvcConf, SatResp, Z3Conf},
+            sexp::{app, atom_s, parse},
+        },
+        solver::solver_path,
     };
     use eyre::Context;
 
@@ -413,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_check_sat_z3() {
-        let z3 = Z3Conf::new("z3").done();
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
         let mut solver = SmtProc::new(z3, None).unwrap();
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         assert!(
@@ -424,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_get_model_z3() {
-        let z3 = Z3Conf::new("z3").done();
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
         let mut solver = SmtProc::new(z3, None).unwrap();
         solver.send(&app("declare-const", [atom_s("a"), atom_s("Bool")]));
 
@@ -441,7 +444,7 @@ mod tests {
     /// We tried to pass --strict-parsing by default, which causes CVC5 to
     /// reject (or b) (it requires 2 or more disjuncts to the or).
     fn test_cvc5_singleton_or() {
-        let cvc5 = CvcConf::new_cvc5("cvc5").done();
+        let cvc5 = CvcConf::new_cvc5(&solver_path("cvc5")).done();
         let mut solver = if let Ok(solver) = SmtProc::new(cvc5, None) {
             solver
         } else {
@@ -457,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_spawn_many() {
-        let z3 = Z3Conf::new("z3").done();
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
         // launching z3 is slow on macos so don't spawn too many
         #[cfg(target_os = "macos")]
         let num_iters = 200;

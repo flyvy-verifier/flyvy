@@ -6,5 +6,7 @@
 pub mod backends;
 mod imp;
 mod models;
+mod path;
 mod sexp;
 pub use imp::{Backend, FOModel, Solver};
+pub use path::solver_path;
