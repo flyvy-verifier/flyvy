@@ -118,13 +118,6 @@ pub struct App {
     command: Command,
 }
 
-fn env_path_fallback(path: &Option<String>, bin: &str) -> String {
-    if let Some(path) = path {
-        return path.into();
-    }
-    solver_path(bin)
-}
-
 fn solver_default_bin(t: SolverType) -> &'static str {
     match t {
         SolverType::Z3 => "z3",
@@ -140,11 +133,7 @@ impl SolverArgs {
             SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
             SolverType::Cvc4 => backends::SolverType::Cvc4,
         };
-        let solver_bin = env_path_fallback(
-            // TODO: allow command-line override, which would be Some here
-            &None,
-            solver_default_bin(self.solver),
-        );
+        let solver_bin = solver_path(solver_default_bin(self.solver));
         let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {
             Some(path.to_path_buf())
         } else if self.smt {

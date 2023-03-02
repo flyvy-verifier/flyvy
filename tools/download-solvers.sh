@@ -1,19 +1,20 @@
 #!/bin/bash
 
+# This script downloads binary releases of Z3, CVC4, and cvc5 to solvers/ in
+# the source directory, according to the versions specified in
+# tools/solver-versions.sh. It handles Linux, macOS, and macOS arm64.
+
 set -eu
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR/.."
 
-source etc/solver-versions.sh
-# NOTE: z3's Linux release has a glibc version, make sure this is in sync with
-# the version of Z3 in use
-Z3_GLIBC="2.31"
+source tools/solver-versions.sh
 
 UNAME=$(uname)
 
 if [ "$UNAME" = "Linux" ]; then
-  Z3_FILE="z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC}"
+  Z3_FILE="z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC_VERSION}"
   CVC4_FILE="cvc4-${CVC4_VERSION}-x86_64-linux-opt"
   CVC5_FILE="cvc5-Linux"
 elif [ "$UNAME" = "Darwin" ]; then
