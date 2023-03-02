@@ -20,7 +20,7 @@ if [ "$UNAME" = "Linux" ]; then
 elif [ "$UNAME" = "Darwin" ]; then
   UNAME_M=$(uname -m)
   if [ "${UNAME_M}" = "arm64" ]; then
-    Z3_FILE="z3-${Z3_VERSION}-arm-osx-11.0"
+    Z3_FILE="z3-${Z3_VERSION}-arm64-osx-11.0"
     CVC5_FILE="cvc5-macOS-arm64"
     # x86 binary, don't have an arm64 build
     CVC4_FILE="cvc4-${CVC4_VERSION}-macos-opt"
