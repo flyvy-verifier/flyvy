@@ -181,14 +181,23 @@ grammar parser() for str {
   /// Parse an sexp but be tolerant to whitespace around it.
   pub(super) rule sexp_whitespace() -> Sexp
   = _ s:sexp() _ { s }
+
+  /// Parse a sequence of sexps.
+  pub(super) rule sexps() -> Vec<Sexp>
+  = _ ss:(sexp() ** _) _ { ss }
 }
 }
 
-/// Parse a sequence of sexps.
+/// Parse an sexp.
 ///
 /// Allows whitespace before or after.
 pub fn parse(s: &str) -> Result<Sexp, peg::error::ParseError<LineCol>> {
     parser::sexp_whitespace(s)
+}
+
+/// Parse a sequence of sexps, separated by whitespace.
+pub fn parse_many(s: &str) -> Result<Vec<Sexp>, peg::error::ParseError<LineCol>> {
+    parser::sexps(s)
 }
 
 #[cfg(test)]
