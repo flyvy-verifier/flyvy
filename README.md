@@ -25,6 +25,8 @@ You'll need Rust (for example, through `rustup`) and recent versions of [Z3](htt
 2. `cargo test` to run tests
 3. `cargo run -- verify <file.fly>` will run the verifier on an input file
 
+You can run `cargo bench` to run the performance benchmarks.
+
 ## Documentation
 
 Run `cargo doc` to generate the low-level API documentation. Currently there
