@@ -12,6 +12,7 @@ set -eu
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR/.."
 
+# shellcheck disable=SC1091
 source tools/solver-versions.sh
 
 UNAME=$(uname)
