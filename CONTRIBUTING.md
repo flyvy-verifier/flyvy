@@ -39,6 +39,7 @@ month).
 * Before creating a commit, make sure the following tests pass (these are run by CI on GitHub, so the commit will get a :x: if they don't). You can run `./tools/ci-check.sh` to run all of these automatically.
   * `cargo test`
   * Use `cargo fmt` to format the code. You can use the "format on save" setting in VS Code to have this done automatically.
+  * Run `cargo clippy --tests` and make sure there are no warnings. In VS Code you can run this check automatically on save by opening user preferences and adding `"rust-analyzer.checkOnSave.command": "clippy"`.
 * Commit messages should generally follow this [style guide](http://chris.beams.io/posts/git-commit/). In short:
   * Use a short summary title, and add a longer body if needed.
   * Use imperative style ("Fix bug" and not "Fixed bug", "Fixes bug", or "Bugfix"). The title should read like "if you apply it, this commit will ..." or "after applying this commit, the code will...".

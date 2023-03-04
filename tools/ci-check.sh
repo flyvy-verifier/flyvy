@@ -97,3 +97,11 @@ else
     exit 1
   fi
 fi
+
+start_group "cargo clippy"
+if [ "$ci" = true ]; then
+  cargo clippy --tests -- --no-deps -D clippy::all
+else
+  cargo clippy --quiet --tests -- --no-deps -D clippy::all
+fi
+end_group

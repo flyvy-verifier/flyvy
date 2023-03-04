@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+#![allow(clippy::needless_return)]
+
 use std::{
     collections::HashMap,
     env,
@@ -29,7 +31,7 @@ lazy_static! {
             .expect("could not find tools/solver-versions.sh")
             .lines()
         {
-            if line.starts_with("#") || line.is_empty() {
+            if line.starts_with('#') || line.is_empty() {
                 continue;
             }
             let m = re
@@ -48,11 +50,11 @@ fn expected_version(solver: &str) -> String {
         .get(&solver.to_uppercase())
         .expect("unexpected solver {solver} (not in tools/solver-versions.sh)");
     if solver == "z3" {
-        format!("Z3 version {}", version)
+        format!("Z3 version {version}")
     } else if solver == "cvc4" {
-        format!("CVC4 version {}", version)
+        format!("CVC4 version {version}")
     } else if solver == "cvc5" {
-        format!("cvc5 version {}", version)
+        format!("cvc5 version {version}")
     } else {
         panic!("unexpected solver {solver}")
     }
