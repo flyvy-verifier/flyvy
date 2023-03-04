@@ -1,6 +1,6 @@
 ---
 source: tests/test_examples.rs
-description: "--name=houdini -- verify --houdini tests/examples/fail/safety1_proof_invariants.fly"
+description: "--name=houdini -- infer --houdini tests/examples/fail/safety1_proof_invariants.fly"
 expression: combined_stdout_stderr
 ---
 Running Houdini, candidate invariants are:
