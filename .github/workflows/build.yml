@@ -37,4 +37,5 @@ jobs:
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal
       - run: cargo build --verbose
       - run: cargo test --verbose -- --nocapture
+      - run: cargo test --benches
       - run: cargo fmt --check
