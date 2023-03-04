@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 use std::{collections::HashMap, iter::zip};
 
 use super::syntax::{Binder, Definition, Module, Proof, Term, ThmStmt};

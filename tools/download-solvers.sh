@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
 # This script downloads binary releases of Z3, CVC4, and cvc5 to solvers/ in
 # the source directory, according to the versions specified in
 # tools/solver-versions.sh. It handles Linux, macOS, and macOS arm64.

@@ -29,7 +29,7 @@ lazy_static! {
             .expect("could not find etc/solver-versions.sh")
             .lines()
         {
-            if line.starts_with("#") {
+            if line.starts_with("#") || line.is_empty() {
                 continue;
             }
             let m = re.captures(line).expect("malformed line in versions.sh");
