@@ -14,6 +14,11 @@ Candidate invariants are:
 Computing fixed point:
     Checking !q & !p
 Fixed point reached
+# inferred invariant:
+assert always !q & !p
+proof {
+  invariant !q & !p
+}
 verifies!
 
 ======== STDERR: ===========

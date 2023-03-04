@@ -166,7 +166,16 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                 {
                     let res = infer(conf, &m.signature, pf.assert.span, &assert);
                     match res {
-                        Ok(_) => (),
+                        Ok(invs) => {
+                            println!("# inferred invariant:");
+                            println!("assert {}", &pf.assert.x);
+                            println!("proof {{");
+                            for inv in invs {
+                                println!("  invariant {inv}");
+                            }
+                            println!("}}");
+                        }
+
                         Err(err) => errors.push(err),
                     }
                 } else {

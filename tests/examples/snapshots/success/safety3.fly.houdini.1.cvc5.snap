@@ -18,6 +18,12 @@ Computing fixed point:
     Checking x
     Checking y
 Fixed point reached
+# inferred invariant:
+assert always x
+proof {
+  invariant x
+  invariant y
+}
 verifies!
 
 ======== STDERR: ===========

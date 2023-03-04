@@ -22,6 +22,13 @@ Computing fixed point:
     Checking !p
     Checking !q
 Fixed point reached
+# inferred invariant:
+assert always !p
+proof {
+  invariant !p
+  invariant !p
+  invariant !q
+}
 verifies!
 
 ======== STDERR: ===========
