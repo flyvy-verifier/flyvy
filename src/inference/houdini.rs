@@ -33,28 +33,28 @@ pub fn infer<'a>(
 ) -> Result<Vec<&'a Term>, AssertionFailure> {
     let mut invs = vec![&assert.inv];
     invs.extend(assert.proof_invs.iter());
-    println!("Running Houdini, candidate invariants are:");
+    log::info!("Running Houdini, candidate invariants are:");
     for &p in &invs {
-        println!("    {p}")
+        log::info!("    {p}")
     }
-    println!();
+    log::info!("");
 
     {
         // filter based on initiation
-        println!("Checking initiation:");
+        log::info!("Checking initiation:");
         let mut not_implied: HashSet<&Term> = HashSet::new();
         for &q in &invs {
             if not_implied.contains(q) {
                 continue;
             };
-            println!("    Checking {q}");
+            log::info!("    Checking {q}");
             let mut solver = conf.solver(sig, 1);
             solver.assert(&assert.init);
             solver.assert(&Term::negate(q.clone()));
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
                 SatResp::Sat => {
-                    println!("        Got model");
+                    log::info!("        Got model");
                     let states = solver.get_model();
                     assert_eq!(states.len(), 1);
                     // TODO(oded): make 0 and 1 special constants for this use
@@ -62,7 +62,7 @@ pub fn infer<'a>(
                     assert_eq!(states[0].eval(q, None), 0);
                     for &qq in &invs {
                         if states[0].eval(qq, None) == 0 {
-                            println!("        Pruning {qq}");
+                            log::info!("        Pruning {qq}");
                             not_implied.insert(qq);
                         }
                     }
@@ -79,21 +79,21 @@ pub fn infer<'a>(
         }
         invs.retain(|q| !not_implied.contains(q));
     }
-    println!("Candidate invariants are:");
+    log::info!("Candidate invariants are:");
     for &p in &invs {
-        println!("    {p}")
+        log::info!("    {p}")
     }
-    println!();
+    log::info!("");
 
     // compute fixed point
-    println!("Computing fixed point:");
+    log::info!("Computing fixed point:");
     loop {
         let mut not_implied: HashSet<&Term> = HashSet::new();
         for &q in &invs {
             if not_implied.contains(q) {
                 continue;
             };
-            println!("    Checking {q}");
+            log::info!("    Checking {q}");
             let mut solver = conf.solver(sig, 2);
             for &p in &invs {
                 solver.assert(p);
@@ -103,14 +103,14 @@ pub fn infer<'a>(
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
                 SatResp::Sat => {
-                    println!("        Got model");
+                    log::info!("        Got model");
                     let states = solver.get_model();
                     assert_eq!(states.len(), 2);
                     // TODO(oded): make 0 and 1 special constants for their use as Booleans
                     assert_eq!(states[1].eval(q, None), 0);
                     for &qq in &invs {
                         if states[1].eval(qq, None) == 0 {
-                            println!("        Pruning {qq}");
+                            log::info!("        Pruning {qq}");
                             not_implied.insert(qq);
                         }
                     }
@@ -127,15 +127,15 @@ pub fn infer<'a>(
         }
         if not_implied.is_empty() {
             // fixed poined reached
-            println!("Fixed point reached");
+            log::info!("Fixed point reached");
             break;
         }
         invs.retain(|q| !not_implied.contains(q));
-        println!("Candidate invariants are:");
+        log::info!("Candidate invariants are:");
         for &p in &invs {
-            println!("    {p}")
+            log::info!("    {p}")
         }
-        println!();
+        log::info!("");
     }
     if invs.is_empty() || invs[0] != &assert.inv {
         return Err(AssertionFailure {
