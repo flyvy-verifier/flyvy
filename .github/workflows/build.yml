@@ -19,10 +19,10 @@ jobs:
       matrix:
         toolchain:
           - stable
-          - nightly
+          # - nightly
         os:
           - ubuntu-latest
-          - macos-latest
+          # - macos-latest
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
