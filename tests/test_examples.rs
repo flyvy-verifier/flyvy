@@ -26,13 +26,15 @@ lazy_static! {
         let mut versions = HashMap::new();
         let re = Regex::new(r#"(.*)_VERSION="(.*)""#).unwrap();
         for line in fs::read_to_string("tools/solver-versions.sh")
-            .expect("could not find etc/solver-versions.sh")
+            .expect("could not find tools/solver-versions.sh")
             .lines()
         {
             if line.starts_with("#") || line.is_empty() {
                 continue;
             }
-            let m = re.captures(line).expect("malformed line in versions.sh");
+            let m = re
+                .captures(line)
+                .expect("malformed line in solver-versions.sh");
             let solver = m.get(1).unwrap().as_str();
             let version = m.get(2).unwrap().as_str();
             versions.insert(solver.to_string(), version.to_string());
@@ -44,7 +46,7 @@ lazy_static! {
 fn expected_version(solver: &str) -> String {
     let version = SOLVER_VERSION_VARS
         .get(&solver.to_uppercase())
-        .expect("unexpected solver {solver} (not in solver/versions.sh)");
+        .expect("unexpected solver {solver} (not in tools/solver-versions.sh)");
     if solver == "z3" {
         format!("Z3 version {}", version)
     } else if solver == "cvc4" {
