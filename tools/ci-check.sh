@@ -72,9 +72,9 @@ end_group
 
 start_group "cargo test"
 if [ "$ci" = true ]; then
-  cargo test --tests --benches --verbose -- --nocapture
+  cargo test --all-targets --verbose -- --nocapture
 else
-  cargo test --tests --benches --quiet
+  cargo test --all-targets --quiet
 fi
 end_group
 
