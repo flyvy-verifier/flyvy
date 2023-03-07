@@ -1,23 +1,14 @@
 ---
 source: tests/test_examples.rs
-description: "--all-solvers --name=houdini.1 -- verify --houdini tests/examples/success/safety3.fly"
+description: "--all-solvers --name=houdini.1 -- infer --houdini tests/examples/success/safety3.fly"
 expression: combined_stdout_stderr
 ---
-Running Houdini, candidate invariants are:
-    x
-    y
-
-Checking initiation:
-    Checking x
-    Checking y
-Candidate invariants are:
-    x
-    y
-
-Computing fixed point:
-    Checking x
-    Checking y
-Fixed point reached
+# inferred invariant:
+assert always x
+proof {
+  invariant x
+  invariant y
+}
 verifies!
 
 ======== STDERR: ===========

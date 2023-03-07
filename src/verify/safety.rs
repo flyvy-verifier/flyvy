@@ -13,11 +13,11 @@ use crate::{
 /// A temporal property expressed as an invariant problem.
 #[derive(Debug, Clone)]
 pub struct InvariantAssertion {
-    pub(super) init: Term,
-    pub(super) next: Term,
-    pub(super) assumed_inv: Term,
-    pub(super) inv: Term,
-    pub(super) proof_invs: Vec<Term>,
+    pub init: Term,
+    pub next: Term,
+    pub assumed_inv: Term,
+    pub inv: Term,
+    pub proof_invs: Vec<Term>,
 }
 
 #[derive(Error, Debug)]

@@ -1,13 +1,12 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::error::{AssertionFailure, FailureType, QueryError, SolveError};
 use super::safety::InvariantAssertion;
 use crate::fly::syntax::Proof;
-use crate::term::Next;
 use crate::{
     fly::{
         printer,
@@ -63,153 +62,37 @@ fn verify_firstorder(
     verify_term(&mut solver, assert.clone())
 }
 
-pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(), SolveError> {
-    let check_invariant = |pf: &Proof, assert: &InvariantAssertion| {
-        {
-            // check initiation (init implies invariant)
-            let mut solver = conf.solver(&m.signature, 1);
-            solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv)));
-            let res = verify_term(&mut solver, assert.initiation().0);
-            if let Err(cex) = res {
-                return Err(AssertionFailure {
-                    loc: pf.assert.span,
-                    reason: FailureType::InitInv,
-                    error: cex,
-                });
-            }
-        }
-        {
-            // check consecution (transitions preserve invariant)
-            let mut solver = conf.solver(&m.signature, 2);
-            solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
-            let res = verify_term(&mut solver, assert.consecution().0);
-            if let Err(cex) = res {
-                return Err(AssertionFailure {
-                    loc: pf.assert.span,
-                    reason: FailureType::NotInductive,
-                    error: cex,
-                });
-            }
-        }
-        Ok(())
-    };
-
-    let run_houdini = |pf: &Proof, assert: &InvariantAssertion| {
-        let mut invs = vec![&assert.inv];
-        invs.extend(assert.proof_invs.iter());
-        println!("Running Houdini, candidate invariants are:");
-        for &p in &invs {
-            println!("    {p}")
-        }
-        println!();
-
-        {
-            // filter based on initiation
-            println!("Checking initiation:");
-            let mut not_implied: HashSet<&Term> = HashSet::new();
-            for &q in &invs {
-                if not_implied.contains(q) {
-                    continue;
-                };
-                println!("    Checking {q}");
+pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
+    let check_invariant =
+        |pf: &Proof, assert: &InvariantAssertion| -> Result<(), AssertionFailure> {
+            {
+                // check initiation (init implies invariant)
                 let mut solver = conf.solver(&m.signature, 1);
-                solver.assert(&assert.init);
-                solver.assert(&Term::negate(q.clone()));
-                let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-                match resp {
-                    SatResp::Sat => {
-                        println!("        Got model");
-                        let states = solver.get_model();
-                        assert_eq!(states.len(), 1);
-                        // TODO(oded): make 0 and 1 special constants for this use
-                        assert_eq!(states[0].eval(&assert.init, None), 1);
-                        assert_eq!(states[0].eval(q, None), 0);
-                        for &qq in &invs {
-                            if states[0].eval(qq, None) == 0 {
-                                println!("        Pruning {qq}");
-                                not_implied.insert(qq);
-                            }
-                        }
-                    }
-                    SatResp::Unsat => (),
-                    SatResp::Unknown(m) => {
-                        return Err(AssertionFailure {
-                            loc: pf.assert.span,
-                            reason: FailureType::InitInv,
-                            error: QueryError::Unknown(m),
-                        });
-                    }
+                solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv)));
+                let res = verify_term(&mut solver, assert.initiation().0);
+                if let Err(cex) = res {
+                    return Err(AssertionFailure {
+                        loc: pf.assert.span,
+                        reason: FailureType::InitInv,
+                        error: cex,
+                    });
                 }
             }
-            invs.retain(|q| !not_implied.contains(q));
-        }
-        println!("Candidate invariants are:");
-        for &p in &invs {
-            println!("    {p}")
-        }
-        println!();
-
-        // compute fixed point
-        println!("Computing fixed point:");
-        loop {
-            let mut not_implied: HashSet<&Term> = HashSet::new();
-            for &q in &invs {
-                if not_implied.contains(q) {
-                    continue;
-                };
-                println!("    Checking {q}");
+            {
+                // check consecution (transitions preserve invariant)
                 let mut solver = conf.solver(&m.signature, 2);
-                for &p in &invs {
-                    solver.assert(p);
-                }
-                solver.assert(&assert.next);
-                solver.assert(&Term::negate(Next::prime(q)));
-                let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-                match resp {
-                    SatResp::Sat => {
-                        println!("        Got model");
-                        let states = solver.get_model();
-                        assert_eq!(states.len(), 2);
-                        // TODO(oded): make 0 and 1 special constants for their use as Booleans
-                        assert_eq!(states[1].eval(q, None), 0);
-                        for &qq in &invs {
-                            if states[1].eval(qq, None) == 0 {
-                                println!("        Pruning {qq}");
-                                not_implied.insert(qq);
-                            }
-                        }
-                    }
-                    SatResp::Unsat => (),
-                    SatResp::Unknown(m) => {
-                        return Err(AssertionFailure {
-                            loc: pf.assert.span,
-                            reason: FailureType::NotInductive,
-                            error: QueryError::Unknown(m),
-                        });
-                    }
+                solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
+                let res = verify_term(&mut solver, assert.consecution().0);
+                if let Err(cex) = res {
+                    return Err(AssertionFailure {
+                        loc: pf.assert.span,
+                        reason: FailureType::NotInductive,
+                        error: cex,
+                    });
                 }
             }
-            if not_implied.is_empty() {
-                // fixed poined reached
-                println!("Fixed point reached");
-                break;
-            }
-            invs.retain(|q| !not_implied.contains(q));
-            println!("Candidate invariants are:");
-            for &p in &invs {
-                println!("    {p}")
-            }
-            println!();
-        }
-        if invs.is_empty() || invs[0] != &assert.inv {
-            return Err(AssertionFailure {
-                loc: pf.assert.span,
-                reason: FailureType::NotInductive,
-                error: QueryError::Unknown("assertion not in fixed point".to_string()), // TODO(oded): better error reporting
-            });
-        }
-        Ok(())
-    };
+            Ok(())
+        };
 
     // assumptions/assertions so far
     let mut assumes: Vec<&Term> = vec![];
@@ -231,11 +114,7 @@ pub fn verify_module(conf: &SolverConf, m: &Module, houdini: bool) -> Result<(),
                 } else if let Ok(assert) =
                     InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
                 {
-                    let res = if houdini {
-                        run_houdini(pf, &assert)
-                    } else {
-                        check_invariant(pf, &assert)
-                    };
+                    let res = check_invariant(pf, &assert);
                     if res.is_err() {
                         errors.push(res.err().unwrap())
                     }
@@ -278,7 +157,7 @@ mod tests {
             backend: GenericBackend::new(SolverType::Z3, &z3_cmd),
             tee: None,
         };
-        verify_module(&conf, m, false)
+        verify_module(&conf, m)
     }
 
     #[test]
