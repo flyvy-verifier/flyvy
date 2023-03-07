@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 use std::fs;
 
 use criterion::{criterion_group, criterion_main, Criterion};

@@ -52,3 +52,10 @@ jobs:
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal
       - name: CI checks
         run: ./tools/ci-check.sh --ci
+      - name: Install license-header-checker
+        run: |
+          curl -s https://raw.githubusercontent.com/lluissm/license-header-checker/master/install.sh | bash -s -- -b ./bin
+          echo "$PWD/bin" >> $GITHUB_PATH
+      - name: Run license check
+        run: |
+          ./tools/ci-license-header-check.sh
