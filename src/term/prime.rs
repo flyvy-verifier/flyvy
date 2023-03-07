@@ -61,6 +61,31 @@ fn with_next(sig: &Signature, t: &Term, bound: im::HashSet<String>, next: usize)
     }
 }
 
+/// removes occurrences of prime  in `t`.
+pub fn clear_next(t: Term) -> Term {
+    match t {
+        Term::UnaryOp(UOp::Prime, t) => clear_next(*t),
+        Term::App(f, _, xs) => Term::App(f, 0, xs.iter().map(|t| clear_next(t.clone())).collect()),
+        Term::UnaryOp(op, t) => Term::UnaryOp(op, Box::new(clear_next(*t))),
+        Term::Literal(b) => Term::Literal(b),
+        Term::BinOp(op, lhs, rhs) => {
+            Term::BinOp(op, Box::new(clear_next(*lhs)), Box::new(clear_next(*rhs)))
+        }
+        Term::NAryOp(op, terms) => Term::NAryOp(op, terms.into_iter().map(clear_next).collect()),
+        Term::Quantified {
+            quantifier: quant,
+            binders,
+            body,
+        } => Term::Quantified {
+            quantifier: quant,
+            binders,
+            body: Box::new(clear_next(*body)),
+        },
+        Term::Id(_) => t,
+        _ => panic!("got illegal operator in negate and simplify"),
+    }
+}
+
 /// Context for normalizing primes in terms.
 pub struct Next<'a> {
     sig: &'a Signature,

@@ -19,6 +19,7 @@ use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagnostic, printer, sorts},
+    inference::Updr,
     inference::{fixpoint_multi, fixpoint_single, QfBody},
     solver::backends::{self, GenericBackend},
     verify::verify_module,
@@ -249,6 +250,7 @@ struct InferArgs {
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
     Verify(VerifyArgs),
+    UpdrVerify(VerifyArgs),
     Infer(InferArgs),
     Print {
         /// File name for a .fly file
@@ -287,6 +289,7 @@ impl Command {
         match self {
             Command::Verify(VerifyArgs { file, .. }) => file,
             Command::Infer(InferArgs { infer_cmd, .. }) => infer_cmd.file(),
+            Command::UpdrVerify(VerifyArgs { file, .. }) => file,
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
             Command::SetCheck { file, .. } => file,
@@ -559,6 +562,10 @@ impl App {
                 }
 
                 crate::bounded::set::check(&mut m, &universe, depth, compress_traces.into());
+            Command::UpdrVerify(ref args @ VerifyArgs { .. }) => {
+                let conf = Arc::new(args.get_solver_conf());
+                let mut updr = Updr::new(conf);
+                let _result = updr.search(&m);
             }
         }
     }

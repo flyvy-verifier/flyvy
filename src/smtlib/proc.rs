@@ -195,7 +195,9 @@ impl Z3Conf {
         };
         cmd.args(["-in", "-smt2"]);
         cmd.option("model.completion", "true");
-        Self(cmd)
+        let mut conf = Self(cmd);
+        conf.timeout_ms(Some(30000 * 100));
+        conf
     }
 
     /// Enable model compaction

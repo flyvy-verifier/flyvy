@@ -130,6 +130,35 @@ impl Term {
         Self::UnaryOp(UOp::Not, Box::new(t))
     }
 
+    pub fn negate_and_simplify(t: Term) -> Self {
+        match t {
+            Term::Literal(b) => Term::Literal(!b),
+            Term::UnaryOp(UOp::Not, t) => *t,
+            Term::UnaryOp(..) => panic!("got UnaryOp other than Not!"),
+            Term::BinOp(BinOp::NotEquals, lhs, rhs) => Term::BinOp(BinOp::Equals, lhs, rhs),
+            Term::BinOp(BinOp::Equals, lhs, rhs) => Term::BinOp(BinOp::NotEquals, lhs, rhs),
+            Term::NAryOp(NOp::Or, terms) => Term::NAryOp(
+                NOp::And,
+                terms.into_iter().map(Term::negate_and_simplify).collect(),
+            ),
+            Term::NAryOp(NOp::And, terms) => Term::NAryOp(
+                NOp::Or,
+                terms.into_iter().map(Term::negate_and_simplify).collect(),
+            ),
+            Term::Id(_) | Term::App(_, _, _) => Term::negate(t),
+            Term::Quantified {
+                quantifier: Quantifier::Forall,
+                binders,
+                body,
+            } => Term::Quantified {
+                quantifier: Quantifier::Exists,
+                binders,
+                body: Box::new(Term::negate_and_simplify(*body)),
+            },
+            _ => panic!("got illegal operator in negate and simplify"),
+        }
+    }
+
     pub fn exists<I>(binders: I, body: Term) -> Self
     where
         I: IntoIterator,

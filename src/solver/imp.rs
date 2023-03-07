@@ -428,7 +428,6 @@ impl<B: Backend> Solver<B> {
     /// minimal set of indicator variables which still result in unsat.
     ///
     /// Not yet implemented so there is no algorithm here.
-    #[allow(dead_code)]
     pub fn get_minimal_unsat_core(&mut self) -> HashMap<Term, bool> {
         eprintln!("unsat code minimization is not yet implemented");
         self.get_unsat_core()
