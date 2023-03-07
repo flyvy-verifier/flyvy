@@ -25,7 +25,10 @@ month).
 ## Must-haves for every commit pushed to this repository
 
 * Do not push to `main` without asking. Instead, use a branch and create a pull request.
-* Every commit must be signed (see above). Use `git -s` or otherwise add `Signed-off-by: Your Name <your@email.com>` to the last line of each Git commit message.
+* Every commit must be signed (see above). Use `git -s` or otherwise add
+  `Signed-off-by: Your Name <your@email.com>` to the last line of each Git
+  commit message. You can get git to add this line automatically when you start
+  editing a commit message by copying `tools/prepare-commit-msg` to `.git/hooks/`.
 * Every code file in the repository must start with a two-line copyright notice:
   ```rust
   // Copyright 2022-2023 VMware, Inc.
