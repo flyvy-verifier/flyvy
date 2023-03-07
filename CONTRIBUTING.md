@@ -36,7 +36,7 @@ month).
   # Copyright 2022-2023 VMware, Inc.
   # SPDX-License-Identifier: BSD-2-Clause
   ```
-* Before creating a commit, make sure the following tests pass (these are run by CI on GitHub, so the commit will get a :x: if they don't):
+* Before creating a commit, make sure the following tests pass (these are run by CI on GitHub, so the commit will get a :x: if they don't). You can run `./tools/ci-check.sh` to run all of these automatically.
   * `cargo test`
   * Use `cargo fmt` to format the code. You can use the "format on save" setting in VS Code to have this done automatically.
 * Commit messages should generally follow this [style guide](http://chris.beams.io/posts/git-commit/). In short:
