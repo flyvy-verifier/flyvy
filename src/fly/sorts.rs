@@ -287,10 +287,20 @@ impl Context<'_> {
                 }
                 Ok(())
             }
-            Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime, x) => {
-                self.fix_sorts_in_term(x)
-            }
-            Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Implies | BinOp::Iff, x, y) => {
+            Term::UnaryOp(
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+                x,
+            ) => self.fix_sorts_in_term(x),
+            Term::BinOp(
+                BinOp::Equals
+                | BinOp::NotEquals
+                | BinOp::Implies
+                | BinOp::Iff
+                | BinOp::Until
+                | BinOp::Since,
+                x,
+                y,
+            ) => {
                 self.fix_sorts_in_term(x)?;
                 self.fix_sorts_in_term(y)?;
                 Ok(())
@@ -368,7 +378,10 @@ impl Context<'_> {
                 Some(NamedSort::Unknown(_)) => unreachable!("function sorts are always known"),
                 None => Err(SortError::UnknownName(f.clone())),
             },
-            Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually, x) => {
+            Term::UnaryOp(
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
+                x,
+            ) => {
                 let x = self.sort_of_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
                 Ok(AbstractSort::Known(Sort::Bool))
@@ -380,7 +393,7 @@ impl Context<'_> {
                 self.unify_var_var(&a, &b)?;
                 Ok(AbstractSort::Known(Sort::Bool))
             }
-            Term::BinOp(BinOp::Implies | BinOp::Iff, x, y) => {
+            Term::BinOp(BinOp::Implies | BinOp::Iff | BinOp::Until | BinOp::Since, x, y) => {
                 let x = self.sort_of_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
                 let y = self.sort_of_term(y)?;
