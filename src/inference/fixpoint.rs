@@ -18,15 +18,15 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
 
     println!("Axioms:");
     for a in fo.axioms.iter() {
-        println!("    {}", a);
+        println!("    {a}");
     }
     println!("Initial states:");
     for a in fo.inits.iter() {
-        println!("    {}", a);
+        println!("    {a}");
     }
     println!("Transitions:");
     for a in fo.transitions.iter() {
-        println!("    {}", a);
+        println!("    {a}");
     }
     println!();
 
@@ -111,6 +111,6 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
     println!();
     println!("Fixpoint:");
     for lemma in &frame_t {
-        println!("    {}", lemma);
+        println!("    {lemma}");
     }
 }

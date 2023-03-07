@@ -370,7 +370,7 @@ mutable c(): T2
 
         let lemma1_vec = lemma0.weaken(&model1, &cfg, None);
         for lemma1 in lemma1_vec.iter() {
-            assert!(lemma0.subsumes(&lemma1));
+            assert!(lemma0.subsumes(lemma1));
             assert_eq!(model1.eval(&lemma1.to_term(), None), 1);
         }
 
