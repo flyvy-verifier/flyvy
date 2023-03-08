@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
-      - name: Set up cargo cache
+      - name: Set up cache
         uses: actions/cache@v3
         continue-on-error: false
         with:
@@ -36,7 +36,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{matrix.toolchain}}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            solvers/
+          key: ${{ runner.os }}-${{matrix.toolchain}}-cargo-${{ hashFiles('**/Cargo.lock,tools/solver-versions.sh') }}
           restore-keys: ${{ runner.os }}-${{matrix.toolchain}}-cargo-
       - name: Download solvers
         run: |
