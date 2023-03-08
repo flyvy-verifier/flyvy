@@ -9,7 +9,7 @@ trace = ["peg/trace"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.0.29", features = ["derive"] }
+clap = { version = "4.1.8", features = ["derive"] }
 codespan-reporting = "0.11.1"
 eyre = "0.6.8"
 im = "15.1.0"
@@ -18,19 +18,19 @@ lazy_static = "1.4.0"
 log = "0.4.17"
 peg = "0.8.1"
 pretty_env_logger = "0.4.0"
-regex = "1.7.0"
-serde = { version = "1.0.151", features = ["derive"] }
-serde_derive = "1.0.152"
-thiserror = "1.0.37"
-toml = "0.5.10"
+regex = "1.7.1"
+serde = { version = "1.0.154", features = ["derive"] }
+serde_derive = "1.0.154"
+thiserror = "1.0.39"
 walkdir = "2.3.2"
 
 [dev-dependencies]
 criterion = "0.4.0"
 env_logger = "0.10.0"
-insta = { version = "1.22.0", features = ["yaml", "redactions"] }
-regex = "1.7.0"
+insta = { version = "1.28.0", features = ["yaml", "redactions"] }
+regex = "1.7.1"
 test-log = "0.2.11"
+toml = "0.7.2"
 
 [profile.dev.package.insta]
 opt-level = 3
