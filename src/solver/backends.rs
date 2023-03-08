@@ -202,7 +202,6 @@ mod tests {
     use test_log::test;
 
     #[test]
-    #[ignore]
     fn test_issue_5_parse_model_with_auxilliary_defs() {
         let _ = pretty_env_logger::try_init();
         let sig = parser::parse_signature(
