@@ -14,13 +14,13 @@ use crate::{
     },
     smtlib::{
         proc::{CvcConf, SolverCmd, Z3Conf},
-        sexp::{self, atom_s},
+        sexp::{self, Atom},
     },
     solver::models::ModelSymbol,
 };
 
 use super::{
-    models::{self, subst, PartialInterp},
+    models::{self, PartialInterp},
     {Backend, FOModel},
 };
 
@@ -134,22 +134,22 @@ impl Backend for &GenericBackend {
                     .map(|(&e_idx, typ)| match typ {
                         Sort::Bool => {
                             if e_idx == 0 {
-                                atom_s("false")
+                                Atom::S("false".to_string())
                             } else {
-                                atom_s("true")
+                                Atom::S("true".to_string())
                             }
                         }
                         Sort::Id(sort) => {
                             let elements = &model.universes[sort];
                             let element = elements[e_idx].clone();
-                            atom_s(element)
+                            Atom::S(element)
                         }
                     })
                     .collect::<Vec<_>>();
-                let repl = zip(binders.iter().map(|s| s.0.as_str()), args).collect::<Vec<_>>();
-                let body = subst(&repl, body);
+                let repl: HashMap<&str, Atom> =
+                    zip(binders.iter().map(|s| s.0.as_str()), args).collect();
                 let e = model
-                    .smt_eval(&part_interp, &body)
+                    .smt_eval(&repl, &part_interp, body)
                     .unwrap_or_else(|err| panic!("could not interpret {symbol}: {err}"));
                 let res = e.s().expect("unhandled evaluation result");
                 match ret_sort {

@@ -46,22 +46,32 @@ fn bool_atom(b: bool) -> Atom {
     Atom::S(v.to_string())
 }
 
-fn subst_hashmap(repl: &HashMap<&str, &Sexp>, e: &Sexp) -> Sexp {
+fn subst_hashmap(repl: &HashMap<&str, &Sexp>, e: &mut Sexp) {
     match e {
-        Sexp::Atom(Atom::I(_)) | Sexp::Comment(_) => e.clone(),
-        Sexp::Atom(Atom::S(s)) => repl.get(s.as_str()).cloned().unwrap_or(e).clone(),
-        Sexp::List(ss) => Sexp::List(ss.iter().map(|e| subst_hashmap(repl, e)).collect()),
+        Sexp::Atom(Atom::I(_)) | Sexp::Comment(_) => {}
+        Sexp::Atom(Atom::S(s)) => {
+            if let Some(&new) = repl.get(s.as_str()) {
+                *e = new.clone();
+            }
+        }
+        Sexp::List(ss) => {
+            for s in ss.iter_mut() {
+                subst_hashmap(repl, s)
+            }
+        }
     }
 }
 
 /// Parallel substitution into an sexp.
 pub fn subst(repl: &[(&str, Sexp)], e: &Sexp) -> Sexp {
-    let mut repl_map: HashMap<&str, &Sexp> = HashMap::new();
+    let mut repl_map: HashMap<&str, &Sexp> = HashMap::with_capacity(repl.len());
     for (name, e) in repl {
         let old = repl_map.insert(name, e);
         assert_eq!(old, None, "duplicate replacement for {name} in subst");
     }
-    subst_hashmap(&repl_map, e)
+    let mut new = e.clone();
+    subst_hashmap(&repl_map, &mut new);
+    new
 }
 
 fn parse_sort(sort: &Sexp) -> Sort {
@@ -261,8 +271,13 @@ impl PartialInterp {
 }
 
 impl Model {
-    fn eval_bool(&self, part_eval: &PartialInterp, e: &Sexp) -> Result<bool, EvalError> {
-        let a = self.smt_eval(part_eval, e)?;
+    fn eval_bool(
+        &self,
+        repl: &HashMap<&str, Atom>,
+        part_eval: &PartialInterp,
+        e: &Sexp,
+    ) -> Result<bool, EvalError> {
+        let a = self.smt_eval(repl, part_eval, e)?;
         match a {
             Atom::S(s) if s == "true" => Ok(true),
             Atom::S(s) if s == "false" => Ok(false),
@@ -272,12 +287,23 @@ impl Model {
 
     /// Evaluate an SMT expression, reducing constants with known semantics. Fails
     /// if this does not result in an Atom.
-    pub fn smt_eval(&self, part_eval: &PartialInterp, e: &Sexp) -> Result<Atom, EvalError> {
+    pub fn smt_eval(
+        &self,
+        repl: &HashMap<&str, Atom>,
+        part_eval: &PartialInterp,
+        e: &Sexp,
+    ) -> Result<Atom, EvalError> {
         // println!("evaluating {e}");
-        let go_bool = |e: &Sexp| self.eval_bool(part_eval, e);
-        let go = |e: &Sexp| self.smt_eval(part_eval, e);
+        let go_bool = |e: &Sexp| self.eval_bool(repl, part_eval, e);
+        let go = |e: &Sexp| self.smt_eval(repl, part_eval, e);
         match e {
-            Sexp::Atom(a) => Ok(a.clone()),
+            Sexp::Atom(a) => {
+                if let Some(id) = a.s() {
+                    Ok(repl.get(id).unwrap_or(a).clone())
+                } else {
+                    Ok(a.clone())
+                }
+            }
             Sexp::Comment(_) => Err(EvalError("comment".to_string())),
             Sexp::List(ss) => {
                 let ss = ss
@@ -293,19 +319,21 @@ impl Model {
                 )))?;
                 let args = &ss[1..];
                 if head == "and" {
-                    let args = args
-                        .iter()
-                        .map(|s| go_bool(s))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let v = args.iter().all(|x| *x);
-                    Ok(bool_atom(v))
+                    for arg in args {
+                        let v = go_bool(arg)?;
+                        if !v {
+                            return Ok(bool_atom(false));
+                        }
+                    }
+                    return Ok(bool_atom(true));
                 } else if head == "or" {
-                    let args = args
-                        .iter()
-                        .map(|s| go_bool(s))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let v = args.iter().any(|x| *x);
-                    Ok(bool_atom(v))
+                    for arg in args {
+                        let v = go_bool(arg)?;
+                        if v {
+                            return Ok(bool_atom(true));
+                        }
+                    }
+                    return Ok(bool_atom(false));
                 } else if head == "not" || head == "!" {
                     assert_eq!(args.len(), 1);
                     let x = go_bool(args[0])?;
@@ -354,13 +382,15 @@ impl Model {
                         args.len(),
                         "wrong number of arguments to {head}"
                     );
+                    // first evaluate all arguments
                     let args = args
                         .iter()
-                        .flat_map(|e| -> Result<Sexp, EvalError> {
+                        .map(|e| -> Result<Sexp, EvalError> {
                             let a = go(e)?;
                             Ok(Sexp::Atom(a))
                         })
-                        .collect::<Vec<_>>();
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // then substitute for each binder
                     let repl: Vec<(&str, Sexp)> = iter::zip(binders, args.iter().cloned())
                         .map(|(binder, e)| (binder.0.as_str(), e))
                         .collect();
