@@ -100,7 +100,16 @@ impl Backend for &GenericBackend {
             .collect();
 
         let mut part_interp = PartialInterp::for_model(&model);
-        for (symbol, model_sym) in &model.symbols {
+        let mut symbols = model.symbols.iter().collect::<Vec<_>>();
+        symbols.sort_unstable_by_key(|(symbol, _)| {
+            let in_signature = sig.contains_name(symbol);
+            // sort the model-only signatures first
+            //
+            // NOTE: this is just a heuristic to evaluate auxilliary functions
+            // first, for now.
+            (in_signature, symbol.to_string())
+        });
+        for (symbol, model_sym) in symbols.into_iter() {
             if indicators.contains(symbol) {
                 continue;
             }
@@ -175,14 +184,7 @@ impl Backend for &GenericBackend {
         let interp = part_interp
             .interps
             .into_iter()
-            .filter(|(symbol, _)| {
-                let symbol_no_primes = symbol.trim_end_matches(|c| c == '\'');
-                // this symbol is not in the signature
-                if !sig.relations.iter().any(|r| r.name == symbol_no_primes) {
-                    return false;
-                }
-                return true;
-            })
+            .filter(|(symbol, _)| sig.contains_name(symbol))
             .map(|(symbol, (interp, _))| (symbol, interp))
             .collect();
         FOModel { universe, interp }
