@@ -198,6 +198,8 @@ impl<B: Backend> Solver<B> {
     /// returned `Term`.
     fn set_universe_card(&mut self, univ: &str, card: usize) -> Term {
         assert!(card > 0);
+        self.proc
+            .comment_with(|| format!("setting {univ} to cardinality {card}"));
         let ind = self.get_indicator(&format!("{univ}_card_{card}"));
 
         let univ: Sort = Sort::new(univ);
@@ -223,50 +225,47 @@ impl<B: Backend> Solver<B> {
         ind
     }
 
-    /// Try to find a model where `univ` has max cardinality `card`, respecting `assumptions`.
-    ///
-    /// As a side effect, if this succeeds (and returns `Some(model)`) the
-    /// indicator that enforces this cardinality is added to `assumptions`.
-    fn with_universe_card(
-        &mut self,
-        assumptions: &mut Vec<Term>,
-        univ: &str,
-        card: usize,
-    ) -> Option<FOModel> {
-        self.proc
-            .comment_with(|| format!("check if {univ} can have cardinality {card}"));
-        let ind = self.set_universe_card(univ, card);
-        let mut new_assumptions = assumptions.iter().map(sexp::term).collect::<Vec<_>>();
-        new_assumptions.push(sexp::term(&ind));
-        let resp = self
-            .proc
-            .check_sat_assuming(&new_assumptions)
-            .unwrap_or_else(|err| panic!("internal error in cardinality check: {err}"));
-        match resp {
-            SatResp::Sat => {
-                let model = self.get_fo_model();
-                // make sure future queries use this minimized cardinality
-                assumptions.push(ind);
-                Some(model)
-            }
-            SatResp::Unsat => None,
-            SatResp::Unknown(err) => panic!("could not check cardinality (unknown): {err}"),
-        }
-    }
-
     /// Find the minimum cardinality for a specific universe. As a side effect,
     /// adds an indicator to `assumptions` that enforces this cardinality.
-    fn minimize_card(&mut self, assumptions: &mut Vec<Term>, model: &mut FOModel, univ: &str) {
-        let card = *model.universe.get(univ).unwrap_or(&1);
-        for new_card in 1..=card {
-            if let Some(new_model) = self.with_universe_card(assumptions, univ, new_card) {
-                *model = new_model;
-                return;
+    fn minimize_card(
+        &mut self,
+        max_card: usize,
+        assumptions: &mut Vec<Term>,
+        univ: &str,
+    ) -> Result<usize, SolverError> {
+        // The loop attempts to go from max_card-1 down. Thus it will go from
+        // sat to unsat at some point, and we want the cardinality and indicator
+        // for the last sat. If it starts out unsat, then no further
+        // minimization is possible and we don't need to change `assumptions`.
+        let mut prev_ind = None;
+        for new_card in (1..max_card).rev() {
+            let ind = self.set_universe_card(univ, new_card);
+            let r = self
+                .proc
+                .check_sat_assuming(&assumptions.iter().map(sexp::term).collect::<Vec<_>>())?;
+            match r {
+                SatResp::Sat => (),
+                SatResp::Unsat => {
+                    // The previous cardinality was the minimum one.
+                    if let Some(ind) = prev_ind {
+                        self.proc.comment_with(|| format!("assuming {ind} for now"));
+                        assumptions.push(ind);
+                    }
+                    return Ok(new_card + 1);
+                }
+                SatResp::Unknown(msg) => {
+                    // TODO: add a case to SolverError for unknown
+                    return Err(SolverError::UnexpectedClose(msg));
+                }
             }
+            prev_ind = Some(ind);
         }
+        // if we never got unsat, then 1 is a valid cardinality (and we don't
+        // check if 0 would work)
+        return Ok(1);
     }
 
-    /// Tries to set all universes to have cardinality (at most) card.
+    /// Try to set all universes to have cardinality (at most) card.
     ///
     /// Returns Some(indicators) on success, where indicators enforce `card`.
     fn is_valid_max_card(&mut self, card: usize) -> Option<Vec<Term>> {
@@ -287,7 +286,7 @@ impl<B: Backend> Solver<B> {
     }
 
     /// Search for the minimum cardinality `card` such that there is a model
-    /// where all universes are at some `card` in size.
+    /// where all universes are at `card` in size.
     ///
     /// Returns the cardinality `card` and the indicators that enforce this
     /// cardinality across all universes.
@@ -305,23 +304,24 @@ impl<B: Backend> Solver<B> {
 
     pub fn get_minimal_model(&mut self) -> Vec<Model> {
         let start = std::time::Instant::now();
-        let (init_card, indicators) = self.get_min_max_card();
-        let mut model = self.get_fo_model();
-        self.assert(&Term::and(indicators));
+        let (max_card, indicators) = self.get_min_max_card();
         // Minimize each sort in turn, greedily in the order of the signature.
         //
         // (This does not produce a global optimum but the search process is
         // simple to implement.)
         {
             let sorts = self.signature.sorts.clone();
-            let mut assumptions = vec![];
+            let mut assumptions = indicators;
             for sort in sorts {
-                self.minimize_card(&mut assumptions, &mut model, &sort);
+                // TODO: a solver error should be reported to the caller
+                self.minimize_card(max_card, &mut assumptions, &sort)
+                    .expect("solver error while minimizing");
             }
         }
+        let model = self.get_fo_model();
         let trace = model.into_trace(&self.signature, self.n_states);
         log::debug!(
-            "minimized model to max card {init_card} in {:.1}s",
+            "minimized model to max card {max_card} in {:.1}s",
             start.elapsed().as_secs_f64(),
         );
         trace
