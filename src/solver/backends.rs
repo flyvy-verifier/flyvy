@@ -218,4 +218,27 @@ mod tests {
         // auxilliary definition in Z3's model
         assert!(!fo_model.interp.contains_key("k!1058"));
     }
+
+    #[test]
+    fn test_parse_test_model() {
+        let sig = parser::parse_signature(
+            r#"
+        sort node
+        mutable votes(node, node): bool
+        "#
+            .trim(),
+        );
+
+        let backend = GenericBackend {
+            solver_type: SolverType::Z3,
+            bin: "z3".to_string(),
+        };
+
+        let model_text =
+            fs::read_to_string("tests/test_model.sexp").expect("could not find model file");
+        let model_sexp = sexp::parse(&model_text).expect("test model does not parse");
+
+        let fo_model = (&backend).parse(&sig, 0, &HashSet::new(), &model_sexp);
+        assert!(fo_model.interp.contains_key("votes"));
+    }
 }
