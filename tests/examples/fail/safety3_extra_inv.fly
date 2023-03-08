@@ -1,7 +1,7 @@
 # Copyright 2022-2023 VMware, Inc.
 # SPDX-License-Identifier: BSD-2-Clause
 
-# TEST --name houdini --all-solvers -- verify --houdini
+# TEST --name houdini --all-solvers -- infer --houdini
 
 mutable x: bool
 mutable y: bool

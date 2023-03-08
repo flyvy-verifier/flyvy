@@ -3,6 +3,7 @@
 
 mod basics;
 mod fixpoint;
+pub mod houdini;
 mod lemma;
 mod pdnf;
 

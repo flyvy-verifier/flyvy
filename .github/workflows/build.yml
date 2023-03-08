@@ -6,6 +6,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  ## Incremental builds only slow things down in CI.
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: full
   TEST_STRICT_VERSIONS: true
 
 jobs:
@@ -23,6 +26,18 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
+      - name: Set up cargo cache
+        uses: actions/cache@v3
+        continue-on-error: false
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{matrix.toolchain}}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{matrix.toolchain}}-cargo-
       - name: Download solvers
         run: |
           ./tools/download-solvers.sh
@@ -35,6 +50,12 @@ jobs:
         run: |
           rustup set auto-self-update disable
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal
-      - run: cargo build --verbose
-      - run: cargo test --verbose -- --nocapture
-      - run: cargo fmt --check
+      - name: CI checks
+        run: ./tools/ci-check.sh --ci
+      - name: Install license-header-checker
+        run: |
+          curl -s https://raw.githubusercontent.com/lluissm/license-header-checker/master/install.sh | bash -s -- -b ./bin
+          echo "$PWD/bin" >> $GITHUB_PATH
+      - name: Run license check
+        run: |
+          ./tools/ci-license-header-check.sh

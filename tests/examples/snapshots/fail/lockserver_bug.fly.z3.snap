@@ -7,9 +7,9 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ tests/examples/fail/lockserver_bug.fly:21:1
+   ┌─ tests/examples/fail/lockserver_bug.fly:24:1
    │
-21 │ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+24 │ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:

@@ -1,7 +1,6 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#![allow(clippy::needless_return)]
 use std::{
     collections::{HashMap, HashSet},
     iter::zip,

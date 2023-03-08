@@ -25,6 +25,13 @@ You'll need Rust (for example, through `rustup`) and recent versions of [Z3](htt
 2. `cargo test` to run tests
 3. `cargo run -- verify <file.fly>` will run the verifier on an input file
 
+You can run `cargo bench` to run the performance benchmarks.
+
+For debug logging, we use the
+[env_logger](https://docs.rs/env_logger/latest/env_logger/) crate, which uses
+the `RUST_LOG` environment variable to configure logging. For example, to get
+info-level messages run with `env RUST_LOG=info cargo run -- ...`.
+
 ## Documentation
 
 Run `cargo doc` to generate the low-level API documentation. Currently there

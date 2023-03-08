@@ -5,6 +5,7 @@ use clap::Parser;
 use temporal_verifier::App;
 
 fn main() {
+    pretty_env_logger::init();
     let app = App::parse();
     app.exec();
 }

@@ -49,8 +49,8 @@ pub enum SatResp {
 pub enum SolverError {
     #[error("some io went wrong")]
     Io(#[from] io::Error),
-    #[error("solver unexpectedly exited")]
-    UnexpectedClose,
+    #[error("solver unexpectedly exited:\n{0}")]
+    UnexpectedClose(String),
 }
 
 type Result<T> = std::result::Result<T, SolverError>;
@@ -291,20 +291,47 @@ impl SmtProc {
         }
     }
 
-    fn parse_sat(&mut self, resp: &str) -> SatResp {
+    /// Parse an error message returned as an s-expression.
+    fn parse_error(resp: &str) -> String {
+        // Z3 returns check-sat errors as:
+        // (error "error msg")
+        // sat
+        //
+        // Thus we parse the result as a sequence of sexps and look for the
+        // error sexp.
+        let sexps = sexp::parse_many(resp)
+            .unwrap_or_else(|err| panic!("could not parse error response {resp}: {err}"));
+        let error_msg = sexps
+            .iter()
+            .filter_map(|s| {
+                s.app().and_then(|(head, args)| {
+                    if head == "error" && args.len() == 1 {
+                        args[0].atom_s()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .next();
+        let msg = error_msg.unwrap_or_else(|| panic!("no error sexp found in {resp}"));
+        msg.to_string()
+    }
+
+    fn parse_sat(&mut self, resp: &str) -> Result<SatResp> {
         if resp == "unsat" {
-            return SatResp::Unsat;
+            return Ok(SatResp::Unsat);
         }
         if resp == "sat" {
-            return SatResp::Sat;
+            return Ok(SatResp::Sat);
         }
         if resp == "unknown" {
             let reason = self
                 .get_info(":reason-unknown")
                 .expect("could not get :reason-unknown");
-            return SatResp::Unknown(reason.to_string());
+            return Ok(SatResp::Unknown(reason.to_string()));
         }
-        panic!("unexpected check-sat response {resp}");
+        let msg = Self::parse_error(resp);
+        return Err(SolverError::UnexpectedClose(msg));
     }
 
     /// Send the solver `(check-sat)`. For unknown gets a reason, but does not
@@ -312,7 +339,7 @@ impl SmtProc {
     pub fn check_sat(&mut self) -> Result<SatResp> {
         self.send(&app("check-sat", []));
         let resp = self.get_response(|s| s.to_string())?;
-        Ok(self.parse_sat(&resp))
+        self.parse_sat(&resp)
     }
 
     pub fn check_sat_assuming(&mut self, assumptions: &[Sexp]) -> Result<SatResp> {
@@ -321,7 +348,7 @@ impl SmtProc {
             vec![sexp_l(assumptions.to_vec())],
         ));
         let resp = self.get_response(|s| s.to_string())?;
-        Ok(self.parse_sat(&resp))
+        self.parse_sat(&resp)
     }
 
     /// Run `(get-unsat-assumptions)` following an unsat response to get the
@@ -363,7 +390,8 @@ impl SmtProc {
             // including the newline)
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
-                return Err(SolverError::UnexpectedClose);
+                let msg = Self::parse_error(&buf);
+                return Err(SolverError::UnexpectedClose(msg));
             }
             // last line, without the newline
             let last_line = &buf[last_end..last_end + n - 1];
@@ -469,5 +497,36 @@ mod tests {
         for _ in 0..num_iters {
             let _ = SmtProc::new(z3.clone(), None).unwrap();
         }
+    }
+
+    #[test]
+    fn test_cvc5_ill_formed() {
+        let cvc = CvcConf::new_cvc5(&solver_path("cvc5")).done();
+        let mut proc = SmtProc::new(cvc, None).unwrap();
+        let e = parse("(assert (= and or))").unwrap();
+        proc.send(&e);
+        let r = proc.check_sat();
+        insta::assert_display_snapshot!(r.unwrap_err());
+    }
+
+    #[test]
+    fn test_cvc4_ill_formed() {
+        let cvc = CvcConf::new_cvc4(&solver_path("cvc4")).done();
+        let mut proc = SmtProc::new(cvc, None).unwrap();
+        let e = parse("(assert (= and or))").unwrap();
+        proc.send(&e);
+        let r = proc.check_sat();
+        insta::assert_display_snapshot!(r.unwrap_err());
+    }
+
+    #[test]
+    fn test_z3_ill_formed() {
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
+        let mut proc = SmtProc::new(z3, None).unwrap();
+        // unbound symbol
+        let e = parse("(assert p)").unwrap();
+        proc.send(&e);
+        let r = proc.check_sat();
+        insta::assert_display_snapshot!(r.unwrap_err());
     }
 }

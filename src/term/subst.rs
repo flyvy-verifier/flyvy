@@ -54,6 +54,7 @@ pub fn substitute_qf(term: &Term, substitution: &Substitution) -> Term {
 }
 
 #[cfg(test)]
+#[allow(clippy::redundant_clone)]
 mod tests {
     use super::*;
     use crate::fly::parser::parse_term;
@@ -63,10 +64,10 @@ mod tests {
         let x = Term::Id("x".to_string());
         let y = Term::Id("y".to_string());
 
-        let t1 = parse_term(&"(x | z) -> !y").expect("parser error.");
-        let t1_subx = parse_term(&"(y | z) -> !y").expect("parser error.");
-        let t1_suby = parse_term(&"(x | z) -> !x").expect("parser error.");
-        let t1_subt = parse_term(&"(((x | z) -> !y) | y) -> !x").expect("parser error.");
+        let t1 = parse_term("(x | z) -> !y").expect("parser error.");
+        let t1_subx = parse_term("(y | z) -> !y").expect("parser error.");
+        let t1_suby = parse_term("(x | z) -> !x").expect("parser error.");
+        let t1_subt = parse_term("(((x | z) -> !y) | y) -> !x").expect("parser error.");
 
         let mut subx = Substitution::new();
         subx.insert("x".to_string(), y.clone());

@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 use std::{env, path::Path};
 
 /// Get the right invocation of the solver with binary name bin.

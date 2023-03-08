@@ -1,0 +1,6 @@
+---
+source: src/smtlib/proc.rs
+expression: r.unwrap_err()
+---
+solver unexpectedly exited:
+line 6 column 8: unknown constant p

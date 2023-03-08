@@ -5,6 +5,7 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
+use crate::inference::houdini;
 use crate::solver::solver_path;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
@@ -56,10 +57,6 @@ struct VerifyArgs {
     #[command(flatten)]
     solver: SolverArgs,
 
-    #[arg(long)]
-    /// Run Houdini on supplied invariants
-    houdini: bool,
-
     /// File name for a .fly file
     file: String,
 }
@@ -68,6 +65,10 @@ struct VerifyArgs {
 struct InferArgs {
     #[command(flatten)]
     solver: SolverArgs,
+
+    #[arg(long)]
+    /// Run the Houdini algorithm to infer invariants
+    houdini: bool,
 
     #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
@@ -204,9 +205,9 @@ impl App {
             Command::Print { .. } => {
                 println!("{}", printer::fmt(&m));
             }
-            Command::Verify(ref args @ VerifyArgs { houdini, .. }) => {
+            Command::Verify(ref args) => {
                 let conf = args.get_solver_conf();
-                let r = verify_module(&conf, &m, houdini);
+                let r = verify_module(&conf, &m);
                 match r {
                     Ok(()) => println!("verifies!"),
                     Err(err) => {
@@ -222,9 +223,28 @@ impl App {
                     }
                 }
             }
-            Command::Infer(ref args @ InferArgs { .. }) => {
-                let conf = Rc::new(args.get_solver_conf());
-                run_fixpoint(conf, &m, args.extend_models, args.disj);
+            Command::Infer(ref args @ InferArgs { houdini, .. }) => {
+                if houdini {
+                    let conf = args.get_solver_conf();
+                    let r = houdini::infer_module(&conf, &m);
+                    match r {
+                        Ok(()) => println!("verifies!"),
+                        Err(err) => {
+                            eprintln!("verification errors:");
+
+                            for fail in &err.fails {
+                                let diagnostic = fail.diagnostic(());
+                                terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
+                                    .unwrap();
+                            }
+
+                            process::exit(1);
+                        }
+                    }
+                } else {
+                    let conf = Rc::new(args.get_solver_conf());
+                    run_fixpoint(conf, &m, args.extend_models, args.disj);
+                }
             }
             Command::Inline { .. } => {
                 let mut m = m;

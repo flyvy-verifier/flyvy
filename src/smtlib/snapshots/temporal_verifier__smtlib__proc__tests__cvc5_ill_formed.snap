@@ -1,0 +1,10 @@
+---
+source: src/smtlib/proc.rs
+expression: r.unwrap_err()
+---
+solver unexpectedly exited:
+Parse Error: <stdin>:6.14: Symbol 'and' not declared as a variable
+
+  (assert (= and or))
+             ^
+
