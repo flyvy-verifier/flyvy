@@ -179,6 +179,7 @@ mod tests {
     #[test]
     #[ignore] // parsing this model takes too long
     fn test_issue_5_parse_model_with_auxilliary_defs() {
+        let _ = pretty_env_logger::try_init();
         let sig = parser::parse_signature(
             r#"
         sort node
@@ -221,6 +222,7 @@ mod tests {
 
     #[test]
     fn test_parse_test_model() {
+        let _ = pretty_env_logger::try_init();
         let sig = parser::parse_signature(
             r#"
         sort node
