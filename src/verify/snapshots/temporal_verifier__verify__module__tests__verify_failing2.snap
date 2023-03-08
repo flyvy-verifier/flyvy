@@ -11,21 +11,21 @@ fails:
       Sat:
         signature:
           sorts:
-            - Id: thread
+            - thread
           relations:
             - mutable: true
               name: p
               args:
                 - Id: thread
-              typ: Bool
+              sort: Bool
             - mutable: false
               name: q
               args: []
-              typ: Bool
+              sort: Bool
             - mutable: false
               name: t0
               args: []
-              typ:
+              sort:
                 Id: thread
         universe:
           - 1

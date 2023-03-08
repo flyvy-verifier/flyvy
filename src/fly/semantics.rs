@@ -107,7 +107,7 @@ impl Model {
             assert_eq!(relation.args.len(), interp.shape.len() - 1);
             assert_eq!(
                 interp.shape.iter().last().unwrap(),
-                &self.cardinality(&relation.typ),
+                &self.cardinality(&relation.sort),
             );
             for j in 0..relation.args.len() {
                 let k = self.signature.sort_idx(&relation.args[j]);
@@ -128,8 +128,8 @@ impl Model {
 
     // ODED: I would change this function signature to:
     // fn fmt_element(sort: &Sort, element: Element) -> String
-    fn fmt_sort(typ: &Sort, idx: usize) -> String {
-        match typ {
+    fn fmt_sort(sort: &Sort, idx: usize) -> String {
+        match sort {
             Sort::Bool => {
                 if idx == 0 {
                     "false".to_string()
@@ -163,7 +163,7 @@ impl Model {
             } else {
                 format!("({})", args_s.join(","))
             };
-            let ret_s = Self::fmt_sort(&decl.typ, interp.get(&args));
+            let ret_s = Self::fmt_sort(&decl.sort, interp.get(&args));
             lines.push(format!("{name}{args_s} = {ret_s}"));
         }
         lines.join("\n")
@@ -269,14 +269,7 @@ impl Model {
                 body,
             } => {
                 assert!(!binders.is_empty());
-                let shape: Vec<usize> = binders
-                    .iter()
-                    .map(|b| {
-                        self.cardinality(
-                            b.typ.as_ref().expect("cannot evaluate unsorted quantifer"),
-                        )
-                    })
-                    .collect();
+                let shape: Vec<usize> = binders.iter().map(|b| self.cardinality(&b.sort)).collect();
                 let names: Vec<&String> = binders.iter().map(|b| &b.name).collect();
                 let mut assignment_ = assignment.cloned().unwrap_or_default();
                 let mut iter = shape
@@ -326,23 +319,20 @@ impl Model {
         let mut exists_binders: Vec<Binder> = vec![];
         let mut assignment: Assignment = Assignment::new();
         for i in 0..sort_cnt {
-            if let Sort::Id(sort_name) = &self.signature.sorts[i] {
-                // EDEN: We should use some convention so the names here will not be available for use elsewhere.
-                exists_vars.push(
-                    (0..self.universe[i])
-                        .map(|j| format!("{}_{}", sort_name.clone(), j))
-                        .collect(),
-                );
-                univ_vars.push(format!("{}_{}", sort_name.clone(), self.universe[i]));
-                for (j, name) in exists_vars[i].iter().enumerate() {
-                    assignment.insert(name.clone(), j);
-                    exists_binders.push(Binder {
-                        name: name.clone(),
-                        typ: Some(self.signature.sorts[i].clone()),
-                    });
-                }
-            } else {
-                panic!("Bool sort in signature.")
+            let sort_name = &self.signature.sorts[i];
+            // EDEN: We should use some convention so the names here will not be available for use elsewhere.
+            exists_vars.push(
+                (0..self.universe[i])
+                    .map(|j| format!("{}_{}", sort_name.clone(), j))
+                    .collect(),
+            );
+            univ_vars.push(format!("{}_{}", sort_name.clone(), self.universe[i]));
+            for (j, name) in exists_vars[i].iter().enumerate() {
+                assignment.insert(name.clone(), j);
+                exists_binders.push(Binder {
+                    name: name.clone(),
+                    sort: Sort::Id(self.signature.sorts[i].clone()),
+                });
             }
         }
 
@@ -375,7 +365,7 @@ impl Model {
                 quantifier: Quantifier::Forall,
                 binders: vec![Binder {
                     name: univ_vars[i].clone(),
-                    typ: Some(self.signature.sorts[i].clone()),
+                    sort: Sort::Id(self.signature.sorts[i].clone()),
                 }],
                 body: Box::new(Term::NAryOp(
                     NOp::Or,
@@ -439,22 +429,22 @@ mod tests {
 
     #[test]
     fn test_wf() {
-        let typ = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Id(format!("T{n}"));
 
         let sig = Signature {
-            sorts: vec![typ(1), typ(2)],
+            sorts: vec!["T1".to_string(), "T2".to_string()],
             relations: vec![
                 RelationDecl {
                     mutable: true,
                     name: "r1".to_string(),
-                    args: vec![typ(2), typ(1)],
-                    typ: Sort::Bool,
+                    args: vec![sort(2), sort(1)],
+                    sort: Sort::Bool,
                 },
                 RelationDecl {
                     mutable: true,
                     name: "r2".to_string(),
-                    args: vec![typ(1)],
-                    typ: typ(2),
+                    args: vec![sort(1)],
+                    sort: sort(2),
                 },
             ],
         };
@@ -513,34 +503,34 @@ mod tests {
     #[test]
     #[allow(clippy::redundant_clone)]
     fn test_eval() {
-        let typ = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Id(format!("T{n}"));
 
         let sig = Signature {
-            sorts: vec![typ(1), typ(2)],
+            sorts: vec!["T1".to_string(), "T2".to_string()],
             relations: vec![
                 RelationDecl {
                     mutable: true,
                     name: "r1".to_string(),
-                    args: vec![typ(2), typ(1)],
-                    typ: Sort::Bool,
+                    args: vec![sort(2), sort(1)],
+                    sort: Sort::Bool,
                 },
                 RelationDecl {
                     mutable: true,
                     name: "r2".to_string(),
-                    args: vec![typ(1)],
-                    typ: typ(2),
+                    args: vec![sort(1)],
+                    sort: sort(2),
                 },
                 RelationDecl {
                     mutable: true,
                     name: "c1".to_string(),
                     args: vec![],
-                    typ: typ(1),
+                    sort: sort(1),
                 },
                 RelationDecl {
                     mutable: true,
                     name: "c2".to_string(),
                     args: vec![],
-                    typ: typ(2),
+                    sort: sort(2),
                 },
             ],
         };
@@ -674,7 +664,7 @@ mod tests {
                     quantifier: Forall,
                     binders: vec![Binder {
                         name: "x".to_string(),
-                        typ: Some(Sort::Bool),
+                        sort: Sort::Bool,
                     }],
                     body: Box::new(Id("x".to_string())),
                 },
@@ -686,7 +676,7 @@ mod tests {
                     quantifier: Exists,
                     binders: vec![Binder {
                         name: "x".to_string(),
-                        typ: Some(Sort::Bool),
+                        sort: Sort::Bool,
                     }],
                     body: Box::new(Id("x".to_string())),
                 },
@@ -714,34 +704,34 @@ mod tests {
 
     #[test]
     fn test_to_term() {
-        let typ = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Id(format!("T{n}"));
 
         let sig = Signature {
-            sorts: vec![typ(1), typ(2)],
+            sorts: vec!["T1".to_string(), "T2".to_string()],
             relations: vec![
                 RelationDecl {
                     mutable: true,
                     name: "r1".to_string(),
-                    args: vec![typ(2), typ(1)],
-                    typ: Sort::Bool,
+                    args: vec![sort(2), sort(1)],
+                    sort: Sort::Bool,
                 },
                 RelationDecl {
                     mutable: true,
                     name: "r2".to_string(),
-                    args: vec![typ(1)],
-                    typ: typ(2),
+                    args: vec![sort(1)],
+                    sort: sort(2),
                 },
                 RelationDecl {
                     mutable: true,
                     name: "c1".to_string(),
                     args: vec![],
-                    typ: typ(1),
+                    sort: sort(1),
                 },
                 RelationDecl {
                     mutable: true,
                     name: "c2".to_string(),
                     args: vec![],
-                    typ: typ(2),
+                    sort: sort(2),
                 },
             ],
         };

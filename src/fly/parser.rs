@@ -28,8 +28,11 @@ grammar parser() for str {
     rule __ = word_boundary() _
 
     rule binder() -> Binder
-    =  "(" name:ident() _ ":" _ typ:sort() ")" { Binder {name, typ: Some(typ) } } /
-       name:ident() typ:(_ ":" _ s:sort() { s })? { Binder { name, typ } }
+    =  "(" name:ident() _ ":" _ sort:sort() ")" { Binder {name, sort } } /
+        name:ident() sort:(_ ":" _ s:sort() { s })? { Binder {
+            name,
+            sort: sort.unwrap_or(Sort::Id("".to_owned()))
+        } }
 
     pub(super) rule term() -> Term = precedence!{
         q:("forall" { Forall } / "exists" { Exists }) __
@@ -76,8 +79,8 @@ grammar parser() for str {
     = ("bool" word_boundary() { Sort::Bool }) /
       s:ident() { Sort::Id(s) }
 
-    rule sort_decl() -> Sort
-    = "sort" __ s:sort() { s }
+    rule sort_decl() -> String
+    = "sort" __ s:ident() { s }
 
     // matches whitespace with at least one newline
     rule newline_separator()
@@ -100,7 +103,7 @@ grammar parser() for str {
       mutable: m,
       name: r,
       args,
-      typ: s,
+      sort: s,
     } }
 
     pub(super) rule signature() -> Signature
@@ -112,15 +115,15 @@ grammar parser() for str {
      } }
 
      rule def_binder() -> Binder
-     = name:ident() _ ":" _ typ:sort() { Binder { name, typ: Some(typ) } }
+     = name:ident() _ ":" _ sort:sort() { Binder { name, sort } }
 
      rule def_binders() -> Vec<Binder>
      = "(" _ args:(def_binder() ** (_ "," _)) _ ")" { args }
 
      rule def() -> Definition
-     = "def" __ name:ident() _ binders:def_binders() _ "->" _ ret_typ:sort() _
+     = "def" __ name:ident() _ binders:def_binders() _ "->" _ ret_sort:sort() _
        "{" _ body:term() _ "}"
-     { Definition { name, binders, ret_typ, body } }
+     { Definition { name, binders, ret_sort, body } }
 
      rule defs() -> Vec<Definition>
      = newline_separated(<def()>)
@@ -262,7 +265,7 @@ proof {
 
     #[test]
     fn test_quantifiers() {
-        term("forall x. x = y").unwrap();
+        term("forall x:t. x = y").unwrap();
         term("forall x:t, y:t. x = y").unwrap();
         term("forall x:t,y:t. x = y").unwrap();
         term("forall x:t , y:t. x = y").unwrap();
@@ -271,8 +274,8 @@ proof {
         term("forall (x : t),(y:t). x = y").unwrap();
 
         assert_eq!(
-            term("forall x. x = y & exists z. x = z").unwrap(),
-            term("forall x. (x = y & exists z. x = z)").unwrap(),
+            term("forall x:t. x = y & exists z:t. x = z").unwrap(),
+            term("forall x:t. (x = y & exists z:t. x = z)").unwrap(),
         );
 
         assert_eq!(

@@ -1,13 +1,14 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
 use crate::inference::houdini;
 use crate::solver::solver_path;
 use crate::{
-    fly::{self, parser::parse_error_diagonistic, printer},
+    fly::{self, parser::parse_error_diagonistic, printer, sorts},
     inference::run_fixpoint,
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
@@ -186,6 +187,19 @@ impl App {
                 process::exit(1);
             }
         };
+
+        let r = sorts::check(&m);
+        if let Err((err, span)) = r {
+            eprintln!("sort checking error:");
+
+            let mut diagnostic = Diagnostic::error().with_message(format!("{}", err));
+            if let Some(span) = span {
+                diagnostic = diagnostic.with_labels(vec![Label::primary((), span.start..span.end)]);
+            }
+            terminal::emit(&mut writer.lock(), &config, &files, &diagnostic).unwrap();
+
+            process::exit(1);
+        }
 
         match self.command {
             Command::Print { .. } => {

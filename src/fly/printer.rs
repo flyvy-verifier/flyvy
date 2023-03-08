@@ -42,11 +42,7 @@ fn left_associative(_op: &BinOp) -> bool {
 }
 
 fn binder(b: &Binder) -> String {
-    if let Some(t) = &b.typ {
-        format!("{}:{}", b.name, sort(t))
-    } else {
-        b.name.to_string()
-    }
+    format!("{}:{}", b.name, sort(&b.sort))
 }
 
 pub fn term(t: &Term) -> String {
@@ -202,9 +198,9 @@ fn relation_decl(decl: &RelationDecl) -> String {
             decl.args.iter().map(sort).collect::<Vec<_>>().join(", ")
         )
     };
-    let typ = sort(&decl.typ);
+    let sort = sort(&decl.sort);
     format!(
-        "{} {name}{args}: {typ}",
+        "{} {name}{args}: {sort}",
         if decl.mutable { "mutable" } else { "immutable" },
     )
 }
@@ -214,7 +210,7 @@ fn signature(sig: &Signature) -> String {
         .sorts
         .iter()
         // end with trailing newline if there are any sorts
-        .map(|s| format!("sort {}\n", sort(s)))
+        .map(|s| format!("sort {}\n", s))
         .collect::<Vec<_>>()
         .join("");
     let relations = sig
@@ -227,7 +223,7 @@ fn signature(sig: &Signature) -> String {
 }
 
 fn def_binder(binder: &Binder) -> String {
-    format!("{}: {}", &binder.name, sort(binder.typ.as_ref().unwrap()))
+    format!("{}: {}", &binder.name, sort(&binder.sort))
 }
 
 fn def(def: &Definition) -> String {
@@ -237,10 +233,10 @@ fn def(def: &Definition) -> String {
         .map(def_binder)
         .collect::<Vec<_>>()
         .join(", ");
-    let ret_typ = sort(&def.ret_typ);
+    let ret_sort = sort(&def.ret_sort);
     let body = term(&def.body);
     format!(
-        "def {name}({binders}) -> {ret_typ} {{\n  {body}\n}}",
+        "def {name}({binders}) -> {ret_sort} {{\n  {body}\n}}",
         name = &def.name
     )
 }

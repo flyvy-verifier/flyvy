@@ -85,7 +85,7 @@ impl<B: Backend> Solver<B> {
     /// to emit each mutable symbol.
     fn send_signature(proc: &mut SmtProc, sig: &Signature, n_states: usize) {
         for sort in &sig.sorts {
-            proc.send(&app("declare-sort", [sexp::sort(sort), atom_i(0)]));
+            proc.send(&app("declare-sort", [atom_s(sort.clone()), atom_i(0)]));
         }
         for r in &sig.relations {
             // immutable symbols are always declared once
@@ -95,7 +95,7 @@ impl<B: Backend> Solver<B> {
                     [
                         atom_s(&r.name),
                         sexp_l(r.args.iter().map(sexp::sort)),
-                        sexp::sort(&r.typ),
+                        sexp::sort(&r.sort),
                     ],
                 ));
             }
@@ -109,7 +109,7 @@ impl<B: Backend> Solver<B> {
                         [
                             atom_s(format!("{name}{}", "'".repeat(n_primes))),
                             sexp_l(r.args.iter().map(sexp::sort)),
-                            sexp::sort(&r.typ),
+                            sexp::sort(&r.sort),
                         ],
                     ));
                 }
@@ -205,18 +205,18 @@ impl<B: Backend> Solver<B> {
 
         let ind = self.get_indicator(&format!("{univ}_card_{card}"));
 
-        let univ: Option<Sort> = Some(Sort::new(univ));
+        let univ: Sort = Sort::new(univ);
 
         let univ_card =
             Term::exists(
                 (0..card).map(|n| Binder {
                     name: format!("x{n}"),
-                    typ: univ.clone(),
+                    sort: univ.clone(),
                 }),
                 Term::forall(
                     [Binder {
                         name: "x".to_string(),
-                        typ: univ.clone(),
+                        sort: univ.clone(),
                     }],
                     Term::or((0..card).map(|n| {
                         Term::equals(Term::Id("x".to_string()), Term::Id(format!("x{n}")))
@@ -257,7 +257,7 @@ impl<B: Backend> Solver<B> {
         let mut model = self.get_fo_model();
         let universes = self.signature.sorts.clone();
         for univ in universes {
-            self.minimize_card(&mut assumptions, &mut model, univ.id().unwrap());
+            self.minimize_card(&mut assumptions, &mut model, &univ);
         }
         model.into_trace(&self.signature, self.n_states)
     }
@@ -320,14 +320,10 @@ impl FOModel {
             .sorts
             .iter()
             .map(|s| {
-                if let Sort::Id(s) = s {
-                    *self
-                        .universe
-                        .get(s)
-                        .unwrap_or_else(|| panic!("unknown sort {s} in model"))
-                } else {
-                    panic!("unexpected sort in signature")
-                }
+                *self
+                    .universe
+                    .get(s)
+                    .unwrap_or_else(|| panic!("unknown sort {s} in model"))
             })
             .collect();
         let mut states: Vec<Model> = vec![];
