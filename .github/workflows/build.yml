@@ -37,7 +37,7 @@ jobs:
             ~/.cargo/git/db/
             target/
             solvers/
-          key: ${{ runner.os }}-${{matrix.toolchain}}-cargo-${{ hashFiles('**/Cargo.lock,tools/solver-versions.sh') }}
+          key: ${{ runner.os }}-${{matrix.toolchain}}-cargo-${{ hashFiles('**/Cargo.lock','tools/solver-versions.sh') }}
           restore-keys: ${{ runner.os }}-${{matrix.toolchain}}-cargo-
       - name: Download solvers
         run: |
