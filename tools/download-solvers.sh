@@ -45,18 +45,30 @@ CVC4_URL="https://github.com/CVC4/CVC4/releases/download/${CVC4_VERSION}/${CVC4_
 CVC5_URL="https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/${CVC5_FILE}"
 
 mkdir -p solvers
-cd solvers
-echo "downloading Z3"
-wget -nv -O z3.zip "$Z3_URL"
-unzip -q z3.zip && rm z3.zip
-mv "$Z3_FILE/bin/z3" ./
-rm -r "$Z3_FILE"
-cd ..
+if [ -x solvers/z3 ] && ./solvers/z3 --version | grep --fixed-strings --quiet "$Z3_VERSION"; then
+  echo "found Z3"
+else
+  cd solvers
+  echo "downloading Z3"
+  wget -nv -O z3.zip "$Z3_URL"
+  unzip -q z3.zip && rm z3.zip
+  mv "$Z3_FILE/bin/z3" ./
+  rm -r "$Z3_FILE"
+  cd ..
+fi
 
-echo "downloading CVC5"
-wget -nv -O solvers/cvc5 "$CVC5_URL"
-chmod +x solvers/cvc5
+if [ -x solvers/cvc5 ] && ./solvers/cvc5 --version | grep --fixed-strings --quiet "$CVC5_VERSION"; then
+  echo "found CVC5"
+else
+  echo "downloading CVC5"
+  wget -nv -O solvers/cvc5 "$CVC5_URL"
+  chmod +x solvers/cvc5
+fi
 
-echo "downloading CVC4"
-wget -nv -O solvers/cvc4 "$CVC4_URL"
-chmod +x solvers/cvc4
+if [ -x solvers/cvc4 ] && ./solvers/cvc4 --version | grep --fixed-strings --quiet "$CVC4_VERSION"; then
+  echo "found CVC4"
+else
+  echo "downloading CVC4"
+  wget -nv -O solvers/cvc4 "$CVC4_URL"
+  chmod +x solvers/cvc4
+fi
