@@ -70,7 +70,7 @@ fn get_version(solver: &str) -> String {
             .next()
             .expect("no output from --version")
             .to_string(),
-        Err(_) => format!("({solver} not found)"),
+        Err(_) => return format!("({solver} not found)"),
     };
     let version_re = Regex::new(r"(Z3|CVC4|cvc5) version [0-9.]*").unwrap();
     match version_re.captures(&version) {
@@ -336,6 +336,20 @@ fn test_dir(root_dir: &str) {
             )
         }
     }
+}
+
+#[test]
+fn test_solver_versions_match() {
+    let mismatches = SOLVERS_TO_TEST
+        .iter()
+        .filter(|solver| !check_version(solver))
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        mismatches.is_empty(),
+        "some solvers ({}) are at the wrong version (try running ./tools/download-solvers.sh)",
+        mismatches.join(", ")
+    );
 }
 
 #[test]
