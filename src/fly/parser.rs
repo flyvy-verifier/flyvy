@@ -57,6 +57,14 @@ grammar parser() for str {
         --
         x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
         --
+        // NOTE(tej): precedence of these operators was an arbitrary choice
+        x:@ _ "until" _ y:(@) { Term::BinOp(BinOp::Until, Box::new(x), Box::new(y)) }
+        x:@ _ "since" _ y:(@) { Term::BinOp(BinOp::Since, Box::new(x), Box::new(y)) }
+        --
+        // NOTE(tej): precedence of these operators was an arbitrary choice
+        "X" __ x:@ { Term::UnaryOp(UOp::Next, Box::new(x)) }
+        "X^-1" __ x:@ { Term::UnaryOp(UOp::Previously, Box::new(x)) }
+        --
         x:(@) _ "=" _ y:@ { Term::BinOp(Equals, Box::new(x), Box::new(y)) }
         x:(@) _ "!=" _ y:@ { Term::BinOp(NotEquals, Box::new(x), Box::new(y)) }
         --
@@ -206,6 +214,21 @@ mod tests {
         // precedence of & and |
         assert_eq!(term("a | b & c").unwrap(), term("a | (b & c)").unwrap());
 
+        // precedence of &, ->, and until
+        // matches examples in https://www.cl.cam.ac.uk/teaching/1617/HLog+ModC/slides/lecture-8.pdf
+        assert_eq!(
+            term("a | b -> c until d").unwrap(),
+            term("(a | b) -> (c until d)").unwrap()
+        );
+        assert_eq!(
+            term("a -> b | always c").unwrap(),
+            term("a -> (b | (always c))").unwrap(),
+        );
+        assert_eq!(
+            term("always p -> eventually X^-1 b").unwrap(),
+            term("(always p) -> (eventually (X^-1 b))").unwrap(),
+        );
+
         // always is treated as an atomic keyword
         assert_ne!(term("alwaysx").unwrap(), term("always x").unwrap());
 
@@ -222,6 +245,24 @@ mod tests {
         assert_eq!(
             term("always p'=(p|q) & q'=q").unwrap(),
             term("always (p'=(p|q) & ((q')=q))").unwrap()
+        );
+
+        assert_eq!(
+            term("always ((X p) until q)").unwrap(),
+            term("always X p until q").unwrap(),
+        );
+
+        assert_eq!(
+            term("p until q since r").unwrap(),
+            term("p until (q since r)").unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_term_associativity() {
+        assert_ne!(
+            term("(p until q) since r").unwrap(),
+            term("p until q since r").unwrap(),
         );
     }
 
