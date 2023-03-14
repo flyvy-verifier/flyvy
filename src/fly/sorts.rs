@@ -10,20 +10,25 @@ use thiserror::Error;
 pub enum SortError {
     #[error("sort {0} was not declared")]
     UnknownSort(String),
-    #[error("sort {0} was defined multiple times")]
-    RedefinedSort(String),
-
-    #[error("{0} was unknown")]
-    UnknownName(String),
+    #[error("sort {0} was declared multiple times")]
+    RedeclaredSort(String),
+    #[error("unknown variable/constant {0}")]
+    UnknownVariable(String),
+    #[error("unknown function/definition {0}")]
+    UnknownFunction(String),
     #[error("{0} was declared multiple times")]
-    RedefinedName(String),
+    RedeclaredName(String),
 
     #[error("could not unify {0} and {1}")]
     UnificationFail(Sort, Sort),
     #[error("expected {expected} but found {found}")]
     ExpectedButFoundSorts { expected: Sort, found: Sort },
     #[error("function {function_name} expected {expected} args but found {found} args")]
-    ExpectedButFoundArity { function_name: String, expected: usize, found: usize },
+    ExpectedButFoundArity {
+        function_name: String,
+        expected: usize,
+        found: usize,
+    },
 
     #[error("{0} is a function/definition that takes arguments, but no arguments were passed")]
     Uncalled(String),
@@ -41,7 +46,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
     let mut sorts = HashSet::new();
     for sort in &module.signature.sorts {
         if !sorts.insert(sort.clone()) {
-            return Err((SortError::RedefinedSort(sort.clone()), None));
+            return Err((SortError::RedeclaredSort(sort.clone()), None));
         }
     }
 
@@ -229,7 +234,7 @@ impl Context<'_> {
         allow_shadowing: bool,
     ) -> Result<(), SortError> {
         match self.names.insert(name.clone(), sort) {
-            Some(_) if !allow_shadowing => Err(SortError::RedefinedName(name)),
+            Some(_) if !allow_shadowing => Err(SortError::RedeclaredName(name)),
             _ => Ok(()),
         }
     }
@@ -240,7 +245,7 @@ impl Context<'_> {
         let mut names = HashSet::new();
         for binder in binders {
             if !names.insert(binder.name.clone()) {
-                return Err(SortError::RedefinedName(binder.name.clone()));
+                return Err(SortError::RedeclaredName(binder.name.clone()));
             }
             self.check_sort_exists_or_empty(&binder.sort)?;
             let sort = if binder.sort == Sort::Id("".to_owned()) {
@@ -363,7 +368,7 @@ impl Context<'_> {
                 }
                 Some(NamedSort::Known(_, ret)) => Ok(AbstractSort::Known(ret.clone())),
                 Some(NamedSort::Unknown(var)) => Ok(AbstractSort::Unknown(*var)),
-                None => Err(SortError::UnknownName(name.clone())),
+                None => Err(SortError::UnknownVariable(name.clone())),
             },
             Term::App(f, _p, xs) => match self.names.get(f).cloned() {
                 Some(NamedSort::Known(args, _)) if args.is_empty() => {
@@ -384,7 +389,7 @@ impl Context<'_> {
                     Ok(AbstractSort::Known(ret))
                 }
                 Some(NamedSort::Unknown(_)) => unreachable!("function sorts are always known"),
-                None => Err(SortError::UnknownName(f.clone())),
+                None => Err(SortError::UnknownFunction(f.clone())),
             },
             Term::UnaryOp(
                 UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
