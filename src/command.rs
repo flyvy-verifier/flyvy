@@ -5,7 +5,7 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
-use crate::inference::houdini;
+use crate::inference::{houdini, input_cfg};
 use crate::solver::solver_path;
 use crate::timing;
 use crate::{
@@ -260,7 +260,8 @@ impl App {
                     }
                 } else {
                     let conf = Rc::new(args.get_solver_conf());
-                    run_fixpoint(conf, &m, args.extend_models, args.disj);
+                    let infer_cfg = input_cfg(&m.signature);
+                    run_fixpoint(infer_cfg, conf, &m, args.extend_models, args.disj);
                     if args.time {
                         timing::report();
                     }

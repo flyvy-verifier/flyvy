@@ -364,9 +364,15 @@ impl<T: LemmaQF> Frame<T> {
     }
 }
 
+pub struct InferenceConfig {
+    pub cfg: QuantifierConfig,
+    pub kpdnf_cubes: usize,
+    pub kpdnf_lit: Option<usize>,
+}
+
 /// Create a quantifier configuration using user input.
 // TODO: replace with config file or command-line arguments
-pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
+pub fn input_cfg(sig: &Signature) -> InferenceConfig {
     let mut quantifiers = vec![];
     let mut sorts = vec![];
     let mut names = vec![];
@@ -436,15 +442,16 @@ pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
         .parse::<usize>()
         .unwrap();
 
-    (
-        QuantifierConfig {
-            quantifiers,
-            sorts,
-            names,
-            depth: None,
-            include_eq: true,
-        },
-        kpdnf,
-        Some(kpdnf_lit),
-    )
+    let cfg = QuantifierConfig {
+        quantifiers,
+        sorts,
+        names,
+        depth: None,
+        include_eq: true,
+    };
+    InferenceConfig {
+        cfg,
+        kpdnf_cubes: kpdnf,
+        kpdnf_lit: Some(kpdnf_lit),
+    }
 }

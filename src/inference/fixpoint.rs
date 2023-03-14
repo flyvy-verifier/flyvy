@@ -9,14 +9,26 @@ use std::rc::Rc;
 use crate::{
     fly::{semantics::Model, syntax::Module},
     inference::{
-        basics::{input_cfg, FOModule, Frame},
+        basics::{FOModule, Frame, InferenceConfig},
         pdnf::PDNF,
     },
     verify::SolverConf,
 };
 
 /// Run a simple fixpoint algorithm on the configured lemma domain.
-pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj: bool) {
+pub fn run_fixpoint(
+    infer_cfg: InferenceConfig,
+    conf: Rc<SolverConf>,
+    m: &Module,
+    extend_models: bool,
+    disj: bool,
+) {
+    let InferenceConfig {
+        cfg,
+        kpdnf_cubes: kpdnf,
+        kpdnf_lit,
+    } = infer_cfg;
+    let cfg = Rc::new(cfg);
     let fo = Rc::new(FOModule::new(m, disj));
 
     println!("Axioms:");
@@ -32,9 +44,6 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
         println!("    {a}");
     }
     println!();
-
-    let (cfg, kpdnf, kpdnf_lit) = input_cfg(&m.signature);
-    let cfg = Rc::new(cfg);
 
     let mut frame = Frame::new(
         vec![cfg.quantify_false(PDNF::get_false(kpdnf, kpdnf_lit))],

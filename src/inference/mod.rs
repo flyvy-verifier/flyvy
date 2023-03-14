@@ -12,4 +12,5 @@ pub mod houdini;
 mod lemma;
 mod pdnf;
 
+pub use basics::input_cfg;
 pub use fixpoint::run_fixpoint;
