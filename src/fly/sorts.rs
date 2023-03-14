@@ -22,12 +22,12 @@ pub enum SortError {
     UnificationFail(Sort, Sort),
     #[error("expected {expected} but found {found}")]
     ExpectedButFoundSorts { expected: Sort, found: Sort },
-    #[error("expected {expected} args but found {found} args")]
-    ExpectedButFoundArity { expected: usize, found: usize },
+    #[error("function {function_name} expected {expected} args but found {found} args")]
+    ExpectedButFoundArity { function_name: String, expected: usize, found: usize },
 
-    #[error("{0} expected args but didn't get them")]
+    #[error("{0} is a function/definition that takes arguments, but no arguments were passed")]
     Uncalled(String),
-    #[error("{0} was called but didn't take any args")]
+    #[error("{0} was called but it is not a function/definition")]
     Uncallable(String),
 
     #[error("could not solve for the sort of {0}")]
@@ -372,6 +372,7 @@ impl Context<'_> {
                 Some(NamedSort::Known(args, ret)) => {
                     if args.len() != xs.len() {
                         return Err(SortError::ExpectedButFoundArity {
+                            function_name: f.clone(),
                             expected: args.len(),
                             found: xs.len(),
                         });
