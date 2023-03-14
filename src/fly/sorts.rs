@@ -55,9 +55,9 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
     (|| {
         for rel in &module.signature.relations {
             for arg in &rel.args {
-                context.check_sort_exists(arg, false)?;
+                context.check_sort_exists(arg)?;
             }
-            context.check_sort_exists(&rel.sort, false)?;
+            context.check_sort_exists(&rel.sort)?;
             context.add_name(
                 rel.name.clone(),
                 NamedSort::Known(rel.args.clone(), rel.sort.clone()),
@@ -69,7 +69,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             {
                 let mut context = context.new_inner_scope();
                 context.add_binders(&mut def.binders)?;
-                context.check_sort_exists(&def.ret_sort, false)?;
+                context.check_sort_exists(&def.ret_sort)?;
                 let ret = context.sort_of_term(&mut def.body)?;
                 context.unify_var_value(&def.ret_sort, &ret)?;
             }
@@ -203,15 +203,22 @@ impl Context<'_> {
 
     // all sorts must be declared in the module signature
     // this function checks that, assuming that it gets called on all sorts
-    fn check_sort_exists(&self, sort: &Sort, empty_valid: bool) -> Result<(), SortError> {
+    fn check_sort_exists_internal(&self, sort: &Sort, empty_allowed: bool) -> Result<(), SortError> {
         match sort {
             Sort::Bool => Ok(()),
-            Sort::Id(a) if a.is_empty() && empty_valid => Ok(()),
+            Sort::Id(a) if a.is_empty() && empty_allowed => Ok(()),
             Sort::Id(a) => match self.sorts.contains(a) {
                 true => Ok(()),
                 false => Err(SortError::UnknownSort(a.clone())),
             },
         }
+    }
+
+    fn check_sort_exists(&self, sort: &Sort) -> Result<(), SortError> {
+        self.check_sort_exists_internal(sort, false)
+    }
+    fn check_sort_exists_or_empty(&self, sort: &Sort) -> Result<(), SortError> {
+        self.check_sort_exists_internal(sort, true)
     }
 
     // adds `(name, sort)` to `context`, potentially giving an error if name already exists
@@ -235,7 +242,7 @@ impl Context<'_> {
             if !names.insert(binder.name.clone()) {
                 return Err(SortError::RedefinedName(binder.name.clone()));
             }
-            self.check_sort_exists(&binder.sort, true)?;
+            self.check_sort_exists_or_empty(&binder.sort)?;
             let sort = if binder.sort == Sort::Id("".to_owned()) {
                 let var = self.vars.new_key(OptionSort(None));
                 binder.sort = Sort::Id(format!("var {}", var.0));
