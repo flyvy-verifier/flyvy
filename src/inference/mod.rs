@@ -9,8 +9,8 @@
 mod basics;
 mod fixpoint;
 pub mod houdini;
-mod lemma;
+pub mod lemma;
 mod pdnf;
 
-pub use basics::input_cfg;
+pub use basics::{parse_quantifier, InferenceConfig};
 pub use fixpoint::run_fixpoint;

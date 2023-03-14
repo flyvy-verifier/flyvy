@@ -153,7 +153,12 @@ impl Display for TestCfg {
         }
         if !self.args.is_empty() {
             write!(f, "-- ")?;
-            write!(f, "{}", self.args.join(" "))?;
+            let args = self
+                .args
+                .iter()
+                .map(|arg| shell_words::quote(arg))
+                .collect::<Vec<_>>();
+            write!(f, "{}", args.join(" "))?;
         }
         Ok(())
     }
@@ -185,8 +190,17 @@ fn get_file_tests(path: &Path) -> Vec<Test> {
         .flat_map(|l| {
             let l = l.unwrap();
             l.strip_prefix("# TEST ").map(|test_line| {
-                let args = ["TEST"].iter().copied();
-                let args = args.chain(test_line.split(' '));
+                let split_line = match shell_words::split(test_line) {
+                    Ok(split) => split,
+                    Err(err) => {
+                        eprintln!("could not tokenize TEST line:");
+                        eprintln!("# TEST {test_line}");
+                        panic!("{err}");
+                    }
+                };
+                let args = ["TEST".to_string()]
+                    .into_iter()
+                    .chain(split_line.into_iter());
                 Test {
                     path: path.to_path_buf(),
                     cfg: TestCfg::try_parse_from(args).unwrap_or_else(|err| {

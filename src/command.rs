@@ -5,7 +5,9 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
-use crate::inference::{houdini, input_cfg};
+use crate::fly::syntax::Signature;
+use crate::inference::lemma::QuantifierConfig;
+use crate::inference::{houdini, parse_quantifier, InferenceConfig};
 use crate::solver::solver_path;
 use crate::timing;
 use crate::{
@@ -67,6 +69,67 @@ struct VerifyArgs {
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct QuantifierConfigArgs {
+    #[arg(long)]
+    depth: Option<usize>,
+
+    #[arg(long, action)]
+    no_include_eq: bool,
+
+    #[arg(short, long)]
+    /// Quantifier in the form `<quantifier: F/E/*> <sort> <var1> <var2> ...`.
+    quantifier: Vec<String>,
+}
+
+impl QuantifierConfigArgs {
+    fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
+        let mut quantifiers = vec![];
+        let mut sorts = vec![];
+        let mut names = vec![];
+        for quantifier_spec in &self.quantifier {
+            let r = parse_quantifier(sig, quantifier_spec);
+            match r {
+                Ok((q, sort, q_names)) => {
+                    quantifiers.push(q);
+                    sorts.push(sort);
+                    names.push(q_names);
+                }
+                Err(err) => panic!("{err}"),
+            }
+        }
+        QuantifierConfig {
+            quantifiers,
+            sorts,
+            names,
+            depth: self.depth,
+            include_eq: !self.no_include_eq,
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct InferenceConfigArgs {
+    #[command(flatten)]
+    q_cfg_args: QuantifierConfigArgs,
+
+    #[arg(long, default_value_t = 0)]
+    kpdnf_cubes: usize,
+
+    #[arg(long)]
+    kpdnf_lit: Option<usize>,
+}
+
+impl InferenceConfigArgs {
+    fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
+        InferenceConfig {
+            cfg: self.q_cfg_args.to_cfg(sig),
+            kpdnf_cubes: self.kpdnf_cubes,
+            kpdnf_lit: self.kpdnf_lit,
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct InferArgs {
     #[command(flatten)]
     solver: SolverArgs,
@@ -74,6 +137,9 @@ struct InferArgs {
     #[arg(long)]
     /// Run the Houdini algorithm to infer invariants
     houdini: bool,
+
+    #[command(flatten)]
+    infer_cfg: InferenceConfigArgs,
 
     #[arg(long)]
     /// Print timing statistics
@@ -260,7 +326,7 @@ impl App {
                     }
                 } else {
                     let conf = Rc::new(args.get_solver_conf());
-                    let infer_cfg = input_cfg(&m.signature);
+                    let infer_cfg = args.infer_cfg.to_cfg(&m.signature);
                     run_fixpoint(infer_cfg, conf, &m, args.extend_models, args.disj);
                     if args.time {
                         timing::report();

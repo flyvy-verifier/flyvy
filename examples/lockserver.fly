@@ -3,6 +3,8 @@
 
 # Lock server example, translated from mypyvy
 # TEST --all-solvers -- verify
+# TEST --name infer-z3 -- infer --quantifier "F node n1 n2" --kpdnf-lit 3
+# TEST --name infer-cvc5 -- infer --solver cvc5 --quantifier "F node n1 n2" --kpdnf-lit 3
 
 sort node
 
