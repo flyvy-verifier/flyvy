@@ -141,7 +141,65 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         }
     }
 
+    assert!(module_has_all_sort_annotations(module));
+
     Ok(())
+}
+
+/// Return whether every quantified variable in every term in the given fly
+/// module has a (non-empty) sort annotation.
+pub fn module_has_all_sort_annotations(module: &Module) -> bool {
+    // This function should be kept in sync with the parser. Currently the
+    // parser only generates Sort::Id("") on quantified variables, so that is
+    // the only place we need to check. If future changes to the parser
+    // introduce more opportunities for sort inference, then this function
+    // should be adjusted as well.
+
+    module
+        .defs
+        .iter()
+        .all(|def| term_has_all_sort_annotations(&def.body))
+        && module.statements.iter().all(|statement| match statement {
+            ThmStmt::Assume(term) => term_has_all_sort_annotations(term),
+            ThmStmt::Assert(proof) => {
+                proof
+                    .invariants
+                    .iter()
+                    .all(|inv| term_has_all_sort_annotations(&inv.x))
+                    && term_has_all_sort_annotations(&proof.assert.x)
+            }
+        })
+}
+
+/// Return whether every quantified variable in this term has a (non-empty) sort
+/// annotation.
+pub fn term_has_all_sort_annotations(term: &Term) -> bool {
+    match term {
+        Term::Literal(_) | Term::Id(_) => true,
+        Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
+        Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime, x) => {
+            term_has_all_sort_annotations(x)
+        }
+        Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Implies | BinOp::Iff, x, y) => {
+            term_has_all_sort_annotations(x) && term_has_all_sort_annotations(y)
+        }
+        Term::NAryOp(NOp::And | NOp::Or, xs) => xs.iter().all(term_has_all_sort_annotations),
+        Term::Ite { cond, then, else_ } => {
+            term_has_all_sort_annotations(cond)
+                && term_has_all_sort_annotations(then)
+                && term_has_all_sort_annotations(else_)
+        }
+        Term::Quantified {
+            quantifier: Quantifier::Forall | Quantifier::Exists,
+            binders,
+            body,
+        } => {
+            binders
+                .iter()
+                .all(|binder| binder.sort != Sort::Id("".to_owned()))
+                && term_has_all_sort_annotations(body)
+        }
+    }
 }
 
 // can either hold a function sort or the index of a sort variable
