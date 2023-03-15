@@ -1,7 +1,10 @@
 # Language Reference Manual
 
-This file is not a tutorial, but describes the language with a high-level grammar.
-It also describes how names and scopes are handled, as well as sort checking.
+This file describes the flyvy input language. It is intended to precisely convey
+the grammar, binding and scoping rules, and sort checking.
+
+flyvy is under active development, so this file may be out of date with respect
+to the implementation. Please file an issue if you notice any discrepancies.
 
 ## Grammar
 
