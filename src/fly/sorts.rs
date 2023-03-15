@@ -1,6 +1,16 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Infer and check sorts.
+//!
+//! The main entry point is [sort_check_and_infer].
+//!
+//! The parser represents missing sort annotations as `Sort::Id("")`. One of the
+//! main purposes of sort inference is to replace these placeholders with proper
+//! sort annotations. Sort inference is combined with sort checking, so another
+//! main purpose of this module is to make sure the given fly program is well
+//! sorted.
+
 use crate::fly::syntax::*;
 use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
 use std::collections::HashSet;
@@ -8,21 +18,30 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SortError {
+    /// The program referred to an uninterpreted sort that was not declared.
     #[error("sort {0} was not declared")]
     UnknownSort(String),
+    /// An uninterpreted sort was declared multiple times.
     #[error("sort {0} was declared multiple times")]
     RedeclaredSort(String),
+
+    /// The program referred to a variable that was not declared.
     #[error("unknown variable/constant {0}")]
     UnknownVariable(String),
+    /// The program referred to a function that was not declared.
     #[error("unknown function/definition {0}")]
     UnknownFunction(String),
+    /// A name was declared multiple times in a context that did not allow shadowing.
     #[error("{0} was declared multiple times")]
     RedeclaredName(String),
 
+    /// Sort inference detected a conflict between two sorts.
     #[error("could not unify {0} and {1}")]
     UnificationFail(Sort, Sort),
+    /// Sort checking detected a mismatch between the expected and actual sorts of a term.
     #[error("expected {expected} but found {found}")]
     ExpectedButFoundSorts { expected: Sort, found: Sort },
+    /// A function or definition was applied to the wrong number of arguments.
     #[error("function {function_name} expected {expected} args but found {found} args")]
     ExpectedButFoundArity {
         function_name: String,
@@ -30,18 +49,42 @@ pub enum SortError {
         found: usize,
     },
 
+    /// A function/definition was referred to without passing any arguments.
     #[error("{0} is a function/definition that takes arguments, but no arguments were passed")]
     Uncalled(String),
+    /// A constant or variable was called like a function.
     #[error("{0} was called but it is not a function/definition")]
     Uncallable(String),
 
+    /// Sort inference finished without gaining enough information to figure out
+    /// the sort of the given variable.
     #[error("could not solve for the sort of {0}")]
     UnsolvedSort(String),
 }
 
-// checks that the program is well-sorted
-// as well as modifying the module by filling in any missing sort annotations on binders
-// entry point for this module
+/// Checks that the given fly module is well sorted, inferring sort annotations
+/// on bound variables as needed.
+///
+/// This is the main entry point to the sort checker/inferencer.
+///
+/// Note that this is a *mutable* operation on the AST! Sort inference will
+/// write its results back into the AST so that future passes can easily find
+/// the type of a bound variable.
+///
+/// Sort inference allows the user to leave off the sort annotation of most
+/// quantified variables. Internally, it uses unification to discover the
+/// missing sorts. The sorts on arguments to definitions are required to be
+/// given explicitly. (This last requirement is enforced by the parser.)
+///
+/// The parser represents missing sort annotations in the input AST as
+/// `Sort::Id("")`. `sort_check_and_infer` guarantees that, after it returns, no
+/// sort annotation is `Sort::Id("")` anywhere in the given fly module. In other
+/// words, it guarantees that [module_has_all_sort_annotations] returns true.
+///
+/// If sort checking detects an error (see [SortError]), it will attempt to
+/// provide a [Span] to locate this error in the source code. The AST has
+/// limited span information, so some errors will be returned without location
+/// information (the span will be `None` in that case).
 pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
     let mut sorts = HashSet::new();
     for sort in &module.signature.sorts {
@@ -291,9 +334,13 @@ impl Context<'_> {
         }
     }
 
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
     fn check_sort_exists(&self, sort: &Sort) -> Result<(), SortError> {
         self.check_sort_exists_internal(sort, false)
     }
+
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
+    // Sort("") does not cause an error.
     fn check_sort_exists_or_empty(&self, sort: &Sort) -> Result<(), SortError> {
         self.check_sort_exists_internal(sort, true)
     }
@@ -317,6 +364,7 @@ impl Context<'_> {
     fn add_binders(&mut self, binders: &mut [Binder]) -> Result<(), SortError> {
         let mut names = HashSet::new();
         for binder in binders {
+            // First check that the name is not repeated *within* this slice.
             if !names.insert(binder.name.clone()) {
                 return Err(SortError::RedeclaredName(binder.name.clone()));
             }
@@ -328,6 +376,8 @@ impl Context<'_> {
             } else {
                 NamedSort::Known(vec![], binder.sort.clone())
             };
+            // Now add it to the context, allowing it to shadow bindings from
+            // any outer scopes.
             self.add_name(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
         }
         Ok(())
