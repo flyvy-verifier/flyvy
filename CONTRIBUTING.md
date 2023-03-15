@@ -101,6 +101,8 @@ Before submitting your pull request, we advise you to use the following:
 1. Check if your code changes will pass both code linting and format checks (`cargo fmt --check`) and unit and regression tests (`cargo test`).
 2. Ensure your commit messages are descriptive. We follow the conventions on [How to Write a Git Commit Message](http://chris.beams.io/posts/git-commit/). Be sure to include any related GitHub issue references in the commit message. See [GFM syntax](https://guides.github.com/features/mastering-markdown/#GitHub-flavored-markdown) for referencing issues and commits.
 3. Check the commits and commits messages and ensure they are free from typos.
+4. Any new modules or new public functions should have a rustdoc comment.
+5. Strive for 100% statement coverage via tests (unit tests or snapshot tests are both good). For example, if you are writing a function that traverses the AST, make sure there is a test where every possible kind of AST node is passed to your function. Don't forget to test error paths, especially for user-facing code. Users make great fuzzers, so you shouldn't assume anything about user-provided input that you haven't checked yourself.
 
 ## Reporting Bugs and Creating Issues
 
