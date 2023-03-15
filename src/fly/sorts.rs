@@ -270,16 +270,24 @@ impl Context<'_> {
         }
     }
 
-    // all sorts must be declared in the module signature
-    // this function checks that, assuming that it gets called on all sorts
-    fn check_sort_exists_internal(&self, sort: &Sort, empty_allowed: bool) -> Result<(), SortError> {
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
+    // if empty_allowed is true, then Sort("") does not cause an error.
+    // callers should not call this function directly, but rather [check_sort_exists] or [check_sort_exists_or_empty]
+    fn check_sort_exists_internal(
+        &self,
+        sort: &Sort,
+        empty_allowed: bool,
+    ) -> Result<(), SortError> {
         match sort {
             Sort::Bool => Ok(()),
             Sort::Id(a) if a.is_empty() && empty_allowed => Ok(()),
-            Sort::Id(a) => match self.sorts.contains(a) {
-                true => Ok(()),
-                false => Err(SortError::UnknownSort(a.clone())),
-            },
+            Sort::Id(a) => {
+                if !self.sorts.contains(a) {
+                    Err(SortError::UnknownSort(a.clone()))
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
