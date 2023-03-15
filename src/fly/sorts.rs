@@ -66,7 +66,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             context.add_name(
                 rel.name.clone(),
                 NamedSort::Known(rel.args.clone(), rel.sort.clone()),
-                false,
+                ShadowingConstraint::Disallow,
             )?;
         }
 
@@ -88,7 +88,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             context.add_name(
                 def.name.clone(),
                 NamedSort::Known(args, def.ret_sort.clone()),
-                false,
+                ShadowingConstraint::Disallow,
             )?;
         }
 
@@ -189,6 +189,12 @@ impl UnifyValue for OptionSort {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum ShadowingConstraint {
+    Allow,
+    Disallow,
+}
+
 #[derive(Debug)]
 struct Context<'a> {
     sorts: &'a HashSet<String>,
@@ -231,10 +237,11 @@ impl Context<'_> {
         &mut self,
         name: String,
         sort: NamedSort,
-        allow_shadowing: bool,
+        shadowing_constraint: ShadowingConstraint,
     ) -> Result<(), SortError> {
         match self.names.insert(name.clone(), sort) {
-            Some(_) if !allow_shadowing => Err(SortError::RedeclaredName(name)),
+            Some(_) if shadowing_constraint == ShadowingConstraint::Disallow =>
+                Err(SortError::RedeclaredName(name)),
             _ => Ok(()),
         }
     }
@@ -255,7 +262,7 @@ impl Context<'_> {
             } else {
                 NamedSort::Known(vec![], binder.sort.clone())
             };
-            self.add_name(binder.name.clone(), sort, true)?;
+            self.add_name(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
         }
         Ok(())
     }
