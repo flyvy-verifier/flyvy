@@ -390,7 +390,7 @@ mod tests {
     use std::vec;
 
     use super::{RelationDecl, Signature, Sort};
-    use crate::fly::parser::parse_term;
+    use crate::fly::parser::term;
 
     #[test]
     fn test_terms_by_sort() {
@@ -441,21 +441,9 @@ mod tests {
         assert_eq!(
             terms,
             vec![
-                vec![
-                    parse_term("a1").expect("parser error"),
-                    parse_term("a2").expect("parser error"),
-                    parse_term("c1").expect("parser error"),
-                ],
-                vec![
-                    parse_term("b").expect("parser error"),
-                    parse_term("c2").expect("parser error"),
-                ],
-                vec![
-                    parse_term("a1=a2").expect("parser error"),
-                    parse_term("a1=c1").expect("parser error"),
-                    parse_term("a2=c1").expect("parser error"),
-                    parse_term("b=c2").expect("parser error"),
-                ]
+                vec![term("a1"), term("a2"), term("c1"),],
+                vec![term("b"), term("c2"),],
+                vec![term("a1=a2"), term("a1=c1"), term("a2=c1"), term("b=c2"),]
             ]
         );
 
@@ -464,50 +452,50 @@ mod tests {
             terms,
             vec![
                 vec![
-                    parse_term("a1").expect("parser error"),
-                    parse_term("a2").expect("parser error"),
-                    parse_term("c1").expect("parser error"),
-                    parse_term("f21(b)").expect("parser error"),
-                    parse_term("f21(c2)").expect("parser error"),
-                    parse_term("f21(f12(a1))").expect("parser error"),
-                    parse_term("f21(f12(a2))").expect("parser error"),
-                    parse_term("f21(f12(c1))").expect("parser error"),
+                    term("a1"),
+                    term("a2"),
+                    term("c1"),
+                    term("f21(b)"),
+                    term("f21(c2)"),
+                    term("f21(f12(a1))"),
+                    term("f21(f12(a2))"),
+                    term("f21(f12(c1))"),
                 ],
                 vec![
-                    parse_term("b").expect("parser error"),
-                    parse_term("c2").expect("parser error"),
-                    parse_term("f12(a1)").expect("parser error"),
-                    parse_term("f12(a2)").expect("parser error"),
-                    parse_term("f12(c1)").expect("parser error"),
-                    parse_term("f12(f21(b))").expect("parser error"),
-                    parse_term("f12(f21(c2))").expect("parser error"),
+                    term("b"),
+                    term("c2"),
+                    term("f12(a1)"),
+                    term("f12(a2)"),
+                    term("f12(c1)"),
+                    term("f12(f21(b))"),
+                    term("f12(f21(c2))"),
                 ],
                 vec![
-                    parse_term("r(b, a1)").expect("parser error"),
-                    parse_term("r(b, a2)").expect("parser error"),
-                    parse_term("r(b, c1)").expect("parser error"),
-                    parse_term("r(c2, a1)").expect("parser error"),
-                    parse_term("r(c2, a2)").expect("parser error"),
-                    parse_term("r(c2, c1)").expect("parser error"),
-                    parse_term("r(b, f21(b))").expect("parser error"),
-                    parse_term("r(b, f21(c2))").expect("parser error"),
-                    parse_term("r(c2, f21(b))").expect("parser error"),
-                    parse_term("r(c2, f21(c2))").expect("parser error"),
-                    parse_term("r(f12(a1), a1)").expect("parser error"),
-                    parse_term("r(f12(a1), a2)").expect("parser error"),
-                    parse_term("r(f12(a1), c1)").expect("parser error"),
-                    parse_term("r(f12(a2), a1)").expect("parser error"),
-                    parse_term("r(f12(a2), a2)").expect("parser error"),
-                    parse_term("r(f12(a2), c1)").expect("parser error"),
-                    parse_term("r(f12(c1), a1)").expect("parser error"),
-                    parse_term("r(f12(c1), a2)").expect("parser error"),
-                    parse_term("r(f12(c1), c1)").expect("parser error"),
-                    parse_term("r(f12(a1), f21(b))").expect("parser error"),
-                    parse_term("r(f12(a1), f21(c2))").expect("parser error"),
-                    parse_term("r(f12(a2), f21(b))").expect("parser error"),
-                    parse_term("r(f12(a2), f21(c2))").expect("parser error"),
-                    parse_term("r(f12(c1), f21(b))").expect("parser error"),
-                    parse_term("r(f12(c1), f21(c2))").expect("parser error"),
+                    term("r(b, a1)"),
+                    term("r(b, a2)"),
+                    term("r(b, c1)"),
+                    term("r(c2, a1)"),
+                    term("r(c2, a2)"),
+                    term("r(c2, c1)"),
+                    term("r(b, f21(b))"),
+                    term("r(b, f21(c2))"),
+                    term("r(c2, f21(b))"),
+                    term("r(c2, f21(c2))"),
+                    term("r(f12(a1), a1)"),
+                    term("r(f12(a1), a2)"),
+                    term("r(f12(a1), c1)"),
+                    term("r(f12(a2), a1)"),
+                    term("r(f12(a2), a2)"),
+                    term("r(f12(a2), c1)"),
+                    term("r(f12(c1), a1)"),
+                    term("r(f12(c1), a2)"),
+                    term("r(f12(c1), c1)"),
+                    term("r(f12(a1), f21(b))"),
+                    term("r(f12(a1), f21(c2))"),
+                    term("r(f12(a2), f21(b))"),
+                    term("r(f12(a2), f21(c2))"),
+                    term("r(f12(c1), f21(b))"),
+                    term("r(f12(c1), f21(c2))"),
                 ]
             ]
         );
@@ -546,34 +534,30 @@ mod tests {
         assert_eq!(
             terms,
             vec![
+                vec![term("a1"), term("a2"), term("c1"),],
                 vec![
-                    parse_term("a1").expect("parser error"),
-                    parse_term("a2").expect("parser error"),
-                    parse_term("c1").expect("parser error"),
+                    term("b"),
+                    term("c2"),
+                    term("f12(a1)"),
+                    term("f12(a2)"),
+                    term("f12(c1)"),
                 ],
                 vec![
-                    parse_term("b").expect("parser error"),
-                    parse_term("c2").expect("parser error"),
-                    parse_term("f12(a1)").expect("parser error"),
-                    parse_term("f12(a2)").expect("parser error"),
-                    parse_term("f12(c1)").expect("parser error"),
-                ],
-                vec![
-                    parse_term("r(b, a1)").expect("parser error"),
-                    parse_term("r(b, a2)").expect("parser error"),
-                    parse_term("r(b, c1)").expect("parser error"),
-                    parse_term("r(c2, a1)").expect("parser error"),
-                    parse_term("r(c2, a2)").expect("parser error"),
-                    parse_term("r(c2, c1)").expect("parser error"),
-                    parse_term("r(f12(a1), a1)").expect("parser error"),
-                    parse_term("r(f12(a1), a2)").expect("parser error"),
-                    parse_term("r(f12(a1), c1)").expect("parser error"),
-                    parse_term("r(f12(a2), a1)").expect("parser error"),
-                    parse_term("r(f12(a2), a2)").expect("parser error"),
-                    parse_term("r(f12(a2), c1)").expect("parser error"),
-                    parse_term("r(f12(c1), a1)").expect("parser error"),
-                    parse_term("r(f12(c1), a2)").expect("parser error"),
-                    parse_term("r(f12(c1), c1)").expect("parser error"),
+                    term("r(b, a1)"),
+                    term("r(b, a2)"),
+                    term("r(b, c1)"),
+                    term("r(c2, a1)"),
+                    term("r(c2, a2)"),
+                    term("r(c2, c1)"),
+                    term("r(f12(a1), a1)"),
+                    term("r(f12(a1), a2)"),
+                    term("r(f12(a1), c1)"),
+                    term("r(f12(a2), a1)"),
+                    term("r(f12(a2), a2)"),
+                    term("r(f12(a2), c1)"),
+                    term("r(f12(c1), a1)"),
+                    term("r(f12(c1), a2)"),
+                    term("r(f12(c1), c1)"),
                 ]
             ]
         );

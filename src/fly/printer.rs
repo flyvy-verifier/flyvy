@@ -131,10 +131,10 @@ impl fmt::Display for Term {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fly::parser::parse_term;
+    use crate::fly::parser;
 
     fn parse(s: &str) -> Term {
-        parse_term(s).expect("invalid term in test")
+        parser::term(s)
     }
 
     fn reprint(s: &str) -> String {
@@ -145,7 +145,7 @@ mod tests {
     fn test_printer_basic() {
         let e = parse("a & b | c");
         insta::assert_display_snapshot!(term(&e), @"a & b | c");
-        assert_eq!(parse_term(&term(&e)), Ok(e));
+        assert_eq!(parse(&term(&e)), e);
     }
 
     #[test]
@@ -192,7 +192,7 @@ mod tests {
            @"(always a)' & (eventually (c = d)')");
 
         let s = "(p until q) since (always r)";
-        assert_eq!(parse_term(s), parse_term(&reprint(s)));
+        assert_eq!(parse(s), parse(&reprint(s)));
     }
 }
 

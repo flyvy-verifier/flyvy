@@ -184,101 +184,91 @@ grammar parser() for str {
 
 #[cfg(test)]
 mod tests {
-    use super::parser::*;
+    use super::parser;
     use crate::fly::syntax::*;
+
+    fn ident(s: &str) -> String {
+        parser::ident(s).expect("test ident should parse")
+    }
+
+    fn term(s: &str) -> Term {
+        parser::term(s).expect("term in test should parse")
+    }
 
     #[test]
     fn test_ident() {
-        assert_eq!(ident("hello"), Ok("hello".to_string()));
-        assert_eq!(ident("a"), Ok("a".to_string()));
-        assert_eq!(ident("hello_world"), Ok("hello_world".to_string()));
-        assert_eq!(ident("_allowed"), Ok("_allowed".to_string()));
-        assert!(ident("1up").is_err());
+        assert_eq!(&ident("hello"), "hello");
+        assert_eq!(&ident("a"), "a");
+        assert_eq!(&ident("hello_world"), "hello_world");
+        assert_eq!(&ident("_allowed"), "_allowed");
+        assert!(parser::ident("1up").is_err());
     }
 
     #[test]
     fn test_term() {
-        term("!p & !q").unwrap();
+        term("!p & !q");
 
-        term("p''").unwrap();
-        term("(p')'").unwrap();
+        term("p''");
+        term("(p')'");
 
-        term("p(x, y)").unwrap();
-        term("p(x,y)").unwrap();
+        term("p(x, y)");
+        term("p(x,y)");
 
         // & and | at the same level are grouped into a single NAry
-        assert_eq!(term("(p & q) & r").unwrap(), term("p & q & r").unwrap());
-        assert_eq!(term("p & (q & r)").unwrap(), term("p & q & r").unwrap());
-        assert_eq!(term("p | (q | r)").unwrap(), term("(p | q) | r").unwrap());
+        assert_eq!(term("(p & q) & r"), term("p & q & r"));
+        assert_eq!(term("p & (q & r)"), term("p & q & r"));
+        assert_eq!(term("p | (q | r)"), term("(p | q) | r"));
 
         // precedence of & and |
-        assert_eq!(term("a | b & c").unwrap(), term("a | (b & c)").unwrap());
+        assert_eq!(term("a | b & c"), term("a | (b & c)"));
 
         // precedence of &, ->, and until
         // matches examples in https://www.cl.cam.ac.uk/teaching/1617/HLog+ModC/slides/lecture-8.pdf
+        assert_eq!(term("a | b -> c until d"), term("(a | b) -> (c until d)"));
+        assert_eq!(term("a -> b | always c"), term("a -> (b | (always c))"),);
         assert_eq!(
-            term("a | b -> c until d").unwrap(),
-            term("(a | b) -> (c until d)").unwrap()
-        );
-        assert_eq!(
-            term("a -> b | always c").unwrap(),
-            term("a -> (b | (always c))").unwrap(),
-        );
-        assert_eq!(
-            term("always p -> eventually X^-1 b").unwrap(),
-            term("(always p) -> (eventually (X^-1 b))").unwrap(),
+            term("always p -> eventually X^-1 b"),
+            term("(always p) -> (eventually (X^-1 b))"),
         );
 
         // always is treated as an atomic keyword
-        assert_ne!(term("alwaysx").unwrap(), term("always x").unwrap());
+        assert_ne!(term("alwaysx"), term("always x"));
 
-        assert!(term("= x").is_err());
+        assert!(parser::term("= x").is_err());
     }
 
     #[test]
     fn test_term_precedence() {
-        assert_eq!(
-            term("!p & !q & !r").unwrap(),
-            term("(!p) & (!q) & (!r)").unwrap()
-        );
+        assert_eq!(term("!p & !q & !r"), term("(!p) & (!q) & (!r)"));
 
         assert_eq!(
-            term("always p'=(p|q) & q'=q").unwrap(),
-            term("always (p'=(p|q) & ((q')=q))").unwrap()
+            term("always p'=(p|q) & q'=q"),
+            term("always (p'=(p|q) & ((q')=q))")
         );
 
-        assert_eq!(
-            term("always ((X p) until q)").unwrap(),
-            term("always X p until q").unwrap(),
-        );
+        assert_eq!(term("always ((X p) until q)"), term("always X p until q"),);
 
-        assert_eq!(
-            term("p until q since r").unwrap(),
-            term("p until (q since r)").unwrap(),
-        );
+        assert_eq!(term("p until q since r"), term("p until (q since r)"),);
     }
 
     #[test]
     fn test_term_associativity() {
-        assert_ne!(
-            term("(p until q) since r").unwrap(),
-            term("p until q since r").unwrap(),
-        );
+        assert_ne!(term("(p until q) since r"), term("p until q since r"),);
     }
 
     #[test]
     fn test_signature() {
-        let s = signature(
+        let s = parser::signature(
             r"mutable p: bool
 mutable q: bool",
         )
-        .unwrap();
+        .expect("test signature should parse");
         assert_eq!(s.relations.len(), 2);
     }
 
     #[test]
     fn test_module() {
-        let m = module(
+        let m = parser::module(
             r"mutable p: bool
 mutable q: bool
 
@@ -293,7 +283,7 @@ proof {
 # we don't allow this: forall x:t1. exists x:t2. p(x:t1, x:t2)
 ",
         )
-        .unwrap();
+        .expect("test module should parse");
         assert_eq!(m.signature.relations.len(), 2);
         assert_eq!(m.statements.len(), 2);
         match &m.statements[1] {
@@ -306,30 +296,30 @@ proof {
 
     #[test]
     fn test_quantifiers() {
-        term("forall x:t. x = y").unwrap();
-        term("forall x:t, y:t. x = y").unwrap();
-        term("forall x:t,y:t. x = y").unwrap();
-        term("forall x:t , y:t. x = y").unwrap();
-        term("forall x:t, y:t. x = y | y != x").unwrap();
-        term("forall (x : t). x").unwrap();
-        term("forall (x : t),(y:t). x = y").unwrap();
+        term("forall x:t. x = y");
+        term("forall x:t, y:t. x = y");
+        term("forall x:t,y:t. x = y");
+        term("forall x:t , y:t. x = y");
+        term("forall x:t, y:t. x = y | y != x");
+        term("forall (x : t). x");
+        term("forall (x : t),(y:t). x = y");
 
         assert_eq!(
-            term("forall x:t. x = y & exists z:t. x = z").unwrap(),
-            term("forall x:t. (x = y & exists z:t. x = z)").unwrap(),
+            term("forall x:t. x = y & exists z:t. x = z"),
+            term("forall x:t. (x = y & exists z:t. x = z)"),
         );
 
         assert_eq!(
-            term("forall (x : t), (y : t2). f(x) & f(y)").unwrap(),
-            term("forall x:t, y:t2 . f(x) & f(y)").unwrap(),
+            term("forall (x : t), (y : t2). f(x) & f(y)"),
+            term("forall x:t, y:t2 . f(x) & f(y)"),
         );
     }
 }
 
 #[cfg(test)]
 /// Parse a single term. Only used for testing.
-pub fn parse_term(s: &str) -> Result<Term, String> {
-    parser::term(s).map_err(|err| err.to_string())
+pub fn term(s: &str) -> Term {
+    parser::term(s).expect("test term should parse")
 }
 
 #[cfg(test)]
