@@ -31,7 +31,7 @@ all sorts are first order (cannot take other sorts as arguments).)
 A function is declared by giving its mutability, its name, the sorts of its
 arguments, and its return sort.
 
-    function_declaration ::= mutability identifier function_arguments ":" sort
+    function_declaration ::= mutability identifier function_arguments? ":" sort
     mutability ::= "mutable" | "immutable"
     function_arguments ::= "(" zero_or_more_separated(sort, ",")  ")"
 
