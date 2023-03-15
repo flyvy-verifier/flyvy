@@ -96,14 +96,9 @@ impl FirstOrder {
 
 #[cfg(test)]
 mod tests {
-    use crate::fly::parser::parse_term;
-    use crate::fly::syntax::Term;
+    use crate::fly::parser::term;
 
     use super::FirstOrder;
-
-    fn term(s: &str) -> Term {
-        parse_term(s).unwrap()
-    }
 
     #[test]
     fn test_fo() {

@@ -85,40 +85,37 @@ impl Cnf {
 
 #[cfg(test)]
 mod tests {
-    use crate::fly::parser::parse_term;
+    use crate::fly::parser::term;
     use crate::fly::syntax::{NOp, Term};
 
     use super::{cnf, Cnf};
 
     #[test]
     fn test_already_cnf() {
-        cnf(&parse_term("p & q & r & (a | b)").unwrap());
-        cnf(&parse_term("always p & q & r & (a | b)").unwrap());
+        cnf(&term("p & q & r & (a | b)"));
+        cnf(&term("always p & q & r & (a | b)"));
     }
 
     #[test]
     fn test_cnf_and() {
-        let t = Term::NAryOp(
-            NOp::And,
-            vec![parse_term("a").unwrap(), parse_term("b & c").unwrap()],
-        );
+        let t = Term::NAryOp(NOp::And, vec![term("a"), term("b & c")]);
         let cnf = Cnf::new(t.clone());
         // make sure this test is non-trivial
         assert_ne!(t, cnf.0);
-        assert_eq!(cnf.0, parse_term("a & b & c").unwrap());
+        assert_eq!(cnf.0, term("a & b & c"));
     }
 
     #[test]
     fn test_cnf_always() {
-        let t = parse_term("always (always (always p & q))").unwrap();
+        let t = term("always (always (always p & q))");
         let cnf = Cnf::new(t.clone());
         assert_ne!(t, cnf.0);
-        assert_eq!(cnf.0, parse_term("always p & q").unwrap());
+        assert_eq!(cnf.0, term("always p & q"));
     }
 
     #[test]
     fn test_cnf_single() {
-        let t = parse_term("p | q").unwrap();
+        let t = term("p | q");
         let cnf = Cnf::new(t.clone());
         assert_eq!(cnf.0, Term::NAryOp(NOp::And, vec![t]));
     }
