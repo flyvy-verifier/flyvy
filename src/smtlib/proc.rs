@@ -46,19 +46,29 @@ pub enum SatResp {
 }
 
 #[derive(Error, Debug)]
+/// An error from trying to call the solver
+///
+/// NOTE: this is still highly incomplete and some errors actually result in a
+/// panic.
 pub enum SolverError {
+    /// I/O went wrong
     #[error("some io went wrong")]
     Io(#[from] io::Error),
+    /// Solver died for some reason
     #[error("solver unexpectedly exited:\n{0}")]
     UnexpectedClose(String),
 }
 
 type Result<T> = std::result::Result<T, SolverError>;
 
+/// The full invocation of a solver binary.
 #[derive(Debug, Clone)]
 pub struct SolverCmd {
+    /// Binary to launch
     pub cmd: String,
+    /// Arguments to pass
     pub args: Vec<String>,
+    /// SMT options to send on startup
     pub options: Vec<(String, String)>,
 }
 
@@ -94,10 +104,12 @@ impl SolverCmd {
     }
 }
 
+/// Builder for creating a Z3 [`SolverCmd`].
 #[derive(Debug, Clone)]
 pub struct Z3Conf(SolverCmd);
 
 impl Z3Conf {
+    /// Create a Z3Conf with some default options. Uses `cmd` as the path to Z3.
     pub fn new(cmd: &str) -> Self {
         let mut cmd = SolverCmd {
             cmd: cmd.to_string(),
@@ -111,10 +123,12 @@ impl Z3Conf {
         conf
     }
 
+    /// Enable model compaction
     pub fn model_compact(&mut self) {
         self.0.option("model.compact", "true");
     }
 
+    /// Set the SMT timeout option
     pub fn timeout_ms(&mut self, ms: usize) {
         self.0.option("timeout", format!("{ms}"));
     }
@@ -125,6 +139,7 @@ impl Z3Conf {
     }
 }
 
+/// Builder for a CVC4 or CVC5 [`SolverCmd`].
 #[derive(Debug, Clone)]
 pub struct CvcConf {
     version5: bool,
@@ -148,10 +163,12 @@ impl CvcConf {
         Self { version5, cmd }
     }
 
+    /// Create a new CVC4 builder with some default options.
     pub fn new_cvc4(cmd: &str) -> Self {
         Self::new_cvc(cmd, /*version5*/ false)
     }
 
+    /// Create a new CVC5 builder with some default options.
     pub fn new_cvc5(cmd: &str) -> Self {
         Self::new_cvc(cmd, /*version5*/ true)
     }
@@ -176,6 +193,7 @@ impl CvcConf {
         }
     }
 
+    /// Get the final command to run the solver.
     pub fn done(self) -> SolverCmd {
         self.cmd
     }
@@ -274,6 +292,7 @@ impl SmtProc {
         }
     }
 
+    /// Get some attribute using the SMT get-info command.
     pub fn get_info(&mut self, attribute: &str) -> Result<Sexp> {
         let resp = self.send_with_reply(&app("get-info", [atom_s(attribute)]))?;
         match resp {
@@ -342,6 +361,10 @@ impl SmtProc {
         self.parse_sat(&resp)
     }
 
+    /// Send the solver `(check-sat-assuming)` with some assumed variables
+    /// (which must be atoms, literal symbols or their negations).
+    ///
+    /// The assumptions do not affect subsequent use of the solver.
     pub fn check_sat_assuming(&mut self, assumptions: &[Sexp]) -> Result<SatResp> {
         self.send(&app(
             "check-sat-assuming",

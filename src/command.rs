@@ -118,6 +118,7 @@ impl Command {
 
 #[derive(clap::Parser, Debug)]
 #[command(about, long_about=None)]
+/// Entrypoint for the temporal-verifier binary, including all commands.
 pub struct App {
     #[arg(value_enum, long, default_value_t = ColorOutput::Auto)]
     /// Control color output. Auto disables colors with TERM=dumb or
@@ -173,6 +174,7 @@ impl InferArgs {
 }
 
 impl App {
+    /// Run the application.
     pub fn exec(self) {
         let file = fs::read_to_string(self.command.file()).expect("could not read input file");
         let files = SimpleFile::new(self.command.file(), &file);

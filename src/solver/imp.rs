@@ -25,8 +25,11 @@ use crate::{
 /// thus there are meaningful differences in the format of how solvers respond
 /// to `(get-model)`).
 pub trait Backend {
+    /// Get a [`SolverCmd`] with all the info to launch instances of this solver.
     fn get_cmd(&self) -> SolverCmd;
 
+    /// Parse a model returned by `(get-model)` into something structured and
+    /// uniform.
     fn parse(
         &self,
         sig: &Signature,
@@ -41,7 +44,11 @@ pub trait Backend {
 /// to be an easy-to-construct representation of a trace involving multiple
 /// states, parseable from an SMT solver's counter example to a single query.
 pub struct FOModel {
+    /// For each sort in the signature, its cardinality.
     pub universe: HashMap<String, usize>,
+    /// For each symbol (including primed versions, with the primes in the
+    /// name), its Interpretation in this model (which gives the full table of
+    /// values on the finite universes of its input sorts).
     pub interp: HashMap<String, Interpretation>,
 }
 
@@ -119,11 +126,17 @@ impl<B: Backend> Solver<B> {
         }
     }
 
+    /// Send `(assert ...)` to the solver.
     pub fn assert(&mut self, t: &Term) {
         self.proc.send(&app("assert", [sexp::term(t)]));
         self.asserts.push(t.clone())
     }
 
+    /// Create a comment in the tee'd SMT file, if there is one.
+    ///
+    /// The comment is passed as a closure so that it isn't computed if we're
+    /// not generating an SMT file (in this case it is not sent to the solver;
+    /// note that this will affect line numbers in error messages).
     pub fn comment_with<F>(&mut self, comment: F)
     where
         F: FnOnce() -> String,
@@ -314,6 +327,19 @@ impl<B: Backend> Solver<B> {
         panic!("max cardinality got too high");
     }
 
+    /// Get a minimized model after a call to `check_sat` returns `Sat`.
+    ///
+    /// Will fail in some unexpected way if the solver has not just replied
+    /// `sat`.
+    ///
+    /// The minimization process makes several more sat queries, which add
+    /// constraints on universe cardinalities. The algorithm first finds the
+    /// smallest maximum cardinality across all universes that is still sat.
+    /// starting at 1, then enforces that for the remainder of the process.
+    /// Then, it greedily minimizes each sort in the signature in turn; at each
+    /// step it enforces that all the previous sorts have their minimized
+    /// cardinalities. Finally, it returns the model with these cardinality
+    /// constraints in place.
     pub fn get_minimal_model(&mut self) -> Vec<Model> {
         let start = std::time::Instant::now();
         let (max_card, indicators) = self.get_min_max_card();
@@ -369,18 +395,22 @@ impl<B: Backend> Solver<B> {
         assumptions
     }
 
+    /// After a call to check-sat returns unsat, get a minimized unsat core: a
+    /// minimal set of indicator variables which still result in unsat.
+    ///
+    /// Not yet implemented so there is no algorithm here.
     #[allow(dead_code)]
     pub fn get_minimal_unsat_core(&mut self) -> HashMap<Term, bool> {
         eprintln!("unsat code minimization is not yet implemented");
         self.get_unsat_core()
     }
 
-    #[allow(dead_code)]
+    /// Call the SMT push command to create a new assertion stack frame.
     pub fn push(&mut self) {
         self.proc.send(&app("push", []));
     }
 
-    #[allow(dead_code)]
+    /// Call the SMT pop command to rewind the solver to the last pop.
     pub fn pop(&mut self) {
         self.proc.send(&app("pop", []));
     }
