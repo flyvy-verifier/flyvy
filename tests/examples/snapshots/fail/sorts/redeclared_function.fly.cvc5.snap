@@ -1,0 +1,11 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/sorts/redeclared_function.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+sort checking error:
+error: f was declared multiple times
+
+
