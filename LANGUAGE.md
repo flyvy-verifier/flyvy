@@ -5,7 +5,7 @@ It also describes how names and scopes are handled, as well as sort checking.
 
 ## Grammar
 
-A program is a single module. (In the future, multiple modules will be supported.)
+A program is a single module. (In the future, multiple modules may be supported.)
 
     program ::= module
 
@@ -79,6 +79,18 @@ TODO
 - Each definition's argument and return sorts must be declared.
 - Each definition's argument names must be distinct from each other, but
   can shadow global names.
+- The body of a definition introduces a local scope where the argument names are
+  bound.
+- A quantifier's variable names must be distinct from each other, but can shadow
+  names from outer scopes.
+    - Note that this means `forall x:bool, x:bool. x = x` is *not* allowed
+      (because the two `x`s are from the same quantifier, so they must have
+      distinct names) but `forall x:bool. forall x:bool. x = x` *is* allowed
+      (because the two `x`s are from different quantifiers). In the second
+      example the occurrences of `x` in the inner body refer to the innermost
+      binding of `x`.
+- The body of a quantifier introduces a nested local scope where the variable
+  names are bound.
 
 ### Sort checking
 
