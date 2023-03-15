@@ -220,12 +220,20 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
     match term {
         Term::Literal(_) | Term::Id(_) => true,
         Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
-        Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime, x) => {
-            term_has_all_sort_annotations(x)
-        }
-        Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Implies | BinOp::Iff, x, y) => {
-            term_has_all_sort_annotations(x) && term_has_all_sort_annotations(y)
-        }
+        Term::UnaryOp(
+            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+            x,
+        ) => term_has_all_sort_annotations(x),
+        Term::BinOp(
+            BinOp::Equals
+            | BinOp::NotEquals
+            | BinOp::Implies
+            | BinOp::Iff
+            | BinOp::Until
+            | BinOp::Since,
+            x,
+            y,
+        ) => term_has_all_sort_annotations(x) && term_has_all_sort_annotations(y),
         Term::NAryOp(NOp::And | NOp::Or, xs) => xs.iter().all(term_has_all_sort_annotations),
         Term::Ite { cond, then, else_ } => {
             term_has_all_sort_annotations(cond)
@@ -353,8 +361,9 @@ impl Context<'_> {
         shadowing_constraint: ShadowingConstraint,
     ) -> Result<(), SortError> {
         match self.names.insert(name.clone(), sort) {
-            Some(_) if shadowing_constraint == ShadowingConstraint::Disallow =>
-                Err(SortError::RedeclaredName(name)),
+            Some(_) if shadowing_constraint == ShadowingConstraint::Disallow => {
+                Err(SortError::RedeclaredName(name))
+            }
             _ => Ok(()),
         }
     }
