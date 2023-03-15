@@ -9,11 +9,11 @@ A program is a single module. (In the future, multiple modules may be supported.
 
     program ::= module
 
-A module consists of a sequence of declarations, each of which either (1)
-adds to the signature, (2) defines a macro, or (3) states a theorem.
+A module consists of a sequence of declarations, each of which either (1) adds
+to the signature, (2) defines a macro, or (3) states an assertion or assumption.
 
     module ::= declaration*
-    declaration ::= signature_declaration | definition | theorem_statement
+    declaration ::= signature_declaration | definition | statement
 
 ### Signature declarations
 
@@ -52,13 +52,13 @@ arguments, its return sort, and its body.
 
 Terms are described below.
 
-### Theorem statements
+### Statements
 
-A theorem statement is either an `assume` or an `assert`, each of which takes a
-term. An `assert` can optionally provide a `proof`, which is a sequence of
-`invariant` terms.
+A statement is either an `assume` or an `assert`, each of which takes a term. An
+`assert` can optionally provide a `proof`, which is a sequence of `invariant`
+terms.
 
-    theorem_statement ::= assume_statement | assert_statement
+    statement ::= assume_statement | assert_statement
     assume_statement ::= "assume" term
     assert_statement ::= "assert" term proof?
     proof ::= "proof" "{" invariant* "}"
@@ -105,13 +105,14 @@ TODO
   macro-expanded/inlined away.) The local scope for checking the body of a
   definition consists of the argument names and sorts. The body term must have
   the declared return sort.
-- Each theorem statement is checked in the full global scopes with empty local
-  scope. The main term of the `assume` or `assert` must have sort `bool`. Also,
-  every `invariant` inside of any `assert`'s `proof` must have sort `bool`.
+- Each statement is checked in the full global scopes with empty local scope.
+  The main term of the `assume` or `assert` must have sort `bool`. Also, every
+  `invariant` inside of any `assert`'s `proof` must have sort `bool`.
 
 ## Semantics
 
-TODO
+TODO:
+- Statements build up a list of assumptions and along the way we prove some theorems (asserts).
 
 ## Commands
 
