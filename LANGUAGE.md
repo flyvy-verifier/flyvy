@@ -12,11 +12,10 @@ A program is a single module. (In the future, multiple modules may be supported.
 
     program ::= module
 
-A module consists of a sequence of declarations, each of which either (1) adds
-to the signature, (2) defines a macro, or (3) states an assertion or assumption.
+A module consists of a signature, a sequence of definitions, and a sequence of
+statements (assertions or assumptions).
 
-    module ::= declaration*
-    declaration ::= signature_declaration | definition | statement
+    module ::= signature_declaration* definition* statement*
 
 ### Signature declarations
 
