@@ -8,6 +8,8 @@
 
 #![allow(clippy::needless_return)]
 #![warn(missing_docs)]
+#![allow(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 mod command;
 mod fly;

@@ -105,3 +105,11 @@ else
   cargo clippy --quiet --tests -- --no-deps -D clippy::all
 fi
 end_group
+
+start_group "cargo doc"
+if [ "$ci" = true ]; then
+  cargo doc --document-private-items --no-deps
+else
+  cargo doc --quiet --document-private-items --no-deps
+fi
+end_group

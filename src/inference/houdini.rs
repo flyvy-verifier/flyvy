@@ -126,7 +126,6 @@ pub fn infer<'a>(
             }
         }
         if not_implied.is_empty() {
-            // fixed poined reached
             log::info!("Fixed point reached");
             break;
         }
