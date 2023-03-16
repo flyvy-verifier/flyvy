@@ -1,6 +1,9 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Find a fixpoint for an invariant expressing the reachable states for a given
+//! lemma domain.
+
 use std::rc::Rc;
 
 use crate::{

@@ -1,6 +1,10 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Support for launching a solver (Z3, CVC4, or CVC5) and then parsing its
+//! models, which are the two features that generally differ from solver to
+//! solver.
+
 use std::{
     collections::{HashMap, HashSet},
     iter::zip,
@@ -24,6 +28,8 @@ use super::{
     {Backend, FOModel},
 };
 
+/// The type of solver being used
+#[allow(missing_docs)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SolverType {
     Z3,
@@ -31,6 +37,7 @@ pub enum SolverType {
     Cvc5,
 }
 
+/// A Backend for launching and parsing Z3/CVC4/CVC5, with some hard-coded options.
 #[derive(Debug, Clone)]
 pub struct GenericBackend {
     solver_type: SolverType,
@@ -38,6 +45,8 @@ pub struct GenericBackend {
 }
 
 impl GenericBackend {
+    /// Create a Backend for a given type of solver and with a path to the
+    /// solver binary.
     pub fn new(solver_type: SolverType, bin: &str) -> Self {
         Self {
             solver_type,
@@ -57,7 +66,6 @@ fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
 
 impl Backend for &GenericBackend {
     fn get_cmd(&self) -> SolverCmd {
-        // TODO: move Z3Conf and CvcConf into this module
         match self.solver_type {
             SolverType::Z3 => {
                 let mut conf = Z3Conf::new(&self.bin);

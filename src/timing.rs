@@ -1,6 +1,10 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Track and report timing info across the whole pipeline.
+//!
+//! Focused on measuring time spent in calling the SMT solver.
+
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -9,10 +13,18 @@ use std::{
 use itertools::Itertools;
 use lazy_static::lazy_static;
 
+/// The category for a timing measurement.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TimeType {
-    CheckSatCall { sat: bool },
+    /// A call to (check-sat)
+    CheckSatCall {
+        /// true if the result is sat (and false for unsat and unknown)
+        sat: bool,
+    },
+    /// A call to (get-model)
     GetModel,
+    /// The full process of getting a minimized model (incorporating several SMT
+    /// queries)
     GetMinimalModel,
 }
 
@@ -34,28 +46,30 @@ struct TimeInfo {
     dur: Duration,
 }
 
-#[derive(Clone, Debug)]
-struct TimingVec {
-    times: Vec<TimeInfo>,
-}
-
 /// A record of timing measurements.
 ///
 /// `Sync` to support concurrent time recording.
-pub struct Timings(Mutex<TimingVec>, Instant);
+pub struct Timings {
+    /// List of timings gathered.
+    times: Mutex<Vec<TimeInfo>>,
+    /// The start time of the program (the exact time depends on how the
+    /// `Timings` is initialized).
+    start: Instant,
+}
 
 impl Timings {
     #[allow(clippy::new_without_default)]
+    /// Create a new empty Timings struct, and set the start time.
     pub fn new() -> Self {
-        Timings(Mutex::new(TimingVec { times: vec![] }), Instant::now())
+        Timings {
+            times: Mutex::new(vec![]),
+            start: Instant::now(),
+        }
     }
 
-    /// Hack to make sure start time is initialized
-    pub fn init(&self) {}
-
     fn record_duration(&self, typ: TimeType, dur: Duration) {
-        let mut times = self.0.lock().unwrap();
-        times.times.push(TimeInfo { typ, dur })
+        let mut times = self.times.lock().unwrap();
+        times.push(TimeInfo { typ, dur })
     }
 
     /// Record a timing elapsed since `start`.
@@ -69,12 +83,12 @@ impl Timings {
         if cfg!(debug_assertions) {
             eprintln!("warning: this is a debug build, non-solver time will be worse");
         }
-        let total_time = self.1.elapsed().as_secs_f64();
+        let total_time = self.start.elapsed().as_secs_f64();
         println!("{:<22}: {total_time:.1}s", "total");
 
         let times = {
-            let times = self.0.lock().unwrap();
-            times.times.clone()
+            let times = self.times.lock().unwrap();
+            times.clone()
         };
         let count = times.len();
         let solver_total = times
@@ -113,17 +127,30 @@ impl Timings {
 }
 
 lazy_static! {
-    pub static ref TIMES: Timings = Timings::new();
+    /// A global Timings struct for the whole program.
+    static ref TIMES: Timings = Timings::new();
 }
 
+/// Set the start time of the program.
+///
+/// Does nothing if run multiple times.
+pub fn init() {
+    let _ = TIMES.start;
+}
+
+/// Get the start time of the program.
+///
+/// To make this mean anything the program must call [`init`] reasonably early.
 pub fn start() -> Instant {
     Instant::now()
 }
 
+/// Record an elapsed time for a call of `typ` since `start`.
 pub fn elapsed(typ: TimeType, start: Instant) {
     TIMES.elapsed(typ, start)
 }
 
+/// Print a timing report.
 pub fn report() {
     TIMES.report()
 }

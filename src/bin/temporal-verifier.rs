@@ -7,6 +7,6 @@ use temporal_verifier::{timing, App};
 fn main() {
     pretty_env_logger::init();
     let app = App::parse();
-    timing::TIMES.init();
+    timing::init();
     app.exec();
 }
