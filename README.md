@@ -11,9 +11,17 @@ correctness properties, including safety and liveness.
 
 ## Try it out
 
-`cargo run -- verify examples/lockserver.fly`
+```sh
+cargo run -- verify examples/lockserver.fly`
 
-`cargo run -- infer examples/lockserver.fly --quantifier "F node n1 n2" --kpdnf-lit 3`
+cargo run -- infer examples/lockserver.fly --quantifier "F node n1 n2" --kpdnf-lit 3
+
+cargo run --release -- \
+  infer examples/consensus_epr.fly --time \
+  --quantifier "E quorum q" --quantifier "F node n1 n2 n3" --quantifier "F value v" \
+  --kpdnf-lit 3
+# note: this last example takes about 2min to run
+```
 
 ### Prerequisites
 
