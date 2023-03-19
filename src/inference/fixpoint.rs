@@ -117,8 +117,9 @@ pub fn run_fixpoint(
         }
     }
 
-    println!("Fixpoint:");
+    println!("proof {{");
     for lemma in &frame_t {
-        println!("    {lemma}");
+        println!("  invariant {lemma}");
     }
+    println!("}}");
 }
