@@ -11,16 +11,18 @@ correctness properties, including safety and liveness.
 
 ## Try it out
 
+Run `./tools/download-solvers.sh` to get compatible versions of the supported SMT solvers (Z3, CVC5, and CVC4).
+
 ```sh
 cargo run -- verify examples/lockserver.fly`
 
 cargo run -- infer examples/lockserver.fly --quantifier "F node n1 n2" --kpdnf-lit 3
 
-cargo run --release -- \
+env RUST_LOG=info cargo run --release -- \
   infer examples/consensus_epr.fly --time \
   --quantifier "E quorum q" --quantifier "F node n1 n2 n3" --quantifier "F value v" \
   --kpdnf-lit 3
-# note: this last example takes about 2min to run
+# note: this last example takes about two minutes to run
 ```
 
 ### Prerequisites
