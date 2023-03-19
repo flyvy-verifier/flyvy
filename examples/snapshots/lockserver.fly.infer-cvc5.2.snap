@@ -1,0 +1,22 @@
+---
+source: tests/test_examples.rs
+description: "--name=infer-cvc5.2 -- infer --solver cvc5 --quantifier 'F node n1 n2' --kpdnf-lit 3 examples/lockserver.fly"
+expression: combined_stdout_stderr
+---
+proof {
+  invariant forall n1:node, n2:node. !grant_msg(n1) | !server_holds_lock
+  invariant forall n1:node, n2:node. !grant_msg(n1) | n1 = n2 | !grant_msg(n2)
+  invariant forall n1:node, n2:node. !holds_lock(n1) | !server_holds_lock
+  invariant forall n1:node, n2:node. !holds_lock(n1) | !grant_msg(n1)
+  invariant forall n1:node, n2:node. !holds_lock(n1) | !grant_msg(n2)
+  invariant forall n1:node, n2:node. !holds_lock(n1) | n1 = n2 | !holds_lock(n2)
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | !server_holds_lock
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | !grant_msg(n1)
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | !grant_msg(n2)
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | !holds_lock(n1)
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | !holds_lock(n2)
+  invariant forall n1:node, n2:node. !unlock_msg(n1) | n1 = n2 | !unlock_msg(n2)
+}
+
+======== STDERR: ===========
+

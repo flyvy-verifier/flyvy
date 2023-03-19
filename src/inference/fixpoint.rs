@@ -9,32 +9,40 @@ use std::rc::Rc;
 use crate::{
     fly::{semantics::Model, syntax::Module},
     inference::{
-        basics::{input_cfg, FOModule, Frame},
+        basics::{FOModule, Frame, InferenceConfig},
         pdnf::PDNF,
     },
     verify::SolverConf,
 };
 
 /// Run a simple fixpoint algorithm on the configured lemma domain.
-pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj: bool) {
+pub fn run_fixpoint(
+    infer_cfg: InferenceConfig,
+    conf: Rc<SolverConf>,
+    m: &Module,
+    extend_models: bool,
+    disj: bool,
+) {
+    let InferenceConfig {
+        cfg,
+        kpdnf_cubes: kpdnf,
+        kpdnf_lit,
+    } = infer_cfg;
+    let cfg = Rc::new(cfg);
     let fo = Rc::new(FOModule::new(m, disj));
 
-    println!("Axioms:");
+    log::debug!("Axioms:");
     for a in fo.axioms.iter() {
-        println!("    {a}");
+        log::debug!("    {a}");
     }
-    println!("Initial states:");
+    log::debug!("Initial states:");
     for a in fo.inits.iter() {
-        println!("    {a}");
+        log::debug!("    {a}");
     }
-    println!("Transitions:");
+    log::debug!("Transitions:");
     for a in fo.transitions.iter() {
-        println!("    {a}");
+        log::debug!("    {a}");
     }
-    println!();
-
-    let (cfg, kpdnf, kpdnf_lit) = input_cfg(&m.signature);
-    let cfg = Rc::new(cfg);
 
     let mut frame = Frame::new(
         vec![cfg.quantify_false(PDNF::get_false(kpdnf, kpdnf_lit))],
@@ -46,13 +54,12 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
     let mut models: Vec<Model> = vec![];
 
     let print = |frame: &Frame<_>, s: &str| {
-        println!("[{}, {}] {}", frame.len(), frame.len_weakened(), s);
+        log::info!("[{}, {}] {}", frame.len(), frame.len_weakened(), s);
     };
 
     let atoms = cfg.atoms(&m.signature);
-    println!();
-    println!("Atoms in configuration: {}", atoms.len());
-    println!();
+    log::debug!("Atoms in configuration: {}", atoms.len());
+    log::debug!("");
 
     // Begin by overapproximating the initial states.
     let mut i_init = (0, 0);
@@ -105,15 +112,14 @@ pub fn run_fixpoint(conf: Rc<SolverConf>, m: &Module, extend_models: bool, disj:
 
         // Verify safety of updated frame.
         if fo.trans_safe_cex(&conf, &frame_t).is_some() {
-            println!();
-            println!("Frame is unsafe! Aborting.");
+            log::warn!("Frame is unsafe! Aborting.");
             return;
         }
     }
 
-    println!();
-    println!("Fixpoint:");
+    println!("proof {{");
     for lemma in &frame_t {
-        println!("    {lemma}");
+        println!("  invariant {lemma}");
     }
+    println!("}}");
 }

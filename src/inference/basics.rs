@@ -3,8 +3,6 @@
 
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::io::BufRead;
-use std::io::Write;
 use std::rc::Rc;
 
 use crate::{
@@ -340,9 +338,9 @@ impl<T: LemmaQF> Frame<T> {
             self.entries.retain(|e| !e.weakened.is_empty());
         } else if let Some(index) = prog_index {
             let entry = self.entries.remove(index);
-            println!("    Replacing {} with", &entry.lemma.to_term());
+            log::info!("    Replacing {} with", &entry.lemma.to_term());
             for w in entry.weakened {
-                println!("        {}", &w.to_term());
+                log::info!("        {}", &w.to_term());
                 self.entries.push(FrameEntry {
                     lemma: w.clone(),
                     weakened: vec![w],
@@ -364,87 +362,32 @@ impl<T: LemmaQF> Frame<T> {
     }
 }
 
-/// Create a quantifier configuration using user input.
-// TODO: replace with config file or command-line arguments
-pub fn input_cfg(sig: &Signature) -> (QuantifierConfig, usize, Option<usize>) {
-    let mut quantifiers = vec![];
-    let mut sorts = vec![];
-    let mut names = vec![];
+pub struct InferenceConfig {
+    pub cfg: QuantifierConfig,
+    pub kpdnf_cubes: usize,
+    pub kpdnf_lit: Option<usize>,
+}
 
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+pub fn parse_quantifier(
+    sig: &Signature,
+    s: &str,
+) -> Result<(Option<Quantifier>, Sort, Vec<String>), String> {
+    let mut parts = s.split_whitespace();
 
-    print!("Prefix length: ");
-    stdout.flush().unwrap();
-    let length = stdin
-        .lock()
-        .lines()
-        .next()
-        .unwrap()
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
+    let quantifier = match parts.next().unwrap() {
+        "*" => None,
+        "F" => Some(Quantifier::Forall),
+        "E" => Some(Quantifier::Exists),
+        _ => return Err("invalid quantifier (choose F/E/*)".to_string()),
+    };
 
-    println!();
+    let sort_id = parts.next().unwrap().to_string();
+    let sort = if sig.sorts.contains(&sort_id) {
+        Sort::Id(sort_id)
+    } else {
+        return Err(format!("invalid sort {sort_id}"));
+    };
 
-    println!("Please enter each quantifier on a separate line, in the form");
-    println!("<quantifier: F/E/*> <sort> <first var name> <second var name> ...");
-    for _ in 0..length {
-        let line = stdin.lock().lines().next().unwrap().unwrap();
-        let mut parts = line.split_whitespace();
-
-        quantifiers.push(match parts.next().unwrap() {
-            "*" => None,
-            "F" => Some(Quantifier::Forall),
-            "E" => Some(Quantifier::Exists),
-            _ => panic!("Invalid quantifier entered."),
-        });
-
-        let sort_id = parts.next().unwrap().to_string();
-        if sig.sorts.contains(&sort_id) {
-            sorts.push(Sort::Id(sort_id));
-        } else {
-            panic!("Invalid sort entered.");
-        }
-
-        names.push(parts.map(|s| s.to_string()).collect_vec());
-    }
-
-    println!();
-
-    print!("k-pDNF # of cubes: ");
-    stdout.flush().unwrap();
-    let kpdnf = stdin
-        .lock()
-        .lines()
-        .next()
-        .unwrap()
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
-
-    println!();
-
-    print!("k-pDNF # of literals: ");
-    stdout.flush().unwrap();
-    let kpdnf_lit = stdin
-        .lock()
-        .lines()
-        .next()
-        .unwrap()
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
-
-    (
-        QuantifierConfig {
-            quantifiers,
-            sorts,
-            names,
-            depth: None,
-            include_eq: true,
-        },
-        kpdnf,
-        Some(kpdnf_lit),
-    )
+    let names = parts.map(|s| s.to_string()).collect_vec();
+    Ok((quantifier, sort, names))
 }
