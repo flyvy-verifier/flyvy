@@ -13,7 +13,7 @@ correctness properties, including safety and liveness.
 
 `cargo run -- verify examples/lockserver.fly`
 
-`echo -e "1\nF node n1 n2\n0\n3" | cargo run -- infer examples/lockserver.fly`
+`cargo run -- infer examples/lockserver.fly --quantifier "F node n1 n2" --kpdnf-lit 3`
 
 ### Prerequisites
 
