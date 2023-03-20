@@ -2,6 +2,8 @@
 mod tests {
     use std::{collections::HashMap, fs};
 
+    use rayon::prelude::*;
+
     use crate::{
         fly::{
             self,
@@ -50,18 +52,22 @@ mod tests {
         // to prove Next::prime(inv) in the post state for each proof invariant
         // separately
         let proof_inv = Term::and(inv_assert.proof_invs);
-        let mut results = vec![];
-        for inv in &pf_invs {
-            // not bothering to check initiation
-            let mut solver = conf.solver(&m.signature, 2);
-            solver.assert(&inv_assert.next);
-            solver.assert(&inv_assert.assumed_inv);
-            solver.assert(&Next::prime(&inv_assert.assumed_inv));
-            solver.assert(&proof_inv);
-            solver.assert(&Term::negate(Next::prime(inv)));
-            results.push(solver.check_sat(HashMap::new()));
-            println!("{inv} {:?}", results.last().unwrap());
-        }
+        // rayon provides .par_iter(), which performs the invariant checks in
+        // parallel; then we gather up a Vec of all the results due to the
+        // `.collect()`.
+        let results = pf_invs
+            .par_iter()
+            .map(|inv| {
+                // not bothering to check initiation
+                let mut solver = conf.solver(&m.signature, 2);
+                solver.assert(&inv_assert.next);
+                solver.assert(&inv_assert.assumed_inv);
+                solver.assert(&Next::prime(&inv_assert.assumed_inv));
+                solver.assert(&proof_inv);
+                solver.assert(&Term::negate(Next::prime(inv)));
+                return solver.check_sat(HashMap::new());
+            })
+            .collect::<Vec<_>>();
         for r in results {
             match r {
                 Ok(resp) => assert!(resp == SatResp::Unsat, "invariant is not inductive"),

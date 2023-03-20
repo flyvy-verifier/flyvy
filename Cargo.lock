@@ -972,6 +972,7 @@ dependencies = [
  "log",
  "peg",
  "pretty_env_logger",
+ "rayon",
  "regex",
  "serde",
  "serde_derive",
