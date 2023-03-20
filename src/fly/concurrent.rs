@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, fs};
