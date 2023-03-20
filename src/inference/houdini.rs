@@ -6,8 +6,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
+
 use crate::{
-    fly::syntax::{Module, Signature, Span, Term, ThmStmt},
+    fly::{
+        semantics::Model,
+        syntax::{Module, Signature, Span, Term, ThmStmt},
+    },
     smtlib::proc::SatResp,
     term::Next,
     verify::{
@@ -20,6 +25,12 @@ use crate::{
 // should later be converted into spanned errors that can be reported to the
 // user. The code currently overloads AssertionFailure which was only intended
 // for failures that are the direct result of checking a user assertion.
+
+enum SatResult {
+    Sat(Vec<Model>),
+    Unsat,
+    Unknown(String),
+}
 
 /// Attempt to infer inductive invariants to prove `assert`.
 ///
@@ -89,23 +100,36 @@ pub fn infer<'a>(
     log::info!("Computing fixed point:");
     loop {
         let mut not_implied: HashSet<&Term> = HashSet::new();
-        for &q in &invs {
-            if not_implied.contains(q) {
-                continue;
-            };
-            log::info!("    Checking {q}");
-            let mut solver = conf.solver(sig, 2);
-            for &p in &invs {
-                solver.assert(p);
-            }
-            solver.assert(&assert.next);
-            solver.assert(&Term::negate(Next::prime(q)));
-            let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+        let inv_checks = invs
+            .par_iter()
+            .filter(|q| !not_implied.contains(*q))
+            .map(|q| {
+                log::info!("    Checking {q}");
+                let mut solver = conf.solver(sig, 2);
+                for &p in &invs {
+                    solver.assert(p);
+                }
+                solver.assert(&assert.next);
+                solver.assert(&Term::negate(Next::prime(q)));
+                let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+                (
+                    q,
+                    match resp {
+                        SatResp::Sat => {
+                            log::info!("        Got model");
+                            let states = solver.get_model();
+                            assert_eq!(states.len(), 2);
+                            SatResult::Sat(states)
+                        }
+                        SatResp::Unsat => SatResult::Unsat,
+                        SatResp::Unknown(err) => SatResult::Unknown(err),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        for (q, resp) in inv_checks {
             match resp {
-                SatResp::Sat => {
-                    log::info!("        Got model");
-                    let states = solver.get_model();
-                    assert_eq!(states.len(), 2);
+                SatResult::Sat(states) => {
                     // TODO(oded): make 0 and 1 special constants for their use as Booleans
                     assert_eq!(states[1].eval(q, None), 0);
                     for &qq in &invs {
@@ -115,8 +139,8 @@ pub fn infer<'a>(
                         }
                     }
                 }
-                SatResp::Unsat => (),
-                SatResp::Unknown(m) => {
+                SatResult::Unsat => (),
+                SatResult::Unknown(m) => {
                     return Err(AssertionFailure {
                         loc: span,
                         reason: FailureType::NotInductive,
