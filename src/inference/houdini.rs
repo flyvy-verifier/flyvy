@@ -4,15 +4,15 @@
 //! Implementation of the Houdini algorithm, which infers inductive invariants
 //! to prove an assertion.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
 
 use rayon::prelude::*;
 
 use crate::{
-    fly::{
-        semantics::Model,
-        syntax::{Module, Signature, Term, ThmStmt},
-    },
+    fly::syntax::{Module, Signature, Term, ThmStmt},
     smtlib::proc::SatResp,
     term::Next,
     verify::{
@@ -41,12 +41,6 @@ pub enum HoudiniError {
     InitInvUnknown(String),
     InductiveInvUnknown(String),
     NotInductive,
-}
-
-enum SatResult {
-    Sat(Vec<Model>),
-    Unsat,
-    Unknown(String),
 }
 
 impl Houdini {
@@ -106,13 +100,23 @@ impl Houdini {
     }
 
     fn inductive_iteration(&mut self) -> Result<bool, HoudiniError> {
-        let mut not_implied: HashSet<Term> = HashSet::new();
+        let mut not_implied: Mutex<HashSet<Term>> = Mutex::new(HashSet::new());
         let inv_checks = self
             .invs
             .par_iter()
-            .filter(|q| !not_implied.contains(*q))
             .map(|q| {
                 log::info!("    Checking {q}");
+                // create a new scope to lock not_implied for the shortest duration possible
+                {
+                    // NOTE: this set is mutated concurrently by these invariant
+                    // checks, so this check is just an optimization - a later
+                    // Sat result might prove that this invariant check is
+                    // redundant, but it'll be too late by then
+                    let not_implied = not_implied.lock().unwrap();
+                    if not_implied.contains(q) {
+                        return None;
+                    }
+                }
                 let mut solver = self.conf.solver(&self.sig, 2);
                 for p in &self.invs {
                     solver.assert(p);
@@ -120,37 +124,36 @@ impl Houdini {
                 solver.assert(&self.next);
                 solver.assert(&Term::negate(Next::prime(q)));
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-                (
-                    q,
-                    match resp {
-                        SatResp::Sat => {
-                            log::info!("        Got model");
-                            let states = solver.get_model();
-                            assert_eq!(states.len(), 2);
-                            SatResult::Sat(states)
-                        }
-                        SatResp::Unsat => SatResult::Unsat,
-                        SatResp::Unknown(err) => SatResult::Unknown(err),
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        for (q, resp) in inv_checks {
-            match resp {
-                SatResult::Sat(states) => {
+                if matches!(resp, SatResp::Sat) {
+                    log::info!("        Got model");
+                    let states = solver.get_model();
+                    assert_eq!(states.len(), 2);
                     // TODO(oded): make 0 and 1 special constants for their use as Booleans
                     assert_eq!(states[1].eval(q, None), 0);
                     for qq in &self.invs {
                         if states[1].eval(qq, None) == 0 {
                             log::info!("        Pruning {qq}");
+                            let mut not_implied = not_implied.lock().unwrap();
                             not_implied.insert(qq.clone());
                         }
                     }
                 }
-                SatResult::Unsat => (),
-                SatResult::Unknown(m) => return Err(HoudiniError::InductiveInvUnknown(m)),
+                Some(resp)
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for resp in inv_checks {
+            match resp {
+                SatResp::Sat => {}
+                SatResp::Unsat => (),
+                SatResp::Unknown(m) => return Err(HoudiniError::InductiveInvUnknown(m)),
             }
         }
+        // We have a `&mut Mutex` here, which proves that no other thread has a
+        // reference to the mutex, so we can use `get_mut()` to get its contents
+        // without actually locking. The `.unwrap()` is still needed for poison
+        // checking.
+        let not_implied = not_implied.get_mut().unwrap();
         if not_implied.is_empty() {
             log::info!("Fixed point reached");
             return Ok(true);
