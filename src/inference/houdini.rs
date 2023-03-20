@@ -29,7 +29,10 @@ use crate::{
 struct Houdini {
     conf: SolverConf,
     sig: Signature,
-    assert: InvariantAssertion,
+    init: Term,
+    next: Term,
+    /// These are the candidate invariants remaining.
+    // (this is the only mutable state)
     invs: Vec<Term>,
 }
 
@@ -59,7 +62,8 @@ impl Houdini {
         Self {
             conf,
             sig: sig.clone(),
-            assert,
+            init: assert.init,
+            next: assert.next,
             invs,
         }
     }
@@ -73,7 +77,7 @@ impl Houdini {
             };
             log::info!("    Checking {q}");
             let mut solver = self.conf.solver(&self.sig, 1);
-            solver.assert(&self.assert.init);
+            solver.assert(&self.init);
             solver.assert(&Term::negate(q.clone()));
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
@@ -82,7 +86,7 @@ impl Houdini {
                     let states = solver.get_model();
                     assert_eq!(states.len(), 1);
                     // TODO(oded): make 0 and 1 special constants for this use
-                    assert_eq!(states[0].eval(&self.assert.init, None), 1);
+                    assert_eq!(states[0].eval(&self.init, None), 1);
                     assert_eq!(states[0].eval(q, None), 0);
                     for qq in &self.invs {
                         if states[0].eval(qq, None) == 0 {
@@ -113,7 +117,7 @@ impl Houdini {
                 for p in &self.invs {
                     solver.assert(p);
                 }
-                solver.assert(&self.assert.next);
+                solver.assert(&self.next);
                 solver.assert(&Term::negate(Next::prime(q)));
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 (
@@ -238,7 +242,9 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                                 loc: pf.assert.span,
                                 reason: FailureType::NotInductive,
                                 // TODO(oded): better error reporting here
-                                error: QueryError::Unknown("assertion not in fixed point".to_string()),
+                                error: QueryError::Unknown(
+                                    "assertion not in fixed point".to_string(),
+                                ),
                             },
                         }),
                     }
