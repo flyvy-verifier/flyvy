@@ -194,7 +194,7 @@ impl<T: LemmaQF> Lemma<T> {
         model: &Model,
         cfg: &QuantifierConfig,
         atoms: &[Term],
-        assignment: &Assignment,
+        assignment: Assignment,
         index: usize,
     ) -> Vec<Self> {
         let mut weakened: Vec<Self> = vec![];
@@ -203,7 +203,7 @@ impl<T: LemmaQF> Lemma<T> {
         if index == cfg.quantifiers.len() {
             let mut terms = vec![];
             atoms.clone_into(&mut terms);
-            model.flip_to_sat(&mut terms, Some(assignment));
+            model.flip_to_sat(&mut terms, assignment);
 
             for qf in self.lemma_qf.weaken(terms).into_iter() {
                 insert_lemma(
@@ -244,7 +244,7 @@ impl<T: LemmaQF> Lemma<T> {
                 for lemma in weakened.iter() {
                     new_weakened = merge_lemmas(
                         new_weakened,
-                        lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1),
+                        lemma.weaken_rec(model, cfg, atoms, new_assignment.clone(), index + 1),
                     );
                 }
 
@@ -264,7 +264,7 @@ impl<T: LemmaQF> Lemma<T> {
 
         // Recursion: existential quantification case.
         if cfg.quantifiers[index].is_none() || cfg.quantifiers[index] == Some(Quantifier::Exists) {
-            let mut new_assignment = assignment.clone();
+            let mut new_assignment = assignment;
             let asgn_iter = (0..cfg.names[index].len())
                 .map(|_| 0..model.universe[model.signature.sort_idx(&cfg.sorts[index])])
                 .multi_cartesian_product();
@@ -274,7 +274,7 @@ impl<T: LemmaQF> Lemma<T> {
                 }
 
                 for mut lemma in
-                    base_lemma.weaken_rec(model, cfg, atoms, &new_assignment, index + 1)
+                    base_lemma.weaken_rec(model, cfg, atoms, new_assignment.clone(), index + 1)
                 {
                     lemma.quantifiers.insert(0, Quantifier::Exists);
                     lemma.sorts.insert(0, cfg.sorts[index].clone());
@@ -295,10 +295,10 @@ impl<T: LemmaQF> Lemma<T> {
         atoms: Option<&[Term]>,
     ) -> Vec<Self> {
         if let Some(atoms_v) = atoms {
-            self.weaken_rec(model, cfg, atoms_v, &Assignment::new(), 0)
+            self.weaken_rec(model, cfg, atoms_v, Assignment::new(), 0)
         } else {
             let atoms_v = cfg.atoms(&model.signature);
-            self.weaken_rec(model, cfg, &atoms_v, &Assignment::new(), 0)
+            self.weaken_rec(model, cfg, &atoms_v, Assignment::new(), 0)
         }
     }
 }
@@ -370,21 +370,21 @@ mutable c(): T2
 
         // Original lemma: forall x11:T1. forall x31:T3, x32:T3. false
         let lemma0 = cfg.quantify_false(PDNF::get_false(0, None));
-        assert_eq!(model1.eval(&lemma0.to_term(), None), 0);
-        assert_eq!(model2.eval(&lemma0.to_term(), None), 0);
+        assert_eq!(model1.eval(&lemma0.to_term()), 0);
+        assert_eq!(model2.eval(&lemma0.to_term()), 0);
 
         let lemma1_vec = lemma0.weaken(&model1, &cfg, None);
         for lemma1 in lemma1_vec.iter() {
             assert!(lemma0.subsumes(lemma1));
-            assert_eq!(model1.eval(&lemma1.to_term(), None), 1);
+            assert_eq!(model1.eval(&lemma1.to_term()), 1);
         }
 
         let mut lemma2_vec = vec![];
         for lemma1 in lemma1_vec.iter() {
             for lemma2 in lemma1.weaken(&model2, &cfg, None) {
                 assert!(lemma1.subsumes(&lemma2));
-                assert_eq!(model1.eval(&lemma2.to_term(), None), 1);
-                assert_eq!(model2.eval(&lemma2.to_term(), None), 1);
+                assert_eq!(model1.eval(&lemma2.to_term()), 1);
+                assert_eq!(model2.eval(&lemma2.to_term()), 1);
                 insert_lemma(&mut lemma2_vec, lemma2);
             }
         }

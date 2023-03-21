@@ -80,10 +80,10 @@ impl Houdini {
                     let states = solver.get_model();
                     assert_eq!(states.len(), 1);
                     // TODO(oded): make 0 and 1 special constants for this use
-                    assert_eq!(states[0].eval(&self.init, None), 1);
-                    assert_eq!(states[0].eval(q, None), 0);
+                    assert_eq!(states[0].eval(&self.init), 1);
+                    assert_eq!(states[0].eval(q), 0);
                     for qq in &self.invs {
-                        if states[0].eval(qq, None) == 0 {
+                        if states[0].eval(qq) == 0 {
                             log::info!("        Pruning {qq}");
                             not_implied.insert(qq.clone());
                         }
@@ -129,9 +129,9 @@ impl Houdini {
                     let states = solver.get_model();
                     assert_eq!(states.len(), 2);
                     // TODO(oded): make 0 and 1 special constants for their use as Booleans
-                    assert_eq!(states[1].eval(q, None), 0);
+                    assert_eq!(states[1].eval(q), 0);
                     for qq in &self.invs {
-                        if states[1].eval(qq, None) == 0 {
+                        if states[1].eval(qq) == 0 {
                             log::info!("        Pruning {qq}");
                             let mut not_implied = not_implied.lock().unwrap();
                             not_implied.insert(qq.clone());
