@@ -112,9 +112,12 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                             error: cex,
                         });
                     }
-                } else if let Ok(assert) =
-                    InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
-                {
+                } else if let Ok(assert) = InvariantAssertion::for_assert(
+                    &m.signature,
+                    &assumes,
+                    &pf.assert.x,
+                    &proof_invariants,
+                ) {
                     let res = check_invariant(pf, &assert);
                     if res.is_err() {
                         errors.push(res.err().unwrap())

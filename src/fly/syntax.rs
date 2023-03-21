@@ -216,6 +216,15 @@ impl Signature {
             .unwrap_or_else(|| panic!("could not find relation {name}"))
     }
 
+    /// Returns true if name is an immutable relation, or a primed version of one.
+    pub fn is_immutable(&self, name: &str) -> bool {
+        let name = name.trim_end_matches('\'');
+        match self.relations.iter().find(|x| x.name == name) {
+            Some(decl) => !decl.mutable,
+            None => false,
+        }
+    }
+
     pub fn relation_idx(&self, name: &str) -> usize {
         self.relations
             .iter()
@@ -223,6 +232,8 @@ impl Signature {
             .unwrap_or_else(|| panic!("invalid relation {name}"))
     }
 
+    /// Check if `name` is a relation in the signature, or a primed version of
+    /// one.
     pub fn contains_name(&self, name: &str) -> bool {
         let symbol_no_primes = name.trim_end_matches(|c| c == '\'');
         return self.relations.iter().any(|r| r.name == symbol_no_primes);

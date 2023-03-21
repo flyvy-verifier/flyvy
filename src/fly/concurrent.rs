@@ -80,8 +80,9 @@ mod tests {
             .next()
             .expect("should have one assertion");
         let pf_invs = pf.invariants.iter().map(|inv| &inv.x).collect::<Vec<_>>();
-        let inv_assert = InvariantAssertion::for_assert(&assumes, &pf.assert.x, &pf_invs)
-            .expect("should be an invariant assertion");
+        let inv_assert =
+            InvariantAssertion::for_assert(&m.signature, &assumes, &pf.assert.x, &pf_invs)
+                .expect("should be an invariant assertion");
 
         let backend = GenericBackend::new(SolverType::Z3, &solver_path("z3"));
         let conf = SolverConf { backend, tee: None };
@@ -115,9 +116,9 @@ mod tests {
                 let mut solver = conf.solver(&m.signature, 2);
                 solver.assert(&inv_assert.next);
                 solver.assert(&inv_assert.assumed_inv);
-                solver.assert(&Next::prime(&inv_assert.assumed_inv));
+                solver.assert(&Next::new(&m.signature).prime(&inv_assert.assumed_inv));
                 solver.assert(&proof_inv);
-                solver.assert(&Term::negate(Next::prime(inv)));
+                solver.assert(&Term::negate(Next::new(&m.signature).prime(inv)));
                 let resp = solver.check_sat(HashMap::new());
                 // if this check fails, don't start new checks
                 if matches!(resp, Ok(SatResp::Unsat) | Err(_)) {
