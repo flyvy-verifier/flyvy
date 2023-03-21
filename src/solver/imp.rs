@@ -434,6 +434,7 @@ impl FOModel {
                 .relations
                 .iter()
                 .map(|r| {
+                    let n = if r.mutable { n } else { 0 };
                     let relation = format!("{r}{primes}", r = &r.name, primes = "'".repeat(n));
                     self.interp[&relation].clone()
                 })

@@ -122,7 +122,7 @@ impl Houdini {
                     solver.assert(p);
                 }
                 solver.assert(&self.next);
-                solver.assert(&Term::negate(Next::prime(q)));
+                solver.assert(&Term::negate(Next::new(&self.sig).prime(q)));
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 if matches!(resp, SatResp::Sat) {
                     log::info!("        Got model");
@@ -215,9 +215,12 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
             ThmStmt::Assume(e) => assumes.push(e),
             ThmStmt::Assert(pf) => {
                 let proof_invariants: Vec<&Term> = pf.invariants.iter().map(|s| &s.x).collect();
-                if let Ok(assert) =
-                    InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
-                {
+                if let Ok(assert) = InvariantAssertion::for_assert(
+                    &m.signature,
+                    &assumes,
+                    &pf.assert.x,
+                    &proof_invariants,
+                ) {
                     let res = infer(conf, &m.signature, &assert);
                     match res {
                         Ok(invs) => {

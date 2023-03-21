@@ -48,7 +48,9 @@ impl FOModule {
                     } else if let Term::UnaryOp(UOp::Always, t) = t {
                         match FirstOrder::unrolling(t) {
                             Some(0) => fo.axioms.push(t.as_ref().clone()),
-                            Some(1) => fo.transitions.push(Next::normalize(t.as_ref())),
+                            Some(1) => fo
+                                .transitions
+                                .push(Next::new(&m.signature).normalize(t.as_ref())),
                             _ => (),
                         }
                     }
@@ -112,9 +114,9 @@ impl FOModule {
                 solver.assert(a);
             }
             for a in self.axioms.iter() {
-                solver.assert(&Next::prime(a));
+                solver.assert(&Next::new(&self.signature).prime(a));
             }
-            solver.assert(&Term::negate(Next::prime(t)));
+            solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
 
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {

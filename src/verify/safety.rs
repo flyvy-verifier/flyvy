@@ -6,13 +6,14 @@
 use thiserror::Error;
 
 use crate::{
-    fly::syntax::{Term, UOp::Always},
+    fly::syntax::{Signature, Term, UOp::Always},
     term::{FirstOrder, Next},
 };
 
 /// A temporal property expressed as an invariant problem.
 #[derive(Debug, Clone)]
 pub struct InvariantAssertion {
+    sig: Signature,
     pub init: Term,
     pub next: Term,
     pub assumed_inv: Term,
@@ -31,6 +32,7 @@ pub enum InvariantError {
 impl InvariantAssertion {
     /// Construct an invariant assertion to represent a temporal assertion.
     pub fn for_assert(
+        sig: &Signature,
         assumes: &[&Term],
         assert: &Term,
         proof_invs: &[&Term],
@@ -64,8 +66,9 @@ impl InvariantAssertion {
         }
 
         Ok(Self {
+            sig: sig.clone(),
             init: Term::and(init),
-            next: Next::normalize(&Term::and(next)),
+            next: Next::new(sig).normalize(&Term::and(next)),
             assumed_inv: Term::and(assumed_invs),
             inv,
             proof_invs: proof_invs.iter().map(|&t| t.clone()).collect(),
@@ -85,19 +88,13 @@ impl InvariantAssertion {
     }
 
     pub fn consecution(&self) -> FirstOrder {
-        // TODO: note that in this process we will generate p' even when p is immutable.
-        //
-        // Fixing this requires some stage (either the prime processing or the
-        // sexp solver encoding) to be aware of the signature. It would help if
-        // symbols were resolved once, so that at each occurrence of a function
-        // it was easy to look it up.
         let lhs = Term::and(vec![
             self.inductive_invariant(),
             self.next.clone(),
             self.assumed_inv.clone(),
-            Next::prime(&self.assumed_inv),
+            Next::new(&self.sig).prime(&self.assumed_inv),
         ]);
-        let rhs = Next::prime(&self.inductive_invariant());
+        let rhs = Next::new(&self.sig).prime(&self.inductive_invariant());
         FirstOrder::new(Term::implies(lhs, rhs))
     }
 }
