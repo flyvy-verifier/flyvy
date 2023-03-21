@@ -1,8 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use std::fmt::Write;
 use std::iter::zip;
-use std::{collections::HashMap, fmt::Write};
 
 use itertools::Itertools;
 use serde::Serialize;
@@ -23,7 +23,7 @@ pub type Element = usize;
 pub type Universe = Vec<usize>;
 
 /// An assignment maps the names of Id terms to elements of a model.
-pub type Assignment = HashMap<String, Element>;
+pub type Assignment = im::HashMap<String, Element>;
 
 /// An interpretation gives the complete value of a function for a
 /// finite-cardinality universe.
@@ -178,19 +178,24 @@ impl Model {
         w
     }
 
-    /// Evaluate a term to a model element. Also depends on an assignment to
-    /// logical variables.
+    /// Evaluate a term to a model element.
     ///
-    /// * None defaults to the empty assignment.
-    /// * The assignment is unsorted, and so is the return value of this
-    ///   function.
-    pub fn eval(&self, t: &Term, assignment: Option<&HashMap<String, Element>>) -> Element {
+    /// The term should be closed (that is, have no free logical variables).
+    pub fn eval(&self, t: &Term) -> Element {
+        self.eval_assign(t, Assignment::new())
+    }
+
+    /// Evaluate a term to a model element, given an assignment of
+    /// logical variables to elements.
+    ///
+    /// The assignment is unsorted, and so is the return value of this
+    /// function.
+    fn eval_assign(&self, t: &Term, assignment: Assignment) -> Element {
+        let go = |t: &Term| self.eval_assign(t, assignment.clone());
         match t {
             Term::Literal(false) => 0,
             Term::Literal(true) => 1,
-            Term::Id(name) if assignment.is_some() && assignment.unwrap().contains_key(name) => {
-                assignment.unwrap()[name]
-            }
+            Term::Id(name) if assignment.contains_key(name) => assignment[name],
             Term::Id(name) => {
                 let i = self.signature.relation_idx(name);
                 assert!(
@@ -200,33 +205,32 @@ impl Model {
                 self.interp[i].get(&[])
             }
             Term::App(f, p, args) => {
-                let args: Vec<Element> = args.iter().map(|x| self.eval(x, assignment)).collect();
+                let args: Vec<Element> = args.iter().map(|x| go(x)).collect();
                 if *p != 0 {
                     panic!("tried to eval {t}")
                 }
                 self.interp[self.signature.relation_idx(f)].get(&args)
             }
             Term::UnaryOp(Not, t) => {
-                let v = self.eval(t, assignment);
+                let v = go(t);
                 assert!(v == 0 || v == 1);
                 1 - v
             }
             Term::BinOp(Equals | Iff, lhs, rhs) => {
-                let lhs = self.eval(lhs, assignment);
-                let rhs = self.eval(rhs, assignment);
+                let lhs = go(lhs);
+                let rhs = go(rhs);
                 if lhs == rhs {
                     1
                 } else {
                     0
                 }
             }
-            Term::BinOp(NotEquals, lhs, rhs) => self.eval(
-                &Term::negate(Term::BinOp(Equals, lhs.clone(), rhs.clone())),
-                assignment,
-            ),
+            Term::BinOp(NotEquals, lhs, rhs) => {
+                go(&Term::negate(Term::BinOp(Equals, lhs.clone(), rhs.clone())))
+            }
             Term::BinOp(Implies, lhs, rhs) => {
-                let lhs = self.eval(lhs, assignment);
-                let rhs = self.eval(rhs, assignment);
+                let lhs = go(lhs);
+                let rhs = go(rhs);
                 if lhs <= rhs {
                     1
                 } else {
@@ -234,7 +238,7 @@ impl Model {
                 }
             }
             Term::NAryOp(And, ts) => {
-                let res = ts.iter().all(|t| self.eval(t, assignment) == 1);
+                let res = ts.iter().all(|t| go(t) == 1);
                 if res {
                     1
                 } else {
@@ -242,7 +246,7 @@ impl Model {
                 }
             }
             Term::NAryOp(Or, ts) => {
-                let res = ts.iter().any(|t| self.eval(t, assignment) == 1);
+                let res = ts.iter().any(|t| go(t) == 1);
                 if res {
                     1
                 } else {
@@ -250,17 +254,17 @@ impl Model {
                 }
             }
             Term::Ite { cond, then, else_ } => {
-                if self.eval(cond, assignment) == 1 {
-                    self.eval(then, assignment)
+                if go(cond) == 1 {
+                    go(then)
                 } else {
-                    self.eval(else_, assignment)
+                    go(else_)
                 }
             }
             Term::Quantified {
                 quantifier: _,
                 binders,
                 body,
-            } if binders.is_empty() => self.eval(body, assignment),
+            } if binders.is_empty() => go(body),
             Term::Quantified {
                 quantifier,
                 binders,
@@ -276,11 +280,11 @@ impl Model {
                     .multi_cartesian_product()
                     .map(|elements| {
                         // extend assignment with all variables bound to these `elements`
-                        let mut assignment = assignment.cloned().unwrap_or_default();
+                        let mut assignment = assignment.clone();
                         for (name, element) in zip(&names, elements) {
                             assignment.insert(name.to_string(), element);
                         }
-                        self.eval(body, Some(&assignment)) == 1
+                        self.eval_assign(body, assignment) == 1
                     });
                 let result = match quantifier {
                     Forall => iter.all(|x| x),
@@ -302,9 +306,9 @@ impl Model {
 
     /// Negate the necessary terms in order to make all given terms hold
     /// on the model and the given assignment.
-    pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: Option<&Assignment>) {
+    pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: Assignment) {
         for term in terms {
-            if self.eval(term, assignment) == 0 {
+            if self.eval_assign(term, assignment.clone()) == 0 {
                 *term = Term::negate(term.clone());
             }
         }
@@ -338,7 +342,7 @@ impl Model {
 
         // Get depth=1 terms (without inequalities).
         let mut terms = self.signature.terms_by_sort(&exists_vars, Some(1), false);
-        self.flip_to_sat(&mut terms[sort_cnt], Some(&assignment));
+        self.flip_to_sat(&mut terms[sort_cnt], assignment.clone());
 
         for i in 0..sort_cnt {
             let mut new_terms = vec![];
@@ -353,7 +357,7 @@ impl Model {
             }
             // Add equalities for the other terms of sort i.
             for j in self.universe[i]..terms[i].len() {
-                let elem = self.eval(&terms[i][j], Some(&assignment));
+                let elem = self.eval_assign(&terms[i][j], assignment.clone());
                 new_terms.push(Term::BinOp(
                     BinOp::Equals,
                     Box::new(terms[i][j].clone()),
@@ -579,7 +583,7 @@ mod tests {
         let c1 = Id("c1".to_string());
         let c2 = Id("c2".to_string());
 
-        let e = |t| model.eval(t, None);
+        let e = |t| model.eval(t);
         let b = |t: &Term| Box::new(t.clone());
         let ite = |cond, then, else_| Ite {
             cond: b(cond),
@@ -888,24 +892,24 @@ mod tests {
 
         assert_ne!(fst_as_term, fth_as_term);
 
-        assert_eq!(fst_model.eval(&fst_as_term, None), 1);
-        assert_eq!(fst_model.eval(&snd_as_term, None), 0);
-        assert_eq!(fst_model.eval(&thr_as_term, None), 0);
-        assert_eq!(fst_model.eval(&fth_as_term, None), 1);
+        assert_eq!(fst_model.eval(&fst_as_term), 1);
+        assert_eq!(fst_model.eval(&snd_as_term), 0);
+        assert_eq!(fst_model.eval(&thr_as_term), 0);
+        assert_eq!(fst_model.eval(&fth_as_term), 1);
 
-        assert_eq!(snd_model.eval(&fst_as_term, None), 0);
-        assert_eq!(snd_model.eval(&snd_as_term, None), 1);
-        assert_eq!(snd_model.eval(&thr_as_term, None), 0);
-        assert_eq!(snd_model.eval(&fth_as_term, None), 0);
+        assert_eq!(snd_model.eval(&fst_as_term), 0);
+        assert_eq!(snd_model.eval(&snd_as_term), 1);
+        assert_eq!(snd_model.eval(&thr_as_term), 0);
+        assert_eq!(snd_model.eval(&fth_as_term), 0);
 
-        assert_eq!(thr_model.eval(&fst_as_term, None), 0);
-        assert_eq!(thr_model.eval(&snd_as_term, None), 0);
-        assert_eq!(thr_model.eval(&thr_as_term, None), 1);
-        assert_eq!(thr_model.eval(&fth_as_term, None), 0);
+        assert_eq!(thr_model.eval(&fst_as_term), 0);
+        assert_eq!(thr_model.eval(&snd_as_term), 0);
+        assert_eq!(thr_model.eval(&thr_as_term), 1);
+        assert_eq!(thr_model.eval(&fth_as_term), 0);
 
-        assert_eq!(fth_model.eval(&fst_as_term, None), 1);
-        assert_eq!(fth_model.eval(&snd_as_term, None), 0);
-        assert_eq!(fth_model.eval(&thr_as_term, None), 0);
-        assert_eq!(fth_model.eval(&fth_as_term, None), 1);
+        assert_eq!(fth_model.eval(&fst_as_term), 1);
+        assert_eq!(fth_model.eval(&snd_as_term), 0);
+        assert_eq!(fth_model.eval(&thr_as_term), 0);
+        assert_eq!(fth_model.eval(&fth_as_term), 1);
     }
 }

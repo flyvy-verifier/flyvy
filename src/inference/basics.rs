@@ -278,7 +278,7 @@ impl<T: LemmaQF> Frame<T> {
         let mut i = start_at.unwrap_or((0, 0));
         while i.0 < self.entries.len() {
             while i.1 < self.entries[i.0].weakened.len() {
-                if model.eval(&self.entries[i.0].weakened[i.1].to_term(), None) == 0 {
+                if model.eval(&self.entries[i.0].weakened[i.1].to_term()) == 0 {
                     self.entries[i.0].progress = true;
                     let lemma = self.entries[i.0].weakened.remove(i.1);
                     let mut new_lemmas = lemma.weaken(model, &self.cfg, Some(atoms));
