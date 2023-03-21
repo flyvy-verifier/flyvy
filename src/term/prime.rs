@@ -124,8 +124,8 @@ mod tests {
         mutable p(s): bool
     "#,
         );
-        assert!(sig.is_immutable("r"));
         assert!(!sig.is_immutable("z"));
+        assert!(sig.is_immutable("r"));
         assert_eq!(
             Next::new(&sig).normalize(&term("r'(x) | z")),
             term("r(x) | z")
