@@ -17,6 +17,7 @@ use crate::{
     term::FirstOrder,
 };
 
+#[derive(Debug, Clone)]
 pub struct SolverConf {
     pub backend: GenericBackend,
     pub tee: Option<PathBuf>,

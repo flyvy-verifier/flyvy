@@ -1,6 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+mod concurrent;
 mod defs;
 pub mod parser;
 pub mod printer;

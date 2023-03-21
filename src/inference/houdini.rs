@@ -4,10 +4,15 @@
 //! Implementation of the Houdini algorithm, which infers inductive invariants
 //! to prove an assertion.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
+
+use rayon::prelude::*;
 
 use crate::{
-    fly::syntax::{Module, Signature, Span, Term, ThmStmt},
+    fly::syntax::{Module, Signature, Term, ThmStmt},
     smtlib::proc::SatResp,
     term::Next,
     verify::{
@@ -21,35 +26,52 @@ use crate::{
 // user. The code currently overloads AssertionFailure which was only intended
 // for failures that are the direct result of checking a user assertion.
 
-/// Attempt to infer inductive invariants to prove `assert`.
-///
-/// On success, returns a list of invariants which are together inductive and
-/// include `assert.inv`.
-pub fn infer<'a>(
-    conf: &SolverConf,
-    sig: &Signature,
-    span: Span,
-    assert: &'a InvariantAssertion,
-) -> Result<Vec<&'a Term>, AssertionFailure> {
-    let mut invs = vec![&assert.inv];
-    invs.extend(assert.proof_invs.iter());
-    log::info!("Running Houdini, candidate invariants are:");
-    for &p in &invs {
-        log::info!("    {p}")
-    }
-    log::info!("");
+struct Houdini {
+    conf: SolverConf,
+    sig: Signature,
+    init: Term,
+    next: Term,
+    /// These are the candidate invariants remaining.
+    // (this is the only mutable state)
+    invs: Vec<Term>,
+}
 
-    {
-        // filter based on initiation
+#[derive(Debug, Clone)]
+pub enum HoudiniError {
+    InitInvUnknown(String),
+    InductiveInvUnknown(String),
+    NotInductive,
+}
+
+impl Houdini {
+    fn new(conf: SolverConf, sig: &Signature, assert: InvariantAssertion) -> Self {
+        let mut invs = vec![assert.inv.clone()];
+        // TODO: support customization of initial candidate invariants
+        invs.extend(assert.proof_invs.iter().cloned());
+        log::info!("Running Houdini, candidate invariants are:");
+        for p in &invs {
+            log::info!("    {p}")
+        }
+        log::info!("");
+        Self {
+            conf,
+            sig: sig.clone(),
+            init: assert.init,
+            next: assert.next,
+            invs,
+        }
+    }
+
+    fn initiation_filter(&mut self) -> Result<(), HoudiniError> {
         log::info!("Checking initiation:");
-        let mut not_implied: HashSet<&Term> = HashSet::new();
-        for &q in &invs {
+        let mut not_implied: HashSet<Term> = HashSet::new();
+        for q in &self.invs {
             if not_implied.contains(q) {
                 continue;
             };
             log::info!("    Checking {q}");
-            let mut solver = conf.solver(sig, 1);
-            solver.assert(&assert.init);
+            let mut solver = self.conf.solver(&self.sig, 1);
+            solver.assert(&self.init);
             solver.assert(&Term::negate(q.clone()));
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
@@ -58,29 +80,103 @@ pub fn infer<'a>(
                     let states = solver.get_model();
                     assert_eq!(states.len(), 1);
                     // TODO(oded): make 0 and 1 special constants for this use
-                    assert_eq!(states[0].eval(&assert.init, None), 1);
+                    assert_eq!(states[0].eval(&self.init, None), 1);
                     assert_eq!(states[0].eval(q, None), 0);
-                    for &qq in &invs {
+                    for qq in &self.invs {
                         if states[0].eval(qq, None) == 0 {
                             log::info!("        Pruning {qq}");
-                            not_implied.insert(qq);
+                            not_implied.insert(qq.clone());
                         }
                     }
                 }
                 SatResp::Unsat => (),
                 SatResp::Unknown(m) => {
-                    return Err(AssertionFailure {
-                        loc: span,
-                        reason: FailureType::InitInv,
-                        error: QueryError::Unknown(m),
-                    });
+                    return Err(HoudiniError::InitInvUnknown(m));
                 }
             }
         }
-        invs.retain(|q| !not_implied.contains(q));
+        self.invs.retain(|q| !not_implied.contains(q));
+        Ok(())
     }
+
+    fn inductive_iteration(&mut self) -> Result<bool, HoudiniError> {
+        let mut not_implied: Mutex<HashSet<Term>> = Mutex::new(HashSet::new());
+        let inv_checks = self
+            .invs
+            .par_iter()
+            .map(|q| {
+                log::info!("    Checking {q}");
+                // create a new scope to lock not_implied for the shortest duration possible
+                {
+                    // NOTE: this set is mutated concurrently by these invariant
+                    // checks, so this check is just an optimization - a later
+                    // Sat result might prove that this invariant check is
+                    // redundant, but it'll be too late by then
+                    let not_implied = not_implied.lock().unwrap();
+                    if not_implied.contains(q) {
+                        return None;
+                    }
+                }
+                let mut solver = self.conf.solver(&self.sig, 2);
+                for p in &self.invs {
+                    solver.assert(p);
+                }
+                solver.assert(&self.next);
+                solver.assert(&Term::negate(Next::prime(q)));
+                let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+                if matches!(resp, SatResp::Sat) {
+                    log::info!("        Got model");
+                    let states = solver.get_model();
+                    assert_eq!(states.len(), 2);
+                    // TODO(oded): make 0 and 1 special constants for their use as Booleans
+                    assert_eq!(states[1].eval(q, None), 0);
+                    for qq in &self.invs {
+                        if states[1].eval(qq, None) == 0 {
+                            log::info!("        Pruning {qq}");
+                            let mut not_implied = not_implied.lock().unwrap();
+                            not_implied.insert(qq.clone());
+                        }
+                    }
+                }
+                Some(resp)
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for resp in inv_checks {
+            match resp {
+                SatResp::Sat => {}
+                SatResp::Unsat => (),
+                SatResp::Unknown(m) => return Err(HoudiniError::InductiveInvUnknown(m)),
+            }
+        }
+        // We have a `&mut Mutex` here, which proves that no other thread has a
+        // reference to the mutex, so we can use `get_mut()` to get its contents
+        // without actually locking. The `.unwrap()` is still needed for poison
+        // checking.
+        let not_implied = not_implied.get_mut().unwrap();
+        if not_implied.is_empty() {
+            log::info!("Fixed point reached");
+            return Ok(true);
+        }
+        self.invs.retain(|q| !not_implied.contains(q));
+        Ok(false)
+    }
+}
+
+/// Attempt to infer inductive invariants to prove `assert`.
+///
+/// On success, returns a list of invariants which are together inductive and
+/// include `assert.inv`.
+pub fn infer(
+    conf: &SolverConf,
+    sig: &Signature,
+    assert: &InvariantAssertion,
+) -> Result<Vec<Term>, HoudiniError> {
+    let mut state = Houdini::new(conf.clone(), sig, assert.clone());
+    state.initiation_filter()?;
+
     log::info!("Candidate invariants are:");
-    for &p in &invs {
+    for p in &state.invs {
         log::info!("    {p}")
     }
     log::info!("");
@@ -88,62 +184,21 @@ pub fn infer<'a>(
     // compute fixed point
     log::info!("Computing fixed point:");
     loop {
-        let mut not_implied: HashSet<&Term> = HashSet::new();
-        for &q in &invs {
-            if not_implied.contains(q) {
-                continue;
-            };
-            log::info!("    Checking {q}");
-            let mut solver = conf.solver(sig, 2);
-            for &p in &invs {
-                solver.assert(p);
-            }
-            solver.assert(&assert.next);
-            solver.assert(&Term::negate(Next::prime(q)));
-            let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-            match resp {
-                SatResp::Sat => {
-                    log::info!("        Got model");
-                    let states = solver.get_model();
-                    assert_eq!(states.len(), 2);
-                    // TODO(oded): make 0 and 1 special constants for their use as Booleans
-                    assert_eq!(states[1].eval(q, None), 0);
-                    for &qq in &invs {
-                        if states[1].eval(qq, None) == 0 {
-                            log::info!("        Pruning {qq}");
-                            not_implied.insert(qq);
-                        }
-                    }
-                }
-                SatResp::Unsat => (),
-                SatResp::Unknown(m) => {
-                    return Err(AssertionFailure {
-                        loc: span,
-                        reason: FailureType::NotInductive,
-                        error: QueryError::Unknown(m),
-                    });
-                }
-            }
-        }
-        if not_implied.is_empty() {
+        let done = state.inductive_iteration()?;
+        if done {
             log::info!("Fixed point reached");
             break;
         }
-        invs.retain(|q| !not_implied.contains(q));
         log::info!("Candidate invariants are:");
-        for &p in &invs {
+        for p in &state.invs {
             log::info!("    {p}")
         }
         log::info!("");
     }
-    if invs.is_empty() || invs[0] != &assert.inv {
-        return Err(AssertionFailure {
-            loc: span,
-            reason: FailureType::NotInductive,
-            error: QueryError::Unknown("assertion not in fixed point".to_string()), // TODO(oded): better error reporting
-        });
+    if state.invs.is_empty() || state.invs[0] != assert.inv {
+        return Err(HoudiniError::NotInductive);
     }
-    Ok(invs)
+    Ok(state.invs)
 }
 
 /// Prove the assertions in a module using Houdini invariant inference.
@@ -163,7 +218,7 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                 if let Ok(assert) =
                     InvariantAssertion::for_assert(&assumes, &pf.assert.x, &proof_invariants)
                 {
-                    let res = infer(conf, &m.signature, pf.assert.span, &assert);
+                    let res = infer(conf, &m.signature, &assert);
                     match res {
                         Ok(invs) => {
                             println!("# inferred invariant:");
@@ -175,7 +230,26 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                             println!("}}");
                         }
 
-                        Err(err) => errors.push(err),
+                        Err(err) => errors.push(match err {
+                            HoudiniError::InitInvUnknown(m) => AssertionFailure {
+                                loc: pf.assert.span,
+                                reason: FailureType::InitInv,
+                                error: QueryError::Unknown(m),
+                            },
+                            HoudiniError::InductiveInvUnknown(m) => AssertionFailure {
+                                loc: pf.assert.span,
+                                reason: FailureType::NotInductive,
+                                error: QueryError::Unknown(m),
+                            },
+                            HoudiniError::NotInductive => AssertionFailure {
+                                loc: pf.assert.span,
+                                reason: FailureType::NotInductive,
+                                // TODO(oded): better error reporting here
+                                error: QueryError::Unknown(
+                                    "assertion not in fixed point".to_string(),
+                                ),
+                            },
+                        }),
                     }
                 } else {
                     errors.push(AssertionFailure {

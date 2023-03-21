@@ -31,7 +31,7 @@ pub struct SmtProc {
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
 ///
 /// For unknown it also returns the reason the solver provides.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SatResp {
     /// The query is satisfiable.
     Sat,
