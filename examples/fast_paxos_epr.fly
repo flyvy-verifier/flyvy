@@ -13,6 +13,8 @@
 ## invariant to be inductive assuming the prior invariants, but the mypyvy proof
 ## already had this property.
 
+# TEST -- verify
+
 # sorts:
 sort node
 sort value

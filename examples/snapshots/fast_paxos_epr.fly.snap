@@ -1,0 +1,9 @@
+---
+source: tests/test_examples.rs
+description: "-- verify examples/fast_paxos_epr.fly"
+expression: combined_stdout_stderr
+---
+verifies!
+
+======== STDERR: ===========
+
