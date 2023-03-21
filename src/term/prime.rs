@@ -61,11 +61,14 @@ fn with_next(sig: &Signature, t: &Term, bound: im::HashSet<String>, next: usize)
     }
 }
 
+/// Context for normalizing primes in terms.
 pub struct Next<'a> {
     sig: &'a Signature,
 }
 
 impl<'a> Next<'a> {
+    /// Create a new instance of `Next` that uses `sig` to resolve mutability of
+    /// symbols.
     pub fn new(sig: &'a Signature) -> Self {
         Self { sig }
     }
