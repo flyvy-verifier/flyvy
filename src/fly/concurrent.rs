@@ -79,10 +79,8 @@ mod tests {
             })
             .next()
             .expect("should have one assertion");
-        let pf_invs = pf.invariants.iter().map(|inv| &inv.x).collect::<Vec<_>>();
-        let inv_assert =
-            InvariantAssertion::for_assert(&m.signature, &assumes, &pf.assert.x, &pf_invs)
-                .expect("should be an invariant assertion");
+        let inv_assert = InvariantAssertion::for_assert(&m.signature, &assumes, pf)
+            .expect("should be an invariant assertion");
 
         let backend = GenericBackend::new(SolverType::Z3, &solver_path("z3"));
         let conf = SolverConf { backend, tee: None };
@@ -90,7 +88,7 @@ mod tests {
         // we'll assume proof_inv (all the invariants) in the pre state and try
         // to prove Next::prime(inv) in the post state for each proof invariant
         // separately
-        let proof_inv = Term::and(inv_assert.proof_invs);
+        let proof_inv = Term::and(pf.invariants.iter().map(|pf| pf.x.clone()));
         let task = Task::new();
         // rayon provides .par_iter(), which performs the invariant checks in
         // parallel; then we gather up a Vec of all the results due to the
@@ -106,9 +104,11 @@ mod tests {
         // for automated usage, not for verifying user-provided invariants; it's
         // useful to provide the user with feedback on all the invariants that
         // are incorrect (or at least to wait a while for these results).
-        let results = pf_invs
+        let results = pf
+            .invariants
             .par_iter()
             .map(|inv| {
+                let inv = &inv.x;
                 if task.is_cancelled() {
                     return None;
                 }

@@ -65,14 +65,16 @@ fn verify_firstorder(
 
 pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
     let check_invariant =
-        |pf: &Proof, assert: &InvariantAssertion| -> Result<(), AssertionFailure> {
+        |pf: &Proof, assert: &InvariantAssertion| -> Result<(), Vec<AssertionFailure>> {
+            let mut failures = vec![];
             {
                 // check initiation (init implies invariant)
                 let mut solver = conf.solver(&m.signature, 1);
-                solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv)));
+                solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv.x)));
+                // TODO: break this down per invariant, as with consecutions()
                 let res = verify_term(&mut solver, assert.initiation().0);
                 if let Err(cex) = res {
-                    return Err(AssertionFailure {
+                    failures.push(AssertionFailure {
                         loc: pf.assert.span,
                         reason: FailureType::InitInv,
                         error: cex,
@@ -81,16 +83,22 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
             }
             {
                 // check consecution (transitions preserve invariant)
-                let mut solver = conf.solver(&m.signature, 2);
-                solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
-                let res = verify_term(&mut solver, assert.consecution().0);
-                if let Err(cex) = res {
-                    return Err(AssertionFailure {
-                        loc: pf.assert.span,
-                        reason: FailureType::NotInductive,
-                        error: cex,
-                    });
+                for (span, t) in assert.consecutions() {
+                    // TODO: do this concurrently
+                    let mut solver = conf.solver(&m.signature, 2);
+                    solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv.x)));
+                    let res = verify_term(&mut solver, t.0);
+                    if let Err(cex) = res {
+                        failures.push(AssertionFailure {
+                            loc: span,
+                            reason: FailureType::NotInductive,
+                            error: cex,
+                        });
+                    }
                 }
+            }
+            if !failures.is_empty() {
+                return Err(failures);
             }
             Ok(())
         };
@@ -102,7 +110,6 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
         match step {
             ThmStmt::Assume(e) => assumes.push(e),
             ThmStmt::Assert(pf) => {
-                let proof_invariants: Vec<&Term> = pf.invariants.iter().map(|s| &s.x).collect();
                 if let Some(n) = FirstOrder::unrolling(&pf.assert.x) {
                     let res = verify_firstorder(conf, &m.signature, n + 1, &assumes, &pf.assert.x);
                     if let Err(cex) = res {
@@ -112,16 +119,13 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                             error: cex,
                         });
                     }
-                } else if let Ok(assert) = InvariantAssertion::for_assert(
-                    &m.signature,
-                    &assumes,
-                    &pf.assert.x,
-                    &proof_invariants,
-                ) {
+                } else if let Ok(assert) =
+                    InvariantAssertion::for_assert(&m.signature, &assumes, pf)
+                {
                     log::info!("checking invariant {}", &pf.assert.x);
                     let res = check_invariant(pf, &assert);
                     if res.is_err() {
-                        errors.push(res.err().unwrap())
+                        errors.fails.extend(res.err().unwrap())
                     }
                 } else {
                     errors.push(AssertionFailure {
