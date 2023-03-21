@@ -118,6 +118,7 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                     &pf.assert.x,
                     &proof_invariants,
                 ) {
+                    log::info!("checking invariant {}", &pf.assert.x);
                     let res = check_invariant(pf, &assert);
                     if res.is_err() {
                         errors.push(res.err().unwrap())
