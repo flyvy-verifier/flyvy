@@ -325,7 +325,7 @@ pub fn term(s: &str) -> Term {
 #[cfg(test)]
 /// Parse a signature. Only used for testing.
 pub fn parse_signature(s: &str) -> Signature {
-    parser::signature(s).expect("invalid signature in test")
+    parser::signature(s.trim()).expect("invalid signature in test")
 }
 
 /// Parse a fly module, reporting a human-readable error on failure.

@@ -96,8 +96,7 @@ mod tests {
         sort s
         mutable z: bool
         mutable r(s): bool
-    "#
-            .trim(),
+    "#,
         );
         assert_eq!(
             Next::new(&sig).normalize(&term("r'(x) | z")),
@@ -123,8 +122,7 @@ mod tests {
         mutable z: bool
         immutable r(s): bool
         mutable p(s): bool
-    "#
-            .trim(),
+    "#,
         );
         assert!(sig.is_immutable("r"));
         assert!(!sig.is_immutable("z"));

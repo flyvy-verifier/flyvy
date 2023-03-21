@@ -330,8 +330,7 @@ sort T2
 sort T3
 mutable r(T1, T2, T3, T3): bool
 mutable c(): T2
-"#
-            .trim(),
+"#,
         );
 
         // First model, has elements x:1 y:2 z:3, c = y and r(x,y,z) = true

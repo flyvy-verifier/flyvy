@@ -232,8 +232,7 @@ mod tests {
         mutable votes(node, node): bool
         mutable leader(node): bool
         mutable decided(node, value): bool
-        "#
-            .trim(),
+        "#,
         );
 
         let backend = GenericBackend {
@@ -259,8 +258,7 @@ mod tests {
             r#"
         sort node
         mutable votes(node, node): bool
-        "#
-            .trim(),
+        "#,
         );
 
         let backend = GenericBackend {
