@@ -4,6 +4,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use rayon::prelude::*;
+
 use super::error::{AssertionFailure, FailureType, QueryError, SolveError};
 use super::safety::InvariantAssertion;
 use crate::fly::syntax::Proof;
@@ -64,44 +66,52 @@ fn verify_firstorder(
 }
 
 pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
-    let check_invariant =
-        |pf: &Proof, assert: &InvariantAssertion| -> Result<(), Vec<AssertionFailure>> {
-            let mut failures = vec![];
-            {
-                // check initiation (init implies invariant)
-                let mut solver = conf.solver(&m.signature, 1);
-                solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv.x)));
-                // TODO: break this down per invariant, as with consecutions()
-                let res = verify_term(&mut solver, assert.initiation().0);
-                if let Err(cex) = res {
-                    failures.push(AssertionFailure {
-                        loc: pf.assert.span,
-                        reason: FailureType::InitInv,
-                        error: cex,
-                    });
-                }
+    let check_invariant = |pf: &Proof,
+                           assert: &InvariantAssertion|
+     -> Result<(), Vec<AssertionFailure>> {
+        let mut failures = vec![];
+        {
+            // check initiation (init implies invariant)
+            let mut solver = conf.solver(&m.signature, 1);
+            solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv.x)));
+            // TODO: break this down per invariant, as with consecutions()
+            let res = verify_term(&mut solver, assert.initiation().0);
+            if let Err(cex) = res {
+                failures.push(AssertionFailure {
+                    loc: pf.assert.span,
+                    reason: FailureType::InitInv,
+                    error: cex,
+                });
             }
-            {
-                // check consecution (transitions preserve invariant)
-                for (span, t) in assert.consecutions() {
-                    // TODO: do this concurrently
+        }
+        {
+            // check consecution (transitions preserve invariant)
+            let new_failures = assert
+                .consecutions()
+                .into_par_iter()
+                .map(|(span, t)| {
                     let mut solver = conf.solver(&m.signature, 2);
                     solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv.x)));
                     let res = verify_term(&mut solver, t.0);
                     if let Err(cex) = res {
-                        failures.push(AssertionFailure {
+                        Some(AssertionFailure {
                             loc: span,
                             reason: FailureType::NotInductive,
                             error: cex,
-                        });
+                        })
+                    } else {
+                        None
                     }
-                }
-            }
-            if !failures.is_empty() {
-                return Err(failures);
-            }
-            Ok(())
-        };
+                })
+                .flatten()
+                .collect::<Vec<_>>();
+            failures.extend(new_failures);
+        }
+        if !failures.is_empty() {
+            return Err(failures);
+        }
+        Ok(())
+    };
 
     // assumptions/assertions so far
     let mut assumes: Vec<&Term> = vec![];
