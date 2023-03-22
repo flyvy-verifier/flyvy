@@ -153,7 +153,7 @@ grammar parser() for str {
   rule ident_char() = ident_start() / ['0'..='9' | '!' | '#' | '%' | '-' | '.']
   rule ident() = quiet! { ident_start() ident_char()* } / expected!("atom")
 
-  rule whitespace() = [' ' | '\t' | '\n']
+  rule whitespace() = [' ' | '\t' | '\n' | '\r']
   rule _ = whitespace()*
 
   rule quoted_atom() -> Atom
