@@ -45,9 +45,9 @@ pub enum HoudiniError {
 
 impl Houdini {
     fn new(conf: SolverConf, sig: &Signature, assert: InvariantAssertion) -> Self {
-        let mut invs = vec![assert.inv.clone()];
+        let mut invs = vec![assert.inv.x.clone()];
         // TODO: support customization of initial candidate invariants
-        invs.extend(assert.proof_invs.iter().cloned());
+        invs.extend(assert.proof_invs.iter().map(|pf| pf.x.clone()));
         log::info!("Running Houdini, candidate invariants are:");
         for p in &invs {
             log::info!("    {p}")
@@ -195,7 +195,7 @@ pub fn infer(
         }
         log::info!("");
     }
-    if state.invs.is_empty() || state.invs[0] != assert.inv {
+    if state.invs.is_empty() || state.invs[0] != assert.inv.x {
         return Err(HoudiniError::NotInductive);
     }
     Ok(state.invs)
@@ -214,13 +214,7 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
         match step {
             ThmStmt::Assume(e) => assumes.push(e),
             ThmStmt::Assert(pf) => {
-                let proof_invariants: Vec<&Term> = pf.invariants.iter().map(|s| &s.x).collect();
-                if let Ok(assert) = InvariantAssertion::for_assert(
-                    &m.signature,
-                    &assumes,
-                    &pf.assert.x,
-                    &proof_invariants,
-                ) {
+                if let Ok(assert) = InvariantAssertion::for_assert(&m.signature, &assumes, pf) {
                     let res = infer(conf, &m.signature, &assert);
                     match res {
                         Ok(invs) => {

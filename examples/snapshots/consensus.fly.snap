@@ -7,10 +7,25 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ examples/consensus.fly:40:1
+   ┌─ examples/consensus.fly:40:5
    │
-40 │ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
-   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+40 │     invariant exists q:quorum. forall n1:node, n2:node, n3:node. forall v:value. !vote_request_msg(n1, n1)
+   │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     member(@node_0,@quorum_0) = true
+     vote_request_msg(@node_0,@node_0) = false
+     voted(@node_0) = false
+     vote_msg(@node_0,@node_0) = false
+     votes(@node_0,@node_0) = false
+     leader(@node_0) = false
+     decided(@node_0,@value_0) = false
+
+error: invariant is not inductive
+   ┌─ examples/consensus.fly:41:5
+   │
+41 │     invariant exists q:quorum. forall n1:node, n2:node, n3:node. forall v:value. !vote_request_msg(n1, n2)
+   │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
      member(@node_0,@quorum_0) = true

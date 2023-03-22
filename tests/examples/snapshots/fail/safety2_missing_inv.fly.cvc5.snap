@@ -7,10 +7,10 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ tests/examples/fail/safety2_missing_inv.fly:11:1
+   ┌─ tests/examples/fail/safety2_missing_inv.fly:13:5
    │
-11 │ assert always x
-   │ ^^^^^^^^^^^^^^^
+13 │     invariant y
+   │     ^^^^^^^^^^^
    │
    = counter example:
      x = true

@@ -119,7 +119,7 @@ impl Z3Conf {
         cmd.args(["-in", "-smt2"]);
         cmd.option("model.completion", "true");
         let mut conf = Self(cmd);
-        conf.timeout_ms(20000);
+        conf.timeout_ms(Some(30000));
         conf
     }
 
@@ -129,7 +129,9 @@ impl Z3Conf {
     }
 
     /// Set the SMT timeout option
-    pub fn timeout_ms(&mut self, ms: usize) {
+    pub fn timeout_ms(&mut self, ms: Option<usize>) {
+        // this is the default Z3 timeout
+        let ms = ms.unwrap_or(4294967295);
         self.0.option("timeout", format!("{ms}"));
     }
 

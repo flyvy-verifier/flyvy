@@ -13,6 +13,23 @@ error: invariant is not inductive
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
+     lock_msg(@node_0) = false
+     lock_msg(@node_1) = false
+     grant_msg(@node_0) = true
+     grant_msg(@node_1) = false
+     unlock_msg(@node_0) = false
+     unlock_msg(@node_1) = false
+     holds_lock(@node_0) = false
+     holds_lock(@node_1) = true
+     server_holds_lock = true
+
+error: invariant is not inductive
+   ┌─ tests/examples/fail/lockserver_bug.fly:26:5
+   │
+26 │     invariant server_holds_lock
+   │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
      lock_msg(@node_0) = true
      grant_msg(@node_0) = false
      unlock_msg(@node_0) = false

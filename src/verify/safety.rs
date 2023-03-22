@@ -6,7 +6,7 @@
 use thiserror::Error;
 
 use crate::{
-    fly::syntax::{Signature, Term, UOp::Always},
+    fly::syntax::{Proof, Signature, Span, Spanned, Term, UOp::Always},
     term::{FirstOrder, Next},
 };
 
@@ -17,8 +17,8 @@ pub struct InvariantAssertion {
     pub init: Term,
     pub next: Term,
     pub assumed_inv: Term,
-    pub inv: Term,
-    pub proof_invs: Vec<Term>,
+    pub inv: Spanned<Term>,
+    pub proof_invs: Vec<Spanned<Term>>,
 }
 
 #[derive(Error, Debug)]
@@ -34,10 +34,9 @@ impl InvariantAssertion {
     pub fn for_assert(
         sig: &Signature,
         assumes: &[&Term],
-        assert: &Term,
-        proof_invs: &[&Term],
+        pf: &Proof,
     ) -> Result<Self, InvariantError> {
-        let inv = match assert {
+        let inv = match &pf.assert.x {
             Term::UnaryOp(Always, p) => *p.clone(),
             _ => return Err(InvariantError::NotSafety),
         };
@@ -58,8 +57,8 @@ impl InvariantAssertion {
             }
         }
 
-        for &t in proof_invs {
-            if FirstOrder::unrolling(t) != Some(0) {
+        for t in &pf.invariants {
+            if FirstOrder::unrolling(&t.x) != Some(0) {
                 // TODO(oded): better error reporting
                 return Err(InvariantError::BadProofInvariant);
             }
@@ -70,15 +69,20 @@ impl InvariantAssertion {
             init: Term::and(init),
             next: Next::new(sig).normalize(&Term::and(next)),
             assumed_inv: Term::and(assumed_invs),
-            inv,
-            proof_invs: proof_invs.iter().map(|&t| t.clone()).collect(),
+            inv: Spanned {
+                x: inv,
+                span: pf.assert.span,
+            },
+            proof_invs: pf.invariants.clone(),
         })
     }
 
+    fn invariants(&self) -> impl Iterator<Item = &Spanned<Term>> {
+        vec![&self.inv].into_iter().chain(self.proof_invs.iter())
+    }
+
     fn inductive_invariant(&self) -> Term {
-        let mut invs = vec![self.inv.clone()];
-        invs.extend(self.proof_invs.iter().cloned());
-        Term::and(invs)
+        Term::and(self.invariants().map(|t| t.x.clone()))
     }
 
     pub fn initiation(&self) -> FirstOrder {
@@ -87,14 +91,25 @@ impl InvariantAssertion {
         FirstOrder::new(Term::implies(lhs, rhs))
     }
 
-    pub fn consecution(&self) -> FirstOrder {
+    /// Return a list of consecution checks. All checks assumes `self.next`,
+    /// `self.assumed_inv`, `prime(self.assumed_inv)`, and that all of the
+    /// invariants to be proven hold in the pre state. Each check shows that
+    /// given these assumptions, one of the invariants (either the proof
+    /// invariants or top-level assertion) holds in the post state.
+    pub fn consecutions(&self) -> Vec<(Span, FirstOrder)> {
         let lhs = Term::and(vec![
-            self.inductive_invariant(),
-            self.next.clone(),
             self.assumed_inv.clone(),
+            self.next.clone(),
             Next::new(&self.sig).prime(&self.assumed_inv),
+            self.inductive_invariant(),
         ]);
-        let rhs = Next::new(&self.sig).prime(&self.inductive_invariant());
-        FirstOrder::new(Term::implies(lhs, rhs))
+        self.invariants()
+            .map(|inv| {
+                log::info!("checking inductiveness of {}", inv.x);
+                let rhs = Next::new(&self.sig).prime(&inv.x);
+                let consecution = FirstOrder::new(Term::implies(lhs.clone(), rhs));
+                (inv.span, consecution)
+            })
+            .collect()
     }
 }
