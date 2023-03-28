@@ -64,6 +64,8 @@ pub struct Solver<B> {
     asserts: Vec<Term>,
     indicators: HashSet<String>,
     backend: B,
+    /// The assumptions used in the last call to `check_sat` (if that was the last call).
+    last_assumptions: Option<HashMap<Term, bool>>,
 }
 
 impl<B: Backend> Solver<B> {
@@ -87,6 +89,7 @@ impl<B: Backend> Solver<B> {
             asserts: vec![],
             indicators: HashSet::new(),
             backend,
+            last_assumptions: None,
         })
     }
 
@@ -129,6 +132,7 @@ impl<B: Backend> Solver<B> {
     /// Send `(assert ...)` to the solver.
     pub fn assert(&mut self, t: &Term) {
         self.proc.send(&app("assert", [sexp::term(t)]));
+        self.last_assumptions = None;
         self.asserts.push(t.clone())
     }
 
@@ -154,6 +158,7 @@ impl<B: Backend> Solver<B> {
                 vec![atom_s(ind.clone()), atom_s("Bool")],
             ));
         }
+        self.last_assumptions = None;
         Term::Id(ind)
     }
 
@@ -177,6 +182,7 @@ impl<B: Backend> Solver<B> {
             let sat = self.proc.check_sat()?;
             Ok(sat)
         } else {
+            self.last_assumptions = Some(assumptions.clone());
             let assumptions = assumptions
                 .into_iter()
                 .map(|(ind, set_true)| {
@@ -213,6 +219,7 @@ impl<B: Backend> Solver<B> {
     /// of models, one per state. Each model interprets all of the symbols in
     /// the signature.
     pub fn get_model(&mut self) -> Vec<Model> {
+        self.last_assumptions = None;
         let start = timing::start();
         let fo_model = self.get_fo_model(TimeType::GetModel, start);
         fo_model.into_trace(&self.signature, self.n_states)
@@ -292,19 +299,27 @@ impl<B: Backend> Solver<B> {
 
     /// Try to set all universes to have cardinality (at most) card.
     ///
-    /// Returns Some(indicators) on success, where indicators enforce `card`.
-    fn is_valid_max_card(&mut self, card: usize) -> Option<Vec<Term>> {
-        let mut indicators = vec![];
+    /// Returns true on success and adds indicators to `indicators` to enforce
+    /// the cardinality `card`.
+    fn is_valid_max_card(&mut self, card: usize, indicators: &mut Vec<Term>) -> bool {
+        let mut new_indicators = vec![];
         let sorts = self.signature.sorts.clone();
         for sort in &sorts {
             let ind = self.set_universe_card(sort, card);
-            indicators.push(ind);
+            new_indicators.push(ind);
         }
-        let assumptions = indicators.iter().map(sexp::term).collect::<Vec<_>>();
+        let assumptions = indicators
+            .iter()
+            .chain(new_indicators.iter())
+            .map(sexp::term)
+            .collect::<Vec<_>>();
         let r = self.proc.check_sat_assuming(&assumptions);
         match r {
-            Ok(SatResp::Sat) => Some(indicators),
-            Ok(SatResp::Unsat) => None,
+            Ok(SatResp::Sat) => {
+                indicators.extend(new_indicators);
+                true
+            }
+            Ok(SatResp::Unsat) => false,
             Ok(SatResp::Unknown(msg)) => panic!("could not check card {card}: {msg}"),
             Err(err) => panic!("error checking card: {err}"),
         }
@@ -313,15 +328,14 @@ impl<B: Backend> Solver<B> {
     /// Search for the minimum cardinality `card` such that there is a model
     /// where all universes are at `card` in size.
     ///
-    /// Returns the cardinality `card` and the indicators that enforce this
-    /// cardinality across all universes.
-    fn get_min_max_card(&mut self) -> (usize, Vec<Term>) {
+    /// Returns the cardinality `card` and adds indicators to enforce this cardinality to `indicators`.
+    fn get_min_max_card(&mut self, indicators: &mut Vec<Term>) -> usize {
         if self.signature.sorts.is_empty() {
-            return (0, vec![]);
+            return 0;
         }
         for card in 1..100 {
-            if let Some(indicators) = self.is_valid_max_card(card) {
-                return (card, indicators);
+            if self.is_valid_max_card(card, indicators) {
+                return card;
             }
         }
         panic!("max cardinality got too high");
@@ -342,17 +356,23 @@ impl<B: Backend> Solver<B> {
     /// constraints in place.
     pub fn get_minimal_model(&mut self) -> Vec<Model> {
         let start = std::time::Instant::now();
-        let (max_card, indicators) = self.get_min_max_card();
+        let assumptions = self.last_assumptions.take();
+        // initially, assume anything used by the last check_sat call
+        let mut indicators = assumptions
+            .unwrap_or(HashMap::new())
+            .into_iter()
+            .map(|(ind, val)| if val { ind } else { Term::negate(ind) })
+            .collect::<Vec<_>>();
+        let max_card = self.get_min_max_card(&mut indicators);
         // Minimize each sort in turn, greedily in the order of the signature.
         //
         // (This does not produce a global optimum but the search process is
         // simple to implement.)
         {
             let sorts = self.signature.sorts.clone();
-            let mut assumptions = indicators;
             for sort in sorts {
                 // TODO: a solver error should be reported to the caller
-                self.minimize_card(max_card, &mut assumptions, &sort)
+                self.minimize_card(max_card, &mut indicators, &sort)
                     .expect("solver error while minimizing");
             }
         }
@@ -392,6 +412,7 @@ impl<B: Backend> Solver<B> {
                 _ => panic!("non-string unsat assumption {} in solver response", &t),
             }
         }
+        self.last_assumptions = None;
         assumptions
     }
 
@@ -407,11 +428,13 @@ impl<B: Backend> Solver<B> {
 
     /// Call the SMT push command to create a new assertion stack frame.
     pub fn push(&mut self) {
+        self.last_assumptions = None;
         self.proc.send(&app("push", []));
     }
 
     /// Call the SMT pop command to rewind the solver to the last pop.
     pub fn pop(&mut self) {
+        self.last_assumptions = None;
         self.proc.send(&app("pop", []));
     }
 }
