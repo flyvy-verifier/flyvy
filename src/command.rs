@@ -30,7 +30,6 @@ use codespan_reporting::{
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 enum SolverType {
     Z3,
-    Cvc,
     Cvc4,
     Cvc5,
 }
@@ -45,7 +44,7 @@ enum ColorOutput {
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct SolverArgs {
     #[arg(value_enum, long, default_value_t = SolverType::Z3)]
-    /// Solver to use (z3, cvc; or use cvc4 or cvc5 to force a particular solver)
+    /// Solver to use
     solver: SolverType,
 
     #[arg(long)]
@@ -201,7 +200,7 @@ pub struct App {
 fn solver_default_bin(t: SolverType) -> &'static str {
     match t {
         SolverType::Z3 => "z3",
-        SolverType::Cvc | SolverType::Cvc5 => "cvc5",
+        SolverType::Cvc5 => "cvc5",
         SolverType::Cvc4 => "cvc4",
     }
 }
@@ -210,7 +209,7 @@ impl SolverArgs {
     fn get_solver_conf(&self, fname: &String) -> SolverConf {
         let backend_type = match &self.solver {
             SolverType::Z3 => backends::SolverType::Z3,
-            SolverType::Cvc | SolverType::Cvc5 => backends::SolverType::Cvc5,
+            SolverType::Cvc5 => backends::SolverType::Cvc5,
             SolverType::Cvc4 => backends::SolverType::Cvc4,
         };
         let solver_bin = solver_path(solver_default_bin(self.solver));
