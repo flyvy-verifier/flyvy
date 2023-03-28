@@ -201,9 +201,16 @@ impl Backend for &GenericBackend {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+    };
 
-    use crate::{fly::parser, smtlib::sexp};
+    use crate::{
+        fly::{parser, syntax::Term},
+        smtlib::{proc::SatResp, sexp},
+        solver::{solver_path, Solver},
+    };
 
     use super::{Backend, GenericBackend, SolverType};
 
@@ -263,7 +270,7 @@ mod tests {
 
         let backend = GenericBackend {
             solver_type: SolverType::Z3,
-            bin: "z3".to_string(),
+            bin: solver_path("z3"),
         };
 
         let model_text =
@@ -272,5 +279,36 @@ mod tests {
 
         let fo_model = (&backend).parse(&sig, 0, &HashSet::new(), &model_sexp);
         assert!(fo_model.interp.contains_key("votes"));
+    }
+
+    #[test]
+    fn test_check_sat_assuming_and_get_minimal_model() {
+        let sig = parser::parse_signature(
+            r#"
+            sort A
+            mutable x: A
+            mutable p(A): bool
+        "#,
+        );
+        let backend = GenericBackend {
+            solver_type: SolverType::Z3,
+            bin: solver_path("z3"),
+        };
+        let mut solver =
+            Solver::new(&sig, 1, &backend, None).expect("could not create solver for test");
+        let ind = solver.get_indicator("i");
+        // make sure that the first universe tried is not minimal
+        solver.assert(&parser::term("exists a1:A, a2:A. a1 != a2"));
+        solver.assert(&Term::implies(ind.clone(), parser::term("p(x)")));
+        let mut assumptions = HashMap::new();
+        assumptions.insert(ind, true);
+        let resp = solver.check_sat(assumptions).unwrap();
+        assert!(resp == SatResp::Sat);
+        let model = &solver.get_minimal_model()[0];
+        assert_eq!(
+            model.eval(&parser::term("p(x)")),
+            1,
+            "p(x) should be true due to assumption"
+        );
     }
 }
