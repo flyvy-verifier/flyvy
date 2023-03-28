@@ -154,7 +154,8 @@ pub(crate) fn parse_cvc(model: &Sexp, version5: bool) -> Model {
     let mut universe_cardinalities: HashMap<String, usize> = HashMap::new();
     let mut symbols: HashMap<String, ModelSymbol> = HashMap::new();
     lazy_static! {
-        static ref CARDINALITY_RE: Regex = Regex::new("cardinality of (.*) is ([0-9]+)$").unwrap();
+        // No $ at the end because of https://github.com/rust-lang/regex/issues/244
+        static ref CARDINALITY_RE: Regex = Regex::new("cardinality of (.*) is ([0-9]+)").unwrap();
     }
     if let Some(ss) = model.list() {
         // remove a leading "model" for CVC4

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use path_slash::PathExt;
+use std::path::Path;
 use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
@@ -243,7 +245,9 @@ impl App {
     /// Run the application.
     pub fn exec(self) {
         let file = fs::read_to_string(self.command.file()).expect("could not read input file");
-        let files = SimpleFile::new(self.command.file(), &file);
+        // We make sure paths look like Unix paths on all platforms, otherwise test snapshots don't match.
+        let standardized_filename = Path::new(self.command.file()).to_slash_lossy();
+        let files = SimpleFile::new(standardized_filename, &file);
 
         let writer = StandardStream::stderr(match &self.color {
             ColorOutput::Never => ColorChoice::Never,

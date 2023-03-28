@@ -419,7 +419,7 @@ impl SmtProc {
                 return Err(SolverError::UnexpectedClose(msg));
             }
             // last line, without the newline
-            let last_line = &buf[last_end..last_end + n - 1];
+            let last_line = buf[last_end..last_end + n].trim_end();
             // Z3 doesn't put quotes and CVC does (quotes do follow SMT-LIB)
             if last_line == Self::DONE || last_line == format!("\"{}\"", Self::DONE) {
                 let response = buf[..last_end].trim_end();
