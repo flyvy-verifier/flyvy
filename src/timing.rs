@@ -12,6 +12,7 @@ use std::{
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use nix::sys::resource::{getrusage, UsageWho};
 
 /// The category for a timing measurement.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -78,6 +79,17 @@ impl Timings {
         self.record_duration(typ, dur);
     }
 
+    fn proc_time() -> Option<Duration> {
+        let usage = match getrusage(UsageWho::RUSAGE_SELF) {
+            Ok(usage) => usage,
+            Err(_) => return None,
+        };
+        let time = usage.user_time() + usage.system_time();
+        let dur = Duration::from_secs(time.tv_sec() as u64)
+            + Duration::from_micros(time.tv_usec() as u64);
+        Some(dur)
+    }
+
     /// Print a full timing report to stdout.
     pub fn report(&self) {
         if cfg!(debug_assertions) {
@@ -96,7 +108,13 @@ impl Timings {
             .map(|info| info.dur)
             .sum::<Duration>()
             .as_secs_f64();
-        println!("  {:<20}: {:.1}s", "non-solver", total_time - solver_total);
+        let non_solver = Self::proc_time()
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_else(|| total_time - solver_total);
+        // Note this non-solver time comes from getrusage: it is the kernel's
+        // report of time spent in this process, not including children, which
+        // is the same info the `time` utility would have reported.
+        println!("  {:<20}: {:.1}s", "non-solver", non_solver);
         println!(
             "  {:<20}: {solver_total:.1}s {count:>4} calls",
             "solver total",
