@@ -190,7 +190,7 @@ impl Model {
     ///
     /// The assignment is unsorted, and so is the return value of this
     /// function.
-    fn eval_assign(&self, t: &Term, assignment: Assignment) -> Element {
+    pub fn eval_assign(&self, t: &Term, assignment: Assignment) -> Element {
         let go = |t: &Term| self.eval_assign(t, assignment.clone());
         match t {
             Term::Literal(false) => 0,
