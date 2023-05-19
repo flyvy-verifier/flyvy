@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::{fs, path::PathBuf, process};
 
 use crate::fly::syntax::Signature;
-use crate::inference::lemma::QuantifierConfig;
+use crate::inference::quant::QuantifierConfig;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
 use crate::solver::solver_path;
 use crate::timing;
@@ -71,12 +71,6 @@ struct VerifyArgs {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierConfigArgs {
-    #[arg(long)]
-    depth: Option<usize>,
-
-    #[arg(long, action)]
-    no_include_eq: bool,
-
     #[arg(short, long)]
     /// Quantifier in the form `<quantifier: F/E/*> <sort> <var1> <var2> ...`.
     quantifier: Vec<String>,
@@ -86,24 +80,23 @@ impl QuantifierConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
         let mut quantifiers = vec![];
         let mut sorts = vec![];
-        let mut names = vec![];
+        let mut counts = vec![];
         for quantifier_spec in &self.quantifier {
             let r = parse_quantifier(sig, quantifier_spec);
             match r {
-                Ok((q, sort, q_names)) => {
+                Ok((q, sort, count)) => {
                     quantifiers.push(q);
-                    sorts.push(sort);
-                    names.push(q_names);
+                    sorts.push(sig.sort_idx(&sort));
+                    counts.push(count);
                 }
                 Err(err) => panic!("{err}"),
             }
         }
         QuantifierConfig {
+            signature: Rc::new(sig.clone()),
             quantifiers,
             sorts,
-            names,
-            depth: self.depth,
-            include_eq: !self.no_include_eq,
+            counts,
         }
     }
 }
@@ -113,19 +106,27 @@ struct InferenceConfigArgs {
     #[command(flatten)]
     q_cfg_args: QuantifierConfigArgs,
 
-    #[arg(long, default_value_t = 0)]
-    kpdnf_cubes: usize,
+    #[arg(long)]
+    max_clauses: usize,
 
     #[arg(long)]
-    kpdnf_lit: Option<usize>,
+    max_clause_len: usize,
+
+    #[arg(long)]
+    nesting: Option<usize>,
+
+    #[arg(long, action)]
+    no_include_eq: bool,
 }
 
 impl InferenceConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
         InferenceConfig {
             cfg: self.q_cfg_args.to_cfg(sig),
-            kpdnf_cubes: self.kpdnf_cubes,
-            kpdnf_lit: self.kpdnf_lit,
+            max_clauses: self.max_clauses,
+            max_clause_len: self.max_clause_len,
+            nesting: self.nesting,
+            include_eq: !self.no_include_eq,
         }
     }
 }
@@ -328,9 +329,9 @@ impl App {
                         }
                     }
                 } else {
-                    let conf = Rc::new(args.get_solver_conf());
+                    let conf = args.get_solver_conf();
                     let infer_cfg = args.infer_cfg.to_cfg(&m.signature);
-                    run_fixpoint(infer_cfg, conf, &m, args.extend_models, args.disj);
+                    run_fixpoint(infer_cfg, &conf, &m, args.extend_models, args.disj);
                     if args.time {
                         timing::report();
                     }
