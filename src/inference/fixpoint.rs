@@ -1,16 +1,17 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Find a fixpoint for an invariant expressing the reachable states for a given
+//! Find a fixpoint invariant expressing reachable states in a given
 //! lemma domain.
 
 use std::rc::Rc;
 
 use crate::{
-    fly::{semantics::Model, syntax::Module},
+    fly::syntax::Module,
     inference::{
-        basics::{FOModule, Frame, InferenceConfig},
-        pdnf::PDNF,
+        basics::{FOModule, InferenceConfig},
+        lemma::{Cnf, CnfWeaken, Frontier},
+        trie::QcnfSet,
     },
     verify::SolverConf,
 };
@@ -18,18 +19,20 @@ use crate::{
 /// Run a simple fixpoint algorithm on the configured lemma domain.
 pub fn run_fixpoint(
     infer_cfg: InferenceConfig,
-    conf: Rc<SolverConf>,
+    conf: &SolverConf,
     m: &Module,
-    extend_models: bool,
+    _extend_models: bool,
     disj: bool,
 ) {
     let InferenceConfig {
         cfg,
-        kpdnf_cubes: kpdnf,
-        kpdnf_lit,
+        max_clauses,
+        max_clause_len,
+        nesting,
+        include_eq,
     } = infer_cfg;
-    let cfg = Rc::new(cfg);
-    let fo = Rc::new(FOModule::new(m, disj));
+
+    let fo = FOModule::new(m, disj);
 
     log::debug!("Axioms:");
     for a in fo.axioms.iter() {
@@ -44,82 +47,73 @@ pub fn run_fixpoint(
         log::debug!("    {a}");
     }
 
-    let mut frame = Frame::new(
-        vec![cfg.quantify_false(PDNF::get_false(kpdnf, kpdnf_lit))],
-        fo.clone(),
-        cfg.clone(),
-        conf.clone(),
-    );
-    let mut frame_t = frame.to_terms();
-    let mut models: Vec<Model> = vec![];
-
-    let print = |frame: &Frame<_>, s: &str| {
-        log::info!("[{}, {}] {}", frame.len(), frame.len_weakened(), s);
+    let print = |f: &Frontier<Cnf, CnfWeaken>, qs: &QcnfSet<Cnf, CnfWeaken>, s: String| {
+        log::info!("[{} | {} {}] {}", f.len(), qs.len(), qs.len_clauses(), s);
     };
 
-    let atoms = cfg.atoms(&m.signature);
+    let atoms = cfg.atoms(nesting, include_eq);
     log::debug!("Atoms in configuration: {}", atoms.len());
     log::debug!("");
 
+    let cfg = Rc::new(cfg);
+    let weaken = CnfWeaken {
+        max_clauses,
+        max_literals: max_clause_len,
+    };
+    let mut qcnf_set: QcnfSet<Cnf, CnfWeaken> = QcnfSet::new(cfg, Rc::new(weaken), Rc::new(atoms));
+    qcnf_set.add_strongest();
+    let mut frontier: Frontier<Cnf, CnfWeaken> = Frontier::new(&qcnf_set);
+
     // Begin by overapproximating the initial states.
-    let mut i_init = (0, 0);
-    while let Some(model) = frame.get_cex_init(Some(&mut i_init)) {
-        print(&frame, "CTI found, type=initial");
-        frame.weaken(&model, |_| true, &atoms, Some(i_init));
-        if extend_models {
-            models.push(model);
-        }
-        print(&frame, "Frame weakened");
+    print(&frontier, &qcnf_set, "Finding CTIs...".to_string());
+    while let Some(cti) = frontier.init_cex(&fo, conf, &qcnf_set) {
+        print(
+            &frontier,
+            &qcnf_set,
+            "CTI found, type=transition".to_string(),
+        );
+
+        print(&frontier, &qcnf_set, "Weakening...".to_string());
+        qcnf_set.weaken(&cti);
+
+        print(&frontier, &qcnf_set, "Finding CTIs...".to_string());
     }
 
-    loop {
+    print(&frontier, &qcnf_set, "Advancing...".to_string());
+    while frontier.advance(&qcnf_set, true) {
+        if fo.trans_safe_cex(conf, &frontier.to_terms()).is_some() {
+            println!("Frontier unsafe!");
+        }
+
         // Handle transition CTI's.
-        let mut i_trans = (0, 0);
-        loop {
-            let mut i_extend = (0, 0);
-            while !models.is_empty() {
-                if let Some(model) = frame.get_cex_extend(&models[0], Some(&mut i_extend)) {
-                    print(&frame, "CTI found, type=extended");
-                    frame.weaken(&model, |_| true, &atoms, Some(i_extend));
-                    models.push(model);
-                    print(&frame, "Frame weakened");
-                } else {
-                    models.remove(0);
-                    i_extend = (0, 0);
-                }
-            }
+        print(&frontier, &qcnf_set, "Finding CTIs...".to_string());
+        while let Some(cti) = frontier.trans_cex(&fo, conf, &qcnf_set) {
+            print(
+                &frontier,
+                &qcnf_set,
+                "CTI found, type=transition".to_string(),
+            );
 
-            if let Some((_, model)) = frame.get_cex_trans(&frame_t, Some(&mut i_trans)) {
-                print(&frame, "CTI found, type=transition");
-                frame.weaken(&model, |_| true, &atoms, Some(i_trans));
-                if extend_models {
-                    models.push(model);
-                }
-                print(&frame, "Frame weakened");
-            } else {
-                break;
-            }
+            print(&frontier, &qcnf_set, "Weakening...".to_string());
+            qcnf_set.weaken(&cti);
+
+            print(&frontier, &qcnf_set, "Advancing (zero-cost)...".to_string());
+            frontier.advance(&qcnf_set, false);
+
+            print(&frontier, &qcnf_set, "Finding CTIs...".to_string());
         }
 
-        // Once CTI's are exhausted, update the frame to with weakened lemmas.
-        if !frame.update(true) {
-            break;
-        }
-
-        frame_t = frame.to_terms();
-
-        print(&frame, "Frame updated");
-
-        // Verify safety of updated frame.
-        if fo.trans_safe_cex(&conf, &frame_t).is_some() {
-            log::warn!("Frame is unsafe! Aborting.");
-            return;
-        }
+        print(&frontier, &qcnf_set, "Advancing...".to_string());
     }
 
-    println!("proof {{");
-    for lemma in &frame_t {
-        println!("  invariant {lemma}");
+    let proof = frontier.to_terms();
+    if fo.trans_safe_cex(conf, &proof).is_none() {
+        println!("proof {{");
+        for lemma in &frontier.to_terms() {
+            println!("  invariant {lemma}");
+        }
+        println!("}}");
+    } else {
+        println!("Fixpoint unsafe!");
     }
-    println!("}}");
 }
