@@ -10,7 +10,8 @@ mod basics;
 mod fixpoint;
 pub mod houdini;
 pub mod lemma;
-mod pdnf;
+pub mod quant;
+mod trie;
 
 pub use basics::{parse_quantifier, InferenceConfig};
 pub use fixpoint::run_fixpoint;
