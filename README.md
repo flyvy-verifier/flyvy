@@ -16,12 +16,12 @@ Run `./tools/download-solvers.sh` to get compatible versions of the supported SM
 ```sh
 cargo run -- verify examples/lockserver.fly`
 
-cargo run -- infer examples/lockserver.fly --quantifier "F node n1 n2" --kpdnf-lit 3
+cargo run -- infer examples/lockserver.fly --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3
 
 env RUST_LOG=info cargo run --release -- \
   infer examples/consensus_epr.fly --time \
-  --quantifier "E quorum q" --quantifier "F node n1 n2 n3" --quantifier "F value v" \
-  --kpdnf-lit 3
+  --quantifier "E quorum 1" --quantifier "F node 3" --quantifier "F value 1" \
+  --max-size 3 --qf-body cnf --clauses 1 --clause-size 3
 # note: this last example takes about two minutes to run
 ```
 

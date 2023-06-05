@@ -4,17 +4,19 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
 
 use crate::fly::syntax::Signature;
+use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
+use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
 use crate::solver::solver_path;
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
-    inference::run_fixpoint,
+    inference::{fixpoint_multi, fixpoint_single, QfBody},
     solver::backends::{self, GenericBackend},
     verify::{verify_module, SolverConf},
 };
@@ -92,12 +94,7 @@ impl QuantifierConfigArgs {
                 Err(err) => panic!("{err}"),
             }
         }
-        QuantifierConfig {
-            signature: Rc::new(sig.clone()),
-            quantifiers,
-            sorts,
-            counts,
-        }
+        QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
     }
 }
 
@@ -107,24 +104,61 @@ struct InferenceConfigArgs {
     q_cfg_args: QuantifierConfigArgs,
 
     #[arg(long)]
-    max_clauses: usize,
+    qf_body: String,
 
     #[arg(long)]
-    max_clause_len: usize,
+    max_size: Option<usize>,
+
+    #[arg(long)]
+    max_exist: Option<usize>,
+
+    #[arg(long)]
+    clauses: Option<usize>,
+
+    #[arg(long)]
+    clause_size: Option<usize>,
+
+    #[arg(long)]
+    cubes: Option<usize>,
+
+    #[arg(long)]
+    cube_size: Option<usize>,
+
+    #[arg(long)]
+    non_unit: Option<usize>,
 
     #[arg(long)]
     nesting: Option<usize>,
 
     #[arg(long, action)]
     no_include_eq: bool,
+
+    #[arg(long, action)]
+    search: bool,
 }
 
 impl InferenceConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
+        let qf_body = if self.qf_body.to_lowercase() == "cnf".to_string() {
+            QfBody::CNF
+        } else if self.qf_body.to_lowercase() == "pdnf".to_string() {
+            QfBody::PDnf
+        } else if self.qf_body.to_lowercase() == "pdnf-naive".to_string() {
+            QfBody::PDnfNaive
+        } else {
+            panic!("Invalid choice of quantifier-free body!")
+        };
+
         InferenceConfig {
             cfg: self.q_cfg_args.to_cfg(sig),
-            max_clauses: self.max_clauses,
-            max_clause_len: self.max_clause_len,
+            qf_body,
+            max_size: self.max_size,
+            max_existentials: self.max_exist,
+            clauses: self.clauses,
+            clause_size: self.clause_size,
+            cubes: self.cubes,
+            cube_size: self.cube_size,
+            non_unit: self.non_unit,
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
         }
@@ -331,7 +365,55 @@ impl App {
                 } else {
                     let conf = args.get_solver_conf();
                     let infer_cfg = args.infer_cfg.to_cfg(&m.signature);
-                    run_fixpoint(infer_cfg, &conf, &m, args.extend_models, args.disj);
+                    if args.infer_cfg.search {
+                        match infer_cfg.qf_body {
+                            QfBody::CNF => {
+                                fixpoint_multi::<
+                                    subsume::Cnf<lemma::Literal>,
+                                    lemma::LemmaCnf,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                            QfBody::PDnf => {
+                                fixpoint_multi::<
+                                    subsume::Dnf<lemma::Literal>,
+                                    lemma::LemmaPDnf,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                            QfBody::PDnfNaive => {
+                                fixpoint_multi::<
+                                    subsume::Dnf<lemma::Literal>,
+                                    lemma::LemmaPDnfNaive,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                        }
+                    } else {
+                        match infer_cfg.qf_body {
+                            QfBody::CNF => {
+                                fixpoint_single::<
+                                    subsume::Cnf<lemma::Literal>,
+                                    lemma::LemmaCnf,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                            QfBody::PDnf => {
+                                fixpoint_single::<
+                                    subsume::Dnf<lemma::Literal>,
+                                    lemma::LemmaPDnf,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                            QfBody::PDnfNaive => {
+                                fixpoint_single::<
+                                    subsume::Dnf<lemma::Literal>,
+                                    lemma::LemmaPDnfNaive,
+                                    Vec<Vec<lemma::Literal>>,
+                                >(infer_cfg, &conf, &m, args.disj)
+                            }
+                        }
+                    }
                     if args.time {
                         timing::report();
                     }

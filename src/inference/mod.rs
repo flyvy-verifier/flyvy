@@ -11,7 +11,8 @@ mod fixpoint;
 pub mod houdini;
 pub mod lemma;
 pub mod quant;
-mod trie;
+pub mod subsume;
+mod weaken;
 
-pub use basics::{parse_quantifier, InferenceConfig};
-pub use fixpoint::run_fixpoint;
+pub use basics::{parse_quantifier, InferenceConfig, QfBody};
+pub use fixpoint::{fixpoint_multi, fixpoint_single};
