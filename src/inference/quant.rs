@@ -4,23 +4,67 @@
 //! Manage quantifiers used in inference.
 
 use itertools::Itertools;
-use std::collections::HashSet;
-use std::rc::Rc;
+use std::fmt::Debug;
+use std::sync::Arc;
+use std::{cmp::Ordering, collections::HashSet};
 
 use crate::{
     fly::syntax::{Binder, Quantifier, Signature, Sort, Term},
+    inference::InferenceConfig,
     term::subst::Substitution,
 };
+
+pub fn count_exists(qs: &[Quantifier]) -> usize {
+    qs.iter().filter(|q| **q == Quantifier::Exists).count()
+}
+
+/// Generate the variable names for this [`QuantifierSequence`]. The names are grouped
+/// and ordered based on their position in the sequence.
+pub fn vars(signature: &Signature, sorts: &[usize], counts: &[usize]) -> Vec<Vec<String>> {
+    let mut vars = vec![vec![]; sorts.len()];
+    let mut sorted_counts: Vec<usize> = vec![0; signature.sorts.len()];
+    for i in 0..sorts.len() {
+        vars[i].extend((0..counts[i]).map(|_| {
+            sorted_counts[sorts[i]] += 1;
+            format!("{}_{}", signature.sorts[sorts[i]], sorted_counts[sorts[i]])
+        }));
+    }
+
+    vars
+}
+
+fn distribute(amount: usize, boxes: &[usize]) -> Vec<Vec<usize>> {
+    assert!(!boxes.is_empty());
+    if boxes.len() == 1 {
+        if amount <= boxes[0] {
+            vec![vec![amount]]
+        } else {
+            vec![]
+        }
+    } else {
+        (0..=amount.min(boxes[0]))
+            .flat_map(|c| {
+                distribute(amount - c, &boxes[1..])
+                    .into_iter()
+                    .map(|mut v| {
+                        v.insert(0, c);
+                        v
+                    })
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+}
 
 /// A [`QuantifierSequence`] is a sequence where each position represents a sorted
 /// quantifier with a certain number of quantified variables.
 /// Note that this is a generic structure with a generic quantifier.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct QuantifierSequence<Q: Clone> {
-    pub signature: Rc<Signature>,
+    pub signature: Arc<Signature>,
     pub quantifiers: Vec<Q>,
     pub sorts: Vec<usize>,
-    pub counts: Vec<usize>,
+    pub names: Vec<Vec<String>>,
 }
 
 /// A [`QuantifierSequence`] where each quantifier is either [`None`], [`Some(Quantifier::Forall)`],
@@ -32,33 +76,35 @@ pub type QuantifierConfig = QuantifierSequence<Option<Quantifier>>;
 pub type QuantifierPrefix = QuantifierSequence<Quantifier>;
 
 impl<Q: Clone> QuantifierSequence<Q> {
+    pub fn new(
+        signature: Arc<Signature>,
+        quantifiers: Vec<Q>,
+        sorts: Vec<usize>,
+        counts: &[usize],
+    ) -> Self {
+        let names = vars(&signature, &sorts, counts);
+
+        QuantifierSequence {
+            signature,
+            quantifiers,
+            sorts,
+            names,
+        }
+    }
+
     /// Get the length of the [`QuantifierSequence`].
     pub fn len(&self) -> usize {
         self.quantifiers.len()
     }
 
-    /// Generate the variable names for this [`QuantifierSequence`]. The names are grouped
-    /// and ordered based on their position in the sequence.
-    pub fn vars(&self, start_at: usize) -> Vec<Vec<String>> {
-        let mut vars = vec![vec![]; self.len() - start_at];
-        let mut sorted_counts: Vec<usize> = vec![0; self.signature.sorts.len()];
-        for i in start_at..self.len() {
-            vars[i - start_at].extend((0..self.counts[i]).map(|_| {
-                sorted_counts[self.sorts[i]] += 1;
-                format!(
-                    "{}_{}",
-                    self.signature.sorts[self.sorts[i]], sorted_counts[self.sorts[i]]
-                )
-            }));
-        }
-
-        vars
+    pub fn num_vars(&self) -> usize {
+        self.names.iter().map(|n| n.len()).sum()
     }
 
     /// Generate all atoms in a given signature with this [`QuantifierSequence`].
     pub fn atoms(&self, nesting: Option<usize>, include_eq: bool) -> Vec<Term> {
         let mut sorted_vars = vec![vec![]; self.signature.sorts.len()];
-        for (i, mut v) in self.vars(0).into_iter().enumerate() {
+        for (i, mut v) in self.names.iter().cloned().enumerate() {
             sorted_vars[self.sorts[i]].append(&mut v);
         }
 
@@ -80,7 +126,7 @@ impl<Q: Clone> QuantifierSequence<Q> {
             return vec![Substitution::new()];
         }
 
-        let vars = self.vars(start_at);
+        let vars = &self.names[start_at..];
         let only_vars = if let Some(only_set) = only {
             vars.iter()
                 .map(|vs| {
@@ -91,7 +137,7 @@ impl<Q: Clone> QuantifierSequence<Q> {
                 })
                 .collect_vec()
         } else {
-            vars.clone()
+            Vec::from(vars)
         };
         vars.iter()
             .enumerate()
@@ -107,25 +153,120 @@ impl<Q: Clone> QuantifierSequence<Q> {
             })
             .collect_vec()
     }
+
+    pub fn restrict_to_ids(&self, ids: &HashSet<String>) -> Self {
+        Self {
+            signature: self.signature.clone(),
+            quantifiers: self.quantifiers.clone(),
+            sorts: self.sorts.clone(),
+            names: self
+                .names
+                .iter()
+                .map(|vs| {
+                    vs.iter()
+                        .filter(|&v| ids.contains(v))
+                        .cloned()
+                        .collect_vec()
+                })
+                .collect_vec(),
+        }
+    }
 }
 
 impl QuantifierConfig {
-    /// Get the strongest prefix associate with this configuration.
-    /// Here we consider [`Quantifier::Forall`] to be stronger than [`Quantifier::Exists`].
-    pub fn strongest_prefix(&self) -> QuantifierPrefix {
-        let quantifiers = self
-            .quantifiers
-            .iter()
-            .cloned()
-            .map(|q| q.unwrap_or(Quantifier::Forall))
-            .collect_vec();
+    pub fn all_prefixes(&self, infer_cfg: &InferenceConfig) -> Vec<QuantifierPrefix> {
+        let mut res = vec![];
 
-        QuantifierPrefix {
-            signature: self.signature.clone(),
-            quantifiers,
-            sorts: self.sorts.clone(),
-            counts: self.counts.clone(),
+        for e in 0..=infer_cfg.max_existentials.unwrap_or(self.len()) {
+            for s in 0..=infer_cfg.max_size.unwrap_or(self.num_vars()) {
+                res.append(&mut self.exact_prefixes(e, e, s));
+            }
         }
+
+        res
+    }
+
+    pub fn exact_prefixes(
+        &self,
+        min_existentials: usize,
+        max_existentials: usize,
+        size: usize,
+    ) -> Vec<QuantifierPrefix> {
+        if self.len() == 0 {
+            return vec![QuantifierPrefix {
+                signature: self.signature.clone(),
+                quantifiers: vec![],
+                sorts: vec![],
+                names: vec![],
+            }];
+        }
+
+        let counts = self.names.iter().map(|n| n.len()).collect_vec();
+        let sum = counts.iter().sum();
+
+        distribute(size.min(sum), &counts)
+            .iter()
+            .flat_map(|dist| {
+                self.quantifiers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, q)| match q {
+                        None => {
+                            if dist[i] != 0 {
+                                vec![Quantifier::Forall, Quantifier::Exists]
+                            } else {
+                                vec![Quantifier::Forall]
+                            }
+                        }
+                        Some(q) => vec![q.clone()],
+                    })
+                    .multi_cartesian_product()
+                    .filter(|qs| {
+                        let e = count_exists(&qs);
+                        e >= min_existentials && e <= max_existentials
+                    })
+                    .map(|quantifiers| QuantifierPrefix {
+                        signature: self.signature.clone(),
+                        quantifiers: quantifiers.clone(),
+                        sorts: self.sorts.clone(),
+                        names: self
+                            .names
+                            .iter()
+                            .enumerate()
+                            .map(|(i, n)| n[..dist[i]].iter().cloned().collect())
+                            .collect_vec(),
+                    })
+            })
+            .collect_vec()
+    }
+
+    pub fn is_universal(&self) -> bool {
+        self.quantifiers
+            .iter()
+            .all(|q| q == &Some(Quantifier::Forall))
+    }
+}
+
+impl Debug for QuantifierConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = vec![];
+        for i in 0..self.len() {
+            if !self.names[i].is_empty() {
+                let mut q_vec = vec![];
+
+                q_vec.push(match self.quantifiers[i] {
+                    None => "******".to_string(),
+                    Some(Quantifier::Exists) => "exists".to_string(),
+                    Some(Quantifier::Forall) => "forall".to_string(),
+                });
+
+                q_vec.push(self.names[i].iter().join(", "));
+
+                parts.push(q_vec.into_iter().join(" "));
+            }
+        }
+
+        write!(f, "{}", parts.iter().join(" . "))
     }
 }
 
@@ -133,7 +274,7 @@ impl QuantifierPrefix {
     /// Quantify the given term according to this [`QuantifierPrefix`].
     pub fn quantify(&self, mut term: Term) -> Term {
         let present_ids = term.ids();
-        for (i, v) in self.vars(0).into_iter().enumerate().rev() {
+        for (i, v) in self.names.iter().enumerate().rev() {
             let binders = v
                 .iter()
                 .filter_map(|name| {
@@ -163,11 +304,75 @@ impl QuantifierPrefix {
     /// Check whether one [`QuantifierPrefix`] subsumes another. A prefix Q1 is said to subsume Q2
     /// if Q2 can be gotten from Q1 by only flipping universal quantifiers to existential ones.
     pub fn subsumes(&self, other: &Self) -> bool {
-        self.len() == other.len()
-            && (0..self.len()).all(|i| {
-                self.quantifiers[i] == Quantifier::Forall
-                    || other.quantifiers[i] == Quantifier::Exists
-            })
+        assert_eq!(self.len(), other.len());
+        (0..self.len()).all(|i| {
+            self.names[i].is_empty()
+                || other.names[i].is_empty()
+                || self.quantifiers[i] == Quantifier::Forall
+                || other.quantifiers[i] == Quantifier::Exists
+        })
+    }
+
+    /// Check whether one [`QuantifierPrefix`] contains another.
+    pub fn contains(&self, other: &Self) -> bool {
+        assert_eq!(self.len(), other.len());
+        (0..self.len()).all(|i| {
+            self.quantifiers[i] == other.quantifiers[i]
+                && self.names[i].len() >= other.names[i].len()
+        })
+    }
+
+    pub fn is_universal(&self) -> bool {
+        (0..self.len())
+            .all(|i| self.names[i].is_empty() || self.quantifiers[i] == Quantifier::Forall)
+    }
+
+    pub fn existentials(&self) -> usize {
+        count_exists(&self.quantifiers)
+    }
+}
+
+impl PartialOrd for QuantifierPrefix {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for QuantifierPrefix {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        assert_eq!(self.len(), other.len());
+
+        for i in 0..self.len() {
+            match (self.quantifiers[i], other.quantifiers[i]) {
+                (Quantifier::Forall, Quantifier::Exists) => return Ordering::Less,
+                (Quantifier::Exists, Quantifier::Forall) => return Ordering::Greater,
+                _ => (),
+            }
+        }
+
+        Ordering::Equal
+    }
+}
+
+impl Debug for QuantifierPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = vec![];
+        for i in 0..self.len() {
+            if !self.names[i].is_empty() {
+                let mut q_vec = vec![];
+
+                q_vec.push(match self.quantifiers[i] {
+                    Quantifier::Exists => "exists".to_string(),
+                    Quantifier::Forall => "forall".to_string(),
+                });
+
+                q_vec.push(self.names[i].iter().join(", "));
+
+                parts.push(q_vec.into_iter().join(" "));
+            }
+        }
+
+        write!(f, "{}", parts.iter().join(". "))
     }
 }
 
@@ -178,7 +383,7 @@ mod tests {
     use super::QuantifierConfig;
     use crate::fly::syntax::Term;
     use crate::{fly::parser, term::subst::Substitution};
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn test_permutations() {
@@ -191,12 +396,12 @@ sort C
             .trim(),
         );
 
-        let config = QuantifierConfig {
-            signature: Rc::new(signature),
-            quantifiers: vec![None, None, None],
-            sorts: vec![0, 1, 2],
-            counts: vec![2, 1, 2],
-        };
+        let config = QuantifierConfig::new(
+            Arc::new(signature),
+            vec![None, None, None],
+            vec![0, 1, 2],
+            &[2, 1, 2],
+        );
         let a = |i: usize| format!("A_{}", i);
         let b = |i: usize| format!("B_{}", i);
         let c = |i: usize| format!("C_{}", i);

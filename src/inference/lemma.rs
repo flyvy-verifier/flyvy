@@ -1,23 +1,39 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Handle lemmas used in inference.
+//! Implement simple components, lemma domains and data structures for use in inference.
 
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 
 use crate::{
     fly::semantics::Model,
     fly::syntax::{BinOp, Term},
-    inference::{basics::FOModule, quant::QuantifierPrefix, trie::QcnfSet},
+    inference::{
+        basics::{FOModule, InferenceConfig},
+        subsume::OrderSubsumption,
+        weaken::{LemmaQf, LemmaSet},
+    },
+    term::subst::{substitute_qf, Substitution},
     verify::SolverConf,
 };
+
+use rayon::prelude::*;
+
+use super::basics::TransCexResult;
+use super::quant::{count_exists, QuantifierPrefix};
 
 /// An [`Atom`] is referred to via a certain index.
 pub type Atom = usize;
 /// A [`Literal`] represents an atom, either positive or negated.
 /// E.g. atom `i` negated is represented by (i, false).
 pub type Literal = (Atom, bool);
+
+fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
+    ((atoms - len + 1)..=atoms).fold(1, |a, b| a * b) * 2_usize.pow(len as u32)
+}
 
 // Convert a literal to its corresponding term.
 fn literal_as_term(literal: &Literal, atoms: &[Term]) -> Term {
@@ -29,112 +45,167 @@ fn literal_as_term(literal: &Literal, atoms: &[Term]) -> Term {
 
 /// Check whether the given [`Literal`] refers to an equality,
 /// either negated or unnegated.
-fn is_eq(literal: Literal, unnegated: bool, atoms: &[Term]) -> bool {
+pub fn is_eq(literal: Literal, unnegated: bool, atoms: &[Term]) -> bool {
     literal.1 == unnegated && matches!(atoms[literal.0], Term::BinOp(BinOp::Equals, _, _))
 }
 
-/// Check whether the first ordered sequence is a subset of the second.
-fn subset<T: Ord>(seq1: &[T], seq2: &[T]) -> bool {
-    let mut i2 = 0;
-    for t1 in seq1 {
-        while i2 < seq2.len() && t1 < &seq2[i2] {
-            i2 += 1;
-        }
+/// Return the [`Literal`] corresponding to the application of the given [`Substitution`]
+/// to the given [`Literal`].
+fn substitute_literal(
+    literal: &Literal,
+    substitution: &Substitution,
+    atoms: &[Term],
+    atom_to_index: &HashMap<Term, usize>,
+) -> Literal {
+    match &atoms[literal.0] {
+        Term::BinOp(BinOp::Equals, t1, t2) => {
+            let t1_sub = Box::new(substitute_qf(t1, substitution));
+            let t2_sub = Box::new(substitute_qf(t2, substitution));
 
-        if i2 >= seq2.len() || t1 > &seq2[i2] {
-            return false;
+            if let Some(&index) =
+                atom_to_index.get(&Term::BinOp(BinOp::Equals, t1_sub.clone(), t2_sub.clone()))
+            {
+                (index, literal.1)
+            } else if let Some(&index) =
+                atom_to_index.get(&Term::BinOp(BinOp::Equals, t2_sub, t1_sub))
+            {
+                (index, literal.1)
+            } else {
+                panic!("Atom after substitution does not exist!");
+            }
         }
+        _ => (
+            atom_to_index[&substitute_qf(&atoms[literal.0], substitution)],
+            literal.1,
+        ),
     }
-
-    true
 }
 
-/// [`LemmaQf`] defines the basic behavior of the quantifier-free part of lemmas.
-pub trait LemmaQf: Clone {
-    /// Convert into a CNF structure.
-    fn to_cnf(&self) -> Vec<Vec<Literal>>;
-
-    /// Convert into a [`Term`].
-    fn to_term(&self, atoms: &[Term]) -> Term;
+fn atom_to_index(atoms: &[Term]) -> HashMap<Term, usize> {
+    atoms
+        .iter()
+        .enumerate()
+        .map(|(index, term)| (term.clone(), index))
+        .collect()
 }
-
-/// [`WeakenQf`] defines how instances of the associated [`LemmaQf`] are weakened.
-pub trait WeakenQf<L: LemmaQf>: Clone {
-    /// Return the strongest instances of the associated [`LemmaQf`].
-    fn strongest(&self) -> Vec<L>;
-
-    /// Return weakenings of the given [`LemmaQf`] which satisfy the given cube.
-    ///
-    /// For any [`LemmaQf`] satisfying the cube and subsumed by the given [`LemmaQf`],
-    /// there should be some [`LemmaQf`] in the returned vector which subsumes it.
-    /// All subsumptions here refer to CNF subsumption.
-    fn weaken(&self, lemma: &L, cube: &[Literal], atoms: &[Term]) -> Vec<L>;
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct Cnf(Vec<Vec<Literal>>);
 
 #[derive(Clone)]
-pub struct CnfWeaken {
+pub struct LemmaCnf {
     /// The maximal number of clauses in a CNF formula.
-    pub max_clauses: usize,
+    pub clauses: usize,
     /// The maximal number of literals in each clause.
-    pub max_literals: usize,
+    pub clause_size: usize,
+    atoms: Arc<Vec<Term>>,
+    atom_to_index: HashMap<Term, usize>,
 }
 
-impl LemmaQf for Cnf {
-    fn to_cnf(&self) -> Vec<Vec<Literal>> {
-        self.0.clone()
+impl LemmaQf for LemmaCnf {
+    type Base = Vec<Vec<Literal>>;
+
+    fn subsumes(&self, _: &Self::Base, _: &Self::Base) -> bool {
+        true
     }
 
-    fn to_term(&self, atoms: &[Term]) -> Term {
-        Term::and(
-            self.0
-                .iter()
-                .map(|cl| Term::or(cl.iter().map(|lit| literal_as_term(lit, atoms)))),
-        )
-    }
-}
-
-impl WeakenQf<Cnf> for CnfWeaken {
-    fn strongest(&self) -> Vec<Cnf> {
-        vec![Cnf(vec![vec![]])]
+    fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
+        vec![Vec::from(clause)]
     }
 
-    fn weaken(&self, lemma: &Cnf, cube: &[Literal], atoms: &[Term]) -> Vec<Cnf> {
-        assert!(!lemma.0.is_empty());
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
+        base.iter()
+            .map(|clause| {
+                clause
+                    .iter()
+                    .map(|literal| {
+                        substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
+                    })
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+
+    fn ids(&self, base: &Self::Base) -> HashSet<String> {
+        base.iter()
+            .flat_map(|clause| {
+                clause
+                    .iter()
+                    .flat_map(|literal| self.atoms[literal.0].ids())
+            })
+            .collect()
+    }
+
+    fn base_to_term(&self, base: &Self::Base) -> Term {
+        Term::and(base.iter().map(|clause| {
+            Term::or(
+                clause
+                    .iter()
+                    .map(|literal| literal_as_term(literal, &self.atoms)),
+            )
+        }))
+    }
+
+    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
+        let atom_to_index = atom_to_index(&atoms);
+
+        Self {
+            clauses: if is_universal {
+                1
+            } else {
+                cfg.clauses
+                    .expect("Maximum number of clauses not provided.")
+            },
+            clause_size: cfg
+                .clause_size
+                .expect("Maximum number of literals per clause not provided."),
+            atoms,
+            atom_to_index,
+        }
+    }
+
+    fn strongest(&self) -> Vec<Self::Base> {
+        vec![vec![vec![]]]
+    }
+
+    fn weaken<I>(&self, base: Self::Base, cube: &[Literal], ignore: I) -> Vec<Self::Base>
+    where
+        I: Fn(&Self::Base) -> bool,
+    {
+        assert!(!base.is_empty());
 
         // If one of the clauses is of maximal size, or is a unit clause of a negated equality,
         // there are no weakenings possible.
-        if lemma.0.iter().any(|cl| {
-            cl.len() >= self.max_literals || (cl.len() == 1 && is_eq(cl[0], false, atoms))
+        if base.iter().any(|cl| {
+            cl.len() >= self.clause_size || (cl.len() == 1 && is_eq(cl[0], false, &self.atoms))
         }) {
             return vec![];
         }
 
         // Handle the special case where the lemma is the empty clause.
-        if lemma == &Cnf(vec![vec![]]) {
+        if base == vec![vec![]] {
             return cube
                 .iter()
                 .cloned()
-                .combinations(self.max_clauses.min(cube.len()))
-                .map(|lits| Cnf(lits.into_iter().map(|lit| vec![lit]).collect_vec()))
+                .combinations(self.clauses.min(cube.len()))
+                .map(|lits| lits.into_iter().map(|lit| vec![lit]).collect_vec())
                 .collect_vec();
         }
 
         // Weaken each clause by adding a literal from `cube`.
-        let weakened_clauses = lemma.0.iter().map(|cl| {
+        let weakened_clauses = base.iter().map(|cl| {
             let mut new_clauses = vec![];
+            let cl = cl.iter().cloned().sorted().collect_vec();
             for i in 0..=cl.len() {
                 let lower = if i > 0 { cl[i - 1].0 + 1 } else { 0 };
-                let upper = if i < cl.len() { cl[i].0 } else { atoms.len() };
+                let upper = if i < cl.len() {
+                    cl[i].0
+                } else {
+                    self.atoms.len()
+                };
 
                 for atom in lower..upper {
                     // Do not add inequalities to non-empty clauses.
-                    if cl.is_empty() || !is_eq(cube[atom], false, atoms) {
+                    if cl.is_empty() || !is_eq(cube[atom], false, &self.atoms) {
                         let mut new_clause = cl.to_vec();
-                        new_clause.insert(i, cube[atom]);
-                        assert!((1..new_clause.len()).all(|i| new_clause[i - 1] < new_clause[i]));
+                        new_clause.push(cube[atom]);
                         new_clauses.push(new_clause);
                     }
                 }
@@ -147,11 +218,510 @@ impl WeakenQf<Cnf> for CnfWeaken {
         weakened_clauses
             .into_iter()
             .multi_cartesian_product()
-            .map(|mut cls| {
-                minimize_subsumed(&mut cls, |cl1, cl2| subset(cl1, cl2));
-                Cnf(cls)
+            .filter(|b| !ignore(b))
+            .collect_vec()
+    }
+
+    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
+        base.iter()
+            .map(|clause| {
+                clause
+                    .iter()
+                    .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
+                    .collect_vec()
             })
             .collect_vec()
+    }
+
+    fn approx_space_size(&self, atoms: usize) -> usize {
+        let clauses: usize = (0..=self.clause_size)
+            .map(|len| clauses_cubes_count(atoms, len))
+            .sum();
+
+        ((clauses - self.clauses + 1)..=clauses).fold(1, |a, b| a * b)
+    }
+}
+
+#[derive(Clone)]
+pub struct LemmaPDnfNaive {
+    pub cubes: usize,
+    pub cube_size: usize,
+    pub non_unit: usize,
+    atoms: Arc<Vec<Term>>,
+    atom_to_index: HashMap<Term, usize>,
+}
+
+impl LemmaPDnfNaive {
+    fn unit_normalize(
+        &self,
+        mut base: <Self as LemmaQf>::Base,
+        literal: Literal,
+    ) -> Option<<Self as LemmaQf>::Base> {
+        base = base
+            .into_iter()
+            .filter_map(|mut cb| {
+                if cb.contains(&literal) {
+                    None
+                } else {
+                    cb.retain(|lit| (lit.0, !lit.1) != literal);
+                    Some(cb)
+                }
+            })
+            .collect_vec();
+
+        if base.iter().any(|cb| cb.is_empty()) {
+            None
+        } else {
+            Some(base)
+        }
+    }
+
+    fn add_unit(
+        &self,
+        mut base: <Self as LemmaQf>::Base,
+        mut literal: Literal,
+    ) -> Option<<Self as LemmaQf>::Base> {
+        let mut literals = HashSet::new();
+
+        loop {
+            if is_eq(literal, false, &self.atoms) {
+                return None;
+            }
+
+            match self.unit_normalize(base, literal) {
+                Some(new_base) => {
+                    base = new_base;
+                    literals.insert(literal);
+                }
+                None => return None,
+            }
+
+            match base.iter().find_position(|v| v.len() == 1) {
+                Some((i, _)) => literal = base.remove(i).pop().unwrap(),
+                None => break,
+            }
+        }
+
+        if literals.len() + base.len() <= self.cubes {
+            for lit in literals {
+                base.push(vec![lit]);
+            }
+
+            Some(base)
+        } else {
+            None
+        }
+    }
+
+    fn add_combinations(
+        &self,
+        base: <Self as LemmaQf>::Base,
+        cube: &[Literal],
+    ) -> Vec<<Self as LemmaQf>::Base> {
+        let units = base
+            .iter()
+            .filter(|cb| cb.len() == 1)
+            .map(|cb| cb[0].clone())
+            .collect_vec();
+
+        if cube.iter().any(|lit| units.contains(lit)) {
+            return vec![base];
+        }
+
+        let cube = cube
+            .iter()
+            .filter(|lit| !units.contains(&(lit.0, !lit.1)))
+            .cloned()
+            .collect_vec();
+        let cube_len = cube.len();
+
+        match cube_len {
+            0 => vec![],
+            1 => Vec::from_iter(self.add_unit(base, cube[0])),
+            _ => {
+                if base.len() < self.cubes {
+                    cube.into_iter()
+                        .combinations(self.cube_size.min(cube_len))
+                        .map(|cb| {
+                            let mut new_base = base.clone();
+                            new_base.push(cb);
+                            new_base
+                        })
+                        .collect_vec()
+                } else {
+                    vec![]
+                }
+            }
+        }
+    }
+
+    fn intersect_cubes(
+        &self,
+        base: <Self as LemmaQf>::Base,
+        cube: &[Literal],
+    ) -> Vec<<Self as LemmaQf>::Base> {
+        let mut cube: HashSet<Literal> = HashSet::from_iter(cube.iter().cloned());
+        let mut non_units = vec![];
+        for (i, cb) in base.iter().enumerate() {
+            match cb.len() {
+                1 => {
+                    if cube.contains(&cb[0]) {
+                        return vec![base];
+                    } else {
+                        cube.remove(&(cb[0].0, !cb[0].1));
+                    }
+                }
+                _ => non_units.push(i),
+            }
+        }
+
+        let mut intersected = vec![];
+        for i in non_units {
+            let intersection = base[i]
+                .iter()
+                .filter(|lit| cube.contains(lit))
+                .cloned()
+                .collect_vec();
+            match intersection.len() {
+                0 | 1 => (),
+                _ => {
+                    let mut new_base = base.clone();
+                    new_base[i] = intersection;
+                    intersected.push(new_base);
+                }
+            }
+        }
+
+        intersected
+    }
+}
+
+impl LemmaQf for LemmaPDnfNaive {
+    type Base = Vec<Vec<Literal>>;
+
+    fn subsumes(&self, _: &Self::Base, _: &Self::Base) -> bool {
+        true
+    }
+
+    fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
+        clause.iter().map(|lit| vec![*lit]).collect_vec()
+    }
+
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
+        base.iter()
+            .map(|cube| {
+                cube.iter()
+                    .map(|literal| {
+                        substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
+                    })
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+
+    fn ids(&self, base: &Self::Base) -> HashSet<String> {
+        base.iter()
+            .flat_map(|cube| cube.iter().flat_map(|literal| self.atoms[literal.0].ids()))
+            .collect()
+    }
+
+    fn base_to_term(&self, base: &Self::Base) -> Term {
+        Term::or(base.iter().map(|cube| {
+            Term::and(
+                cube.iter()
+                    .map(|literal| literal_as_term(literal, &self.atoms)),
+            )
+        }))
+    }
+
+    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
+        let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
+        let mut non_unit = cfg
+            .non_unit
+            .expect("Number of pDNF non-unit cubes not provided.");
+        let cube_size = cfg
+            .cube_size
+            .expect("Maximum size of non-unit cubes not provided.");
+
+        if is_universal {
+            non_unit = 0;
+        }
+
+        assert!(cubes >= non_unit && (non_unit == 0 || cube_size > 0));
+
+        let atom_to_index = atom_to_index(&atoms);
+
+        Self {
+            cubes,
+            non_unit,
+            cube_size,
+            atoms,
+            atom_to_index,
+        }
+    }
+
+    fn strongest(&self) -> Vec<Self::Base> {
+        vec![vec![]]
+    }
+
+    fn weaken<I>(&self, base: Self::Base, cube: &[Literal], ignore: I) -> Vec<Self::Base>
+    where
+        I: Fn(&Self::Base) -> bool,
+    {
+        // Currently unimplemented for for than one non-unit cube.
+        // For this we'd need to consider intersections of existing cubes,
+        assert!(self.non_unit <= 1);
+
+        let mut weakened = vec![];
+
+        let non_unit = base.iter().filter(|cb| cb.len() > 1).count();
+        assert!(non_unit <= self.non_unit);
+
+        if non_unit < self.non_unit {
+            weakened.extend(self.add_combinations(base, cube));
+        } else {
+            // Add literal from cube.
+            weakened.extend(
+                cube.iter()
+                    .filter_map(|lit| self.add_unit(base.clone(), *lit))
+                    .filter(|b| b.len() <= self.cubes && !ignore(b)),
+            );
+            // Reduce old cube to a literal, and add combinations of new cube.
+            let non_unit_literals: HashSet<Literal> = base
+                .iter()
+                .filter(|cb| cb.len() > 1)
+                .flatten()
+                .cloned()
+                .collect();
+            weakened.extend(
+                non_unit_literals
+                    .into_iter()
+                    .filter_map(|lit| self.add_unit(base.clone(), lit))
+                    .filter(|b| !ignore(b))
+                    .flat_map(|base| self.add_combinations(base, cube))
+                    .filter(|b| !ignore(b)),
+            );
+            // Intersect old cube with new cube.
+            weakened.extend(
+                self.intersect_cubes(base, cube)
+                    .into_iter()
+                    .filter(|b| !ignore(b)),
+            );
+        }
+
+        weakened
+    }
+
+    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
+        base.iter()
+            .map(|cube| {
+                cube.iter()
+                    .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+
+    fn approx_space_size(&self, atoms: usize) -> usize {
+        let cubes: usize = (0..=self.cube_size)
+            .map(|len| clauses_cubes_count(atoms, len))
+            .sum();
+
+        let mut total = 0;
+        for non_unit in 0..=self.non_unit {
+            let literals: usize = (0..=(self.cubes - non_unit))
+                .map(|len| clauses_cubes_count(atoms, len))
+                .sum();
+            total += literals * ((cubes - non_unit + 1)..=cubes).fold(1, |a, b| a * b);
+        }
+
+        total
+    }
+}
+
+#[derive(Clone)]
+pub struct LemmaPDnf {
+    pub cubes: usize,
+    pub cube_size: usize,
+    pub non_unit: usize,
+    atoms: Arc<Vec<Term>>,
+    atom_to_index: HashMap<Term, usize>,
+}
+
+impl LemmaQf for LemmaPDnf {
+    type Base = Vec<Vec<Literal>>;
+
+    fn subsumes(&self, x: &Self::Base, y: &Self::Base) -> bool {
+        let x_non_units = x.iter().filter(|cb| cb.len() > 1).collect_vec();
+        let y_non_units = y.iter().filter(|cb| cb.len() > 1).collect_vec();
+
+        x_non_units.iter().all(|x_cb| {
+            y_non_units
+                .iter()
+                .any(|y_cb| y_cb.iter().all(|lit| x_cb.contains(lit)))
+        })
+    }
+
+    fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
+        clause.iter().map(|lit| vec![*lit]).collect_vec()
+    }
+
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
+        base.iter()
+            .map(|cube| {
+                cube.iter()
+                    .map(|literal| {
+                        substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
+                    })
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+
+    fn ids(&self, base: &Self::Base) -> HashSet<String> {
+        base.iter()
+            .flat_map(|cube| cube.iter().flat_map(|literal| self.atoms[literal.0].ids()))
+            .collect()
+    }
+
+    fn base_to_term(&self, base: &Self::Base) -> Term {
+        Term::or(base.iter().map(|cube| {
+            Term::and(
+                cube.iter()
+                    .map(|literal| literal_as_term(literal, &self.atoms)),
+            )
+        }))
+    }
+
+    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
+        let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
+        let cube_size = cfg
+            .cube_size
+            .expect("Maximum size of non-unit cubes not provided.");
+        let mut non_unit = cfg
+            .non_unit
+            .expect("Number of pDNF non-unit cubes not provided.");
+
+        if is_universal {
+            non_unit = 0;
+        }
+
+        assert!(cubes >= non_unit && (non_unit == 0 || cube_size > 0));
+
+        let atom_to_index = atom_to_index(&atoms);
+
+        Self {
+            cubes,
+            non_unit,
+            cube_size,
+            atoms,
+            atom_to_index,
+        }
+    }
+
+    fn strongest(&self) -> Vec<Self::Base> {
+        vec![vec![]]
+    }
+
+    fn weaken<I>(&self, base: Self::Base, cube: &[Literal], ignore: I) -> Vec<Self::Base>
+    where
+        I: Fn(&Self::Base) -> bool,
+    {
+        let mut weakened = vec![];
+        let (units, non_units): (Vec<Vec<Literal>>, Vec<Vec<Literal>>) =
+            base.into_iter().partition(|cb| cb.len() == 1);
+
+        // Weaken by adding a new literal
+        if units.len() + non_units.len() < self.cubes {
+            for literal in cube.iter().filter(|l| !is_eq(**l, false, &self.atoms)) {
+                let neg_literal = (literal.0, !literal.1);
+                if !units.contains(&vec![neg_literal]) {
+                    let mut new_base = non_units
+                        .iter()
+                        .filter(|cb| !cb.contains(literal))
+                        .map(|cb| {
+                            cb.iter()
+                                .copied()
+                                .filter(|lit| *lit != neg_literal)
+                                .collect_vec()
+                        })
+                        .collect_vec();
+                    if new_base.iter().all(|cb| cb.len() > 1) {
+                        new_base.extend(units.iter().cloned());
+                        new_base.push(vec![*literal]);
+                        if !ignore(&new_base) {
+                            weakened.push(new_base);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Weaken by intersecting a cube
+        for i in 0..non_units.len() {
+            let intersection = non_units[i]
+                .iter()
+                .copied()
+                .filter(|lit| cube[lit.0].1 == lit.1)
+                .collect_vec();
+            if intersection.len() > 1 {
+                let mut new_base = units.clone();
+                new_base.extend(non_units[0..i].iter().cloned());
+                new_base.push(intersection);
+                new_base.extend(non_units[(i + 1)..].iter().cloned());
+                if !ignore(&new_base) {
+                    weakened.push(new_base);
+                }
+            }
+        }
+
+        // Weaken by adding a cube
+        if units.len() + non_units.len() < self.cubes && non_units.len() < self.non_unit {
+            let cube = cube
+                .iter()
+                .filter(|lit| !units.contains(&vec![(lit.0, !lit.1)]))
+                .copied()
+                .collect_vec();
+            let cube_len = cube.len();
+            if cube_len > 1 && self.cube_size > 1 {
+                for comb in cube.into_iter().combinations(self.cube_size.min(cube_len)) {
+                    let mut new_base = units.clone();
+                    new_base.extend(non_units.iter().cloned());
+                    new_base.push(comb);
+                    if !ignore(&new_base) {
+                        weakened.push(new_base);
+                    }
+                }
+            }
+        }
+
+        weakened
+    }
+
+    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
+        base.iter()
+            .map(|cube| {
+                cube.iter()
+                    .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
+                    .collect_vec()
+            })
+            .collect_vec()
+    }
+
+    fn approx_space_size(&self, atoms: usize) -> usize {
+        let cubes: usize = (0..=self.cube_size)
+            .map(|len| clauses_cubes_count(atoms, len))
+            .sum();
+
+        let mut total = 0;
+        for non_unit in 0..=self.non_unit {
+            let literals: usize = (0..=(self.cubes - non_unit))
+                .map(|len| clauses_cubes_count(atoms, len))
+                .sum();
+            total += literals * ((cubes - non_unit + 1)..=cubes).fold(1, |a, b| a * b);
+        }
+
+        total
     }
 }
 
@@ -174,51 +744,40 @@ impl Term {
     }
 }
 
-/// Minimize a vector of elements using the given subsumption predicate.
-pub fn minimize_subsumed<T, S: Fn(&T, &T) -> bool>(v: &mut Vec<T>, subsumes: S) {
-    let mut v_new: Vec<T> = vec![];
-    for t in v.drain(..) {
-        if !v_new.iter().any(|old_t| subsumes(old_t, &t)) {
-            v_new.retain(|old_t| !subsumes(&t, old_t));
-            v_new.push(t);
-        }
-    }
-
-    v.append(&mut v_new);
-}
-
-/// A quantified CNF formula.
-#[derive(Clone, Debug)]
-pub struct Qcnf {
-    pub prefix: Box<QuantifierPrefix>,
-    pub body: Term,
-}
-
-impl Qcnf {
-    pub fn to_term(&self) -> Term {
-        self.prefix.quantify(self.body.clone())
-    }
-}
-
 /// A [`Frontier`] maintains quantified CNF formulas during invariant inference.
-pub struct Frontier<L: LemmaQf, W: WeakenQf<L>> {
+pub struct Frontier<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug,
+{
     /// The set of lemmas used to sample pre-states when sampling from a transition.
     /// This is referred to as the _frontier_.
-    lemmas: QcnfSet<L, W>,
+    pub lemmas: LemmaSet<O, L, B>,
     /// A set of lemmas blocked by the current frontier. That is, any post-state of
     /// a transition from the frontier satisfies `blocked`.
-    blocked: QcnfSet<L, W>,
+    blocked: LemmaSet<O, L, B>,
     /// A mapping between each blocked lemma and a core in the frontier that blocks it.
-    blocking_cores: HashMap<usize, HashSet<usize>>,
+    blocked_to_core: HashMap<usize, HashSet<usize>>,
+    /// A mapping between frontier elements and the blocked lemmas they block.
+    core_to_blocked: HashMap<usize, HashSet<usize>>,
 }
 
-impl<L: LemmaQf, W: WeakenQf<L>> Frontier<L, W> {
+impl<O, L, B> Frontier<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug,
+{
     /// Create a new frontier from the given set of lemmas.
-    pub fn new(qcnf_set: &QcnfSet<L, W>) -> Self {
+    pub fn new(lemmas_init: LemmaSet<O, L, B>) -> Self {
+        let blocked = lemmas_init.clone_empty();
+
         Frontier {
-            lemmas: qcnf_set.clone(),
-            blocked: qcnf_set.clone_empty(),
-            blocking_cores: HashMap::new(),
+            lemmas: lemmas_init,
+            blocked,
+            blocked_to_core: HashMap::new(),
+            core_to_blocked: HashMap::new(),
         }
     }
 
@@ -227,37 +786,46 @@ impl<L: LemmaQf, W: WeakenQf<L>> Frontier<L, W> {
         self.lemmas.len()
     }
 
-    /// Convert the frontier into a vector of terms.    
-    pub fn to_terms(&self) -> Vec<Term> {
-        self.lemmas
-            .qcnfs()
-            .iter()
-            .map(|q| q.to_term())
-            .collect_vec()
-    }
-
     /// Get an initial state which violates one of the given lemmas.
     /// This doesn't use the frontier, only previously blocked lemmas.
     pub fn init_cex(
         &mut self,
         fo: &FOModule,
         conf: &SolverConf,
-        lemmas: &QcnfSet<L, W>,
+        lemmas: &LemmaSet<O, L, B>,
     ) -> Option<Model> {
-        for (id, prefix) in &lemmas.prefixes {
-            if !self.blocked.subsumes(prefix, &lemmas.qcnf_clauses(id), 0) {
-                let term = lemmas.qcnf(id).to_term();
+        let new_cores: Mutex<Vec<(QuantifierPrefix, O, HashSet<usize>)>> = Mutex::new(vec![]);
+
+        let res = lemmas
+            .ordered
+            .par_iter()
+            .filter(|((prefix, body), _)| !self.blocked.contains(prefix, body))
+            .find_map_any(|((prefix, body), _)| {
+                let term = prefix.quantify(lemmas.lemma_qf.base_to_term(&body.to_base()));
                 if let Some(model) = fo.init_cex(conf, &term) {
                     return Some(model);
                 } else {
-                    let new_id = self.blocked.add(prefix.clone(), lemmas.bodies[id].clone());
-                    self.blocking_cores
-                        .insert(new_id, self.lemmas.prefixes.keys().copied().collect());
+                    let core = self.lemmas.to_prefixes.keys().copied().collect();
+                    let mut new_cores_vec = new_cores.lock().unwrap();
+                    new_cores_vec.push((prefix.clone(), body.clone(), core))
+                }
+
+                None
+            });
+
+        for (prefix, body, core) in new_cores.into_inner().unwrap() {
+            let blocked_id = self.blocked.insert(prefix, body);
+            for i in &core {
+                if let Some(hs) = self.core_to_blocked.get_mut(i) {
+                    hs.insert(blocked_id);
+                } else {
+                    self.core_to_blocked.insert(*i, HashSet::from([blocked_id]));
                 }
             }
+            self.blocked_to_core.insert(blocked_id, core);
         }
 
-        None
+        res
     }
 
     /// Get an post-state of the frontier which violates one of the given lemmas.
@@ -265,23 +833,44 @@ impl<L: LemmaQf, W: WeakenQf<L>> Frontier<L, W> {
         &mut self,
         fo: &FOModule,
         conf: &SolverConf,
-        lemmas: &QcnfSet<L, W>,
+        lemmas: &LemmaSet<O, L, B>,
     ) -> Option<Model> {
-        let pre_terms = self.to_terms();
-        for (id, prefix) in &lemmas.prefixes {
-            if !self.blocked.subsumes(prefix, &lemmas.qcnf_clauses(id), 0) {
-                let term = lemmas.qcnf(id).to_term();
-                if let Some((_, model)) = fo.trans_cex(conf, &pre_terms, &term) {
-                    return Some(model);
+        let pre_terms = self.lemmas.to_terms();
+        let pre_ids = self.lemmas.ordered.values().cloned().collect_vec();
+
+        let new_cores: Mutex<Vec<(QuantifierPrefix, O, HashSet<usize>)>> = Mutex::new(vec![]);
+
+        let res = lemmas
+            .ordered
+            .par_iter()
+            .filter(|((prefix, body), _)| !self.blocked.contains(prefix, body))
+            .find_map_any(|((prefix, body), _)| {
+                let term = prefix.quantify(lemmas.lemma_qf.base_to_term(&body.to_base()));
+                match fo.trans_cex(conf, &pre_terms, &term, false, false) {
+                    TransCexResult::CTI(_, model) => return Some(model),
+                    TransCexResult::UnsatCore(core) => {
+                        let mut new_cores_vec = new_cores.lock().unwrap();
+                        new_cores_vec.push((prefix.clone(), body.clone(), core));
+                    }
+                }
+
+                None
+            });
+
+        for (prefix, body, core) in new_cores.into_inner().unwrap() {
+            let core = core.into_iter().map(|i| pre_ids[i]).collect();
+            let blocked_id = self.blocked.insert(prefix, body);
+            for i in &core {
+                if let Some(hs) = self.core_to_blocked.get_mut(i) {
+                    hs.insert(blocked_id);
                 } else {
-                    let new_id = self.blocked.add(prefix.clone(), lemmas.bodies[id].clone());
-                    self.blocking_cores
-                        .insert(new_id, self.lemmas.prefixes.keys().copied().collect());
+                    self.core_to_blocked.insert(*i, HashSet::from([blocked_id]));
                 }
             }
+            self.blocked_to_core.insert(blocked_id, core);
         }
 
-        None
+        res
     }
 
     /// Advance the fontier using the new lemmas.
@@ -293,105 +882,147 @@ impl<L: LemmaQf, W: WeakenQf<L>> Frontier<L, W> {
     /// the lemma that would cause the least growth in the length of the frontier.
     ///
     /// Return whether such an advancement was possible.
-    pub fn advance(&mut self, new_lemmas: &QcnfSet<L, W>, mut grow: bool) -> bool {
+    pub fn advance(
+        &mut self,
+        new_lemmas: &LemmaSet<O, L, B>,
+        mut grow: bool,
+        entire: bool,
+    ) -> bool {
         // If there are no lemmas in the frontier, it cannot be advanced.
         if self.lemmas.len() == 0 {
             return false;
         }
 
+        if entire {
+            if self
+                .lemmas
+                .ordered
+                .keys()
+                .all(|k| new_lemmas.ordered.contains_key(k))
+            {
+                return false;
+            } else {
+                self.lemmas = new_lemmas.clone();
+                self.blocked = new_lemmas.clone_empty();
+                self.blocked_to_core = HashMap::new();
+                self.core_to_blocked = HashMap::new();
+                return true;
+            }
+        }
+
         // Find all lemmas in the frontier (parents) which have been weakened in the new lemmas.
-        // These are precisely the lemmas in the fontier which are not subsumed by new lemmas.
+        // These are precisely the lemmas in the fontier which are not part of the new lemmas.
         let weakened_parents: HashSet<usize> = self
             .lemmas
-            .prefixes
+            .to_prefixes
             .keys()
             .filter(|id| {
-                !new_lemmas.subsumes(&self.lemmas.prefixes[id], &self.lemmas.qcnf_clauses(id), 0)
+                !new_lemmas.ordered.contains_key(&(
+                    self.lemmas.to_prefixes[id].clone(),
+                    self.lemmas.to_bodies[id].clone(),
+                ))
             })
             .cloned()
             .collect();
 
-        // Initialize the mapping from parents to their weakenings (children).
+        // Compute the mapping from parents to their weakenings (children).
         let mut children: HashMap<usize, HashSet<usize>> = weakened_parents
-            .iter()
-            .map(|id| (*id, HashSet::new()))
+            .par_iter()
+            .map(|id| {
+                (
+                    *id,
+                    new_lemmas
+                        .get_subsumed(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id]),
+                )
+            })
             .collect();
 
         // Compute the mapping from children to parents.
         let mut parents: HashMap<usize, HashSet<usize>> = new_lemmas
-            .prefixes
-            .iter()
-            .map(|(&id, prefix)| {
-                let p = self
-                    .lemmas
-                    .subsuming(prefix, &new_lemmas.qcnf_clauses(&id), 0, None);
-
-                (id, p)
+            .to_prefixes
+            .par_iter()
+            .map(|(id, prefix)| {
+                (
+                    *id,
+                    self.lemmas.get_subsuming(prefix, &new_lemmas.to_bodies[id]),
+                )
             })
             .collect();
 
-        // Compute the `children` mapping.
-        for (id, ps) in &parents {
-            for parent in ps {
-                if let Some(ch) = children.get_mut(parent) {
-                    ch.insert(*id);
-                }
-            }
-        }
-
         let mut advanced = false;
-        // Given a children and parents mapping, compute the parent with the least unique children,
-        // i.e. the least number of children which are uniquely theirs.
-        let min_unique = |children_local: &HashMap<usize, HashSet<usize>>,
-                          parents_local: &HashMap<usize, HashSet<usize>>|
-         -> Option<(usize, HashSet<usize>)> {
-            let mut unique_children = children_local.clone();
-            for (_, ch) in unique_children.iter_mut() {
-                ch.retain(|id| parents_local[id].len() == 1);
-            }
+        loop {
+            // Given a children and parents mapping, compute the parent with the least unique children,
+            // i.e. the least number of children which are uniquely theirs.
+            let min_unique = |children_local: &HashMap<usize, HashSet<usize>>,
+                              parents_local: &HashMap<usize, HashSet<usize>>|
+             -> Option<(usize, Vec<usize>)> {
+                children_local
+                    .iter()
+                    .map(|(id, ch)| {
+                        let unique_ch: Vec<usize> = ch
+                            .iter()
+                            .cloned()
+                            .filter(|ch_id| parents_local[ch_id].len() == 1)
+                            .collect();
 
-            unique_children
-                .into_iter()
-                .min_by_key(|(id, ch)| (ch.len(), *id))
-        };
+                        (*id, unique_ch)
+                    })
+                    .min_by_key(|(id, ch)| {
+                        (
+                            ch.iter()
+                                .map(|i| count_exists(&new_lemmas.to_prefixes[i].quantifiers))
+                                .sum::<usize>(),
+                            ch.len(),
+                            *id,
+                        )
+                    })
+            };
 
-        let mut min = min_unique(&children, &parents);
-        while min.is_some() && (grow || min.as_ref().unwrap().1.is_empty()) {
-            // This is the replaced lemma.
-            let (id, ch) = &min.unwrap();
+            let min = min_unique(&children, &parents);
+            if min.is_some() && (grow || min.as_ref().unwrap().1.is_empty()) {
+                // This is the replaced lemma.
+                let (id, ch) = &min.unwrap();
 
-            // The frontier is advanced.
-            advanced = true;
-            // Never grow twice.
-            grow = false;
+                // The frontier is advanced.
+                advanced = true;
+                // Never grow twice.
+                grow = false;
 
-            // Remove the lemma from the frontier.
-            self.lemmas.remove(id);
-            // Remove blocking cores that contain the replaced lemma.
-            let removed: Vec<usize> = self
-                .blocking_cores
-                .keys()
-                .cloned()
-                .filter(|i| self.blocking_cores[i].contains(id))
-                .collect();
-            for r in &removed {
-                self.blocked.remove(r);
-                self.blocking_cores.remove(r);
-            }
-
-            // Add the lemma's unique children to the frontier.
-            for new_id in ch {
-                self.lemmas.add(
-                    new_lemmas.prefixes[new_id].clone(),
-                    new_lemmas.bodies[new_id].clone(),
-                );
-                for p in &parents.remove(new_id).unwrap() {
-                    children.get_mut(p).unwrap().remove(new_id);
+                // Remove the lemma from the frontier.
+                self.lemmas.remove(id);
+                // Remove blocking cores that contain the replaced lemma.
+                if let Some(unblocked) = self.core_to_blocked.remove(id) {
+                    for lemma in &unblocked {
+                        // Signal that the lemma isn't blocked anymore.
+                        self.blocked.remove(lemma);
+                        // For any other frontier element in the core, signal that it doesn't block the lemma anymore.
+                        for in_core in &self.blocked_to_core.remove(lemma).unwrap() {
+                            if in_core != id {
+                                let blocked_by_in_core =
+                                    self.core_to_blocked.get_mut(in_core).unwrap();
+                                blocked_by_in_core.remove(lemma);
+                                if blocked_by_in_core.is_empty() {
+                                    self.core_to_blocked.remove(in_core);
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            children.remove(id);
 
-            min = min_unique(&children, &parents);
+                // Add the lemma's unique children to the frontier.
+                for new_id in ch {
+                    self.lemmas.insert(
+                        new_lemmas.to_prefixes[new_id].clone(),
+                        new_lemmas.to_bodies[new_id].clone(),
+                    );
+                    for p in &parents.remove(new_id).unwrap() {
+                        children.get_mut(p).unwrap().remove(new_id);
+                    }
+                }
+                children.remove(id);
+            } else {
+                break;
+            }
         }
 
         advanced

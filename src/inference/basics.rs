@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     fly::{
         semantics::Model,
-        syntax::{Module, NOp, Quantifier, Signature, Sort, Term, ThmStmt, UOp},
+        syntax::{BinOp, Module, NOp, Quantifier, Signature, Sort, Term, ThmStmt, UOp},
     },
     inference::quant::QuantifierConfig,
     smtlib::proc::SatResp,
@@ -26,6 +26,11 @@ pub struct FOModule {
     pub transitions: Vec<Term>,
     pub safeties: Vec<Term>,
     disj: bool,
+}
+
+pub enum TransCexResult {
+    CTI(Model, Model),
+    UnsatCore(HashSet<usize>),
 }
 
 impl FOModule {
@@ -87,7 +92,14 @@ impl FOModule {
         }
     }
 
-    pub fn trans_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<(Model, Model)> {
+    pub fn trans_cex(
+        &self,
+        conf: &SolverConf,
+        hyp: &[Term],
+        t: &Term,
+        with_init: bool,
+        with_safety: bool,
+    ) -> TransCexResult {
         let disj_trans = if self.disj {
             self.transitions
                 .iter()
@@ -101,42 +113,77 @@ impl FOModule {
             vec![self.transitions.iter().collect_vec()]
         };
 
+        let mut core: HashSet<usize> = HashSet::new();
+
         for trans in disj_trans {
             let mut solver = conf.solver(&self.signature, 2);
-            for a in self
-                .axioms
-                .iter()
-                .chain(self.safeties.iter())
-                .chain(hyp.iter())
-                .chain(trans.into_iter())
-            {
+            let mut assumptions = HashMap::new();
+
+            let mut prestate = vec![];
+            for (i, a) in hyp.iter().enumerate() {
+                let ind = solver.get_indicator(i.to_string().as_str());
+                assumptions.insert(ind.clone(), true);
+                prestate.push(Term::BinOp(BinOp::Iff, Box::new(ind), Box::new(a.clone())));
+            }
+            if with_init {
+                let init = Term::and(self.inits.iter().cloned());
+                solver.assert(&Term::or([init, Term::and(prestate)]));
+            } else {
+                solver.assert(&Term::and(prestate));
+            }
+
+            for a in self.axioms.iter() {
+                solver.assert(a);
+                solver.assert(&Next::new(&self.signature).prime(a));
+            }
+
+            for a in trans {
                 solver.assert(a);
             }
-            for a in self.axioms.iter() {
-                solver.assert(&Next::new(&self.signature).prime(a));
+
+            if with_safety {
+                for a in self.safeties.iter() {
+                    solver.assert(a);
+                }
+            }
+
+            if with_init {
+                let init = Term::and(self.inits.iter().cloned());
+                solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
             }
             solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
 
-            let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+            let resp = solver.check_sat(assumptions).expect("error in solver");
             match resp {
                 SatResp::Sat => {
-                    let states = solver.get_minimal_model();
-                    assert_eq!(states.len(), 2);
+                    let mut states = solver.get_minimal_model().into_iter();
+                    let pre = states.next().unwrap();
+                    let post = states.next().unwrap();
+                    assert_eq!(states.next(), None);
 
-                    return Some(states.into_iter().collect_tuple().unwrap());
+                    return TransCexResult::CTI(pre, post);
                 }
-                SatResp::Unsat => (),
+                SatResp::Unsat => {
+                    for ind in solver.get_unsat_core() {
+                        match ind.0 {
+                            Term::Id(s) => {
+                                core.insert(s[6..].parse().unwrap());
+                            }
+                            _ => (),
+                        }
+                    }
+                }
                 SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
             }
         }
 
-        None
+        TransCexResult::UnsatCore(core)
     }
 
     pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
         for s in self.safeties.iter() {
-            if let Some(models) = self.trans_cex(conf, hyp, s) {
-                return Some(models.0);
+            if let TransCexResult::CTI(model, _) = self.trans_cex(conf, hyp, s, false, true) {
+                return Some(model);
             }
         }
 
@@ -144,10 +191,26 @@ impl FOModule {
     }
 }
 
+pub enum QfBody {
+    CNF,
+    PDnf,
+    PDnfNaive,
+}
+
 pub struct InferenceConfig {
     pub cfg: QuantifierConfig,
-    pub max_clauses: usize,
-    pub max_clause_len: usize,
+    pub qf_body: QfBody,
+
+    pub max_size: Option<usize>,
+    pub max_existentials: Option<usize>,
+
+    pub clauses: Option<usize>,
+    pub clause_size: Option<usize>,
+
+    pub cubes: Option<usize>,
+    pub cube_size: Option<usize>,
+    pub non_unit: Option<usize>,
+
     pub nesting: Option<usize>,
     pub include_eq: bool,
 }
