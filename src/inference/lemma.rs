@@ -240,6 +240,21 @@ impl LemmaQf for LemmaCnf {
 
         ((clauses - self.clauses + 1)..=clauses).fold(1, |a, b| a * b)
     }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (1..=self.clauses)
+            .map(|clauses| Self {
+                clauses,
+                clause_size: self.clause_size,
+                atoms: self.atoms.clone(),
+                atom_to_index: self.atom_to_index.clone(),
+            })
+            .collect_vec()
+    }
+
+    fn contains(&self, other: &Self) -> bool {
+        self.clauses >= other.clauses && self.clause_size >= other.clause_size
+    }
 }
 
 #[derive(Clone)]
@@ -439,7 +454,7 @@ impl LemmaQf for LemmaPDnfNaive {
         let mut non_unit = cfg
             .non_unit
             .expect("Number of pDNF non-unit cubes not provided.");
-        let cube_size = cfg
+        let mut cube_size = cfg
             .cube_size
             .expect("Maximum size of non-unit cubes not provided.");
 
@@ -447,7 +462,11 @@ impl LemmaQf for LemmaPDnfNaive {
             non_unit = 0;
         }
 
-        assert!(cubes >= non_unit && (non_unit == 0 || cube_size > 0));
+        if non_unit == 0 {
+            cube_size = 1;
+        }
+
+        assert!(cubes >= non_unit && cube_size > 0);
 
         let atom_to_index = atom_to_index(&atoms);
 
@@ -537,6 +556,31 @@ impl LemmaQf for LemmaPDnfNaive {
 
         total
     }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (0..=self.non_unit)
+            .flat_map(move |non_unit| {
+                let max_cube_size = match non_unit {
+                    0 => 1,
+                    _ => self.cube_size,
+                };
+
+                (1..=max_cube_size).map(move |cube_size| Self {
+                    cubes: self.cubes,
+                    cube_size,
+                    non_unit,
+                    atoms: self.atoms.clone(),
+                    atom_to_index: self.atom_to_index.clone(),
+                })
+            })
+            .collect_vec()
+    }
+
+    fn contains(&self, other: &Self) -> bool {
+        self.cubes >= other.cubes
+            && self.non_unit >= other.non_unit
+            && self.cube_size >= other.cube_size
+    }
 }
 
 #[derive(Clone)]
@@ -595,7 +639,7 @@ impl LemmaQf for LemmaPDnf {
 
     fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
-        let cube_size = cfg
+        let mut cube_size = cfg
             .cube_size
             .expect("Maximum size of non-unit cubes not provided.");
         let mut non_unit = cfg
@@ -606,7 +650,11 @@ impl LemmaQf for LemmaPDnf {
             non_unit = 0;
         }
 
-        assert!(cubes >= non_unit && (non_unit == 0 || cube_size > 0));
+        if non_unit == 0 {
+            cube_size = 1;
+        }
+
+        assert!(cubes >= non_unit && cube_size > 0);
 
         let atom_to_index = atom_to_index(&atoms);
 
@@ -722,6 +770,31 @@ impl LemmaQf for LemmaPDnf {
         }
 
         total
+    }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (0..=self.non_unit)
+            .flat_map(move |non_unit| {
+                let max_cube_size = match non_unit {
+                    0 => 1,
+                    _ => self.cube_size,
+                };
+
+                (1..=max_cube_size).map(move |cube_size| Self {
+                    cubes: self.cubes,
+                    cube_size,
+                    non_unit,
+                    atoms: self.atoms.clone(),
+                    atom_to_index: self.atom_to_index.clone(),
+                })
+            })
+            .collect_vec()
+    }
+
+    fn contains(&self, other: &Self) -> bool {
+        self.cubes >= other.cubes
+            && self.non_unit >= other.non_unit
+            && self.cube_size >= other.cube_size
     }
 }
 

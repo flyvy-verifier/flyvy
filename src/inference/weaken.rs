@@ -84,6 +84,10 @@ pub trait LemmaQf: Clone + Sync + Send {
     fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base;
 
     fn approx_space_size(&self, atoms: usize) -> usize;
+
+    fn sub_spaces(&self) -> Vec<Self>;
+
+    fn contains(&self, other: &Self) -> bool;
 }
 
 /// Specifies that all lemmas subsumed by the given set and permutations over variables should be ignored.
