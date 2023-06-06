@@ -73,23 +73,7 @@ impl FOModule {
     }
 
     pub fn init_cex(&self, conf: &SolverConf, t: &Term) -> Option<Model> {
-        let mut solver = conf.solver(&self.signature, 1);
-        for a in self.axioms.iter().chain(self.inits.iter()) {
-            solver.assert(a);
-        }
-        solver.assert(&Term::negate(t.clone()));
-
-        let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-        match resp {
-            SatResp::Sat => {
-                let mut states = solver.get_minimal_model();
-                assert_eq!(states.len(), 1);
-
-                Some(states.remove(0))
-            }
-            SatResp::Unsat => None,
-            SatResp::Unknown(_) => panic!(),
-        }
+        self.implication_cex(conf, &self.inits, t)
     }
 
     pub fn trans_cex(
@@ -188,6 +172,26 @@ impl FOModule {
         }
 
         None
+    }
+
+    pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
+        let mut solver = conf.solver(&self.signature, 1);
+        for a in self.axioms.iter().chain(hyp.iter()) {
+            solver.assert(a);
+        }
+        solver.assert(&Term::negate(t.clone()));
+
+        let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+        match resp {
+            SatResp::Sat => {
+                let mut states = solver.get_minimal_model();
+                assert_eq!(states.len(), 1);
+
+                Some(states.remove(0))
+            }
+            SatResp::Unsat => None,
+            SatResp::Unknown(_) => panic!(),
+        }
     }
 }
 

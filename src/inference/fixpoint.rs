@@ -10,7 +10,7 @@ use std::sync::Arc;
 use itertools::Itertools;
 
 use crate::{
-    fly::syntax::{Module, Term},
+    fly::syntax::{Module, Term, ThmStmt},
     inference::{
         basics::{FOModule, InferenceConfig},
         lemma::Frontier,
@@ -22,6 +22,32 @@ use crate::{
 };
 
 type Domain<L> = (QuantifierPrefix, L, Arc<Vec<Term>>);
+
+/// Check how much of the handwritten invariant the given lemmas cover.
+fn invariant_cover(
+    m: &Module,
+    conf: &SolverConf,
+    fo: &FOModule,
+    lemmas: &[Term],
+) -> (usize, usize) {
+    let proof = m
+        .statements
+        .iter()
+        .filter_map(|s| match s {
+            ThmStmt::Assert(p) => Some(p),
+            _ => None,
+        })
+        .next()
+        .unwrap();
+
+    let covered = proof
+        .invariants
+        .iter()
+        .filter(|inv| fo.implication_cex(conf, lemmas, &inv.x).is_none())
+        .count();
+
+    (covered, proof.invariants.len())
+}
 
 pub fn fixpoint_single<O, L, B>(
     infer_cfg: InferenceConfig,
@@ -50,9 +76,12 @@ pub fn fixpoint_single<O, L, B>(
     let infer_cfg = Arc::new(infer_cfg);
     let fo = FOModule::new(m, disj);
 
-    let fixpoint = run_fixpoint::<O, L, B, _>(infer_cfg, conf, &fo, domains, |_| false).unwrap();
-
+    let start = std::time::Instant::now();
+    let fixpoint =
+        run_fixpoint::<O, L, B, _>(infer_cfg.clone(), conf, &fo, domains, |_| false).unwrap();
+    let total_time = start.elapsed().as_secs_f32();
     let proof = fixpoint.to_terms();
+
     println!("proof {{");
     for lemma in &proof {
         println!("  invariant {lemma}");
@@ -64,6 +93,11 @@ pub fn fixpoint_single<O, L, B>(
     } else {
         println!("Fixpoint UNSAFE!");
     }
+
+    let (covered, size) = invariant_cover(m, conf, &fo, &proof);
+
+    println!("Fixpoint runtime = {:.2}s", total_time);
+    println!("Covers {covered} / {size} of handwritten invariant.");
 }
 
 pub fn fixpoint_multi<O, L, B>(
@@ -80,21 +114,35 @@ pub fn fixpoint_multi<O, L, B>(
         .cfg
         .all_prefixes(&infer_cfg)
         .into_iter()
-        .map(|prefix| {
+        .flat_map(|prefix| {
             let atoms = Arc::new(prefix.atoms(infer_cfg.nesting, infer_cfg.include_eq));
-            let weaken = L::new(&infer_cfg, atoms.clone(), prefix.is_universal());
-            (prefix, weaken, atoms)
+            let weaken_full = L::new(&infer_cfg, atoms.clone(), prefix.is_universal());
+            weaken_full
+                .sub_spaces()
+                .into_iter()
+                .map(move |weaken| (prefix.clone(), weaken, atoms.clone()))
         })
         .sorted_by_key(|(p, w, a)| (p.existentials(), w.approx_space_size(a.len())))
         .collect_vec();
     let infer_cfg = Arc::new(infer_cfg);
     let fo = FOModule::new(m, disj);
 
+    println!("Number of individual domains: {}", domains.len());
+
     let mut active_domains: Vec<Domain<L>> = vec![];
     for i in 0..domains.len() {
-        let start = std::time::Instant::now();
-        active_domains.retain(|d| !domains[i].0.contains(&d.0));
+        active_domains.retain(|d| !(domains[i].0.contains(&d.0) && domains[i].1.contains(&d.1)));
         active_domains.push(domains[i].clone());
+
+        println!();
+        println!("({}) Running fixpoint algorithm...", i + 1);
+        let total_preds: usize = active_domains
+            .iter()
+            .map(|(_, w, a)| w.approx_space_size(a.len()))
+            .sum();
+        println!("    Approximate domain size: {}", total_preds);
+
+        let start = std::time::Instant::now();
         let fixpoint = run_fixpoint::<O, L, B, _>(
             infer_cfg.clone(),
             conf,
@@ -103,14 +151,20 @@ pub fn fixpoint_multi<O, L, B>(
             |_| false,
         )
         .unwrap();
+        let total_time = start.elapsed().as_secs_f32();
         let proof = fixpoint.to_terms();
         if fo.trans_safe_cex(conf, &proof).is_none() {
-            println!("Iteration {i}: Fixpoint SAFE!");
+            println!("    Fixpoint SAFE!");
         } else {
-            println!("Iteration {i}: Fixpoint UNSAFE!");
+            println!("    Fixpoint UNSAFE!");
         }
-        println!("    Total time = {:.2}s", start.elapsed().as_secs_f32());
+        println!("    Fixpoint size = {}", proof.len());
+        println!("    Fixpoint runtime = {:.2}s", total_time);
+        let (covered, size) = invariant_cover(m, conf, &fo, &proof);
+        println!("    Covers {covered} / {size} of handwritten invariant.");
     }
+
+    println!();
 }
 
 /// Run a simple fixpoint algorithm on the configured lemma domains.
@@ -152,17 +206,6 @@ where
         );
     };
 
-    log::info!("Running fixpoint algorithm with prefixes:");
-    let mut total_preds = 0;
-    for (p, w, a) in &domains {
-        let preds = w.approx_space_size(a.len());
-        log::info!("    {:?}", p);
-        log::info!("        Atoms = {}, Predicates ~ {}", a.len(), preds);
-        total_preds += preds;
-    }
-    log::info!("Approximate domain size: {}", total_preds);
-    log::info!("");
-
     let mut weaken_set: WeakenLemmaSet<O, L, B> =
         WeakenLemmaSet::new(Arc::new(infer_cfg.cfg.clone()), infer_cfg.clone(), domains);
     weaken_set.init();
@@ -179,6 +222,7 @@ where
         if abort(&weaken_set) {
             return None;
         }
+        print(&frontier, &weakest, "Computing lemmas...".to_string());
         weakest = weaken_set.to_set();
 
         print(&frontier, &weakest, "Finding CTIs...".to_string());
@@ -200,9 +244,10 @@ where
             if abort(&weaken_set) {
                 return None;
             }
+            print(&frontier, &weakest, "Computing lemmas...".to_string());
             weakest = weaken_set.to_set();
 
-            // "Zero-cost" advance is urrently unused.
+            // "Zero-cost" advance is currently unused.
             // print(
             //     &frontier,
             //     &weaken_set,
