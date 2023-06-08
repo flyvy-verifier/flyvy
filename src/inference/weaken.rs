@@ -171,7 +171,7 @@ where
         self.next += 1;
     }
 
-    fn remove(&mut self, body: &O) {
+    pub fn remove(&mut self, body: &O) {
         let id = self.bodies.remove(body);
         self.by_id.remove(&id).unwrap();
     }
@@ -447,8 +447,12 @@ where
         }
     }
 
-    pub fn weaken(&mut self, model: &Model) {
+    pub fn weaken(&mut self, model: &Model) -> bool {
         let unsat = self.unsat(model, &Assignment::new(), 0);
+
+        if unsat.is_empty() {
+            return false;
+        }
 
         let mut to_weaken = self.clone_empty();
         for i in &unsat {
@@ -464,10 +468,52 @@ where
             false,
             &mut vec![],
         );
+
+        true
+    }
+
+    pub fn weaken_cti(&mut self, prestate: &Model, poststate: &Model) -> bool {
+        let non_inductive: HashSet<usize> = self
+            .unsat(poststate, &Assignment::new(), 0)
+            .difference(&self.unsat(prestate, &Assignment::new(), 0))
+            .cloned()
+            .collect();
+
+        if non_inductive.is_empty() {
+            return false;
+        }
+
+        let mut to_weaken = self.clone_empty();
+        for i in &non_inductive {
+            to_weaken.insert(self.remove_by_id(i));
+        }
+
+        self.weaken_add(
+            to_weaken,
+            poststate,
+            &Assignment::new(),
+            0,
+            0,
+            false,
+            &mut vec![],
+        );
+
+        true
     }
 
     fn bases(&self) -> Vec<B> {
         self.by_id.values().map(|o| o.to_base()).collect_vec()
+    }
+
+    pub fn iter_as(&self, lemma_qf: &L) -> Vec<(QuantifierPrefix, O)> {
+        self.by_id
+            .values()
+            .map(|body| {
+                let new_base = self.lemma_qf.to_other_base(&lemma_qf, &body.to_base());
+                let prefix = self.prefix.restrict_to_ids(&lemma_qf.ids(&new_base));
+                (prefix, O::from_base(new_base))
+            })
+            .collect_vec()
     }
 }
 
@@ -512,8 +558,24 @@ where
         }
     }
 
-    pub fn weaken(&mut self, model: &Model) {
-        self.sets.par_iter_mut().for_each(|set| set.weaken(model));
+    pub fn weaken(&mut self, model: &Model) -> bool {
+        let weakened: Vec<bool> = self
+            .sets
+            .par_iter_mut()
+            .map(|set| set.weaken(model))
+            .collect();
+
+        weakened.iter().any(|b| *b)
+    }
+
+    pub fn weaken_cti(&mut self, prestate: &Model, poststate: &Model) -> bool {
+        let weakened: Vec<bool> = self
+            .sets
+            .par_iter_mut()
+            .map(|set| set.weaken_cti(prestate, poststate))
+            .collect();
+
+        weakened.iter().any(|b| *b)
     }
 
     pub fn len(&self) -> usize {
@@ -523,33 +585,15 @@ where
     pub fn iter_as(&self, lemma_qf: &L) -> Vec<(QuantifierPrefix, O)> {
         self.sets
             .iter()
-            .flat_map(|set| {
-                set.by_id.values().map(|body| {
-                    let new_base = set.lemma_qf.to_other_base(&lemma_qf, &body.to_base());
-                    let prefix = set.prefix.restrict_to_ids(&lemma_qf.ids(&new_base));
-                    (prefix, O::from_base(new_base))
-                })
-            })
+            .flat_map(|set| set.iter_as(lemma_qf))
             .collect_vec()
     }
 
     pub fn to_set(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> = LemmaSet::new(self.config.clone(), &self.infer_cfg);
         for set in &self.sets {
-            for body in set.by_id.values() {
-                let new_base = set
-                    .lemma_qf
-                    .to_other_base(&lemmas.lemma_qf, &body.to_base());
-                let new_prefix = set.prefix.restrict_to_ids(&lemmas.lemma_qf.ids(&new_base));
-                let new_body = O::from_base(new_base);
-
-                if lemmas.get_subsuming(&new_prefix, &new_body).is_empty() {
-                    for id in &lemmas.get_subsumed(&new_prefix, &new_body) {
-                        lemmas.remove(id);
-                    }
-
-                    lemmas.insert(new_prefix, new_body);
-                }
+            for (new_prefix, new_body) in set.iter_as(&lemmas.lemma_qf) {
+                lemmas.insert_minimized(new_prefix, new_body);
             }
         }
 
@@ -706,6 +750,18 @@ where
         }
 
         id
+    }
+
+    pub fn insert_minimized(&mut self, prefix: QuantifierPrefix, body: O) -> Option<usize> {
+        if !LemmaSet::subsumes(self, &prefix, &body) {
+            for id in &self.get_subsumed(&prefix, &body) {
+                self.remove(id);
+            }
+
+            Some(self.insert(prefix, body))
+        } else {
+            None
+        }
     }
 
     pub fn remove(&mut self, id: &usize) {

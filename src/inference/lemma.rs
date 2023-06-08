@@ -1088,3 +1088,99 @@ where
         advanced
     }
 }
+
+/// A [`SingleLemmaSearch`] manages the search for individually inductive lemmas.
+pub struct IndividualLemmaSearch<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+{
+    /// The set of lemmas that might still need to be weakened.
+    pub weaken_set: WeakenLemmaSet<O, L, B>,
+    // The set of lemmas already cover initial states.
+    pub initial: LemmaSet<O, L, B>,
+    /// The set of inductive lemmas found so far.
+    pub inductive: LemmaSet<O, L, B>,
+}
+
+impl<O, L, B> IndividualLemmaSearch<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+{
+    /// Get the length of the frontier.
+    pub fn len(&self) -> (usize, usize) {
+        (self.weaken_set.len(), self.inductive.len())
+    }
+
+    pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        let new_initial: Mutex<Vec<_>> = Mutex::new(vec![]);
+        log::info!("Getting weakest lemmas...");
+        let weakest = self.weaken_set.iter_as(&self.initial.lemma_qf);
+        log::info!("Finding CTI...");
+        let cti = weakest
+            .into_par_iter()
+            .filter(|(prefix, body)| !self.initial.subsumes(prefix, body))
+            .find_map_any(|(prefix, body)| {
+                let term = prefix.quantify(self.initial.lemma_qf.base_to_term(&body.to_base()));
+                if let Some(model) = fo.init_cex(conf, &term) {
+                    return Some(model);
+                } else {
+                    let mut new_initial_vec = new_initial.lock().unwrap();
+                    new_initial_vec.push((prefix, body));
+
+                    None
+                }
+            });
+
+        log::info!("Saving initially implied lemmas...");
+        for (prefix, body) in new_initial.into_inner().unwrap() {
+            self.initial.insert_minimized(prefix, body);
+        }
+
+        if let Some(model) = &cti {
+            log::info!("Weakening...");
+            self.weaken_set.weaken(model);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
+        log::info!("Getting weakest lemmas...");
+        let weakest = self.weaken_set.iter_as(&self.inductive.lemma_qf);
+        log::info!("Finding CTI...");
+        let cti = weakest
+            .into_par_iter()
+            .filter(|(prefix, body)| !self.inductive.subsumes(prefix, body))
+            .find_map_any(|(prefix, body)| {
+                let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
+                match fo.trans_cex(conf, &term, &term[0], false, false) {
+                    TransCexResult::CTI(pre, post) => Some((pre, post)),
+                    TransCexResult::UnsatCore(_) => {
+                        let mut new_inductive_vec = new_inductive.lock().unwrap();
+                        new_inductive_vec.push((prefix, body));
+
+                        None
+                    }
+                }
+            });
+
+        log::info!("Saving inductive lemmas...");
+        for (prefix, body) in new_inductive.into_inner().unwrap() {
+            self.inductive.insert_minimized(prefix, body);
+        }
+
+        if let Some((prestate, poststate)) = &cti {
+            log::info!("Weakening...");
+            self.weaken_set.weaken_cti(prestate, poststate);
+            true
+        } else {
+            false
+        }
+    }
+}
