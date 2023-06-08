@@ -380,5 +380,11 @@ fn test_small_examples() {
 
 #[test]
 fn test_larger_examples() {
+    // run tests single-threaded to eliminate some non-determinism
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();
+
     test_dir("examples")
 }
