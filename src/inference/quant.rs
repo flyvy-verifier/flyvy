@@ -4,9 +4,9 @@
 //! Manage quantifiers used in inference.
 
 use itertools::Itertools;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::{cmp::Ordering, collections::HashSet};
 
 use crate::{
     fly::syntax::{Binder, Quantifier, Signature, Sort, Term},
@@ -329,28 +329,6 @@ impl QuantifierPrefix {
 
     pub fn existentials(&self) -> usize {
         count_exists(&self.quantifiers)
-    }
-}
-
-impl PartialOrd for QuantifierPrefix {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for QuantifierPrefix {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        assert_eq!(self.len(), other.len());
-
-        for i in 0..self.len() {
-            match (self.quantifiers[i], other.quantifiers[i]) {
-                (Quantifier::Forall, Quantifier::Exists) => return Ordering::Less,
-                (Quantifier::Exists, Quantifier::Forall) => return Ordering::Greater,
-                _ => (),
-            }
-        }
-
-        Ordering::Equal
     }
 }
 

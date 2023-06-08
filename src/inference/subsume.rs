@@ -488,10 +488,156 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for AndSubsumpt
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Pair<O1: OrderSubsumption, O2: OrderSubsumption>(O1, O2);
+
+impl<O1: OrderSubsumption, O2: OrderSubsumption> PartialOrd for Pair<O1, O2> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.leq_cmp(other))
+    }
+}
+
+impl<O1: OrderSubsumption, O2: OrderSubsumption> Ord for Pair<O1, O2> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.leq_cmp(other)
+    }
+}
+
+impl<O1: OrderSubsumption, O2: OrderSubsumption> OrderSubsumption for Pair<O1, O2> {
+    type Base = (O1::Base, O2::Base);
+
+    type Map<V: Clone + Send + Sync> = PairSubsumptionMap<O1, O2, V>;
+
+    fn leq(&self, other: &Self) -> bool {
+        if self.0 == other.0 {
+            self.1.leq(&other.1)
+        } else {
+            self.0.leq(&other.0)
+        }
+    }
+
+    fn subsumes(&self, other: &Self) -> bool {
+        self.0.subsumes(&other.0) && self.1.subsumes(&other.1)
+    }
+
+    fn to_base(&self) -> Self::Base {
+        (self.0.to_base(), self.1.to_base())
+    }
+
+    fn from_base(base: Self::Base) -> Self {
+        Pair(O1::from_base(base.0), O2::from_base(base.1))
+    }
+}
+
+#[derive(Clone)]
+pub struct PairSubsumptionMap<O1: OrderSubsumption, O2: OrderSubsumption, V: Clone + Send + Sync>(
+    O1::Map<O2::Map<V>>,
+);
+
+impl<O1: OrderSubsumption, O2: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap
+    for PairSubsumptionMap<O1, O2, V>
+{
+    type Key = Pair<O1, O2>;
+
+    type Value = V;
+
+    fn new() -> Self {
+        Self(O1::Map::new())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.0
+            .keys()
+            .iter()
+            .map(|k: &O1| self.0.get(k).unwrap().len())
+            .sum()
+    }
+
+    fn keys(&self) -> Vec<Self::Key> {
+        self.0
+            .keys()
+            .iter()
+            .flat_map(|k1: &O1| {
+                self.0
+                    .get(k1)
+                    .unwrap()
+                    .keys()
+                    .into_iter()
+                    .map(|k2: O2| Pair(k1.clone(), k2))
+            })
+            .collect_vec()
+    }
+
+    fn insert(&mut self, key: Self::Key, value: Self::Value) {
+        if let Some(map) = self.0.get_mut(&key.0) {
+            map.insert(key.1, value);
+        } else {
+            let mut map = O2::Map::<V>::new();
+            map.insert(key.1, value);
+            self.0.insert(key.0, map);
+        }
+    }
+
+    fn remove(&mut self, key: &Self::Key) -> Self::Value {
+        let map = self.0.get_mut(&key.0).unwrap();
+        let value = map.remove(&key.1);
+        if map.is_empty() {
+            self.0.remove(&key.0);
+        }
+
+        value
+    }
+
+    fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
+        if let Some(map) = self.0.get(&key.0) {
+            map.get(&key.1)
+        } else {
+            None
+        }
+    }
+
+    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
+        if let Some(map) = self.0.get_mut(&key.0) {
+            map.get_mut(&key.1)
+        } else {
+            None
+        }
+    }
+
+    fn get_subsuming(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
+        self.0
+            .get_subsuming(&key.0)
+            .into_iter()
+            .flat_map(|(k1, map)| {
+                map.get_subsuming(&key.1)
+                    .into_iter()
+                    .map(move |(k2, value)| (Pair(k1.clone(), k2), value))
+            })
+            .collect_vec()
+    }
+
+    fn get_subsumed(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
+        self.0
+            .get_subsumed(&key.0)
+            .into_iter()
+            .flat_map(|(k1, map)| {
+                map.get_subsumed(&key.1)
+                    .into_iter()
+                    .map(move |(k2, value)| (Pair(k1.clone(), k2), value))
+            })
+            .collect_vec()
+    }
+}
+
 pub type Clause<L> = OrLike<L>;
 pub type Cube<L> = AndLike<L>;
 pub type Cnf<L> = AndLike<Clause<L>>;
 pub type Dnf<L> = OrLike<Cube<L>>;
+pub type PDnf<L> = Pair<Clause<L>, Dnf<L>>;
 
 #[derive(Clone)]
 pub struct EqSubsumptionMap<T: OrderSubsumption, V: Clone + Send + Sync>(HashMap<T, V>);

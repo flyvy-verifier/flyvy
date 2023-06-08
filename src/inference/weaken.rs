@@ -4,7 +4,7 @@
 //! Manage sets of quantified lemmas used in inference, and provide foundational algorithms
 //! for handling them, e.g. checking subsumption, weakening, etc.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -54,9 +54,6 @@ fn extend_assignment(
 pub trait LemmaQf: Clone + Sync + Send {
     /// The type of the quantifier-free bodies which are weakened.
     type Base: Clone + Debug;
-
-    /// Check whether one quantifier-free body subsumes another.
-    fn subsumes(&self, x: &Self::Base, y: &Self::Base) -> bool;
 
     /// Convert a given clause to a quantifier-free body.
     fn base_from_clause(&self, clause: &[Literal]) -> Self::Base;
@@ -109,7 +106,7 @@ where
     B: Clone + Debug + Send,
 {
     fn subsumes(&self, o: &O) -> bool {
-        self.set.subsumes(o, self.perm_index, true)
+        self.set.subsumes(o, self.perm_index)
     }
 }
 
@@ -187,7 +184,7 @@ where
     }
 
     #[allow(dead_code)]
-    fn get_subsuming(&self, body: &O, perm_index: usize, strong: bool) -> HashSet<O> {
+    fn get_subsuming(&self, body: &O, perm_index: usize) -> HashSet<O> {
         let mut subsuming: HashSet<O> = HashSet::new();
         let base = body.to_base();
 
@@ -201,9 +198,6 @@ where
                 self.bodies
                     .get_subsuming(&perm_body)
                     .into_iter()
-                    .filter(|(o, _)| {
-                        !strong || self.lemma_qf.as_ref().subsumes(&o.to_base(), &perm_base)
-                    })
                     .map(|(o, _)| o),
             );
         }
@@ -211,7 +205,7 @@ where
         subsuming
     }
 
-    fn get_subsumed(&self, body: &O, perm_index: usize, strong: bool) -> HashSet<O> {
+    fn get_subsumed(&self, body: &O, perm_index: usize) -> HashSet<O> {
         let mut subsumed: HashSet<O> = HashSet::new();
         let base = body.to_base();
 
@@ -225,9 +219,6 @@ where
                 self.bodies
                     .get_subsumed(&perm_body)
                     .into_iter()
-                    .filter(|(o, _)| {
-                        !strong || self.lemma_qf.as_ref().subsumes(&perm_base, &o.to_base())
-                    })
                     .map(|(o, _)| o),
             );
         }
@@ -235,7 +226,7 @@ where
         subsumed
     }
 
-    fn subsumes(&self, body: &O, perm_index: usize, strong: bool) -> bool {
+    fn subsumes(&self, body: &O, perm_index: usize) -> bool {
         let base = body.to_base();
 
         for perm in self
@@ -248,9 +239,6 @@ where
                 .bodies
                 .get_subsuming(&perm_body)
                 .into_iter()
-                .filter(|(o, _)| {
-                    !strong || self.lemma_qf.as_ref().subsumes(&o.to_base(), &perm_base)
-                })
                 .next()
                 .is_some()
             {
@@ -261,9 +249,9 @@ where
         false
     }
 
-    fn insert_minimized(&mut self, body: O, perm_index: usize, strong: bool) {
-        if !Self::subsumes(self, &body, perm_index, strong) {
-            for subs_body in self.get_subsumed(&body, perm_index, strong) {
+    fn insert_minimized(&mut self, body: O, perm_index: usize) {
+        if !Self::subsumes(self, &body, perm_index) {
+            for subs_body in self.get_subsumed(&body, perm_index) {
                 self.remove(&subs_body);
             }
             self.insert(body);
@@ -365,12 +353,12 @@ where
 
             let mut weakened_min = to_weaken.clone_empty();
             for new_body in weakened {
-                weakened_min.insert_minimized(new_body, perm_index, true);
+                weakened_min.insert_minimized(new_body, perm_index);
             }
 
             if prev_exists && !self.is_empty() {
                 for new_body in weakened_min.by_id.values() {
-                    for subs_body in self.get_subsumed(new_body, perm_index, true) {
+                    for subs_body in self.get_subsumed(new_body, perm_index) {
                         self.remove(&subs_body);
                     }
                 }
@@ -430,12 +418,12 @@ where
             if prev_exists {
                 let mut minimized = to_weaken.clone_empty();
                 for body in to_weaken.bodies.keys() {
-                    minimized.insert_minimized(body, perm_index, true);
+                    minimized.insert_minimized(body, perm_index);
                 }
                 to_weaken = minimized;
 
                 for body in to_weaken.by_id.values() {
-                    for subs_body in self.get_subsumed(body, perm_index, true) {
+                    for subs_body in self.get_subsumed(body, perm_index) {
                         self.remove(&subs_body);
                     }
                 }
@@ -528,6 +516,23 @@ where
         self.sets.par_iter_mut().for_each(|set| set.weaken(model));
     }
 
+    pub fn len(&self) -> usize {
+        self.sets.iter().map(|set| set.by_id.len()).sum()
+    }
+
+    pub fn iter_as(&self, lemma_qf: &L) -> Vec<(QuantifierPrefix, O)> {
+        self.sets
+            .iter()
+            .flat_map(|set| {
+                set.by_id.values().map(|body| {
+                    let new_base = set.lemma_qf.to_other_base(&lemma_qf, &body.to_base());
+                    let prefix = set.prefix.restrict_to_ids(&lemma_qf.ids(&new_base));
+                    (prefix, O::from_base(new_base))
+                })
+            })
+            .collect_vec()
+    }
+
     pub fn to_set(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> = LemmaSet::new(self.config.clone(), &self.infer_cfg);
         for set in &self.sets {
@@ -565,7 +570,6 @@ where
     pub to_prefixes: HashMap<usize, QuantifierPrefix>,
     pub to_bodies: HashMap<usize, O>,
     pub bodies: O::Map<HashSet<usize>>,
-    pub ordered: BTreeMap<(QuantifierPrefix, O), usize>,
     next: usize,
 }
 
@@ -585,7 +589,6 @@ where
             to_prefixes: HashMap::new(),
             to_bodies: HashMap::new(),
             bodies: O::Map::new(),
-            ordered: BTreeMap::new(),
             next: 0,
         }
     }
@@ -597,7 +600,6 @@ where
             to_prefixes: HashMap::new(),
             to_bodies: HashMap::new(),
             bodies: O::Map::new(),
-            ordered: BTreeMap::new(),
             next: 0,
         }
     }
@@ -606,11 +608,44 @@ where
         self.to_prefixes.len()
     }
 
-    pub fn to_terms(&self) -> Vec<Term> {
-        self.ordered
+    pub fn to_terms_ids(&self) -> Vec<(usize, Term)> {
+        self.to_prefixes
             .keys()
-            .map(|(prefix, body)| prefix.quantify(self.lemma_qf.base_to_term(&body.to_base())))
+            .map(|id| {
+                (
+                    *id,
+                    self.to_prefixes[id]
+                        .quantify(self.lemma_qf.base_to_term(&self.to_bodies[id].to_base())),
+                )
+            })
             .collect_vec()
+    }
+
+    pub fn to_terms(&self) -> Vec<Term> {
+        self.to_terms_ids().into_iter().map(|(_, t)| t).collect()
+    }
+
+    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
+        let base = body.to_base();
+
+        for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
+            let perm_body = O::from_base(self.lemma_qf.substitute(&base, &perm));
+
+            if self
+                .bodies
+                .get_subsuming(&perm_body)
+                .into_iter()
+                .flat_map(|(_, is)| is)
+                .copied()
+                .filter(|i| self.to_prefixes[i].subsumes(prefix))
+                .next()
+                .is_some()
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn get_subsuming(&self, prefix: &QuantifierPrefix, body: &O) -> HashSet<usize> {
@@ -669,19 +704,17 @@ where
         } else {
             self.bodies.insert(body.clone(), HashSet::from([id]));
         }
-        self.ordered.insert((prefix, body), id);
 
         id
     }
 
     pub fn remove(&mut self, id: &usize) {
-        let prefix = self.to_prefixes.remove(id).unwrap();
+        self.to_prefixes.remove(id).unwrap();
         let body = self.to_bodies.remove(id).unwrap();
         let hs = self.bodies.get_mut(&body).unwrap();
         hs.remove(id);
         if hs.is_empty() {
             self.bodies.remove(&body);
         }
-        assert_eq!(&self.ordered.remove(&(prefix, body)).unwrap(), id);
     }
 }
