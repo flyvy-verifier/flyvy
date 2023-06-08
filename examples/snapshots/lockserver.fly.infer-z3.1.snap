@@ -1,22 +1,25 @@
 ---
 source: tests/test_examples.rs
-description: "--name=infer-z3.1 -- infer --quantifier 'F node n1 n2' --kpdnf-lit 3 examples/lockserver.fly"
+description: "--name=infer-z3.1 -- infer qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 examples/lockserver.fly"
 expression: combined_stdout_stderr
 ---
 proof {
-  invariant forall n1:node, n2:node. !grant_msg(n1) | !server_holds_lock
-  invariant forall n1:node, n2:node. !grant_msg(n1) | n1 = n2 | !grant_msg(n2)
-  invariant forall n1:node, n2:node. !holds_lock(n1) | !server_holds_lock
-  invariant forall n1:node, n2:node. !holds_lock(n1) | !grant_msg(n1)
-  invariant forall n1:node, n2:node. !holds_lock(n1) | !grant_msg(n2)
-  invariant forall n1:node, n2:node. !holds_lock(n1) | n1 = n2 | !holds_lock(n2)
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | !server_holds_lock
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | !grant_msg(n1)
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | !grant_msg(n2)
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | !holds_lock(n1)
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | !holds_lock(n2)
-  invariant forall n1:node, n2:node. !unlock_msg(n1) | n1 = n2 | !unlock_msg(n2)
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !grant_msg(node_2) | !grant_msg(node_1)
+  invariant forall node_1:node. !holds_lock(node_1) | !unlock_msg(node_1)
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !unlock_msg(node_2) | !unlock_msg(node_1)
+  invariant forall node_1:node, node_2:node. !holds_lock(node_2) | !unlock_msg(node_1)
+  invariant forall node_1:node. !unlock_msg(node_1) | !grant_msg(node_1)
+  invariant forall node_1:node. !holds_lock(node_1) | !grant_msg(node_1)
+  invariant forall node_1:node. !unlock_msg(node_1) | !server_holds_lock
+  invariant forall node_1:node, node_2:node. !holds_lock(node_1) | !grant_msg(node_2)
+  invariant forall node_2:node. !grant_msg(node_2) | !server_holds_lock
+  invariant forall node_1:node. !holds_lock(node_1) | !server_holds_lock
+  invariant forall node_1:node, node_2:node. !unlock_msg(node_1) | !grant_msg(node_2)
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !holds_lock(node_2) | !holds_lock(node_1)
 }
+Fixpoint SAFE!
+Fixpoint runtime = ###s
+Covers 9 / 9 of handwritten invariant.
 
 ======== STDERR: ===========
 
