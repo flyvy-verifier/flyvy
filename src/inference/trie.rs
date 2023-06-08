@@ -3,9 +3,9 @@
 
 //! Trie-based data structures employed in inference algorithms.
 
-use core::hash::Hash;
+use crate::inference::hashmap::{HashMap, HashSet};
 use itertools::Itertools;
-use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::rc::Rc;
 
 use crate::fly::semantics::{Assignment, Model};

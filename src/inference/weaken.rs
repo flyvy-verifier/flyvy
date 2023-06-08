@@ -4,9 +4,10 @@
 //! Manage sets of quantified lemmas used in inference, and provide foundational algorithms
 //! for handling them, e.g. checking subsumption, weakening, etc.
 
-use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
+
+use crate::inference::hashmap::{HashMap, HashSet};
 
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -138,7 +139,7 @@ where
             atoms,
             bodies: Box::new(O::Map::new()),
             lemma_qf: Arc::new(weaken_qf),
-            by_id: HashMap::new(),
+            by_id: HashMap::default(),
             next: 0,
         }
     }
@@ -160,7 +161,7 @@ where
             atoms: self.atoms.clone(),
             bodies: Box::new(O::Map::new()),
             lemma_qf: self.lemma_qf.clone(),
-            by_id: HashMap::new(),
+            by_id: HashMap::default(),
             next: 0,
         }
     }
@@ -185,7 +186,7 @@ where
 
     #[allow(dead_code)]
     fn get_subsuming(&self, body: &O, perm_index: usize) -> HashSet<O> {
-        let mut subsuming: HashSet<O> = HashSet::new();
+        let mut subsuming: HashSet<O> = HashSet::default();
         let base = body.to_base();
 
         for perm in self
@@ -206,7 +207,7 @@ where
     }
 
     fn get_subsumed(&self, body: &O, perm_index: usize) -> HashSet<O> {
-        let mut subsumed: HashSet<O> = HashSet::new();
+        let mut subsumed: HashSet<O> = HashSet::default();
         let base = body.to_base();
 
         for perm in self
@@ -630,8 +631,8 @@ where
         Self {
             config: config,
             lemma_qf: Arc::new(L::new(infer_cfg, atoms, is_universal)),
-            to_prefixes: HashMap::new(),
-            to_bodies: HashMap::new(),
+            to_prefixes: HashMap::default(),
+            to_bodies: HashMap::default(),
             bodies: O::Map::new(),
             next: 0,
         }
@@ -641,8 +642,8 @@ where
         Self {
             config: self.config.clone(),
             lemma_qf: self.lemma_qf.clone(),
-            to_prefixes: HashMap::new(),
-            to_bodies: HashMap::new(),
+            to_prefixes: HashMap::default(),
+            to_bodies: HashMap::default(),
             bodies: O::Map::new(),
             next: 0,
         }
@@ -693,7 +694,7 @@ where
     }
 
     pub fn get_subsuming(&self, prefix: &QuantifierPrefix, body: &O) -> HashSet<usize> {
-        let mut subsuming: HashSet<usize> = HashSet::new();
+        let mut subsuming: HashSet<usize> = HashSet::default();
         let base = body.to_base();
 
         for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
@@ -719,7 +720,7 @@ where
     }
 
     pub fn get_subsumed(&self, prefix: &QuantifierPrefix, body: &O) -> HashSet<usize> {
-        let mut subsumed: HashSet<usize> = HashSet::new();
+        let mut subsumed: HashSet<usize> = HashSet::default();
         let base = body.to_base();
 
         for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
@@ -746,7 +747,7 @@ where
         if let Some(hs) = self.bodies.get_mut(&body) {
             hs.insert(id);
         } else {
-            self.bodies.insert(body.clone(), HashSet::from([id]));
+            self.bodies.insert(body.clone(), HashSet::from_iter([id]));
         }
 
         id

@@ -3,8 +3,8 @@
 
 //! Manage quantifiers used in inference.
 
+use crate::inference::hashmap::HashSet;
 use itertools::Itertools;
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -356,11 +356,12 @@ impl Debug for QuantifierPrefix {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use crate::inference::hashmap::HashSet;
 
     use super::QuantifierConfig;
     use crate::fly::syntax::Term;
     use crate::{fly::parser, term::subst::Substitution};
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
