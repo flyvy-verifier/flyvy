@@ -45,7 +45,9 @@ enum ColorOutput {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct SolverArgs {
-    #[arg(value_enum, long, default_value_t = SolverType::Z3)]
+    // --solver and --smt are global, meaning they are allowed even after
+    // subcommands
+    #[arg(value_enum, long, default_value_t = SolverType::Z3, global = true)]
     /// Solver to use
     solver: SolverType,
 
@@ -53,7 +55,7 @@ struct SolverArgs {
     /// Full path to output SMT file to
     smt_file: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(long, global = true)]
     /// Output smt2 file alongside input file
     smt: bool,
 }
@@ -166,20 +168,9 @@ impl InferenceConfigArgs {
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
-struct InferArgs {
-    #[command(flatten)]
-    solver: SolverArgs,
-
-    #[arg(long)]
-    /// Run the Houdini algorithm to infer invariants
-    houdini: bool,
-
+struct QalphaArgs {
     #[command(flatten)]
     infer_cfg: InferenceConfigArgs,
-
-    #[arg(long)]
-    /// Print timing statistics
-    time: bool,
 
     #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
@@ -198,6 +189,30 @@ struct InferArgs {
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
+enum InferCommand {
+    /// Run Houdini
+    Houdini {
+        /// File name for a .fly file
+        file: String,
+    },
+    /// Run quantified-alpha-from-below
+    Qalpha(QalphaArgs),
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct InferArgs {
+    #[command(flatten)]
+    solver: SolverArgs,
+
+    #[arg(long, global = true)]
+    /// Print timing statistics
+    time: bool,
+
+    #[command(subcommand)]
+    infer_cmd: InferCommand,
+}
+
+#[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
     Verify(VerifyArgs),
     Infer(InferArgs),
@@ -211,11 +226,20 @@ enum Command {
     },
 }
 
+impl InferCommand {
+    fn file(&self) -> &str {
+        match self {
+            InferCommand::Houdini { file } => file,
+            InferCommand::Qalpha(QalphaArgs { file, .. }) => file,
+        }
+    }
+}
+
 impl Command {
     fn file(&self) -> &str {
         match self {
             Command::Verify(VerifyArgs { file, .. }) => file,
-            Command::Infer(InferArgs { file, .. }) => file,
+            Command::Infer(InferArgs { infer_cmd, .. }) => infer_cmd.file(),
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
         }
@@ -275,7 +299,8 @@ impl VerifyArgs {
 
 impl InferArgs {
     fn get_solver_conf(&self) -> SolverConf {
-        self.solver.get_solver_conf(&self.file)
+        self.solver
+            .get_solver_conf(&self.infer_cmd.file().to_string())
     }
 }
 
@@ -345,82 +370,87 @@ impl App {
                     }
                 }
             }
-            Command::Infer(ref args @ InferArgs { houdini, indiv, .. }) => {
-                if houdini {
-                    let conf = args.get_solver_conf();
-                    let r = houdini::infer_module(&conf, &m);
-                    if args.time {
-                        timing::report();
-                    }
-                    match r {
-                        Ok(()) => println!("verifies!"),
-                        Err(err) => {
-                            eprintln!("verification errors:");
+            Command::Infer(
+                ref args @ InferArgs {
+                    infer_cmd: InferCommand::Houdini { .. },
+                    ..
+                },
+            ) => {
+                let conf = args.get_solver_conf();
+                let r = houdini::infer_module(&conf, &m);
+                if args.time {
+                    timing::report();
+                }
+                match r {
+                    Ok(()) => println!("verifies!"),
+                    Err(err) => {
+                        eprintln!("verification errors:");
 
-                            for fail in &err.fails {
-                                let diagnostic = fail.diagnostic(());
-                                terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
-                                    .unwrap();
-                            }
+                        for fail in &err.fails {
+                            let diagnostic = fail.diagnostic(());
+                            terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
+                                .unwrap();
+                        }
 
-                            process::exit(1);
-                        }
+                        process::exit(1);
                     }
-                } else {
-                    let conf = args.get_solver_conf();
-                    let infer_cfg = args.infer_cfg.to_cfg(&m.signature);
-                    if args.infer_cfg.search {
-                        match infer_cfg.qf_body {
-                            QfBody::CNF => {
-                                fixpoint_multi::<
-                                    subsume::Cnf<lemma::Literal>,
-                                    lemma::LemmaCnf,
-                                    Vec<Vec<lemma::Literal>>,
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
-                            QfBody::PDnf => {
-                                fixpoint_multi::<
-                                    subsume::PDnf<lemma::Literal>,
-                                    lemma::LemmaPDnf,
-                                    (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
-                            QfBody::PDnfNaive => {
-                                fixpoint_multi::<
-                                    subsume::Dnf<lemma::Literal>,
-                                    lemma::LemmaPDnfNaive,
-                                    Vec<Vec<lemma::Literal>>,
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
-                        }
-                    } else {
-                        match infer_cfg.qf_body {
-                            QfBody::CNF => fixpoint_single::<
-                                subsume::Cnf<lemma::Literal>,
-                                lemma::LemmaCnf,
-                                Vec<Vec<lemma::Literal>>,
-                            >(
-                                infer_cfg, &conf, &m, args.disj, indiv
-                            ),
-                            QfBody::PDnf => fixpoint_single::<
-                                subsume::PDnf<lemma::Literal>,
-                                lemma::LemmaPDnf,
-                                (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
-                            >(
-                                infer_cfg, &conf, &m, args.disj, indiv
-                            ),
-                            QfBody::PDnfNaive => fixpoint_single::<
+                }
+            }
+            Command::Infer(
+                ref args @ InferArgs {
+                    infer_cmd: InferCommand::Qalpha(ref qargs),
+                    ..
+                },
+            ) => {
+                let conf = args.get_solver_conf();
+                let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
+                if qargs.infer_cfg.search {
+                    match infer_cfg.qf_body {
+                        QfBody::CNF => fixpoint_multi::<
+                            subsume::Cnf<lemma::Literal>,
+                            lemma::LemmaCnf,
+                            Vec<Vec<lemma::Literal>>,
+                        >(infer_cfg, &conf, &m, qargs.disj),
+                        QfBody::PDnf => fixpoint_multi::<
+                            subsume::PDnf<lemma::Literal>,
+                            lemma::LemmaPDnf,
+                            (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
+                        >(infer_cfg, &conf, &m, qargs.disj),
+                        QfBody::PDnfNaive => {
+                            fixpoint_multi::<
                                 subsume::Dnf<lemma::Literal>,
                                 lemma::LemmaPDnfNaive,
                                 Vec<Vec<lemma::Literal>>,
-                            >(
-                                infer_cfg, &conf, &m, args.disj, indiv
-                            ),
+                            >(infer_cfg, &conf, &m, qargs.disj)
                         }
                     }
-                    if args.time {
-                        timing::report();
+                } else {
+                    match infer_cfg.qf_body {
+                        QfBody::CNF => fixpoint_single::<
+                            subsume::Cnf<lemma::Literal>,
+                            lemma::LemmaCnf,
+                            Vec<Vec<lemma::Literal>>,
+                        >(
+                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
+                        ),
+                        QfBody::PDnf => fixpoint_single::<
+                            subsume::PDnf<lemma::Literal>,
+                            lemma::LemmaPDnf,
+                            (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
+                        >(
+                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
+                        ),
+                        QfBody::PDnfNaive => fixpoint_single::<
+                            subsume::Dnf<lemma::Literal>,
+                            lemma::LemmaPDnfNaive,
+                            Vec<Vec<lemma::Literal>>,
+                        >(
+                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
+                        ),
                     }
+                }
+                if args.time {
+                    timing::report();
                 }
             }
             Command::Inline { .. } => {

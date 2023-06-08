@@ -309,6 +309,13 @@ impl Test {
                 .expect("could not run verifier");
             let stdout = String::from_utf8(out.stdout).expect("non-utf8 output");
             let stderr = String::from_utf8(out.stderr).expect("non-utf8 output");
+
+            // redact timing lines so snapshots are consistent
+            lazy_static! {
+                static ref TIMING_RE: Regex = Regex::new(r"Fixpoint runtime = [0-9.]*").unwrap();
+            }
+            let stdout = TIMING_RE.replace_all(&stdout, "Fixpoint runtime = ###");
+
             let combined_stdout_stderr =
                 format!("{stdout}\n======== STDERR: ===========\n{stderr}");
 

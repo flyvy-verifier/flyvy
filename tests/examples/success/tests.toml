@@ -7,4 +7,4 @@ args = ["verify"]
 expect_fail = false
 all_solvers = true
 name = "houdini"
-args = ["infer", "--houdini"]
+args = ["infer", "houdini"]
