@@ -16,7 +16,7 @@ use crate::{
     },
     inference::{
         basics::{FOModule, InferenceConfig},
-        lemma::Frontier,
+        lemma::{Frontier, IndividualLemmaSearch},
         quant::QuantifierPrefix,
         subsume::OrderSubsumption,
         weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
@@ -57,6 +57,7 @@ pub fn fixpoint_single<O, L, B>(
     conf: &SolverConf,
     m: &Module,
     disj: bool,
+    indiv: bool,
 ) where
     O: OrderSubsumption<Base = B>,
     L: LemmaQf<Base = B>,
@@ -80,8 +81,11 @@ pub fn fixpoint_single<O, L, B>(
     let fo = FOModule::new(m, disj);
 
     let start = std::time::Instant::now();
-    let fixpoint =
-        run_fixpoint::<O, L, B, _>(infer_cfg.clone(), conf, &fo, domains, |_| false).unwrap();
+    let fixpoint = if indiv {
+        run_individual::<O, L, B, _>(infer_cfg.clone(), conf, &fo, domains, |_| false).unwrap()
+    } else {
+        run_fixpoint::<O, L, B, _>(infer_cfg.clone(), conf, &fo, domains, |_| false).unwrap()
+    };
     let total_time = start.elapsed().as_secs_f32();
     let proof = fixpoint.to_terms();
 
@@ -217,7 +221,7 @@ where
     let mut models: Vec<Model> = vec![];
 
     // Begin by overapproximating the initial states.
-    print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+    print(&frontier, &weaken_set, "Finding CTI...".to_string());
     while let Some(cti) = frontier.init_cex(&fo, conf, &weaken_set) {
         print(
             &frontier,
@@ -233,7 +237,7 @@ where
             return None;
         }
 
-        print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+        print(&frontier, &weaken_set, "Finding CTI...".to_string());
     }
 
     print(&frontier, &weaken_set, "Computing lemmas...".to_string());
@@ -241,7 +245,7 @@ where
     print(&frontier, &weaken_set, "Advancing...".to_string());
     while frontier.advance(&weakest, true) {
         // Handle transition CTI's.
-        print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+        print(&frontier, &weaken_set, "Finding CTI...".to_string());
 
         while let Some(cti) = frontier.trans_cex(&fo, conf, &weaken_set) {
             print(
@@ -266,7 +270,7 @@ where
             // );
             // frontier.advance(&weaken_set.to_set(), false);
 
-            print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+            print(&frontier, &weaken_set, "Finding CTI...".to_string());
         }
 
         print(&frontier, &weaken_set, "Computing lemmas...".to_string());
@@ -275,4 +279,77 @@ where
     }
 
     Some(weakest)
+}
+
+/// Run a simple fixpoint algorithm on the configured lemma domains.
+fn run_individual<O, L, B, F>(
+    infer_cfg: Arc<InferenceConfig>,
+    conf: &SolverConf,
+    fo: &FOModule,
+    domains: Vec<Domain<L>>,
+    _: F,
+) -> Option<LemmaSet<O, L, B>>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+    F: Fn(&WeakenLemmaSet<O, L, B>) -> bool,
+{
+    let start = std::time::Instant::now();
+
+    log::debug!("Axioms:");
+    for a in fo.axioms.iter() {
+        log::debug!("    {a}");
+    }
+    log::debug!("Initial states:");
+    for a in fo.inits.iter() {
+        log::debug!("    {a}");
+    }
+    log::debug!("Transitions:");
+    for a in fo.transitions.iter() {
+        log::debug!("    {a}");
+    }
+
+    let print = |search: &IndividualLemmaSearch<O, L, B>, s: String| {
+        let len = search.len();
+        log::info!(
+            "[{:.2}s] [{} | {}] {}",
+            start.elapsed().as_secs_f32(),
+            len.1,
+            len.0,
+            s
+        );
+    };
+
+    let config = Arc::new(infer_cfg.cfg.clone());
+    let mut weaken_set: WeakenLemmaSet<O, L, B> =
+        WeakenLemmaSet::new(config.clone(), infer_cfg.clone(), domains);
+    weaken_set.init();
+    let empty: LemmaSet<O, L, B> = LemmaSet::new(config, &infer_cfg);
+    let mut individual_search = IndividualLemmaSearch {
+        weaken_set,
+        initial: empty.clone(),
+        inductive: empty,
+    };
+
+    // Begin by overapproximating the initial states.
+    print(&individual_search, "Initiation cycle...".to_string());
+    while individual_search.init_cycle(fo, conf) {
+        print(&individual_search, "Initiation cycle...".to_string());
+    }
+    print(
+        &individual_search,
+        "Initiation cycles complete.".to_string(),
+    );
+
+    print(&individual_search, "Transition cycle...".to_string());
+    while individual_search.trans_cycle(fo, conf) {
+        print(&individual_search, "Transition cycle...".to_string());
+    }
+    print(
+        &individual_search,
+        "Transition cycles complete.".to_string(),
+    );
+
+    Some(individual_search.inductive)
 }

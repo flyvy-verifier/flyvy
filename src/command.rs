@@ -189,6 +189,10 @@ struct InferArgs {
     /// Try to decompose the transition relation disjunctively
     disj: bool,
 
+    #[arg(long)]
+    /// Try to find individually inductive lemmas
+    indiv: bool,
+
     /// File name for a .fly file
     file: String,
 }
@@ -341,7 +345,7 @@ impl App {
                     }
                 }
             }
-            Command::Infer(ref args @ InferArgs { houdini, .. }) => {
+            Command::Infer(ref args @ InferArgs { houdini, indiv, .. }) => {
                 if houdini {
                     let conf = args.get_solver_conf();
                     let r = houdini::infer_module(&conf, &m);
@@ -391,27 +395,27 @@ impl App {
                         }
                     } else {
                         match infer_cfg.qf_body {
-                            QfBody::CNF => {
-                                fixpoint_single::<
-                                    subsume::Cnf<lemma::Literal>,
-                                    lemma::LemmaCnf,
-                                    Vec<Vec<lemma::Literal>>,
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
-                            QfBody::PDnf => {
-                                fixpoint_single::<
-                                    subsume::PDnf<lemma::Literal>,
-                                    lemma::LemmaPDnf,
-                                    (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
-                            QfBody::PDnfNaive => {
-                                fixpoint_single::<
-                                    subsume::Dnf<lemma::Literal>,
-                                    lemma::LemmaPDnfNaive,
-                                    Vec<Vec<lemma::Literal>>,
-                                >(infer_cfg, &conf, &m, args.disj)
-                            }
+                            QfBody::CNF => fixpoint_single::<
+                                subsume::Cnf<lemma::Literal>,
+                                lemma::LemmaCnf,
+                                Vec<Vec<lemma::Literal>>,
+                            >(
+                                infer_cfg, &conf, &m, args.disj, indiv
+                            ),
+                            QfBody::PDnf => fixpoint_single::<
+                                subsume::PDnf<lemma::Literal>,
+                                lemma::LemmaPDnf,
+                                (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
+                            >(
+                                infer_cfg, &conf, &m, args.disj, indiv
+                            ),
+                            QfBody::PDnfNaive => fixpoint_single::<
+                                subsume::Dnf<lemma::Literal>,
+                                lemma::LemmaPDnfNaive,
+                                Vec<Vec<lemma::Literal>>,
+                            >(
+                                infer_cfg, &conf, &m, args.disj, indiv
+                            ),
                         }
                     }
                     if args.time {
