@@ -10,7 +10,10 @@ use std::sync::Arc;
 use itertools::Itertools;
 
 use crate::{
-    fly::syntax::{Module, Term, ThmStmt},
+    fly::{
+        semantics::Model,
+        syntax::{Module, Term, ThmStmt},
+    },
     inference::{
         basics::{FOModule, InferenceConfig},
         lemma::Frontier,
@@ -196,7 +199,7 @@ where
         log::debug!("    {a}");
     }
 
-    let print = |f: &Frontier<O, L, B>, wls: &LemmaSet<O, L, B>, s: String| {
+    let print = |f: &Frontier<O, L, B>, wls: &WeakenLemmaSet<O, L, B>, s: String| {
         log::info!(
             "[{:.2}s] [{} | {}] {}",
             start.elapsed().as_secs_f32(),
@@ -209,43 +212,51 @@ where
     let mut weaken_set: WeakenLemmaSet<O, L, B> =
         WeakenLemmaSet::new(Arc::new(infer_cfg.cfg.clone()), infer_cfg.clone(), domains);
     weaken_set.init();
-    let mut weakest = weaken_set.to_set();
+    let mut weakest;
     let mut frontier: Frontier<O, L, B> = Frontier::new(weaken_set.to_set());
+    let mut models: Vec<Model> = vec![];
 
     // Begin by overapproximating the initial states.
-    print(&frontier, &weakest, "Finding CTIs...".to_string());
-    while let Some(cti) = frontier.init_cex(&fo, conf, &weakest) {
-        print(&frontier, &weakest, "CTI found, type=initial".to_string());
+    print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+    while let Some(cti) = frontier.init_cex(&fo, conf, &weaken_set) {
+        print(
+            &frontier,
+            &weaken_set,
+            "CTI found, type=initial".to_string(),
+        );
 
-        print(&frontier, &weakest, "Weakening...".to_string());
+        print(&frontier, &weaken_set, "Weakening...".to_string());
         weaken_set.weaken(&cti);
+        models.push(cti);
+
         if abort(&weaken_set) {
             return None;
         }
-        print(&frontier, &weakest, "Computing lemmas...".to_string());
-        weakest = weaken_set.to_set();
 
-        print(&frontier, &weakest, "Finding CTIs...".to_string());
+        print(&frontier, &weaken_set, "Finding CTIs...".to_string());
     }
 
-    print(&frontier, &weakest, "Advancing...".to_string());
-    while frontier.advance(&weakest, true, false) {
+    print(&frontier, &weaken_set, "Computing lemmas...".to_string());
+    weakest = weaken_set.to_set();
+    print(&frontier, &weaken_set, "Advancing...".to_string());
+    while frontier.advance(&weakest, true) {
         // Handle transition CTI's.
-        print(&frontier, &weakest, "Finding CTIs...".to_string());
-        while let Some(cti) = frontier.trans_cex(&fo, conf, &weakest) {
+        print(&frontier, &weaken_set, "Finding CTIs...".to_string());
+
+        while let Some(cti) = frontier.trans_cex(&fo, conf, &weaken_set) {
             print(
                 &frontier,
-                &weakest,
+                &weaken_set,
                 "CTI found, type=transition".to_string(),
             );
 
-            print(&frontier, &weakest, "Weakening...".to_string());
+            print(&frontier, &weaken_set, "Weakening...".to_string());
             weaken_set.weaken(&cti);
+            models.push(cti);
+
             if abort(&weaken_set) {
                 return None;
             }
-            print(&frontier, &weakest, "Computing lemmas...".to_string());
-            weakest = weaken_set.to_set();
 
             // "Zero-cost" advance is currently unused.
             // print(
@@ -255,10 +266,12 @@ where
             // );
             // frontier.advance(&weaken_set.to_set(), false);
 
-            print(&frontier, &weakest, "Finding CTIs...".to_string());
+            print(&frontier, &weaken_set, "Finding CTIs...".to_string());
         }
 
-        print(&frontier, &weakest, "Advancing...".to_string());
+        print(&frontier, &weaken_set, "Computing lemmas...".to_string());
+        weakest = weaken_set.to_set();
+        print(&frontier, &weaken_set, "Advancing...".to_string());
     }
 
     Some(weakest)

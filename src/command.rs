@@ -376,9 +376,9 @@ impl App {
                             }
                             QfBody::PDnf => {
                                 fixpoint_multi::<
-                                    subsume::Dnf<lemma::Literal>,
+                                    subsume::PDnf<lemma::Literal>,
                                     lemma::LemmaPDnf,
-                                    Vec<Vec<lemma::Literal>>,
+                                    (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
                                 >(infer_cfg, &conf, &m, args.disj)
                             }
                             QfBody::PDnfNaive => {
@@ -400,9 +400,9 @@ impl App {
                             }
                             QfBody::PDnf => {
                                 fixpoint_single::<
-                                    subsume::Dnf<lemma::Literal>,
+                                    subsume::PDnf<lemma::Literal>,
                                     lemma::LemmaPDnf,
-                                    Vec<Vec<lemma::Literal>>,
+                                    (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
                                 >(infer_cfg, &conf, &m, args.disj)
                             }
                             QfBody::PDnfNaive => {
