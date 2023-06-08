@@ -4,15 +4,11 @@
 //! Define the abstract notion of subsumption, and provide efficient data structures
 //! for the handling of elements implementing subsumption.
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
 use itertools::Itertools;
 
+use crate::inference::hashmap::{HashMap, HashSet};
 use crate::inference::lemma::Literal;
 
 pub trait OrderSubsumption: Clone + Eq + Hash + Ord + Send + Sync {
@@ -383,8 +379,8 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for AndSubsumpt
 
     fn new() -> Self {
         Self {
-            keys: HashMap::new(),
-            values: HashMap::new(),
+            keys: HashMap::default(),
+            values: HashMap::default(),
             trie: TrieMap::new(),
             subsets: TrieMap::new(),
             next: 0,
@@ -412,7 +408,7 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for AndSubsumpt
 
         for subset in key.0.iter().cloned().powerset() {
             if self.subsets.get(&subset).is_none() {
-                self.subsets.insert(&subset, HashSet::from([id]));
+                self.subsets.insert(&subset, HashSet::from_iter([id]));
             } else {
                 self.subsets.mutate(&subset, |mut hs| {
                     hs.insert(id);
@@ -647,7 +643,7 @@ impl<T: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for EqSubsumpti
     type Value = V;
 
     fn new() -> Self {
-        Self(HashMap::new())
+        Self(HashMap::default())
     }
 
     fn is_empty(&self) -> bool {

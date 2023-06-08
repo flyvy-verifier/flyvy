@@ -8,6 +8,7 @@
 
 mod basics;
 mod fixpoint;
+mod hashmap;
 pub mod houdini;
 pub mod lemma;
 pub mod quant;

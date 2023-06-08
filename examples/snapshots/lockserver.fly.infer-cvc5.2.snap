@@ -4,18 +4,18 @@ description: "--name=infer-cvc5.2 -- infer qalpha --solver cvc5 --quantifier 'F 
 expression: combined_stdout_stderr
 ---
 proof {
-  invariant forall node_1:node. !holds_lock(node_1) | !server_holds_lock
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !holds_lock(node_2) | !holds_lock(node_1)
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !grant_msg(node_2) | !grant_msg(node_1)
-  invariant forall node_1:node. !unlock_msg(node_1) | !grant_msg(node_1)
   invariant forall node_1:node. !grant_msg(node_1) | !server_holds_lock
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !unlock_msg(node_2) | !unlock_msg(node_1)
-  invariant forall node_1:node, node_2:node. !holds_lock(node_2) | !unlock_msg(node_1)
   invariant forall node_1:node, node_2:node. !holds_lock(node_1) | !grant_msg(node_2)
-  invariant forall node_1:node. !holds_lock(node_1) | !unlock_msg(node_1)
-  invariant forall node_1:node, node_2:node. !unlock_msg(node_1) | !grant_msg(node_2)
+  invariant forall node_1:node. !holds_lock(node_1) | !server_holds_lock
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !grant_msg(node_2) | !grant_msg(node_1)
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !holds_lock(node_2) | !holds_lock(node_1)
   invariant forall node_1:node. !holds_lock(node_1) | !grant_msg(node_1)
   invariant forall node_1:node. !unlock_msg(node_1) | !server_holds_lock
+  invariant forall node_1:node, node_2:node. node_1 = node_2 | !unlock_msg(node_2) | !unlock_msg(node_1)
+  invariant forall node_1:node, node_2:node. !holds_lock(node_2) | !unlock_msg(node_1)
+  invariant forall node_1:node. !unlock_msg(node_1) | !grant_msg(node_1)
+  invariant forall node_1:node, node_2:node. !unlock_msg(node_1) | !grant_msg(node_2)
+  invariant forall node_1:node. !holds_lock(node_1) | !unlock_msg(node_1)
 }
 Fixpoint SAFE!
 Fixpoint runtime = ###s

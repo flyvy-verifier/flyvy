@@ -13,7 +13,9 @@ clap = { version = "4.1.8", features = ["derive"] }
 codespan-reporting = "0.11.1"
 ena = "0.14.1"
 eyre = "0.6.8"
+fxhash = "0.2.1"
 im = "15.1.0"
+indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
 log = "0.4.17"

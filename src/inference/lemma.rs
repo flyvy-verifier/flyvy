@@ -4,7 +4,6 @@
 //! Implement simple components, lemma domains and data structures for use in inference.
 
 use itertools::Itertools;
-use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +12,7 @@ use crate::{
     fly::syntax::{BinOp, Term},
     inference::{
         basics::{FOModule, InferenceConfig},
+        hashmap::{HashMap, HashSet},
         subsume::OrderSubsumption,
         weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
     },
@@ -23,6 +23,7 @@ use crate::{
 use rayon::prelude::*;
 
 use super::basics::TransCexResult;
+use super::hashmap;
 use super::quant::{count_exists, QuantifierPrefix};
 
 /// An [`Atom`] is referred to via a certain index.
@@ -292,7 +293,7 @@ impl LemmaPDnfNaive {
         mut base: <Self as LemmaQf>::Base,
         mut literal: Literal,
     ) -> Option<<Self as LemmaQf>::Base> {
-        let mut literals = HashSet::new();
+        let mut literals = HashSet::default();
 
         loop {
             if is_eq(literal, false, &self.atoms) {
@@ -390,7 +391,7 @@ impl LemmaPDnfNaive {
         for i in non_units {
             let intersection = base[i]
                 .iter()
-                .filter(|lit| cube.contains(lit))
+                .filter(|&lit| cube.contains(lit))
                 .cloned()
                 .collect_vec();
             match intersection.len() {
@@ -816,7 +817,7 @@ impl Term {
     /// Supports only quantifier-free terms.
     pub fn ids(&self) -> HashSet<String> {
         match self {
-            Term::Id(name) => HashSet::from([name.clone()]),
+            Term::Id(name) => HashSet::from_iter([name.clone()]),
             Term::App(_, _, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
             Term::UnaryOp(_, t) => t.ids(),
             Term::BinOp(_, t1, t2) => [t1, t2].iter().flat_map(|t| t.ids()).collect(),
@@ -824,7 +825,7 @@ impl Term {
             Term::Ite { cond, then, else_ } => {
                 [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
             }
-            _ => HashSet::new(),
+            _ => HashSet::default(),
         }
     }
 }
@@ -861,8 +862,8 @@ where
         Frontier {
             lemmas: lemmas_init,
             blocked,
-            blocked_to_core: HashMap::new(),
-            core_to_blocked: HashMap::new(),
+            blocked_to_core: HashMap::default(),
+            core_to_blocked: HashMap::default(),
         }
     }
 
@@ -904,7 +905,8 @@ where
                 if let Some(hs) = self.core_to_blocked.get_mut(i) {
                     hs.insert(blocked_id);
                 } else {
-                    self.core_to_blocked.insert(*i, HashSet::from([blocked_id]));
+                    self.core_to_blocked
+                        .insert(*i, HashSet::from_iter([blocked_id]));
                 }
             }
             self.blocked_to_core.insert(blocked_id, core);
@@ -935,7 +937,7 @@ where
                     TransCexResult::CTI(_, model) => return Some(model),
                     TransCexResult::UnsatCore(core) => {
                         let mut new_cores_vec = new_cores.lock().unwrap();
-                        new_cores_vec.push((prefix, body, core));
+                        new_cores_vec.push((prefix, body, hashmap::set_from_std(core.clone())));
                     }
                 }
 
@@ -949,7 +951,8 @@ where
                 if let Some(hs) = self.core_to_blocked.get_mut(i) {
                     hs.insert(blocked_id);
                 } else {
-                    self.core_to_blocked.insert(*i, HashSet::from([blocked_id]));
+                    self.core_to_blocked
+                        .insert(*i, HashSet::from_iter([blocked_id]));
                 }
             }
             self.blocked_to_core.insert(blocked_id, core);
@@ -979,7 +982,7 @@ where
             .lemmas
             .to_prefixes
             .keys()
-            .filter(|id| {
+            .filter(|&id| {
                 !new_lemmas.contains(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
             })
             .cloned()
@@ -988,11 +991,11 @@ where
         // Compute the mapping from parents to their weakenings (children).
         let mut children: HashMap<usize, HashSet<usize>> = weakened_parents
             .par_iter()
-            .map(|id| {
+            .map(|&id| {
                 (
-                    *id,
+                    id,
                     new_lemmas
-                        .get_subsumed(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id]),
+                        .get_subsumed(&self.lemmas.to_prefixes[&id], &self.lemmas.to_bodies[&id]),
                 )
             })
             .collect();
@@ -1076,7 +1079,11 @@ where
                         new_lemmas.to_bodies[new_id].clone(),
                     );
                     for p in &parents.remove(new_id).unwrap() {
-                        children.get_mut(p).unwrap().remove(new_id);
+                        // NOTE: this get_mut only returns None with indexmap;
+                        // is this a bug in indexmap?
+                        if let Some(child) = children.get_mut(p) {
+                            child.remove(new_id);
+                        }
                     }
                 }
                 children.remove(id);
