@@ -37,7 +37,7 @@ mutable sent_msg_proj(node, node): bool
 mutable rcv_msg_proj(node, node): bool
 
 # immutability (added by hand)
-assume always (forall N:node. member_f(node) = (member_f(node))')
+assume always (forall N:node. member_f(N) = (member_f(N))')
 assume always (forall N:node, Q:quorum_a. member_a(N, Q) = (member_a(N, Q))')
 assume always (forall N:node, Q:quorum_b. member_b(N, Q) = (member_b(N, Q))')
 assume always (forall N:node, Q:quorum_c. member_c(N, Q) = (member_c(N, Q))')
