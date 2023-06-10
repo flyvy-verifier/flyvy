@@ -347,10 +347,12 @@ impl App {
 
         match self.command {
             Command::Print { .. } => {
+                // don't inline for printing
                 println!("{}", printer::fmt(&m));
             }
             Command::Verify(ref args) => {
                 let conf = args.get_solver_conf();
+                m.inline_defs();
                 let r = verify_module(&conf, &m);
                 if args.time {
                     timing::report();
@@ -377,6 +379,7 @@ impl App {
                 },
             ) => {
                 let conf = args.get_solver_conf();
+                m.inline_defs();
                 let r = houdini::infer_module(&conf, &m);
                 if args.time {
                     timing::report();
@@ -403,6 +406,7 @@ impl App {
                 },
             ) => {
                 let conf = args.get_solver_conf();
+                m.inline_defs();
                 let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
                 if qargs.infer_cfg.search {
                     match infer_cfg.qf_body {
