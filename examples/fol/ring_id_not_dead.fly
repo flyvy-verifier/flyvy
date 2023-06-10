@@ -1,0 +1,51 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/ring_id_not_dead.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort node
+sort id
+
+# constants:
+
+
+# functions:
+immutable idn(node): id
+
+# relations:
+immutable le(id, id): bool
+immutable btw(node, node, node): bool
+mutable leader(node): bool
+mutable pending(id, node): bool
+mutable sent(node): bool
+
+# immutability (added by hand)
+assume always (forall X:id. idn(X) = (idn(X))')
+assume always (forall X:id, Y:id. le(X, Y) = (le(X, Y))')
+assume always (forall N1:node, N2:node, N3:node. btw(N1, N2, N3) = (btw(N1, N2, N3))')
+
+# axioms:
+assume always (forall X:id. le(X, X)) & (forall X:id, Y:id, Z:id. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:id, Y:id. le(X, Y) & le(Y, X) -> X = Y) & (forall X:id, Y:id. le(X, Y) | le(Y, X)) & (forall W:node, X:node, Y:node, Z:node. btw(W, X, Y) & btw(W, Y, Z) -> btw(W, X, Z)) & (forall W:node, X:node, Y:node. btw(W, X, Y) -> !btw(W, Y, X)) & (forall W:node, X:node, Y:node. btw(W, X, Y) | btw(W, Y, X) | W = X | W = Y | X = Y) & (forall X:node, Y:node, Z:node. btw(X, Y, Z) -> btw(Y, Z, X)) & (forall X:node, Y:node. idn(X) = idn(Y) -> X = Y) & (exists N:node. forall M:node. le(idn(M), idn(N)))
+
+# init:
+assume (forall N:node. !leader(N)) & (forall V:id, N:node. !pending(V, N)) & (forall N:node. !sent(N))
+
+# transitions:
+assume always (exists n:node, next:node. (forall Z:node. Z != n & Z != next -> btw(n, next, Z)) & (forall V:id, N:node. (pending(V, N))' <-> pending(V, N) | V = idn(n) & N = next) & (forall N:node. (sent(N))' <-> sent(N) | N = n) & (forall x0:node. (leader(x0))' = leader(x0))) | (exists v:id, n:node, next:node. (forall Z:node. Z != n & Z != next -> btw(n, next, Z)) & pending(v, n) & (if v = idn(n) then (forall N:node. (leader(N))' <-> leader(N) | N = n) & (forall V:id, N:node. !(V = v & N = n) -> ((pending(V, N))' <-> pending(V, N))) else (forall N:node. (leader(N))' <-> leader(N)) & (if le(idn(n), v) then forall V:id, N:node. !(V = v & N = n) -> ((pending(V, N))' <-> pending(V, N) | V = v & N = next) else forall V:id, N:node. !(V = v & N = n) -> ((pending(V, N))' <-> pending(V, N)))) & (forall x0:node. (sent(x0))' = sent(x0)))
+
+# safety:
+assert always (forall X:node, Y:node. leader(X) & leader(Y) -> X = Y) & ((exists L:node. leader(L)) | (exists M:id, N:node. pending(M, N)) | (exists N:node. !sent(N)))
+proof {
+    invariant forall X:node, Y:node. leader(X) & leader(Y) -> X = Y
+    invariant (exists L:node. leader(L)) | (exists M:id, N:node. pending(M, N)) | (exists N:node. !sent(N))
+    invariant forall L:node, N:node. leader(L) -> le(idn(N), idn(L))
+    invariant forall L:node, N:node. pending(idn(L), L) -> le(idn(N), idn(L))
+    invariant forall S:node, D:node, N:node. pending(idn(S), D) & btw(S, N, D) -> le(idn(N), idn(S))
+    invariant exists N:node. (forall X:node. le(idn(X), idn(N))) & (!sent(N) | leader(N) | (exists M:node. pending(idn(N), M)))
+}

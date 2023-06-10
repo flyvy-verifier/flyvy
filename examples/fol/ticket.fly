@@ -1,0 +1,60 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/ticket.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort thread
+sort ticket
+
+# constants:
+immutable zero: ticket
+mutable service: ticket
+mutable next_ticket: ticket
+
+# functions:
+
+
+# relations:
+immutable le(ticket, ticket): bool
+mutable pc1(thread): bool
+mutable pc2(thread): bool
+mutable pc3(thread): bool
+mutable m(thread, ticket): bool
+
+# immutability (added by hand)
+assume always (zero = zero')
+assume always (forall X:ticket, Y:ticket. le(X, Y) = (le(X, Y))')
+
+# axioms:
+assume always (forall X:ticket. le(X, X)) & (forall X:ticket, Y:ticket, Z:ticket. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:ticket, Y:ticket. le(X, Y) & le(Y, X) -> X = Y) & (forall X:ticket, Y:ticket. le(X, Y) | le(Y, X)) & (forall X:ticket. le(zero, X))
+
+# init:
+assume (forall T:thread. pc1(T)) & (forall T:thread. !pc2(T)) & (forall T:thread. !pc3(T)) & (service = zero) & (next_ticket = zero) & (forall T:thread, K:ticket. m(T, K) <-> K = zero)
+
+# transitions:
+assume always (exists t:thread. pc1(t) & (forall T:thread, K:ticket. (m(T, K))' <-> (if T = t then K = next_ticket else m(T, K))) & !le((next_ticket)', next_ticket) & (forall Z:ticket. !le(Z, next_ticket) -> le((next_ticket)', Z)) & (forall T:thread. (pc1(T))' <-> pc1(T) & T != t) & (forall T:thread. (pc2(T))' <-> pc2(T) | T = t) & (forall x0:thread. (pc3(x0))' = pc3(x0)) & (service)' = service) | (exists t:thread, k:ticket. pc2(t) & m(t, k) & le(k, service) & (forall T:thread. (pc2(T))' <-> pc2(T) & T != t) & (forall T:thread. (pc3(T))' <-> pc3(T) | T = t) & (forall x0:thread. (pc1(x0))' = pc1(x0)) & (forall x0:thread, x1:ticket. (m(x0, x1))' = m(x0, x1)) & (service)' = service & (next_ticket)' = next_ticket) | (exists t:thread. pc3(t) & !le((service)', service) & (forall Z:ticket. !le(Z, service) -> le((service)', Z)) & (forall T:thread. (pc3(T))' <-> pc3(T) & T != t) & (forall T:thread. (pc1(T))' <-> pc1(T) | T = t) & (forall x0:thread. (pc2(x0))' = pc2(x0)) & (forall x0:thread, x1:ticket. (m(x0, x1))' = m(x0, x1)) & (next_ticket)' = next_ticket)
+
+# safety:
+assert always (forall T1:thread, T2:thread. pc3(T1) & pc3(T2) -> T1 = T2)
+proof {
+    invariant forall T1:thread, T2:thread. pc3(T1) & pc3(T2) -> T1 = T2
+    invariant forall T:thread. pc1(T) | pc2(T) | pc3(T)
+    invariant forall T:thread. !pc1(T) | !pc2(T)
+    invariant forall T:thread. !pc1(T) | !pc3(T)
+    invariant forall T:thread. !pc2(T) | !pc3(T)
+    invariant forall T:thread, K1:ticket, K2:ticket. m(T, K1) & m(T, K2) -> K1 = K2
+    invariant forall T:thread. next_ticket = zero -> m(T, zero)
+    invariant forall T:thread, M:ticket. next_ticket != zero & m(T, M) -> !le(next_ticket, M)
+    invariant forall T:thread. pc2(T) | pc3(T) -> next_ticket != zero
+    invariant forall T1:thread, M:ticket, T2:thread. m(T1, M) & m(T2, M) & M != zero -> T1 = T2
+    invariant forall T:thread, M:ticket. pc2(T) & m(T, M) -> le(service, M)
+    invariant forall T:thread. pc3(T) -> m(T, service)
+    invariant le(service, next_ticket)
+    invariant forall T1:thread, T2:thread. !(!pc1(T1) & !pc1(T2) & m(T1, zero) & m(T2, zero) & T1 != T2)
+}

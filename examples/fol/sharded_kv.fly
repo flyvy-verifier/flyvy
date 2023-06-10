@@ -1,0 +1,38 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/sharded_kv.pyv
+
+# sorts:
+sort key
+sort node
+sort value
+
+# constants:
+
+
+# functions:
+
+
+# relations:
+mutable table(node, key, value): bool
+mutable owner(node, key): bool
+mutable transfer_msg(node, key, value): bool
+
+# init:
+assume (forall N:node, K:key, V:value. !table(N, K, V)) & (forall N:node, K:key, V:value. !transfer_msg(N, K, V)) & (forall N1:node, K:key, N2:node. owner(N1, K) & owner(N2, K) -> N1 = N2)
+
+# transitions:
+assume always (exists k:key, v:value, n_old:node, n_new:node. forall N:node, K:key, V:value. table(n_old, k, v) & ((table(N, K, V))' <-> table(N, K, V) & !(N = n_old & K = k & V = v)) & ((owner(N, K))' <-> owner(N, K) & !(N = n_old & K = k)) & ((transfer_msg(N, K, V))' <-> transfer_msg(N, K, V) | N = n_new & K = k & V = v)) | (exists n:node, k:key, v:value. forall N:node, K:key, V:value. transfer_msg(n, k, v) & ((transfer_msg(N, K, V))' <-> transfer_msg(N, K, V) & !(N = n & K = k & V = v)) & ((table(N, K, V))' <-> table(N, K, V) | N = n & K = k & V = v) & ((owner(N, K))' <-> owner(N, K) | N = n & K = k)) | (exists n:node, k:key, v:value. (forall N:node, K:key, V:value. owner(n, k) & (!(N = n & K = k) -> ((table(N, K, V))' <-> table(N, K, V))) & ((table(n, k, V))' <-> V = v)) & (forall x0:node, x1:key. (owner(x0, x1))' = owner(x0, x1)) & (forall x0:node, x1:key, x2:value. (transfer_msg(x0, x1, x2))' = transfer_msg(x0, x1, x2)))
+
+# safety:
+assert always (forall N1:node, K:key, V1:value, N2:node, V2:value. table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2)
+proof {
+    invariant forall N1:node, K:key, V1:value, N2:node, V2:value. table(N1, K, V1) & table(N2, K, V2) -> N1 = N2 & V1 = V2
+    invariant forall N1:node, K:key, N2:node. owner(N1, K) & owner(N2, K) -> N1 = N2
+    invariant forall N:node, K:key, V:value. table(N, K, V) -> owner(N, K)
+    invariant forall N1:node, K:key, V:value, N2:node. !(transfer_msg(N1, K, V) & owner(N2, K))
+    invariant forall N1:node, K:key, V1:value, N2:node, V2:value. transfer_msg(N1, K, V1) & transfer_msg(N2, K, V2) -> N1 = N2 & V1 = V2
+}

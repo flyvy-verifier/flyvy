@@ -1,0 +1,84 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/stoppable_paxos_forall_choosable.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+## Manually converted derived relations to definitions.
+
+# sorts:
+sort inst
+sort votemap
+sort round
+sort value
+sort quorum
+sort node
+
+# constants:
+immutable none: round
+immutable stop: value
+
+# functions:
+immutable maxr(votemap, inst): round
+immutable maxv(votemap, inst): value
+mutable decision_quorum(inst, round, value): quorum
+
+# relations:
+immutable le(round, round): bool
+immutable inst_le(inst, inst): bool
+immutable member(node, quorum): bool
+mutable one_a(round): bool
+mutable one_b_msg(node, round, votemap): bool
+mutable left_round(node, round): bool
+mutable joined_round(node, round): bool
+mutable proposal(inst, round, value): bool
+mutable active(round): bool
+mutable vote(node, inst, round, value): bool
+mutable decision(node, inst, round, value): bool
+def choosable(I:inst, R:round, V:value, Q:quorum) -> bool {
+    (forall N:node. member(N, Q) -> !left_round(N, R) | vote(N, I, R, V))
+}
+
+# immutability (added by hand)
+assume always (none = none')
+assume always (stop = stop')
+assume always (forall M:votemap, I:inst. maxr(M, I) = (maxr(M, I))')
+assume always (forall M:votemap, I:inst. maxv(M, I) = (maxv(M, I))')
+assume always (forall R1:round, R2:round. le(R1, R2) = (le(R1, R2))')
+assume always (forall I1:inst, I2:inst. inst_le(I1, I2) = (inst_le(I1, I2))')
+assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
+
+# axioms:
+assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall X:inst. inst_le(X, X)) & (forall X:inst, Y:inst, Z:inst. inst_le(X, Y) & inst_le(Y, Z) -> inst_le(X, Z)) & (forall X:inst, Y:inst. inst_le(X, Y) & inst_le(Y, X) -> X = Y) & (forall X:inst, Y:inst. inst_le(X, Y) | inst_le(Y, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# init:
+assume (forall R:round. !one_a(R)) & (forall N:node, R1:round, M:votemap. !one_b_msg(N, R1, M)) & (forall N:node, R:round. !left_round(N, R)) & (forall N:node, R:round. !joined_round(N, R)) & (forall I:inst, R:round, V:value. !proposal(I, R, V)) & (forall R:round. !active(R)) & (forall N:node, I:inst, R:round, V:value. !vote(N, I, R, V)) & (forall N:node, I:inst, R:round, V:value. !decision(N, I, R, V))
+
+# transitions:
+assume always (exists r:round. r != none & (forall R:round. (one_a(R))' <-> one_a(R) | R = r) & (forall x0:node, x1:round, x2:votemap. (one_b_msg(x0, x1, x2))' = one_b_msg(x0, x1, x2)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round. (joined_round(x0, x1))' = joined_round(x0, x1)) & (forall x0:inst, x1:round, x2:value. (proposal(x0, x1, x2))' = proposal(x0, x1, x2)) & (forall x0:round. (active(x0))' = active(x0)) & (forall x0:node, x1:inst, x2:round, x3:value. (vote(x0, x1, x2, x3))' = vote(x0, x1, x2, x3)) & (forall x0:node, x1:inst, x2:round, x3:value. (decision(x0, x1, x2, x3))' = decision(x0, x1, x2, x3)) & (forall x0:inst, x1:round, x2:value. (decision_quorum(x0, x1, x2))' = decision_quorum(x0, x1, x2))) | (exists n:node, r:round, m:votemap. r != none & one_a(r) & !left_round(n, r) & (forall I:inst. maxr(m, I) = none & (forall R:round, V:value. !(vote(n, I, R, V) & !le(r, R))) | vote(n, I, maxr(m, I), maxv(m, I)) & !le(r, maxr(m, I)) & (forall R:round, V:value. vote(n, I, R, V) & !le(r, R) -> le(R, maxr(m, I)))) & (forall N:node, R:round, M:votemap. (one_b_msg(N, R, M))' <-> one_b_msg(N, R, M) | N = n & R = r & M = m) & (forall N:node, R:round. (left_round(N, R))' <-> left_round(N, R) | N = n & !le(r, R)) & (forall N:node, R:round. (joined_round(N, R))' <-> joined_round(N, R) | N = n & R = r) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:inst, x1:round, x2:value. (proposal(x0, x1, x2))' = proposal(x0, x1, x2)) & (forall x0:round. (active(x0))' = active(x0)) & (forall x0:node, x1:inst, x2:round, x3:value. (vote(x0, x1, x2, x3))' = vote(x0, x1, x2, x3)) & (forall x0:node, x1:inst, x2:round, x3:value. (decision(x0, x1, x2, x3))' = decision(x0, x1, x2, x3)) & (forall x0:inst, x1:round, x2:value. (decision_quorum(x0, x1, x2))' = decision_quorum(x0, x1, x2))) | (exists r:round, q:quorum, m:votemap, im:inst. r != none & !active(r) & (forall N:node. member(N, q) -> joined_round(N, r)) & (forall I:inst. maxr(m, I) = none & (forall N:node, R:round, V:value. !(member(N, q) & !le(r, R) & vote(N, I, R, V))) | (exists N:node, R:round, V:value. member(N, q) & !le(r, R) & vote(N, I, R, V) & R = maxr(m, I) & V = maxv(m, I)) & (forall N:node, R:round, V:value. member(N, q) & !le(r, R) & vote(N, I, R, V) -> le(R, maxr(m, I)))) & (forall R:round. (active(R))' <-> active(R) | R = r) & (if forall I:inst. !(maxr(m, I) != none & maxv(m, I) = stop) then forall I:inst, R:round, V:value. (proposal(I, R, V))' <-> proposal(I, R, V) | R = r & maxr(m, I) != none & V = maxv(m, I) else maxr(m, im) != none & maxv(m, im) = stop & (forall I:inst. maxr(m, I) != none & maxv(m, I) = stop -> le(maxr(m, I), maxr(m, im))) & (if exists I:inst. !inst_le(I, im) & maxr(m, I) != none & !le(maxr(m, I), maxr(m, im)) then forall I:inst, R:round, V:value. (proposal(I, R, V))' <-> proposal(I, R, V) | R = r & maxr(m, I) != none & V = maxv(m, I) & !(maxv(m, I) = stop | !inst_le(I, im) & !le(maxr(m, im), maxr(m, I))) else forall I:inst, R:round, V:value. (proposal(I, R, V))' <-> proposal(I, R, V) | R = r & maxr(m, I) != none & V = maxv(m, I) & !(I != im & maxv(m, I) = stop | !inst_le(I, im)))) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round, x2:votemap. (one_b_msg(x0, x1, x2))' = one_b_msg(x0, x1, x2)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round. (joined_round(x0, x1))' = joined_round(x0, x1)) & (forall x0:node, x1:inst, x2:round, x3:value. (vote(x0, x1, x2, x3))' = vote(x0, x1, x2, x3)) & (forall x0:node, x1:inst, x2:round, x3:value. (decision(x0, x1, x2, x3))' = decision(x0, x1, x2, x3)) & (forall x0:inst, x1:round, x2:value. (decision_quorum(x0, x1, x2))' = decision_quorum(x0, x1, x2))) | (exists r:round, i:inst, v:value. (forall V:value, I:inst. r != none & active(r) & !proposal(i, r, V) & !(!inst_le(i, I) & proposal(I, r, stop)) & !(!inst_le(I, i) & proposal(I, r, V) & v = stop) & (forall I:inst, R:round, V:value. (proposal(I, R, V))' <-> proposal(I, R, V) | I = i & R = r & V = v)) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round, x2:votemap. (one_b_msg(x0, x1, x2))' = one_b_msg(x0, x1, x2)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round. (joined_round(x0, x1))' = joined_round(x0, x1)) & (forall x0:round. (active(x0))' = active(x0)) & (forall x0:node, x1:inst, x2:round, x3:value. (vote(x0, x1, x2, x3))' = vote(x0, x1, x2, x3)) & (forall x0:node, x1:inst, x2:round, x3:value. (decision(x0, x1, x2, x3))' = decision(x0, x1, x2, x3)) & (forall x0:inst, x1:round, x2:value. (decision_quorum(x0, x1, x2))' = decision_quorum(x0, x1, x2))) | (exists n:node, v:value, r:round, i:inst. r != none & !left_round(n, r) & proposal(i, r, v) & (forall N:node, I:inst, R:round, V:value. (vote(N, I, R, V))' <-> vote(N, I, R, V) | N = n & I = i & R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round, x2:votemap. (one_b_msg(x0, x1, x2))' = one_b_msg(x0, x1, x2)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round. (joined_round(x0, x1))' = joined_round(x0, x1)) & (forall x0:inst, x1:round, x2:value. (proposal(x0, x1, x2))' = proposal(x0, x1, x2)) & (forall x0:round. (active(x0))' = active(x0)) & (forall x0:node, x1:inst, x2:round, x3:value. (decision(x0, x1, x2, x3))' = decision(x0, x1, x2, x3)) & (forall x0:inst, x1:round, x2:value. (decision_quorum(x0, x1, x2))' = decision_quorum(x0, x1, x2))) | (exists n:node, r:round, v:value, q:quorum, i:inst. (forall N:node. r != none & (member(N, q) -> vote(N, i, r, v)) & (forall N:node, I:inst, R:round, V:value. (decision(N, I, R, V))' <-> decision(N, I, R, V) | N = n & I = i & R = r & V = v) & (forall I:inst, R:round, V:value. !(I = i & R = r & V = v) -> (decision_quorum(I, R, V))' = decision_quorum(I, R, V)) & (decision_quorum(i, r, v))' = q) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round, x2:votemap. (one_b_msg(x0, x1, x2))' = one_b_msg(x0, x1, x2)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round. (joined_round(x0, x1))' = joined_round(x0, x1)) & (forall x0:inst, x1:round, x2:value. (proposal(x0, x1, x2))' = proposal(x0, x1, x2)) & (forall x0:round. (active(x0))' = active(x0)) & (forall x0:node, x1:inst, x2:round, x3:value. (vote(x0, x1, x2, x3))' = vote(x0, x1, x2, x3)))
+
+# safety:
+assert always (forall N1:node, N2:node, I:inst, R1:round, R2:round, V1:value, V2:value. decision(N1, I, R1, V1) & decision(N2, I, R2, V2) -> V1 = V2) & (forall V:value. forall N1:node, N2:node, I1:inst, I2:inst, R1:round, R2:round. decision(N1, I1, R1, stop) & !inst_le(I2, I1) -> !decision(N2, I2, R2, V))
+proof {
+    invariant forall N1:node, N2:node, I:inst, R1:round, R2:round, V1:value, V2:value. decision(N1, I, R1, V1) & decision(N2, I, R2, V2) -> V1 = V2
+    invariant forall V:value. forall N1:node, N2:node, I1:inst, I2:inst, R1:round, R2:round. decision(N1, I1, R1, stop) & !inst_le(I2, I1) -> !decision(N2, I2, R2, V)
+    invariant forall I:inst, R:round, V:value. proposal(I, R, V) -> active(R)
+    invariant forall I:inst, R:round, V1:value, V2:value. proposal(I, R, V1) & proposal(I, R, V2) -> V1 = V2
+    invariant forall N:node, I:inst, R:round, V:value. vote(N, I, R, V) -> proposal(I, R, V)
+    invariant forall I:inst, R:round, V:value, N:node, M:node, Q:quorum. Q = decision_quorum(I, R, V) & decision(N, I, R, V) & member(M, Q) -> vote(M, I, R, V)
+    invariant forall N:node, R2:round, M:votemap, I:inst, R1:round, V2:value. one_b_msg(N, R2, M) & maxr(M, I) = none & !le(R2, R1) -> !vote(N, I, R1, V2)
+    invariant forall N:node, R:round, M:votemap, I:inst. one_b_msg(N, R, M) & maxr(M, I) != none -> !le(R, maxr(M, I)) & vote(N, I, maxr(M, I), maxv(M, I))
+    invariant forall N:node, R:round, M:votemap, I:inst, ROTHER:round, VOTHER:value. one_b_msg(N, R, M) & maxr(M, I) != none & !le(R, ROTHER) & !le(ROTHER, maxr(M, I)) -> !vote(N, I, ROTHER, VOTHER)
+    invariant forall I:inst, V:value. !proposal(I, none, V)
+    invariant forall N:node, I:inst, V:value. !vote(N, I, none, V)
+    invariant forall N:node, I:inst, V:value. !decision(N, I, none, V)
+    invariant forall N:node, M:votemap. !one_b_msg(N, none, M)
+    invariant !active(none)
+    invariant forall I:inst, R1:round, R2:round, V:value, Q:quorum. !le(R2, R1) & active(R2) & !proposal(I, R2, V) -> !choosable(I, R1, V, Q)
+    invariant forall I1:inst, R:round, I2:inst, V:value. proposal(I1, R, stop) & !inst_le(I2, I1) -> !proposal(I2, R, V)
+    invariant forall N:node, R2:round, R1:round. joined_round(N, R2) & !le(R2, R1) -> left_round(N, R1)
+    invariant forall N:node, R:round, M:votemap. one_b_msg(N, R, M) -> joined_round(N, R)
+}

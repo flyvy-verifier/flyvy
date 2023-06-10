@@ -1,0 +1,41 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/client_server_ae.pyv
+##
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort node
+sort response
+sort request
+
+# constants:
+
+
+# functions:
+
+
+# relations:
+mutable match_(request, response): bool
+mutable request_sent(node, request): bool
+mutable response_sent(node, response): bool
+mutable response_received(node, response): bool
+
+# immutability (added by hand)
+assume always (forall R:request, P:response. (match_(R, P) = (match_(R, P))'))
+
+# init:
+assume (forall N:node, R:request. !request_sent(N, R)) & (forall N:node, P:response. !response_sent(N, P)) & (forall N:node, P:response. !response_received(N, P))
+
+# transitions:
+assume always (exists n:node, r:request. (forall N:node, R:request. (request_sent(N, R))' <-> request_sent(N, R) | N = n & R = r) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1))) | (exists n:node, r:request, p:response. request_sent(n, r) & match_(r, p) & (forall N:node, P:response. (response_sent(N, P))' <-> response_sent(N, P) | N = n & P = p) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1))) | (exists n:node, p:response. response_sent(n, p) & (forall N:node, P:response. (response_received(N, P))' <-> response_received(N, P) | N = n & P = p) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)))
+
+# safety:
+assert always (forall N:node, P:response. response_received(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P)))
+proof {
+    invariant forall N:node, P:response. response_received(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P))
+    invariant forall N:node, P:response. response_sent(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P))
+}

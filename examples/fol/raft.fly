@@ -1,0 +1,137 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/raft.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort term
+sort quorum
+sort node
+sort log
+sort index
+sort value
+sort option_index
+sort option_term
+
+# constants:
+immutable term_zero: term
+immutable index_zero: index
+immutable none_index: option_index
+immutable none_term: option_term
+immutable log0: log
+mutable commit_index: index
+mutable commit_term: term
+mutable commit_value: value
+mutable commit_log: log
+mutable commit_quorum: quorum
+
+# functions:
+immutable oi_index(option_index): index
+immutable ot_term(option_term): term
+mutable term_leader(term): node
+immutable value_at(log, index): value
+mutable current_log(node): log
+mutable term_log(term): log
+mutable voting_quorum(term): quorum
+
+# relations:
+immutable term_le(term, term): bool
+immutable index_le(index, index): bool
+immutable member(node, quorum): bool
+immutable is_none_index(option_index): bool
+immutable is_none_term(option_term): bool
+mutable append_msg(term, option_index, option_term, index, term, value): bool
+mutable append_reply_msg(node, term, index, term): bool
+mutable request_vote_msg(node, term, option_index, option_term): bool
+mutable vote_msg(node, term, node): bool
+mutable leader(node, term): bool
+mutable voted(node, term): bool
+mutable started(term): bool
+mutable current_term(node, term): bool
+mutable left_term(node, term): bool
+immutable index_used(log, index): bool
+immutable term_at(log, index, term): bool
+mutable committed(index, value): bool
+mutable valid(log): bool
+
+# immutability (added by hand)
+assume always (term_zero = term_zero')
+assume always (index_zero = index_zero')
+assume always (none_index = none_index')
+assume always (none_term = none_term')
+assume always (log0 = log0')
+assume always (forall OI:option_index. oi_index(OI) = (oi_index(OI))')
+assume always (forall OT:option_term. ot_term(OT) = (ot_term(OT))')
+assume always (forall L:log, I:index. value_at(L, I) = (value_at(L, I))')
+assume always (forall T1:term, T2:term. term_le(T1, T2) = (term_le(T1, T2))')
+assume always (forall I1:index, I2:index. index_le(I1, I2) = (index_le(I1, I2))')
+assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
+assume always (forall OI:option_index. is_none_index(OI) = (is_none_index(OI))')
+assume always (forall OT:option_term. is_none_term(OT) = (is_none_term(OT))')
+assume always (forall L:log, I:index. index_used(L, I) = (index_used(L, I))')
+assume always (forall L:log, I:index, T:term. term_at(L, I, T) = (term_at(L, I, T))')
+
+# axioms:
+assume always (forall T:term. term_le(T, T)) & (forall T1:term, T2:term, T3:term. term_le(T1, T2) & term_le(T2, T3) -> term_le(T1, T3)) & (forall T1:term, T2:term. term_le(T1, T2) & term_le(T2, T1) -> T1 = T2) & (forall T1:term, T2:term. term_le(T1, T2) | term_le(T2, T1)) & (forall T:term. term_le(term_zero, T)) & (forall T:index. index_le(T, T)) & (forall T1:index, T2:index, T3:index. index_le(T1, T2) & index_le(T2, T3) -> index_le(T1, T3)) & (forall T1:index, T2:index. index_le(T1, T2) & index_le(T2, T1) -> T1 = T2) & (forall T1:index, T2:index. index_le(T1, T2) | index_le(T2, T1)) & (forall T:index. index_le(index_zero, T)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2)) & (forall OI:option_index. is_none_index(OI) <-> OI = none_index) & (forall OT:option_term. is_none_term(OT) <-> OT = none_term) & (forall L:log, I:index, T1:term, T2:term. term_at(L, I, T1) & term_at(L, I, T2) -> T1 = T2) & (forall I:index. !index_used(log0, I)) & (forall I:index, T:term. !term_at(log0, I, T))
+
+# init:
+assume (forall N:node, T:term. !leader(N, T)) & (forall T:term. !started(T)) & (forall N:node, T:term. !voted(N, T)) & (forall N:node, T:term. current_term(N, T) <-> T = term_zero) & (forall N:node, T:term. !left_term(N, T)) & (forall N:node. current_log(N) = log0) & (forall T:term, PLI:option_index, PLT:option_term, EI:index, ET:term, EV:value. !append_msg(T, PLI, PLT, EI, ET, EV)) & (forall F:node, T:term, EI:index, ET:term. !append_reply_msg(F, T, EI, ET)) & (forall C:node, T:term, LI:option_index, LT:option_term. !request_vote_msg(C, T, LI, LT)) & (forall C:node, T:term, V:node. !vote_msg(C, T, V)) & (forall I:index, V:value. !committed(I, V)) & (commit_index = index_zero) & (commit_log = log0) & (forall T:term. term_log(T) = log0) & (forall L:log. valid(L) <-> L = log0)
+
+# transitions:
+assume always (exists n:node, t:term, cand:node, t2:term, oli:option_index, olt:option_term, my_lli:option_index, my_llt:option_term. current_term(n, t) & request_vote_msg(cand, t2, oli, olt) & term_le(t, t2) & set_term(n, t2) & get_last(current_log(n), my_lli, my_llt) & !voted(n, t2) & (if is_none_index(my_lli) | !is_none_index(oli) & (!term_le(ot_term(olt), ot_term(my_llt)) | ot_term(olt) = ot_term(my_llt) & index_le(oi_index(my_lli), oi_index(oli))) then (forall N:node, T:term. (voted(N, T))' <-> voted(N, T) | N = n & T = t2) & (forall C:node, T:term, V:node. (vote_msg(C, T, V))' <-> vote_msg(C, T, V) | C = cand & T = t2 & V = n) else (forall N:node, T:term. (voted(N, T))' <-> voted(N, T)) & (forall C:node, T:term, V:node. (vote_msg(C, T, V))' <-> vote_msg(C, T, V))) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (forall x0:log. (valid(x0))' = valid(x0)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:node. (current_log(x0))' = current_log(x0)) & (forall x0:term. (term_log(x0))' = term_log(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0))) | (exists n:node, t:term, q:quorum. current_term(n, t) & (forall N:node. member(N, q) -> vote_msg(n, t, N)) & (forall T:term. T != t -> (voting_quorum(T))' = voting_quorum(T)) & (voting_quorum(t))' = q & (forall N:node, T:term. (leader(N, T))' <-> leader(N, T) | N = n & T = t) & (forall T:term. (started(T))' <-> started(T) | T = t) & (forall T:term. T != t -> (term_leader(T))' = term_leader(T)) & (term_leader(t))' = n & (forall T:term. T != t -> (term_log(T))' = term_log(T)) & (term_log(t))' = current_log(n) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:node. (vote_msg(x0, x1, x2))' = vote_msg(x0, x1, x2)) & (forall x0:node, x1:term. (voted(x0, x1))' = voted(x0, x1)) & (forall x0:node, x1:term. (current_term(x0, x1))' = current_term(x0, x1)) & (forall x0:node, x1:term. (left_term(x0, x1))' = left_term(x0, x1)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (forall x0:log. (valid(x0))' = valid(x0)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:node. (current_log(x0))' = current_log(x0))) | (exists n:node, t:term, t2:term, oli:option_index, olt:option_term. current_term(n, t) & !term_le(t2, t) & set_term(n, t2) & get_last(current_log(n), oli, olt) & (forall N:node, T:term, OI:option_index, OT:option_term. (request_vote_msg(N, T, OI, OT))' <-> request_vote_msg(N, T, OI, OT) | N = n & T = t2 & OI = oli & OT = olt) & (forall N:node, T:term. (voted(N, T))' <-> voted(N, T) | N = n & T = t2) & (forall C:node, T:term, V:node. (vote_msg(C, T, V))' <-> vote_msg(C, T, V) | C = n & T = t2 & V = n) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (forall x0:log. (valid(x0))' = valid(x0)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:node. (current_log(x0))' = current_log(x0)) & (forall x0:term. (term_log(x0))' = term_log(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0))) | (exists n:node, v:value, t:term, i:index, l2:log. current_term(n, t) & leader(n, t) & (let l:log = current_log(n) in !index_used(l, i) & (forall I:index. !index_le(i, I) -> index_used(l, I)) & (forall I:index. index_used(l2, I) <-> index_le(I, i)) & (forall I:index, T:term. term_at(l2, I, T) <-> !index_le(i, I) & term_at(l, I, T) | I = i & T = t) & (forall I:index. !index_le(i, I) -> value_at(l2, I) = value_at(l, I)) & value_at(l2, i) = v & (forall L:log. (valid(L))' <-> valid(L) | L = l2) & (forall N:node. N != n -> (current_log(N))' = current_log(N)) & (current_log(n))' = l2 & (forall T:term. T != t -> (term_log(T))' = term_log(T)) & (term_log(t))' = l2) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:node. (vote_msg(x0, x1, x2))' = vote_msg(x0, x1, x2)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:node, x1:term. (voted(x0, x1))' = voted(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:node, x1:term. (current_term(x0, x1))' = current_term(x0, x1)) & (forall x0:node, x1:term. (left_term(x0, x1))' = left_term(x0, x1)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0))) | (exists n:node, t:term, i:index, ti:term, opli:option_index, oplt:option_term. current_term(n, t) & leader(n, t) & (let l:log = current_log(n) in index_used(l, i) & term_at(l, i, ti) & get_pl(l, i, opli, oplt) & (let v:value = value_at(l, i) in forall T:term, OPI:option_index, OPT:option_term, I:index, TI:term, V:value. (append_msg(T, OPI, OPT, I, TI, V))' <-> append_msg(T, OPI, OPT, I, TI, V) | T = t & OPI = opli & OPT = oplt & I = i & TI = ti & V = v)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:node. (vote_msg(x0, x1, x2))' = vote_msg(x0, x1, x2)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:node, x1:term. (voted(x0, x1))' = voted(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:node, x1:term. (current_term(x0, x1))' = current_term(x0, x1)) & (forall x0:node, x1:term. (left_term(x0, x1))' = left_term(x0, x1)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (forall x0:log. (valid(x0))' = valid(x0)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:node. (current_log(x0))' = current_log(x0)) & (forall x0:term. (term_log(x0))' = term_log(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0))) | (exists n:node, t:term, t2:term, opi:option_index, opt:option_term, ei:index, et:term, ev:value, l2:log, ti:term. current_term(n, t) & append_msg(t2, opi, opt, ei, et, ev) & term_le(t, t2) & set_term(n, t2) & (let l:log = current_log(n) in if is_none_index(opi) then (index_used(l, ei) -> term_at(l, ei, ti)) & (if !index_used(l, ei) | et != ti then (forall I:index. index_used(l2, I) <-> I = ei) & (forall I:index, T:term. term_at(l2, I, T) <-> I = ei & T = et) & value_at(l2, ei) = ev & (forall L:log. (valid(L))' <-> valid(L) | L = l2) & (forall N:node. N != n -> (current_log(N))' = current_log(N)) & (current_log(n))' = l2 & (forall N:node, T:term, EI:index, ET:term. (append_reply_msg(N, T, EI, ET))' <-> append_reply_msg(N, T, EI, ET) | N = n & T = t2 & EI = ei & ET = et) else (forall L:log. (valid(L))' <-> valid(L)) & (forall N:node. (current_log(N))' = current_log(N)) & (forall N:node, T:term, EI:index, ET:term. (append_reply_msg(N, T, EI, ET))' <-> append_reply_msg(N, T, EI, ET))) else let pi:index = oi_index(opi) in let pt:term = ot_term(opt) in if term_at(l, pi, pt) then (index_used(l, ei) -> term_at(l, ei, ti)) & (if !index_used(l, ei) | et != ti then (forall I:index. index_used(l2, I) <-> index_le(I, ei)) & (forall I:index, T:term. term_at(l2, I, T) <-> !index_le(ei, I) & term_at(l, I, T) | I = ei & T = et) & (forall I:index. !index_le(ei, I) -> value_at(l2, I) = value_at(l, I)) & value_at(l2, ei) = ev & (forall L:log. (valid(L))' <-> valid(L) | L = l2) & (forall N:node. N != n -> (current_log(N))' = current_log(N)) & (current_log(n))' = l2 & (forall N:node, T:term, EI:index, ET:term. (append_reply_msg(N, T, EI, ET))' <-> append_reply_msg(N, T, EI, ET) | N = n & T = t2 & EI = ei & ET = et) else (forall L:log. (valid(L))' <-> valid(L)) & (forall N:node. (current_log(N))' = current_log(N)) & (forall N:node, T:term, EI:index, ET:term. (append_reply_msg(N, T, EI, ET))' <-> append_reply_msg(N, T, EI, ET))) else (forall L:log. (valid(L))' <-> valid(L)) & (forall N:node. (current_log(N))' = current_log(N)) & (forall N:node, T:term, EI:index, ET:term. (append_reply_msg(N, T, EI, ET))' <-> append_reply_msg(N, T, EI, ET))) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:node. (vote_msg(x0, x1, x2))' = vote_msg(x0, x1, x2)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:node, x1:term. (voted(x0, x1))' = voted(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:index, x1:value. (committed(x0, x1))' = committed(x0, x1)) & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_log)' = commit_log & (commit_quorum)' = commit_quorum & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:term. (term_log(x0))' = term_log(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0))) | (exists n:node, t:term, i:index, q:quorum. current_term(n, t) & leader(n, t) & (let l:log = current_log(n) in index_used(l, i) & (forall N:node. member(N, q) -> append_reply_msg(N, t, i, t)) & (forall I:index, V:value. (committed(I, V))' <-> committed(I, V) | index_le(I, i) & V = value_at(l, I)) & (if index_le(commit_index, i) then (commit_index)' = i & (commit_term)' = t & (commit_value)' = value_at(l, i) & (commit_quorum)' = q & (forall L:log. (valid(L))' <-> valid(L) | L = (commit_log)') & (forall I:index. index_used((commit_log)', I) <-> index_le(I, i)) & (forall I:index, T:term. term_at((commit_log)', I, T) <-> index_le(I, i) & term_at(l, I, T)) & (forall I:index. value_at((commit_log)', I) = value_at(l, I)) else (commit_log)' = commit_log & (commit_index)' = commit_index & (commit_term)' = commit_term & (commit_value)' = commit_value & (commit_quorum)' = commit_quorum & (forall L:log. (valid(L))' <-> valid(L)))) & (forall x0:term, x1:option_index, x2:option_term, x3:index, x4:term, x5:value. (append_msg(x0, x1, x2, x3, x4, x5))' = append_msg(x0, x1, x2, x3, x4, x5)) & (forall x0:node, x1:term, x2:index, x3:term. (append_reply_msg(x0, x1, x2, x3))' = append_reply_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:option_index, x3:option_term. (request_vote_msg(x0, x1, x2, x3))' = request_vote_msg(x0, x1, x2, x3)) & (forall x0:node, x1:term, x2:node. (vote_msg(x0, x1, x2))' = vote_msg(x0, x1, x2)) & (forall x0:node, x1:term. (leader(x0, x1))' = leader(x0, x1)) & (forall x0:node, x1:term. (voted(x0, x1))' = voted(x0, x1)) & (forall x0:term. (started(x0))' = started(x0)) & (forall x0:node, x1:term. (current_term(x0, x1))' = current_term(x0, x1)) & (forall x0:node, x1:term. (left_term(x0, x1))' = left_term(x0, x1)) & (forall x0:term. (term_leader(x0))' = term_leader(x0)) & (forall x0:node. (current_log(x0))' = current_log(x0)) & (forall x0:term. (term_log(x0))' = term_log(x0)) & (forall x0:term. (voting_quorum(x0))' = voting_quorum(x0)))
+
+# safety:
+assert always (forall I:index, V1:value, V2:value. committed(I, V1) & committed(I, V2) -> V1 = V2)
+proof {
+    invariant forall N2:node, T:term, N1:node. vote_msg(N2, T, N1) -> voted(N1, T)
+    invariant forall N2:node, T:term, N1:node, N3:node. vote_msg(N2, T, N1) & vote_msg(N3, T, N1) -> N2 = N3
+    invariant forall N1:node, T:term. leader(N1, T) -> (forall N2:node. member(N2, voting_quorum(T)) -> vote_msg(N1, T, N2))
+    invariant forall N1:node, T:term, N2:node. leader(N1, T) & leader(N2, T) -> N1 = N2
+    invariant forall N:node, T:term, OLI:option_index, OLT:option_term. request_vote_msg(N, T, OLI, OLT) -> (is_none_index(OLI) <-> is_none_term(OLT))
+    invariant forall C:node, T:term, OLI1:option_index, OLT1:option_term, OLI2:option_index, OLT2:option_term. request_vote_msg(C, T, OLI1, OLT1) & request_vote_msg(C, T, OLI2, OLT2) -> OLI1 = OLI2 & OLT1 = OLT2
+    invariant forall C:node, T:term, OLI:option_index, OLT:option_term. request_vote_msg(C, T, OLI, OLT) -> current_term(C, T) | left_term(C, T)
+    invariant forall C:node, T:term, OLI:option_index, OLT:option_term. request_vote_msg(C, T, OLI, OLT) & !is_none_index(OLI) & !left_term(C, T) & !started(T) -> term_at(current_log(C), oi_index(OLI), ot_term(OLT))
+    invariant forall C:node, T:term, OLI:option_index, OLT:option_term, I:index. request_vote_msg(C, T, OLI, OLT) & !is_none_index(OLI) & !left_term(C, T) & !started(T) & !index_le(I, oi_index(OLI)) -> !index_used(current_log(C), I)
+    invariant forall C:node, T:term, OLI:option_index, OLT:option_term, I:index. request_vote_msg(C, T, OLI, OLT) & is_none_index(OLI) & !left_term(C, T) & !started(T) -> !index_used(current_log(C), I)
+    invariant forall N:node, T2:term, T1:term. voted(N, T2) & !term_le(T2, T1) -> left_term(N, T1)
+    invariant forall T:term, OPI:option_index, OPT:option_term, EI:index, ET:term, EV:value. append_msg(T, OPI, OPT, EI, ET, EV) -> (is_none_index(OPI) <-> is_none_term(OPT))
+    invariant forall T:term, OPI:option_index, OPT:option_term, EI:index, ET:term, EV:value. append_msg(T, OPI, OPT, EI, ET, EV) & is_none_index(OPI) -> EI = index_zero
+    invariant forall T:term, OPI:option_index, OPT:option_term, EI:index, ET:term, EV:value. append_msg(T, OPI, OPT, EI, ET, EV) & !is_none_index(OPI) -> !index_le(EI, oi_index(OPI)) & (forall I:index. !index_le(EI, I) -> index_le(I, oi_index(OPI)))
+    invariant forall T:term, PLI:option_index, PLT:option_term, EI:index, ET:term, EV:value. append_msg(T, PLI, PLT, EI, ET, EV) & !is_none_index(PLI) -> term_at(term_log(T), oi_index(PLI), ot_term(PLT))
+    invariant forall T:term, PLI:option_index, PLT:option_term, EI:index, ET:term, EV:value. append_msg(T, PLI, PLT, EI, ET, EV) -> term_at(term_log(T), EI, ET) & EV = value_at(term_log(T), EI)
+    invariant forall N:node, T:term, EI:index, ET:term. append_reply_msg(N, T, EI, ET) -> term_at(term_log(T), EI, ET)
+    invariant forall T:term. valid(term_log(T))
+    invariant forall N:node. valid(current_log(N))
+    invariant valid(commit_log)
+    invariant forall L1:log, L2:log, I1:index, T1:term, I2:index, T2:term. valid(L1) & valid(L2) & index_used(L1, I1) & term_at(L1, I1, T1) & index_used(L2, I1) & term_at(L2, I1, T1) & index_le(I2, I1) -> (term_at(L1, I2, T2) <-> term_at(L2, I2, T2)) & value_at(L1, I2) = value_at(L2, I2)
+    invariant forall L:log, I1:index, I2:index. valid(L) & index_used(L, I1) & index_le(I2, I1) -> index_used(L, I2)
+    invariant forall L:log, I:index, T:term. valid(L) & term_at(L, I, T) -> index_used(L, I)
+    invariant forall L:log, I:index, T:term. valid(L) & term_at(L, I, T) -> index_used(term_log(T), I) & term_at(term_log(T), I, T) & value_at(term_log(T), I) = value_at(L, I)
+    invariant forall N:node, T1:term, T2:term. current_term(N, T1) & current_term(N, T2) -> T1 = T2
+    invariant forall N:node, T1:term, T2:term. current_term(N, T1) & !term_le(T1, T2) -> left_term(N, T2)
+    invariant forall N:node, T1:term, T2:term. left_term(N, T1) & !term_le(T1, T2) -> left_term(N, T2)
+    invariant forall N:node, T:term. !(left_term(N, T) & current_term(N, T))
+    invariant forall N:node, T:term. leader(N, T) -> current_term(N, T) | left_term(N, T)
+    invariant forall N:node, T:term. leader(N, T) -> started(T)
+    invariant forall T:term. started(T) -> leader(term_leader(T), T)
+    invariant forall N:node, I:index, T:term. term_at(current_log(N), I, T) -> current_term(N, T) | left_term(N, T)
+    invariant forall T2:term, I:index, T1:term. term_at(term_log(T2), I, T1) -> term_le(T1, T2)
+    invariant forall I:index, T:term. term_at(commit_log, I, T) -> term_le(T, commit_term)
+    invariant forall N:node, T:term. leader(N, T) & current_term(N, T) -> current_log(N) = term_log(T)
+    invariant forall T:term, I:index. index_used(term_log(T), I) -> started(T)
+    invariant commit_index != index_zero -> committed(commit_index, commit_value)
+    invariant forall I:index, V:value. committed(I, V) -> committed(commit_index, commit_value)
+    invariant committed(commit_index, commit_value) -> (forall N:node. member(N, commit_quorum) -> append_reply_msg(N, commit_term, commit_index, commit_term))
+    invariant forall I:index. committed(commit_index, commit_value) -> (index_used(commit_log, I) <-> index_le(I, commit_index))
+    invariant forall I:index, V:value. committed(I, V) <-> index_used(commit_log, I) & V = value_at(commit_log, I)
+    invariant index_used(commit_log, commit_index) -> term_at(commit_log, commit_index, commit_term)
+    invariant forall T1:term, I:index, N:node. (exists Q:quorum. forall N1:node. member(N1, Q) -> append_reply_msg(N1, T1, I, T1) | !left_term(N1, T1)) & append_reply_msg(N, T1, I, T1) -> term_at(current_log(N), I, T1)
+    invariant forall T1:term, I:index, N:node, C:node, T2:term. (exists Q:quorum. forall N1:node. member(N1, Q) -> append_reply_msg(N1, T1, I, T1) | !left_term(N1, T1)) & append_reply_msg(N, T1, I, T1) & vote_msg(C, T2, N) & !term_le(T2, T1) & !started(T2) & !left_term(C, T2) -> term_at(current_log(C), I, T1)
+    invariant forall T1:term, I:index, T2:term. term_at(term_log(T1), I, T1) & (exists Q:quorum. forall N:node. member(N, Q) -> append_reply_msg(N, T1, I, T1) | !left_term(N, T1)) & started(T2) & term_le(T1, T2) -> term_at(term_log(T2), I, T1)
+    invariant forall I:index, V1:value, V2:value. committed(I, V1) & committed(I, V2) -> V1 = V2
+}
