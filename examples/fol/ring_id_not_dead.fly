@@ -26,7 +26,7 @@ mutable pending(id, node): bool
 mutable sent(node): bool
 
 # immutability (added by hand)
-assume always (forall X:id. idn(X) = (idn(X))')
+assume always (forall X:node. idn(X) = (idn(X))')
 assume always (forall X:id, Y:id. le(X, Y) = (le(X, Y))')
 assume always (forall N1:node, N2:node, N3:node. btw(N1, N2, N3) = (btw(N1, N2, N3))')
 
