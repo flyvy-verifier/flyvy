@@ -53,6 +53,10 @@ grammar parser() for str {
         { Term::UnaryOp(op, Box::new(x)) }
 
         --
+        "if" __ cond:term() __ "then" __ then:term() __ "else" __  else_:(@) {
+            Term::Ite { cond: Box::new(cond), then: Box::new(then), else_: Box::new(else_) }
+        }
+        --
         x:(@) _ "|" _ y:@ { Term::nary(Or, x, y) }
         --
         x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
@@ -312,6 +316,20 @@ proof {
         assert_eq!(
             term("forall (x : t), (y : t2). f(x) & f(y)"),
             term("forall x:t, y:t2 . f(x) & f(y)"),
+        );
+    }
+
+    #[test]
+    fn test_if_then_else() {
+        term("if x then true else false");
+        term("if forall x. x = y then q else r");
+        assert_eq!(
+            term("if x = y then a & b else c | d"),
+            term("if x = y then (a & b) else (c | d)"),
+        );
+        assert_eq!(
+            term("a & if x = y then a & b else c & d"),
+            term("a & (if x = y then a & b else (c & d))"),
         );
     }
 }
