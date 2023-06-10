@@ -1,0 +1,48 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/client_server_db_ae.pyv
+##
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort db_request_id
+sort node
+sort response
+sort request
+
+# constants:
+
+
+# functions:
+
+
+# relations:
+immutable match_(request, response): bool
+mutable request_sent(node, request): bool
+mutable response_sent(node, response): bool
+mutable response_received(node, response): bool
+mutable db_request_sent(db_request_id, request): bool
+mutable db_response_sent(db_request_id, response): bool
+mutable t(db_request_id, node): bool
+
+# immutability (added by hand)
+assume always (forall R:request, P:response. (match_(R, P) = (match_(R, P))'))
+
+# init:
+assume (forall N:node, R:request. !request_sent(N, R)) & (forall N:node, P:response. !response_sent(N, P)) & (forall N:node, P:response. !response_received(N, P)) & (forall I:db_request_id, R:request. !db_request_sent(I, R)) & (forall I:db_request_id, P:response. !db_response_sent(I, P)) & (forall I:db_request_id, N:node. !t(I, N))
+
+# transitions:
+assume always (exists n:node, r:request. (forall N:node, R:request. (request_sent(N, R))' <-> request_sent(N, R) | N = n & R = r) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1)) & (forall x0:db_request_id, x1:request. (db_request_sent(x0, x1))' = db_request_sent(x0, x1)) & (forall x0:db_request_id, x1:response. (db_response_sent(x0, x1))' = db_response_sent(x0, x1)) & (forall x0:db_request_id, x1:node. (t(x0, x1))' = t(x0, x1))) | (exists n:node, r:request, i:db_request_id. request_sent(n, r) & (forall N:node. !t(i, N)) & (forall I:db_request_id, N:node. (t(I, N))' <-> t(I, N) | I = i & N = n) & (forall I:db_request_id, R:request. (db_request_sent(I, R))' <-> db_request_sent(I, R) | I = i & R = r) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1)) & (forall x0:db_request_id, x1:response. (db_response_sent(x0, x1))' = db_response_sent(x0, x1))) | (exists i:db_request_id, r:request, p:response. db_request_sent(i, r) & match_(r, p) & (forall I:db_request_id, P:response. (db_response_sent(I, P))' <-> db_response_sent(I, P) | I = i & P = p) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1)) & (forall x0:db_request_id, x1:request. (db_request_sent(x0, x1))' = db_request_sent(x0, x1)) & (forall x0:db_request_id, x1:node. (t(x0, x1))' = t(x0, x1))) | (exists n:node, i:db_request_id, p:response. db_response_sent(i, p) & t(i, n) & (forall N:node, P:response. (response_sent(N, P))' <-> response_sent(N, P) | N = n & P = p) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_received(x0, x1))' = response_received(x0, x1)) & (forall x0:db_request_id, x1:request. (db_request_sent(x0, x1))' = db_request_sent(x0, x1)) & (forall x0:db_request_id, x1:response. (db_response_sent(x0, x1))' = db_response_sent(x0, x1)) & (forall x0:db_request_id, x1:node. (t(x0, x1))' = t(x0, x1))) | (exists n:node, p:response. response_sent(n, p) & (forall N:node, P:response. (response_received(N, P))' <-> response_received(N, P) | N = n & P = p) & (forall x0:node, x1:request. (request_sent(x0, x1))' = request_sent(x0, x1)) & (forall x0:node, x1:response. (response_sent(x0, x1))' = response_sent(x0, x1)) & (forall x0:db_request_id, x1:request. (db_request_sent(x0, x1))' = db_request_sent(x0, x1)) & (forall x0:db_request_id, x1:response. (db_response_sent(x0, x1))' = db_response_sent(x0, x1)) & (forall x0:db_request_id, x1:node. (t(x0, x1))' = t(x0, x1)))
+
+# safety:
+assert always (forall N:node, P:response. response_received(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P)))
+proof {
+    invariant forall N:node, P:response. response_received(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P))
+    invariant forall N:node, P:response. response_sent(N, P) -> (exists R:request. request_sent(N, R) & match_(R, P))
+    invariant forall I:db_request_id, R:request. db_request_sent(I, R) -> (exists N:node. t(I, N) & request_sent(N, R))
+    invariant forall I:db_request_id, P:response. db_response_sent(I, P) -> (exists R:request. db_request_sent(I, R) & match_(R, P))
+    invariant forall I:db_request_id, N1:node, N2:node. t(I, N1) & t(I, N2) -> N1 = N2
+}

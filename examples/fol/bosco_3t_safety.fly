@@ -1,0 +1,72 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/bosco_3t_safety.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort quorum_a
+sort value
+sort quorum_b
+sort quorum_c
+sort node
+
+# constants:
+
+
+# functions:
+
+
+# relations:
+immutable member_f(node): bool
+immutable member_a(node, quorum_a): bool
+immutable member_b(node, quorum_b): bool
+immutable member_c(node, quorum_c): bool
+immutable input(node, value): bool
+mutable dec(node, value): bool
+mutable und_cons(node, value): bool
+mutable done(node): bool
+mutable und_cons_dec(value): bool
+mutable sent_msg(node, node, value): bool
+mutable rcv_msg(node, node, value): bool
+mutable sent_msg_proj(node, node): bool
+mutable rcv_msg_proj(node, node): bool
+
+# immutability (added by hand)
+assume always (forall N:node. member_f(node) = (member_f(node))')
+assume always (forall N:node, Q:quorum_a. member_a(N, Q) = (member_a(N, Q))')
+assume always (forall N:node, Q:quorum_b. member_b(N, Q) = (member_b(N, Q))')
+assume always (forall N:node, Q:quorum_c. member_c(N, Q) = (member_c(N, Q))')
+assume always (forall N:node, V:value. input(N, V) = (input(N, V))')
+
+# axioms:
+assume always (forall A:quorum_a, B:quorum_b. exists C:quorum_c. forall N:node. member_c(N, C) -> member_a(N, A) & member_b(N, B) & !member_f(N)) & (forall B:quorum_b, C:quorum_c. exists N:node. member_b(N, B) & member_c(N, C) & !member_f(N)) & (forall N:node, V1:value, V2:value. !member_f(N) & input(N, V1) & input(N, V2) -> V1 = V2)
+
+# init:
+assume (forall N:node, V:value. !member_f(N) -> !dec(N, V)) & (forall N:node, V:value. !member_f(N) -> !und_cons(N, V)) & (forall V:value. !und_cons_dec(V)) & (forall N1:node, N2:node, V:value. !member_f(N1) -> (sent_msg(N1, N2, V) <-> input(N1, V))) & (forall N1:node, N2:node. !member_f(N1) -> sent_msg_proj(N1, N2)) & (forall N1:node, N2:node, V:value. sent_msg(N1, N2, V) -> sent_msg_proj(N1, N2)) & (forall N1:node, N2:node, V:value. rcv_msg(N1, N2, V) -> rcv_msg_proj(N1, N2)) & (forall N2:node, N1:node, V:value. !member_f(N2) -> !rcv_msg(N1, N2, V)) & (forall N2:node, N1:node. !member_f(N2) -> !rcv_msg_proj(N1, N2)) & (forall N:node. !done(N))
+
+# transitions:
+assume always (exists n:node, s:node, v:value. !done(n) & sent_msg(s, n, v) & (forall S:node, D:node, V:value. (rcv_msg(S, D, V))' <-> rcv_msg(S, D, V) | S = s & D = n & V = v) & (forall S:node, D:node. (rcv_msg_proj(S, D))' <-> rcv_msg_proj(S, D) | S = s & D = n) & !(exists A:quorum_a. forall N:node. member_a(N, A) -> (rcv_msg_proj(N, n))') & (forall x0:node, x1:value. (dec(x0, x1))' = dec(x0, x1)) & (forall x0:node, x1:value. (und_cons(x0, x1))' = und_cons(x0, x1)) & (forall x0:node. (done(x0))' = done(x0)) & (forall x0:value. (und_cons_dec(x0))' = und_cons_dec(x0)) & (forall x0:node, x1:node, x2:value. (sent_msg(x0, x1, x2))' = sent_msg(x0, x1, x2)) & (forall x0:node, x1:node. (sent_msg_proj(x0, x1))' = sent_msg_proj(x0, x1))) | (exists n:node, s:node, v:value, u:value, w:value. !done(n) & sent_msg(s, n, v) & (forall S:node, D:node, V:value. (rcv_msg(S, D, V))' <-> rcv_msg(S, D, V) | S = s & D = n & V = v) & (forall S:node, D:node. (rcv_msg_proj(S, D))' <-> rcv_msg_proj(S, D) | S = s & D = n) & (exists A:quorum_a. forall N:node. member_a(N, A) -> (rcv_msg_proj(N, n))') & (if exists U:value. exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, U))' then (exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, u))') & (forall N:node, V:value. (dec(N, V))' <-> dec(N, V) | N = n & V = u) else forall N:node, V:value. (dec(N, V))' <-> dec(N, V)) & (exists C:quorum_c. forall N:node. member_c(N, C) -> (rcv_msg(N, n, w))') & (forall N:node, V:value. (und_cons(N, V))' <-> und_cons(N, V) | N = n & V = w) & (forall N:node. (done(N))' <-> done(N) | N = n) & (forall x0:value. (und_cons_dec(x0))' = und_cons_dec(x0)) & (forall x0:node, x1:node, x2:value. (sent_msg(x0, x1, x2))' = sent_msg(x0, x1, x2)) & (forall x0:node, x1:node. (sent_msg_proj(x0, x1))' = sent_msg_proj(x0, x1))) | (exists n:node, s:node, v:value, u:value, w:value. !done(n) & sent_msg(s, n, v) & (forall S:node, D:node, V:value. (rcv_msg(S, D, V))' <-> rcv_msg(S, D, V) | S = s & D = n & V = v) & (forall S:node, D:node. (rcv_msg_proj(S, D))' <-> rcv_msg_proj(S, D) | S = s & D = n) & (exists A:quorum_a. forall N:node. member_a(N, A) -> (rcv_msg_proj(N, n))') & (if exists U:value. exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, U))' then (exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, u))') & (forall N:node, V:value. (dec(N, V))' <-> dec(N, V) | N = n & V = u) else forall N:node, V:value. (dec(N, V))' <-> dec(N, V)) & !(exists W:value, C:quorum_c. forall N:node. member_c(N, C) -> (rcv_msg(N, n, W))') & input(n, w) & (forall N:node, V:value. (und_cons(N, V))' <-> und_cons(N, V) | N = n & V = w) & (forall N:node. (done(N))' <-> done(N) | N = n) & (forall x0:value. (und_cons_dec(x0))' = und_cons_dec(x0)) & (forall x0:node, x1:node, x2:value. (sent_msg(x0, x1, x2))' = sent_msg(x0, x1, x2)) & (forall x0:node, x1:node. (sent_msg_proj(x0, x1))' = sent_msg_proj(x0, x1))) | (exists n:node, s:node, v:value, u:value, w:value. !done(n) & sent_msg(s, n, v) & (forall S:node, D:node, V:value. (rcv_msg(S, D, V))' <-> rcv_msg(S, D, V) | S = s & D = n & V = v) & (forall S:node, D:node. (rcv_msg_proj(S, D))' <-> rcv_msg_proj(S, D) | S = s & D = n) & (exists A:quorum_a. forall N:node. member_a(N, A) -> (rcv_msg_proj(N, n))') & (if exists U:value. exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, U))' then (exists B:quorum_b. forall N:node. member_b(N, B) -> (rcv_msg(N, n, u))') & (forall N:node, V:value. (dec(N, V))' <-> dec(N, V) | N = n & V = u) else forall N:node, V:value. (dec(N, V))' <-> dec(N, V)) & (exists U1:value, U2:value, C1:quorum_c, C2:quorum_c. U1 != U2 & (forall N:node. member_c(N, C1) -> (rcv_msg(N, n, U1))') & (forall N:node. member_c(N, C2) -> (rcv_msg(N, n, U2))')) & input(n, w) & (forall N:node, V:value. (und_cons(N, V))' <-> und_cons(N, V) | N = n & V = w) & (forall N:node. (done(N))' <-> done(N) | N = n) & (forall x0:value. (und_cons_dec(x0))' = und_cons_dec(x0)) & (forall x0:node, x1:node, x2:value. (sent_msg(x0, x1, x2))' = sent_msg(x0, x1, x2)) & (forall x0:node, x1:node. (sent_msg_proj(x0, x1))' = sent_msg_proj(x0, x1))) | (exists v:value. (forall V:value. !und_cons_dec(V)) & ((exists N:node. !member_f(N) & und_cons(N, v)) | (exists N1:node, N2:node, V1:value, V2:value. !member_f(N1) & !member_f(N2) & und_cons(N1, V1) & und_cons(N2, V2) & V1 != V2)) & (forall V:value. (und_cons_dec(V))' <-> und_cons_dec(V) | V = v) & (forall x0:node, x1:value. (dec(x0, x1))' = dec(x0, x1)) & (forall x0:node, x1:value. (und_cons(x0, x1))' = und_cons(x0, x1)) & (forall x0:node. (done(x0))' = done(x0)) & (forall x0:node, x1:node, x2:value. (sent_msg(x0, x1, x2))' = sent_msg(x0, x1, x2)) & (forall x0:node, x1:node, x2:value. (rcv_msg(x0, x1, x2))' = rcv_msg(x0, x1, x2)) & (forall x0:node, x1:node. (sent_msg_proj(x0, x1))' = sent_msg_proj(x0, x1)) & (forall x0:node, x1:node. (rcv_msg_proj(x0, x1))' = rcv_msg_proj(x0, x1)))
+
+# safety:
+assert always (forall N1:node, N2:node, V1:value, V2:value. !member_f(N1) & !member_f(N2) & dec(N1, V1) & dec(N2, V2) -> V1 = V2) & (forall N:node, V1:value, V2:value. !member_f(N) & dec(N, V1) & und_cons_dec(V2) -> V1 = V2) & (forall V1:value, V2:value. (forall N:node. !member_f(N) -> input(N, V1)) & V1 != V2 -> (forall M:node. !member_f(M) -> !dec(M, V2))) & (forall V1:value, V2:value. (forall N:node. !member_f(N) -> input(N, V1)) & V1 != V2 -> !und_cons_dec(V2))
+proof {
+    invariant forall N1:node, N2:node, V1:value, V2:value. !member_f(N1) & !member_f(N2) & dec(N1, V1) & dec(N2, V2) -> V1 = V2
+    invariant forall N:node, V1:value, V2:value. !member_f(N) & dec(N, V1) & und_cons_dec(V2) -> V1 = V2
+    invariant forall V1:value, V2:value. (forall N:node. !member_f(N) -> input(N, V1)) & V1 != V2 -> (forall M:node. !member_f(M) -> !dec(M, V2))
+    invariant forall V1:value, V2:value. (forall N:node. !member_f(N) -> input(N, V1)) & V1 != V2 -> !und_cons_dec(V2)
+    invariant forall N1:node, N2:node, V:value. sent_msg(N1, N2, V) -> sent_msg_proj(N1, N2)
+    invariant forall N1:node, N2:node, V:value. rcv_msg(N1, N2, V) -> rcv_msg_proj(N1, N2)
+    invariant forall N1:node, N2:node, V:value. !member_f(N1) & !member_f(N2) & sent_msg(N1, N2, V) & rcv_msg_proj(N1, N2) -> rcv_msg(N1, N2, V)
+    invariant forall N1:node, N2:node, V:value. !member_f(N1) -> (sent_msg(N1, N2, V) <-> input(N1, V))
+    invariant forall N:node, V1:value, V2:value. !member_f(N) & und_cons(N, V1) & und_cons(N, V2) -> V1 = V2
+    invariant forall N:node, V:value. !member_f(N) & und_cons(N, V) -> done(N)
+    invariant forall N2:node, N1:node, V:value. !member_f(N2) & rcv_msg(N1, N2, V) -> sent_msg(N1, N2, V)
+    invariant forall V:value. (forall N:node. member_f(N) | !dec(N, V)) | (exists B:quorum_b. forall M:node. !member_b(M, B) | member_f(M) | sent_msg(M, M, V))
+    invariant forall V:value. (exists N:node. !member_f(N) & done(N) & !und_cons(N, V)) -> !(exists B:quorum_b. forall M:node. member_b(M, B) & !member_f(M) -> sent_msg(M, M, V))
+    invariant (forall V:value. und_cons_dec(V) -> (exists N:node. !member_f(N) & und_cons(N, V))) | (exists N1:node, N2:node, V1:value, V2:value. !member_f(N1) & !member_f(N2) & und_cons(N1, V1) & und_cons(N2, V2) & V1 != V2)
+}

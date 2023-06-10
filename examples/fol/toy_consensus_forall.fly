@@ -1,0 +1,47 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/toy_consensus_forall.pyv
+##
+## Manually added "always" to axiom.
+## Manually enforced immutability using additional axioms.
+
+# sorts:
+sort quorum
+sort node
+sort value
+
+# constants:
+mutable voting_quorum: quorum
+
+# functions:
+
+
+# relations:
+immutable member(node, quorum): bool
+mutable voted(node): bool
+mutable vote(node, value): bool
+mutable decided(value): bool
+
+# immutability (added by hand)
+assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
+
+# axioms:
+assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# init:
+assume (forall N:node. !voted(N)) & (forall N:node, V:value. !vote(N, V)) & (forall V:value. !decided(V))
+
+# transitions:
+assume always (exists n:node, v:value. (forall N:node, V:value. !voted(n) & ((vote(N, V))' <-> vote(N, V) | N = n & V = v) & ((voted(N))' <-> voted(N) | N = n)) & (forall x0:value. (decided(x0))' = decided(x0)) & (voting_quorum)' = voting_quorum) | (exists v:value, q:quorum. (forall N:node, V:value. (member(N, q) -> vote(N, v)) & ((decided(V))' <-> decided(V) | V = v) & (voting_quorum)' = q) & (forall x0:node. (voted(x0))' = voted(x0)) & (forall x0:node, x1:value. (vote(x0, x1))' = vote(x0, x1)))
+
+# safety:
+assert always (forall V1:value, V2:value. decided(V1) & decided(V2) -> V1 = V2)
+proof {
+    invariant forall V1:value, V2:value. decided(V1) & decided(V2) -> V1 = V2
+    invariant forall N:node, V:value. vote(N, V) -> voted(N)
+    invariant forall N:node, V1:value, V2:value. vote(N, V1) & vote(N, V2) -> V1 = V2
+    invariant forall V:value, N:node. decided(V) & member(N, voting_quorum) -> vote(N, V)
+}

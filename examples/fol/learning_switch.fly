@@ -1,0 +1,36 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/learning_switch.pyv
+
+# sorts:
+sort node
+
+# constants:
+
+
+# functions:
+
+
+# relations:
+mutable table(node, node, node): bool
+mutable pending(node, node, node, node): bool
+
+# init:
+assume (forall T:node, N1:node, N2:node. table(T, N1, N2) <-> N1 = N2) & (forall PS:node, PD:node, S:node, D:node. !pending(PS, PD, S, D))
+
+# transitions:
+assume always (exists ps:node, pd:node. (forall PS:node, PD:node, S:node, D:node. (pending(PS, PD, S, D))' <-> pending(PS, PD, S, D) | PS = ps & PD = pd & S = ps & D = ps) & (forall x0:node, x1:node, x2:node. (table(x0, x1, x2))' = table(x0, x1, x2))) | (exists ps:node, pd:node, sw0:node, sw1:node, nondet:node. pending(ps, pd, sw0, sw1) & (forall PS:node, PD:node, S:node, D:node. (pending(PS, PD, S, D))' <-> pending(PS, PD, S, D) & PS = nondet | PS = ps & PD = pd & S = sw1) & (forall T:node, N1:node, N2:node. (table(T, N1, N2))' <-> table(T, N1, N2) | T = ps & ps != sw1 & (forall W:node. W != sw1 -> !table(T, sw1, W)) & table(T, N1, sw1) & table(T, sw0, N2)))
+
+# safety:
+assert always (forall T:node, X:node. table(T, X, X)) & (forall T:node, X:node, Y:node, Z:node. table(T, X, Y) & table(T, Y, Z) -> table(T, X, Z)) & (forall T:node, X:node, Y:node. table(T, X, Y) & table(T, Y, X) -> X = Y) & (forall T:node, X:node, Y:node, Z:node. table(T, X, Y) & table(T, X, Z) -> table(T, Y, Z) | table(T, Z, Y))
+proof {
+    invariant forall T:node, X:node. table(T, X, X)
+    invariant forall T:node, X:node, Y:node, Z:node. table(T, X, Y) & table(T, Y, Z) -> table(T, X, Z)
+    invariant forall T:node, X:node, Y:node. table(T, X, Y) & table(T, Y, X) -> X = Y
+    invariant forall T:node, X:node, Y:node, Z:node. table(T, X, Y) & table(T, X, Z) -> table(T, Y, Z) | table(T, Z, Y)
+    invariant forall PS:node, PD:node, S:node, D:node. pending(PS, PD, S, D) & PS != S -> table(PS, S, PS)
+    invariant forall T:node, X:node, Y:node. table(T, X, Y) & T != Y & X != Y -> table(T, Y, T)
+}
