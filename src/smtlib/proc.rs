@@ -118,10 +118,7 @@ impl Z3Conf {
         };
         cmd.args(["-in", "-smt2"]);
         cmd.option("model.completion", "true");
-        let mut conf = Self(cmd);
-        // 10-minute timeout
-        conf.timeout_ms(Some(600_000));
-        conf
+        Self(cmd)
     }
 
     /// Enable model compaction
@@ -194,6 +191,12 @@ impl CvcConf {
         } else {
             self.cmd.option("fs-interleave", "true");
         }
+    }
+
+    /// Set a per-query time limit. None sets no time limit.
+    pub fn timeout_ms(&mut self, ms: Option<usize>) {
+        let ms = ms.unwrap_or(0);
+        self.cmd.option("tlimit-per", format!("{ms}"));
     }
 
     /// Get the final command to run the solver.

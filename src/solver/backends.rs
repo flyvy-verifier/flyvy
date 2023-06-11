@@ -37,11 +37,23 @@ pub enum SolverType {
     Cvc5,
 }
 
+#[derive(Debug, Clone)]
+struct GenericOptions {
+    timeout_ms: Option<usize>,
+}
+
+impl Default for GenericOptions {
+    fn default() -> Self {
+        Self { timeout_ms: None }
+    }
+}
+
 /// A Backend for launching and parsing Z3/CVC4/CVC5, with some hard-coded options.
 #[derive(Debug, Clone)]
 pub struct GenericBackend {
     solver_type: SolverType,
     bin: String,
+    opts: GenericOptions,
 }
 
 impl GenericBackend {
@@ -51,7 +63,14 @@ impl GenericBackend {
         Self {
             solver_type,
             bin: bin.to_string(),
+            opts: Default::default(),
         }
+    }
+
+    /// Set the solver timeout. None disables the timeout.
+    pub fn timeout_ms(&mut self, timeout_ms: Option<usize>) -> &mut Self {
+        self.opts.timeout_ms = timeout_ms;
+        return self;
     }
 }
 
@@ -70,18 +89,21 @@ impl Backend for &GenericBackend {
             SolverType::Z3 => {
                 let mut conf = Z3Conf::new(&self.bin);
                 conf.model_compact();
+                conf.timeout_ms(self.opts.timeout_ms);
                 conf.done()
             }
             SolverType::Cvc4 => {
                 let mut conf = CvcConf::new_cvc4(&self.bin);
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
+                conf.timeout_ms(self.opts.timeout_ms);
                 conf.done()
             }
             SolverType::Cvc5 => {
                 let mut conf = CvcConf::new_cvc5(&self.bin);
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
+                conf.timeout_ms(self.opts.timeout_ms);
                 conf.done()
             }
         }
@@ -245,6 +267,7 @@ mod tests {
         let backend = GenericBackend {
             solver_type: SolverType::Z3,
             bin: "z3".to_string(),
+            opts: Default::default(),
         };
 
         let model_text =
@@ -271,6 +294,7 @@ mod tests {
         let backend = GenericBackend {
             solver_type: SolverType::Z3,
             bin: solver_path("z3"),
+            opts: Default::default(),
         };
 
         let model_text =
@@ -293,6 +317,7 @@ mod tests {
         let backend = GenericBackend {
             solver_type: SolverType::Z3,
             bin: solver_path("z3"),
+            opts: Default::default(),
         };
         let mut solver =
             Solver::new(&sig, 1, &backend, None).expect("could not create solver for test");
