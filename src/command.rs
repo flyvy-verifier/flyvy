@@ -58,6 +58,10 @@ struct SolverArgs {
     #[arg(long, global = true)]
     /// Output smt2 file alongside input file
     smt: bool,
+
+    #[arg(long, default_value_t = 600, global = true)]
+    /// SMT solver timeout in seconds
+    timeout: usize,
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -284,10 +288,13 @@ impl SolverArgs {
         } else {
             None
         };
-        SolverConf {
-            backend: GenericBackend::new(backend_type, &solver_bin),
-            tee,
-        }
+        let mut backend = GenericBackend::new(backend_type, &solver_bin);
+        backend.timeout_ms(if self.timeout > 0 {
+            Some(self.timeout * 1000)
+        } else {
+            None
+        });
+        SolverConf { backend, tee }
     }
 }
 
