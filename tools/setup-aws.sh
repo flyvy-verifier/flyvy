@@ -22,12 +22,13 @@ tar -xf z3-4.12.2.tar.gz
 cd z3-z3-4.12.2
 ./configure >/dev/null
 cd build
-make -j"$(nproc)"
+time make -j"$(nproc)"
 sudo make install
 cd
 
 if [ ! -e ~/temporal-verifier ]; then
-  git clone https://github.com/vmware-research/temporal-verifier
+  # TODO: remove branch when qalpha is merged
+  git clone -b qalpha https://github.com/vmware-research/temporal-verifier
 fi
 cd ~/temporal-verifier
 ./tools/download-solvers.sh
