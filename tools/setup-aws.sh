@@ -20,9 +20,9 @@ wget 'https://github.com/Z3Prover/z3/archive/refs/tags/z3-4.12.2.tar.gz'
 tar -xf z3-4.12.2.tar.gz
 
 cd z3-z3-4.12.2
-./configure > /dev/null
+./configure >/dev/null
 cd build
-make -j4
+make -j"$(nproc)"
 sudo make install
 cd
 
