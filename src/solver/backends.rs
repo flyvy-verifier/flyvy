@@ -40,11 +40,15 @@ pub enum SolverType {
 #[derive(Debug, Clone)]
 struct GenericOptions {
     timeout_ms: Option<usize>,
+    seed: usize,
 }
 
 impl Default for GenericOptions {
     fn default() -> Self {
-        Self { timeout_ms: None }
+        Self {
+            timeout_ms: None,
+            seed: 0,
+        }
     }
 }
 
@@ -72,6 +76,12 @@ impl GenericBackend {
         self.opts.timeout_ms = timeout_ms;
         return self;
     }
+
+    /// Set the solver's random seed.
+    pub fn seed(&mut self, seed: usize) -> &mut Self {
+        self.opts.seed = seed;
+        return self;
+    }
 }
 
 fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
@@ -90,6 +100,12 @@ impl Backend for &GenericBackend {
                 let mut conf = Z3Conf::new(&self.bin);
                 conf.model_compact();
                 conf.timeout_ms(self.opts.timeout_ms);
+                if self.opts.seed != 0 {
+                    conf.options()
+                        .option("smt.random_seed", format!("{}", self.opts.seed));
+                    conf.options()
+                        .option("sat.random_seed", format!("{}", self.opts.seed));
+                }
                 conf.done()
             }
             SolverType::Cvc4 => {
@@ -97,6 +113,9 @@ impl Backend for &GenericBackend {
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
                 conf.timeout_ms(self.opts.timeout_ms);
+                if self.opts.seed != 0 {
+                    conf.options().option("seed", format!("{}", self.opts.seed));
+                }
                 conf.done()
             }
             SolverType::Cvc5 => {
@@ -104,6 +123,9 @@ impl Backend for &GenericBackend {
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
                 conf.timeout_ms(self.opts.timeout_ms);
+                if self.opts.seed != 0 {
+                    conf.options().option("seed", format!("{}", self.opts.seed));
+                }
                 conf.done()
             }
         }

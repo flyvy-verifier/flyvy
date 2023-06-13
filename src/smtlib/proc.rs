@@ -82,7 +82,8 @@ impl SolverCmd {
             .extend(args.into_iter().map(|s| s.as_ref().to_string()));
     }
 
-    fn option<S: AsRef<str>>(&mut self, name: &str, val: S) {
+    /// Set an option.
+    pub fn option<S: AsRef<str>>(&mut self, name: &str, val: S) {
         self.options
             .push((name.to_string(), val.as_ref().to_string()));
     }
@@ -131,6 +132,11 @@ impl Z3Conf {
         // this is the default Z3 timeout
         let ms = ms.unwrap_or(4294967295);
         self.0.option("timeout", format!("{ms}"));
+    }
+
+    /// Get access to the raw options of the solver.
+    pub fn options(&mut self) -> &mut SolverCmd {
+        &mut self.0
     }
 
     /// Get the final command to run the solver.
@@ -197,6 +203,11 @@ impl CvcConf {
     pub fn timeout_ms(&mut self, ms: Option<usize>) {
         let ms = ms.unwrap_or(0);
         self.cmd.option("tlimit-per", format!("{ms}"));
+    }
+
+    /// Get access to the raw options of the solver.
+    pub fn options(&mut self) -> &mut SolverCmd {
+        &mut self.cmd
     }
 
     /// Get the final command to run the solver.
