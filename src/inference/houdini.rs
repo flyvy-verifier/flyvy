@@ -14,11 +14,9 @@ use rayon::prelude::*;
 use crate::{
     fly::syntax::{Module, Signature, Term, ThmStmt},
     smtlib::proc::SatResp,
+    solver::SolverConf,
     term::Next,
-    verify::{
-        safety::InvariantAssertion, AssertionFailure, FailureType, QueryError, SolveError,
-        SolverConf,
-    },
+    verify::{safety::InvariantAssertion, AssertionFailure, FailureType, QueryError, SolveError},
 };
 
 // TODO: the error reporting should be specific to Houdini, and these errors

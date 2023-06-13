@@ -14,8 +14,8 @@ use crate::{
     },
     inference::quant::QuantifierConfig,
     smtlib::proc::SatResp,
+    solver::SolverConf,
     term::{FirstOrder, Next},
-    verify::SolverConf,
 };
 
 use rayon::prelude::*;

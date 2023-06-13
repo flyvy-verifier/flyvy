@@ -27,10 +27,10 @@ mod tests {
         smtlib::proc::SatResp,
         solver::{
             backends::{GenericBackend, SolverType},
-            solver_path,
+            solver_path, SolverConf,
         },
         term::Next,
-        verify::{safety::InvariantAssertion, SolverConf},
+        verify::safety::InvariantAssertion,
     };
 
     struct Task {

@@ -13,13 +13,13 @@ use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
-use crate::solver::solver_path;
+use crate::solver::{solver_path, SolverConf};
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
     inference::{fixpoint_multi, fixpoint_single, QfBody},
     solver::backends::{self, GenericBackend},
-    verify::{verify_module, SolverConf},
+    verify::verify_module,
 };
 use clap::Args;
 use codespan_reporting::{

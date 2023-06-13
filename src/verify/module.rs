@@ -2,36 +2,22 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use rayon::prelude::*;
 
 use super::error::{AssertionFailure, FailureType, QueryError, SolveError};
 use super::safety::InvariantAssertion;
 use crate::fly::syntax::Proof;
+use crate::solver::SolverConf;
 use crate::{
     fly::{
         printer,
         syntax::{Module, Signature, Term, ThmStmt},
     },
     smtlib::proc::SatResp,
-    solver::{backends::GenericBackend, Backend, Solver},
+    solver::{Backend, Solver},
     term::FirstOrder,
 };
-
-#[derive(Debug, Clone)]
-pub struct SolverConf {
-    pub backend: GenericBackend,
-    pub tee: Option<PathBuf>,
-}
-
-impl SolverConf {
-    pub fn solver(&self, sig: &Signature, n_states: usize) -> Solver<&GenericBackend> {
-        // TODO: failures to start the solver should be bubbled up to user nicely
-        Solver::new(sig, n_states, &self.backend, self.tee.as_deref())
-            .expect("could not start solver")
-    }
-}
 
 fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryError> {
     solver.assert(&Term::negate(t));

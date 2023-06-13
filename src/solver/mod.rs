@@ -10,3 +10,5 @@ mod path;
 mod sexp;
 pub use imp::{Backend, FOModel, Solver};
 pub use path::solver_path;
+mod conf;
+pub use conf::SolverConf;

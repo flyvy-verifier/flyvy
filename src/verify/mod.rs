@@ -7,5 +7,4 @@ mod error;
 pub use error::*;
 mod module;
 pub use module::verify_module;
-pub use module::SolverConf;
 pub mod safety;
