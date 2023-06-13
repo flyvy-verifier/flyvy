@@ -62,6 +62,10 @@ struct SolverArgs {
     #[arg(long, default_value_t = 600, global = true)]
     /// SMT solver timeout in seconds
     timeout: usize,
+
+    #[arg(long, default_value_t = 0, global = true)]
+    /// SMT solver random seed
+    solver_seed: usize,
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -294,6 +298,7 @@ impl SolverArgs {
         } else {
             None
         });
+        backend.seed(self.solver_seed);
         SolverConf { backend, tee }
     }
 }
