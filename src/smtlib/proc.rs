@@ -8,14 +8,18 @@
 //! the code that parses models returned by [`SmtProc::check_sat`].
 
 use crate::smtlib::sexp;
+use nix::{errno::Errno, sys::signal, unistd::Pid};
 use std::{
     ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     path::Path,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::{Arc, Mutex},
 };
 use thiserror::Error;
+
+use std::os::unix::process::ExitStatusExt;
 
 use super::sexp::{app, atom_s, sexp_l, Sexp};
 
@@ -26,6 +30,16 @@ pub struct SmtProc {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     tee: Option<File>,
+    // signal to SmtPids that this process has terminated (so we don't try to
+    // kill the process long afterward when the pid might have been reused)
+    terminated: Arc<Mutex<bool>>,
+}
+
+/// A handle to the SMT process for cancelling an in-progress check.
+#[derive(Clone)]
+pub struct SmtPid {
+    pid: Pid,
+    terminated: Arc<Mutex<bool>>,
 }
 
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
@@ -40,7 +54,7 @@ pub enum SatResp {
     /// Unknown whether the query is sat or unsat. The reason is the one given
     /// by (get-info :reason-unknown).
     ///
-    /// This can happen to a timeout or limitations of quantifier instantiation
+    /// This can happen due to a timeout or limitations of quantifier instantiation
     /// heuristics, for example.
     Unknown(String),
 }
@@ -55,8 +69,11 @@ pub enum SolverError {
     #[error("some io went wrong")]
     Io(#[from] io::Error),
     /// Solver died for some reason
-    #[error("solver unexpectedly exited:\n{0}")]
+    #[error("solver returned an error:\n{0}")]
     UnexpectedClose(String),
+    /// Solver killed specifically by SIGKILL signal
+    #[error("solver was killed")]
+    Killed,
 }
 
 type Result<T> = std::result::Result<T, SolverError>;
@@ -252,6 +269,7 @@ impl SmtProc {
             stdin,
             stdout,
             tee,
+            terminated: Arc::new(Mutex::new(false)),
         };
         for (option, val) in &cmd.options {
             proc.send(&app(
@@ -264,6 +282,18 @@ impl SmtProc {
         // customized to the solver)
         proc.send(&app("set-logic", vec![atom_s("UFNIA")]));
         Ok(proc)
+    }
+
+    /// Get a handle to the process for cancellation.
+    pub fn pid(&self) -> SmtPid {
+        // this is a u32 -> i32 conversion which is very safe (Child already
+        // guarantees a positive pid)
+        let pid: u32 = self.child.id();
+        let pid = Pid::from_raw(pid.try_into().unwrap());
+        SmtPid {
+            pid,
+            terminated: self.terminated.clone(),
+        }
     }
 
     /// Create the tee file.
@@ -406,6 +436,18 @@ impl SmtProc {
         }
     }
 
+    fn check_killed(&mut self) -> Result<()> {
+        // check if the solver was killed and return a special error
+        if let Some(status) = self.child.try_wait().unwrap() {
+            // mark the process as terminated
+            *self.terminated.lock().unwrap() = true;
+            if status.signal() == Some(nix::libc::SIGKILL) {
+                return Err(SolverError::Killed);
+            }
+        }
+        return Ok(());
+    }
+
     /// A marker for determining end of solver response.
     const DONE: &str = "<<DONE>>";
 
@@ -430,6 +472,7 @@ impl SmtProc {
             // including the newline)
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
+                self.check_killed()?;
                 let msg = Self::parse_error(&buf);
                 return Err(SolverError::UnexpectedClose(msg));
             }
@@ -452,6 +495,7 @@ impl SmtProc {
         _ = self.stdin.flush();
         _ = self.child.kill();
         _ = self.child.wait();
+        *self.terminated.lock().unwrap() = true;
 
         // NOTE: the below waits by polling every 10ms; `child.wait()` actually
         // runs the `wait()` syscall, which cleans up the child process. Without
@@ -469,11 +513,32 @@ impl SmtProc {
     }
 }
 
+impl SmtPid {
+    /// Kill the SMT process by pid.
+    pub fn kill(&self) {
+        if *self.terminated.lock().unwrap() {
+            return;
+        }
+        let r = signal::kill(self.pid, signal::Signal::SIGKILL);
+        *self.terminated.lock().unwrap() = true;
+        match r {
+            Ok(_) => (),
+            Err(errno) => {
+                if errno != Errno::ESRCH {
+                    panic!("killing smt process failed with {errno}");
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc, thread, time::Duration};
+
     use crate::{
         smtlib::{
-            proc::{CvcConf, SatResp, Z3Conf},
+            proc::{CvcConf, SatResp, SolverError, Z3Conf},
             sexp::{app, atom_s, parse},
         },
         solver::solver_path,
@@ -564,5 +629,48 @@ mod tests {
         proc.send(&e);
         let r = proc.check_sat();
         insta::assert_display_snapshot!(r.unwrap_err());
+    }
+
+    #[test]
+    fn test_z3_kill() {
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
+        let mut proc = SmtProc::new(z3, None).unwrap();
+        let pid = proc.pid();
+        let smt2_file = "
+(reset)
+(set-logic QF_FP)
+
+(declare-const a Float32)
+(declare-const b Float32)
+(declare-const r0 Float32)
+(declare-const r1 Float32)
+
+(assert (= r0 (fp.abs a)))
+(assert (= r1 (fp.abs b)))
+(assert (not (= (fp.mul RNE r0 r1) (fp.mul RNE (fp.abs a) (fp.abs b)))))
+(check-sat)
+"
+        .trim();
+        for line in smt2_file.lines().filter(|line| !line.is_empty()) {
+            proc.send(&parse(line).unwrap());
+        }
+        let (send, recv) = mpsc::channel();
+        thread::spawn(move || {
+            let r = proc.get_response(|s| s.to_string());
+            send.send(r).unwrap();
+        });
+        thread::sleep(Duration::from_millis(100));
+        pid.kill();
+        let r = recv.recv().unwrap();
+        match r {
+            Ok(_) => {
+                panic!("check-sat should not succeed");
+            }
+            Err(err) => {
+                if !matches!(err, SolverError::Killed) {
+                    panic!("wrong solver error {err}");
+                }
+            }
+        }
     }
 }

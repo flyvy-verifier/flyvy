@@ -19,7 +19,7 @@ indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
 log = "0.4.17"
-nix = { version = "0.26.2", default-features = false, features = ["resource"] }
+nix = { version = "0.26.2", default-features = false, features = ["resource", "process", "signal"] }
 path-slash = "0.2.1"
 peg = "0.8.1"
 pretty_env_logger = "0.4.0"
