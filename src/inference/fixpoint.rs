@@ -19,7 +19,7 @@ use crate::{
         subsume::OrderSubsumption,
         weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
     },
-    verify::SolverConf,
+    solver::SolverConf,
 };
 
 use rayon::prelude::*;

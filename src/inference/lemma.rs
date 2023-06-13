@@ -18,8 +18,8 @@ use crate::{
         subsume::OrderSubsumption,
         weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
     },
+    solver::SolverConf,
     term::subst::Substitution,
-    verify::SolverConf,
 };
 
 use rayon::prelude::*;
