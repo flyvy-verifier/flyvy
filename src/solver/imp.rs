@@ -13,7 +13,7 @@ use crate::{
         syntax::{Binder, Signature, Sort, Term},
     },
     smtlib::{
-        proc::{SatResp, SmtProc, SolverCmd, SolverError},
+        proc::{SatResp, SmtPid, SmtProc, SolverCmd, SolverError},
         sexp::{app, atom_i, atom_s, sexp_l, Atom, Sexp},
     },
     solver::sexp,
@@ -91,6 +91,11 @@ impl<B: Backend> Solver<B> {
             backend,
             last_assumptions: None,
         })
+    }
+
+    /// Return a handle to cancel the solver
+    pub fn pid(&self) -> SmtPid {
+        self.proc.pid()
     }
 
     /// Emit encoding of signature, using `n_states` to determine how many times
