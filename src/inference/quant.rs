@@ -101,6 +101,10 @@ impl<Q: Clone> QuantifierSequence<Q> {
         self.names.iter().map(|n| n.len()).sum()
     }
 
+    pub fn all_vars(&self) -> HashSet<String> {
+        self.names.iter().flat_map(|n| n.iter().cloned()).collect()
+    }
+
     /// Generate all atoms in a given signature with this [`QuantifierSequence`].
     pub fn atoms(&self, nesting: Option<usize>, include_eq: bool) -> Vec<Term> {
         let mut sorted_vars = vec![vec![]; self.signature.sorts.len()];
@@ -152,24 +156,6 @@ impl<Q: Clone> QuantifierSequence<Q> {
                     .collect()
             })
             .collect_vec()
-    }
-
-    pub fn restrict_to_ids(&self, ids: &HashSet<String>) -> Self {
-        Self {
-            signature: self.signature.clone(),
-            quantifiers: self.quantifiers.clone(),
-            sorts: self.sorts.clone(),
-            names: self
-                .names
-                .iter()
-                .map(|vs| {
-                    vs.iter()
-                        .filter(|&v| ids.contains(v))
-                        .cloned()
-                        .collect_vec()
-                })
-                .collect_vec(),
-        }
     }
 }
 

@@ -6,6 +6,7 @@
 //! Mostly consists of an implementation of the "q-alpha" algorithm, but also
 //! provides an implementation of Houdini.
 
+pub mod atoms;
 mod basics;
 mod fixpoint;
 mod hashmap;
