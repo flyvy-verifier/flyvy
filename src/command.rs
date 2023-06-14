@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
 
 use crate::fly::syntax::Signature;
+use crate::inference::atoms;
 use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
@@ -145,6 +146,26 @@ struct InferenceConfigArgs {
 
     #[arg(long, action)]
     search: bool,
+
+    #[arg(long)]
+    /// Try to decompose the transition relation disjunctively
+    disj: bool,
+
+    #[arg(long)]
+    /// Perform SAT queries gradually
+    gradual: bool,
+
+    #[arg(long)]
+    /// Try to find individually inductive lemmas
+    indiv: bool,
+
+    #[arg(long)]
+    /// Try to extend model traces before looking for CEX in the frame
+    extend_width: Option<usize>,
+
+    #[arg(long)]
+    /// Try to extend model traces before looking for CEX in the frame
+    extend_depth: Option<usize>,
 }
 
 impl InferenceConfigArgs {
@@ -171,6 +192,11 @@ impl InferenceConfigArgs {
             non_unit: self.non_unit,
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
+            disj: self.disj,
+            gradual: self.gradual,
+            indiv: self.indiv,
+            extend_width: self.extend_width,
+            extend_depth: self.extend_depth,
         }
     }
 }
@@ -179,18 +205,6 @@ impl InferenceConfigArgs {
 struct QalphaArgs {
     #[command(flatten)]
     infer_cfg: InferenceConfigArgs,
-
-    #[arg(long)]
-    /// Try to extend model traces before looking for CEX in the frame
-    extend_models: bool,
-
-    #[arg(long)]
-    /// Try to decompose the transition relation disjunctively
-    disj: bool,
-
-    #[arg(long)]
-    /// Try to find individually inductive lemmas
-    indiv: bool,
 
     /// File name for a .fly file
     file: String,
@@ -423,46 +437,38 @@ impl App {
                 if qargs.infer_cfg.search {
                     match infer_cfg.qf_body {
                         QfBody::CNF => fixpoint_multi::<
-                            subsume::Cnf<lemma::Literal>,
+                            subsume::Cnf<atoms::Literal>,
                             lemma::LemmaCnf,
-                            Vec<Vec<lemma::Literal>>,
-                        >(infer_cfg, &conf, &m, qargs.disj),
+                            Vec<Vec<atoms::Literal>>,
+                        >(infer_cfg, &conf, &m),
                         QfBody::PDnf => fixpoint_multi::<
-                            subsume::PDnf<lemma::Literal>,
+                            subsume::PDnf<atoms::Literal>,
                             lemma::LemmaPDnf,
-                            (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
-                        >(infer_cfg, &conf, &m, qargs.disj),
-                        QfBody::PDnfNaive => {
-                            fixpoint_multi::<
-                                subsume::Dnf<lemma::Literal>,
-                                lemma::LemmaPDnfNaive,
-                                Vec<Vec<lemma::Literal>>,
-                            >(infer_cfg, &conf, &m, qargs.disj)
-                        }
+                            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
+                        >(infer_cfg, &conf, &m),
+                        QfBody::PDnfNaive => fixpoint_multi::<
+                            subsume::Dnf<atoms::Literal>,
+                            lemma::LemmaPDnfNaive,
+                            Vec<Vec<atoms::Literal>>,
+                        >(infer_cfg, &conf, &m),
                     }
                 } else {
                     match infer_cfg.qf_body {
                         QfBody::CNF => fixpoint_single::<
-                            subsume::Cnf<lemma::Literal>,
+                            subsume::Cnf<atoms::Literal>,
                             lemma::LemmaCnf,
-                            Vec<Vec<lemma::Literal>>,
-                        >(
-                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
-                        ),
+                            Vec<Vec<atoms::Literal>>,
+                        >(infer_cfg, &conf, &m),
                         QfBody::PDnf => fixpoint_single::<
-                            subsume::PDnf<lemma::Literal>,
+                            subsume::PDnf<atoms::Literal>,
                             lemma::LemmaPDnf,
-                            (Vec<lemma::Literal>, Vec<Vec<lemma::Literal>>),
-                        >(
-                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
-                        ),
+                            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
+                        >(infer_cfg, &conf, &m),
                         QfBody::PDnfNaive => fixpoint_single::<
-                            subsume::Dnf<lemma::Literal>,
+                            subsume::Dnf<atoms::Literal>,
                             lemma::LemmaPDnfNaive,
-                            Vec<Vec<lemma::Literal>>,
-                        >(
-                            infer_cfg, &conf, &m, qargs.disj, qargs.indiv
-                        ),
+                            Vec<Vec<atoms::Literal>>,
+                        >(infer_cfg, &conf, &m),
                     }
                 }
                 if args.time {

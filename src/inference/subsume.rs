@@ -8,8 +8,8 @@ use std::{cmp::Ordering, fmt::Debug, hash::Hash};
 
 use itertools::Itertools;
 
+use crate::inference::atoms::Literal;
 use crate::inference::hashmap::{HashMap, HashSet};
-use crate::inference::lemma::Literal;
 
 pub trait OrderSubsumption: Clone + Eq + Hash + Ord + Send + Sync {
     type Base: Hash + Debug;

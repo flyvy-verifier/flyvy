@@ -4,19 +4,21 @@
 //! Implement simple components, lemma domains and data structures for use in inference.
 
 use itertools::Itertools;
+use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     fly::semantics::Model,
-    fly::syntax::{BinOp, Term},
+    fly::syntax::Term,
     inference::{
+        atoms::{Literal, RestrictedAtoms},
         basics::{FOModule, InferenceConfig},
         hashmap::{HashMap, HashSet},
         subsume::OrderSubsumption,
         weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
     },
-    term::subst::{substitute_qf, Substitution},
+    term::subst::Substitution,
     verify::SolverConf,
 };
 
@@ -26,68 +28,8 @@ use super::basics::TransCexResult;
 use super::hashmap;
 use super::quant::{count_exists, QuantifierPrefix};
 
-/// An [`Atom`] is referred to via a certain index.
-pub type Atom = usize;
-/// A [`Literal`] represents an atom, either positive or negated.
-/// E.g. atom `i` negated is represented by (i, false).
-pub type Literal = (Atom, bool);
-
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
     ((atoms - len + 1)..=atoms).fold(1, |a, b| a * b) * 2_usize.pow(len as u32)
-}
-
-// Convert a literal to its corresponding term.
-fn literal_as_term(literal: &Literal, atoms: &[Term]) -> Term {
-    match literal.1 {
-        true => atoms[literal.0].clone(),
-        false => Term::negate(atoms[literal.0].clone()),
-    }
-}
-
-/// Check whether the given [`Literal`] refers to an equality,
-/// either negated or unnegated.
-pub fn is_eq(literal: Literal, unnegated: bool, atoms: &[Term]) -> bool {
-    literal.1 == unnegated && matches!(atoms[literal.0], Term::BinOp(BinOp::Equals, _, _))
-}
-
-/// Return the [`Literal`] corresponding to the application of the given [`Substitution`]
-/// to the given [`Literal`].
-fn substitute_literal(
-    literal: &Literal,
-    substitution: &Substitution,
-    atoms: &[Term],
-    atom_to_index: &HashMap<Term, usize>,
-) -> Literal {
-    match &atoms[literal.0] {
-        Term::BinOp(BinOp::Equals, t1, t2) => {
-            let t1_sub = Box::new(substitute_qf(t1, substitution));
-            let t2_sub = Box::new(substitute_qf(t2, substitution));
-
-            if let Some(&index) =
-                atom_to_index.get(&Term::BinOp(BinOp::Equals, t1_sub.clone(), t2_sub.clone()))
-            {
-                (index, literal.1)
-            } else if let Some(&index) =
-                atom_to_index.get(&Term::BinOp(BinOp::Equals, t2_sub, t1_sub))
-            {
-                (index, literal.1)
-            } else {
-                panic!("Atom after substitution does not exist!");
-            }
-        }
-        _ => (
-            atom_to_index[&substitute_qf(&atoms[literal.0], substitution)],
-            literal.1,
-        ),
-    }
-}
-
-fn atom_to_index(atoms: &[Term]) -> HashMap<Term, usize> {
-    atoms
-        .iter()
-        .enumerate()
-        .map(|(index, term)| (term.clone(), index))
-        .collect()
 }
 
 #[derive(Clone)]
@@ -96,8 +38,7 @@ pub struct LemmaCnf {
     pub clauses: usize,
     /// The maximal number of literals in each clause.
     pub clause_size: usize,
-    atoms: Arc<Vec<Term>>,
-    atom_to_index: HashMap<Term, usize>,
+    atoms: Arc<RestrictedAtoms>,
 }
 
 impl LemmaQf for LemmaCnf {
@@ -107,17 +48,21 @@ impl LemmaQf for LemmaCnf {
         vec![Vec::from(clause)]
     }
 
-    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
-        base.iter()
-            .map(|clause| {
-                clause
-                    .iter()
-                    .map(|literal| {
-                        substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
-                    })
-                    .collect_vec()
-            })
-            .collect_vec()
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Option<Self::Base> {
+        let mut new_base = vec![];
+        for clause in base {
+            let mut new_clause = vec![];
+            for literal in clause {
+                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
+                    new_clause.push((a, literal.1));
+                } else {
+                    return None;
+                }
+            }
+            new_base.push(new_clause);
+        }
+
+        Some(new_base)
     }
 
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
@@ -125,7 +70,7 @@ impl LemmaQf for LemmaCnf {
             .flat_map(|clause| {
                 clause
                     .iter()
-                    .flat_map(|literal| self.atoms[literal.0].ids())
+                    .flat_map(|literal| self.atoms.to_term(literal).unwrap().ids())
             })
             .collect()
     }
@@ -135,14 +80,12 @@ impl LemmaQf for LemmaCnf {
             Term::or(
                 clause
                     .iter()
-                    .map(|literal| literal_as_term(literal, &self.atoms)),
+                    .map(|literal| self.atoms.to_term(literal).unwrap()),
             )
         }))
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
-        let atom_to_index = atom_to_index(&atoms);
-
+    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
         Self {
             clauses: if is_universal {
                 1
@@ -154,7 +97,6 @@ impl LemmaQf for LemmaCnf {
                 .clause_size
                 .expect("Maximum number of literals per clause not provided."),
             atoms,
-            atom_to_index,
         }
     }
 
@@ -168,14 +110,6 @@ impl LemmaQf for LemmaCnf {
     {
         assert!(!base.is_empty());
 
-        // If one of the clauses is of maximal size, or is a unit clause of a negated equality,
-        // there are no weakenings possible.
-        if base.iter().any(|cl| {
-            cl.len() >= self.clause_size || (cl.len() == 1 && is_eq(cl[0], false, &self.atoms))
-        }) {
-            return vec![];
-        }
-
         // Handle the special case where the lemma is the empty clause.
         if base == vec![vec![]] {
             return cube
@@ -187,28 +121,31 @@ impl LemmaQf for LemmaCnf {
         }
 
         // Weaken each clause by adding a literal from `cube`.
-        let weakened_clauses = base.iter().map(|cl| {
-            let mut new_clauses = vec![];
-            let cl = cl.iter().cloned().sorted().collect_vec();
-            for i in 0..=cl.len() {
-                let lower = if i > 0 { cl[i - 1].0 + 1 } else { 0 };
-                let upper = if i < cl.len() {
-                    cl[i].0
-                } else {
-                    self.atoms.len()
-                };
+        let weakened_clauses = base.into_iter().map(|cl| {
+            assert!(!cl.is_empty());
 
-                for atom in lower..upper {
+            let cl_lits: HashSet<(usize, bool)> = cl.iter().cloned().collect();
+            if cube.iter().any(|lit| cl_lits.contains(lit)) {
+                vec![cl]
+            } else if cl.len() >= self.clause_size {
+                vec![]
+            } else {
+                let mut new_clauses = vec![];
+
+                for lit in cube
+                    .iter()
+                    .filter(|lit| !cl_lits.contains(&(lit.0, !lit.1)))
+                {
                     // Do not add inequalities to non-empty clauses.
-                    if cl.is_empty() || !is_eq(cube[atom], false, &self.atoms) {
+                    if !self.atoms.is_eq(lit.0) || lit.1 {
                         let mut new_clause = cl.to_vec();
-                        new_clause.push(cube[atom]);
+                        new_clause.push(*lit);
                         new_clauses.push(new_clause);
                     }
                 }
-            }
 
-            new_clauses
+                new_clauses
+            }
         });
 
         // Return all combinations of weakened clauses.
@@ -216,17 +153,6 @@ impl LemmaQf for LemmaCnf {
             .into_iter()
             .multi_cartesian_product()
             .filter(|b| !ignore(b))
-            .collect_vec()
-    }
-
-    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
-        base.iter()
-            .map(|clause| {
-                clause
-                    .iter()
-                    .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
-                    .collect_vec()
-            })
             .collect_vec()
     }
 
@@ -244,7 +170,6 @@ impl LemmaQf for LemmaCnf {
                 clauses,
                 clause_size: self.clause_size,
                 atoms: self.atoms.clone(),
-                atom_to_index: self.atom_to_index.clone(),
             })
             .collect_vec()
     }
@@ -259,8 +184,7 @@ pub struct LemmaPDnfNaive {
     pub cubes: usize,
     pub cube_size: usize,
     pub non_unit: usize,
-    atoms: Arc<Vec<Term>>,
-    atom_to_index: HashMap<Term, usize>,
+    atoms: Arc<RestrictedAtoms>,
 }
 
 impl LemmaPDnfNaive {
@@ -296,7 +220,7 @@ impl LemmaPDnfNaive {
         let mut literals = HashSet::default();
 
         loop {
-            if is_eq(literal, false, &self.atoms) {
+            if self.atoms.is_eq(literal.0) && !literal.1 {
                 return None;
             }
 
@@ -330,11 +254,11 @@ impl LemmaPDnfNaive {
         base: <Self as LemmaQf>::Base,
         cube: &[Literal],
     ) -> Vec<<Self as LemmaQf>::Base> {
-        let units = base
+        let units: HashSet<Literal> = base
             .iter()
             .filter(|cb| cb.len() == 1)
             .map(|cb| cb[0].clone())
-            .collect_vec();
+            .collect();
 
         if cube.iter().any(|lit| units.contains(lit)) {
             return vec![base];
@@ -415,21 +339,29 @@ impl LemmaQf for LemmaPDnfNaive {
         clause.iter().map(|lit| vec![*lit]).collect_vec()
     }
 
-    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
-        base.iter()
-            .map(|cube| {
-                cube.iter()
-                    .map(|literal| {
-                        substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
-                    })
-                    .collect_vec()
-            })
-            .collect_vec()
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Option<Self::Base> {
+        let mut new_base = vec![];
+        for cube in base {
+            let mut new_cube = vec![];
+            for literal in cube {
+                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
+                    new_cube.push((a, literal.1));
+                } else {
+                    return None;
+                }
+            }
+            new_base.push(new_cube);
+        }
+
+        Some(new_base)
     }
 
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
         base.iter()
-            .flat_map(|cube| cube.iter().flat_map(|literal| self.atoms[literal.0].ids()))
+            .flat_map(|cube| {
+                cube.iter()
+                    .flat_map(|literal| self.atoms.to_term(literal).unwrap().ids())
+            })
             .collect()
     }
 
@@ -437,12 +369,12 @@ impl LemmaQf for LemmaPDnfNaive {
         Term::or(base.iter().map(|cube| {
             Term::and(
                 cube.iter()
-                    .map(|literal| literal_as_term(literal, &self.atoms)),
+                    .map(|literal| self.atoms.to_term(literal).unwrap()),
             )
         }))
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
+    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut non_unit = cfg
             .non_unit
@@ -461,14 +393,11 @@ impl LemmaQf for LemmaPDnfNaive {
 
         assert!(cubes >= non_unit && cube_size > 0);
 
-        let atom_to_index = atom_to_index(&atoms);
-
         Self {
             cubes,
             non_unit,
             cube_size,
             atoms,
-            atom_to_index,
         }
     }
 
@@ -481,7 +410,7 @@ impl LemmaQf for LemmaPDnfNaive {
         I: Fn(&Self::Base) -> bool,
     {
         // Currently unimplemented for for than one non-unit cube.
-        // For this we'd need to consider intersections of existing cubes,
+        // For this we'd need to consider intersections of existing cubes.
         assert!(self.non_unit <= 1);
 
         let mut weakened = vec![];
@@ -524,16 +453,6 @@ impl LemmaQf for LemmaPDnfNaive {
         weakened
     }
 
-    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
-        base.iter()
-            .map(|cube| {
-                cube.iter()
-                    .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
-                    .collect_vec()
-            })
-            .collect_vec()
-    }
-
     fn approx_space_size(&self, atoms: usize) -> usize {
         let cubes: usize = (0..=self.cube_size)
             .map(|len| clauses_cubes_count(atoms, len))
@@ -563,7 +482,6 @@ impl LemmaQf for LemmaPDnfNaive {
                     cube_size,
                     non_unit,
                     atoms: self.atoms.clone(),
-                    atom_to_index: self.atom_to_index.clone(),
                 })
             })
             .collect_vec()
@@ -581,8 +499,7 @@ pub struct LemmaPDnf {
     pub cubes: usize,
     pub cube_size: usize,
     pub non_unit: usize,
-    atoms: Arc<Vec<Term>>,
-    atom_to_index: HashMap<Term, usize>,
+    atoms: Arc<RestrictedAtoms>,
 }
 
 impl LemmaQf for LemmaPDnf {
@@ -595,37 +512,40 @@ impl LemmaQf for LemmaPDnf {
         )
     }
 
-    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Self::Base {
-        (
-            base.0
-                .iter()
-                .map(|literal| {
-                    substitute_literal(literal, substitution, &self.atoms, &self.atom_to_index)
-                })
-                .collect(),
-            base.1
-                .iter()
-                .map(|cube| {
-                    cube.iter()
-                        .map(|literal| {
-                            substitute_literal(
-                                literal,
-                                substitution,
-                                &self.atoms,
-                                &self.atom_to_index,
-                            )
-                        })
-                        .collect_vec()
-                })
-                .collect(),
-        )
+    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Option<Self::Base> {
+        let mut new_base = (vec![], vec![]);
+
+        for literal in &base.0 {
+            if let Some(a) = self.atoms.substitute(literal.0, substitution) {
+                new_base.0.push((a, literal.1));
+            } else {
+                return None;
+            }
+        }
+
+        for cube in &base.1 {
+            let mut new_cube = vec![];
+            for literal in cube {
+                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
+                    new_cube.push((a, literal.1));
+                } else {
+                    return None;
+                }
+            }
+            new_base.1.push(new_cube);
+        }
+
+        Some(new_base)
     }
 
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
         base.1
             .iter()
             .chain([&base.0])
-            .flat_map(|cube| cube.iter().flat_map(|literal| self.atoms[literal.0].ids()))
+            .flat_map(|cube| {
+                cube.iter()
+                    .flat_map(|literal| self.atoms.to_term(literal).unwrap().ids())
+            })
             .collect()
     }
 
@@ -633,17 +553,17 @@ impl LemmaQf for LemmaPDnf {
         Term::or(
             base.0
                 .iter()
-                .map(|literal| literal_as_term(literal, &self.atoms))
+                .map(|literal| self.atoms.to_term(literal).unwrap())
                 .chain(base.1.iter().map(|cube| {
                     Term::and(
                         cube.iter()
-                            .map(|literal| literal_as_term(literal, &self.atoms)),
+                            .map(|literal| self.atoms.to_term(literal).unwrap()),
                     )
                 })),
         )
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<Vec<Term>>, is_universal: bool) -> Self {
+    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut cube_size = cfg
             .cube_size
@@ -662,14 +582,11 @@ impl LemmaQf for LemmaPDnf {
 
         assert!(cubes >= non_unit && cube_size > 0);
 
-        let atom_to_index = atom_to_index(&atoms);
-
         Self {
             cubes,
             non_unit,
             cube_size,
             atoms,
-            atom_to_index,
         }
     }
 
@@ -686,7 +603,7 @@ impl LemmaQf for LemmaPDnf {
 
         // Weaken by adding a new literal
         if units.len() + non_units.len() < self.cubes {
-            for literal in cube.iter().filter(|l| !is_eq(**l, false, &self.atoms)) {
+            for literal in cube.iter().filter(|lit| !self.atoms.is_eq(lit.0) || lit.1) {
                 let neg_literal = (literal.0, !literal.1);
                 if !units.contains(&neg_literal) {
                     let new_non_units = non_units
@@ -712,10 +629,11 @@ impl LemmaQf for LemmaPDnf {
 
         // Weaken by intersecting a cube
         for i in 0..non_units.len() {
+            let cube_map: HashMap<usize, bool> = cube.iter().cloned().collect();
             let intersection = non_units[i]
                 .iter()
                 .copied()
-                .filter(|lit| cube[lit.0].1 == lit.1)
+                .filter(|lit| cube_map[&lit.0] == lit.1)
                 .collect_vec();
             if intersection.len() > 1 {
                 let mut new_non_units = vec![];
@@ -752,23 +670,6 @@ impl LemmaQf for LemmaPDnf {
         weakened
     }
 
-    fn to_other_base(&self, other: &Self, base: &Self::Base) -> Self::Base {
-        (
-            base.0
-                .iter()
-                .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
-                .collect_vec(),
-            base.1
-                .iter()
-                .map(|cube| {
-                    cube.iter()
-                        .map(|&(i, b)| (other.atom_to_index[&self.atoms[i]], b))
-                        .collect_vec()
-                })
-                .collect_vec(),
-        )
-    }
-
     fn approx_space_size(&self, atoms: usize) -> usize {
         let cubes: usize = (0..=self.cube_size)
             .map(|len| clauses_cubes_count(atoms, len))
@@ -798,7 +699,6 @@ impl LemmaQf for LemmaPDnf {
                     cube_size,
                     non_unit,
                     atoms: self.atoms.clone(),
-                    atom_to_index: self.atom_to_index.clone(),
                 })
             })
             .collect_vec()
@@ -847,6 +747,10 @@ where
     blocked_to_core: HashMap<usize, HashSet<usize>>,
     /// A mapping between frontier elements and the blocked lemmas they block.
     core_to_blocked: HashMap<usize, HashSet<usize>>,
+    /// Whether to extend CTI traces, and how much.
+    extend: Option<(usize, usize)>,
+    /// A set of CTI's to extend.
+    ctis: VecDeque<Model>,
 }
 
 impl<O, L, B> Frontier<O, L, B>
@@ -856,7 +760,7 @@ where
     B: Clone + Debug + Send,
 {
     /// Create a new frontier from the given set of lemmas.
-    pub fn new(lemmas_init: LemmaSet<O, L, B>) -> Self {
+    pub fn new(lemmas_init: LemmaSet<O, L, B>, extend: Option<(usize, usize)>) -> Self {
         let blocked = lemmas_init.clone_empty();
 
         Frontier {
@@ -864,6 +768,8 @@ where
             blocked,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
+            extend,
+            ctis: VecDeque::new(),
         }
     }
 
@@ -880,20 +786,20 @@ where
         conf: &SolverConf,
         lemmas: &WeakenLemmaSet<O, L, B>,
     ) -> Option<Model> {
-        let new_cores: Mutex<Vec<(QuantifierPrefix, O, HashSet<usize>)>> = Mutex::new(vec![]);
+        let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
 
         let res = lemmas
-            .iter_as(&self.blocked.lemma_qf)
+            .iter()
             .into_par_iter()
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
-                let term = prefix.quantify(self.blocked.lemma_qf.base_to_term(&body.to_base()));
+                let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
                 if let Some(model) = fo.init_cex(conf, &term) {
                     return Some(model);
                 } else {
                     let core = self.lemmas.to_prefixes.keys().copied().collect();
                     let mut new_cores_vec = new_cores.lock().unwrap();
-                    new_cores_vec.push((prefix, body, core))
+                    new_cores_vec.push((prefix, body.clone(), core))
                 }
 
                 None
@@ -912,7 +818,41 @@ where
             self.blocked_to_core.insert(blocked_id, core);
         }
 
+        if self.extend.is_some() {
+            self.ctis.extend(res.iter().cloned());
+        }
+
         res
+    }
+
+    /// Extend CTI traces and weaken the given lemmas accordingly,
+    /// until no more states can be sampled.
+    pub fn extend(
+        &mut self,
+        fo: &FOModule,
+        conf: &SolverConf,
+        lemmas: &mut WeakenLemmaSet<O, L, B>,
+    ) {
+        let (width, depth) = self.extend.unwrap();
+        while let Some(state) = self.ctis.pop_front() {
+            log::info!(
+                "[{}] Extending CTI trace... (remaining CTI's = {})",
+                lemmas.len(),
+                self.ctis.len()
+            );
+            let samples = fo.simulate_from(conf, &state, width, depth);
+            log::info!(
+                "[{}] Weakening with {} samples...",
+                lemmas.len(),
+                samples.len()
+            );
+            for sample in samples {
+                if lemmas.weaken(&sample) {
+                    log::info!("[{}] Weakened.", lemmas.len());
+                    self.ctis.push_back(sample);
+                }
+            }
+        }
     }
 
     /// Get an post-state of the frontier which violates one of the given lemmas.
@@ -925,20 +865,30 @@ where
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) =
             self.lemmas.to_terms_ids().into_iter().unzip();
 
-        let new_cores: Mutex<Vec<(QuantifierPrefix, O, HashSet<usize>)>> = Mutex::new(vec![]);
+        let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
+        let cancel = Arc::new(RwLock::new(false));
 
         let res = lemmas
-            .iter_as(&self.blocked.lemma_qf)
+            .iter()
             .into_par_iter()
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
-                let term = prefix.quantify(self.blocked.lemma_qf.base_to_term(&body.to_base()));
-                match fo.trans_cex(conf, &pre_terms, &term, false, false) {
-                    TransCexResult::CTI(_, model) => return Some(model),
+                let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
+                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(cancel.clone())) {
+                    TransCexResult::CTI(_, model) => {
+                        let mut lock = cancel.write().unwrap();
+                        *lock = true;
+                        return Some(model);
+                    }
                     TransCexResult::UnsatCore(core) => {
                         let mut new_cores_vec = new_cores.lock().unwrap();
-                        new_cores_vec.push((prefix, body, hashmap::set_from_std(core.clone())));
+                        new_cores_vec.push((
+                            prefix,
+                            body.clone(),
+                            hashmap::set_from_std(core.clone()),
+                        ));
                     }
+                    TransCexResult::Cancelled => (),
                 }
 
                 None
@@ -956,6 +906,10 @@ where
                 }
             }
             self.blocked_to_core.insert(blocked_id, core);
+        }
+
+        if self.extend.is_some() {
+            self.ctis.extend(res.iter().cloned());
         }
 
         res
@@ -983,13 +937,13 @@ where
             .to_prefixes
             .keys()
             .filter(|&id| {
-                !new_lemmas.contains(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
+                !new_lemmas.subsumes(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
             })
             .cloned()
             .collect();
 
         // Compute the mapping from parents to their weakenings (children).
-        let mut children: HashMap<usize, HashSet<usize>> = weakened_parents
+        let mut to_children: HashMap<usize, HashSet<usize>> = weakened_parents
             .par_iter()
             .map(|&id| {
                 (
@@ -1001,31 +955,42 @@ where
             .collect();
 
         // Compute the mapping from children to parents.
-        let mut parents: HashMap<usize, HashSet<usize>> = new_lemmas
+        let mut to_parents: HashMap<usize, HashSet<usize>> = new_lemmas
             .to_prefixes
             .par_iter()
             .map(|(id, prefix)| {
                 (
                     *id,
-                    self.lemmas.get_subsuming(prefix, &new_lemmas.to_bodies[id]),
+                    self.lemmas
+                        .get_subsuming(prefix, &new_lemmas.to_bodies[id])
+                        .intersection(&weakened_parents)
+                        .cloned()
+                        .collect(),
                 )
             })
             .collect();
+
+        assert!(to_children
+            .iter()
+            .all(|(p, ch)| ch.iter().all(|c| to_parents[c].contains(p))));
+        assert!(to_parents
+            .iter()
+            .all(|(c, pr)| pr.iter().all(|p| to_children[p].contains(c))));
 
         let mut advanced = false;
         loop {
             // Given a children and parents mapping, compute the parent with the least unique children,
             // i.e. the least number of children which are uniquely theirs.
-            let min_unique = |children_local: &HashMap<usize, HashSet<usize>>,
-                              parents_local: &HashMap<usize, HashSet<usize>>|
+            let min_unique = |to_children_local: &HashMap<usize, HashSet<usize>>,
+                              to_parents_local: &HashMap<usize, HashSet<usize>>|
              -> Option<(usize, Vec<usize>)> {
-                children_local
+                to_children_local
                     .iter()
                     .map(|(id, ch)| {
                         let unique_ch: Vec<usize> = ch
                             .iter()
                             .cloned()
-                            .filter(|ch_id| parents_local[ch_id].len() == 1)
+                            .filter(|ch_id| to_parents_local[ch_id].len() == 1)
                             .collect();
 
                         (*id, unique_ch)
@@ -1041,8 +1006,8 @@ where
                     })
             };
 
-            let min = min_unique(&children, &parents);
-            if min.is_some() && (grow || min.as_ref().unwrap().1.is_empty()) {
+            let min = min_unique(&to_children, &to_parents);
+            if min.is_some() && (grow || min.as_ref().unwrap().1.len() <= 1) {
                 // This is the replaced lemma.
                 let (id, ch) = &min.unwrap();
 
@@ -1072,21 +1037,20 @@ where
                     }
                 }
 
-                // Add the lemma's unique children to the frontier.
+                // Remove the parent lemma and disconnect it from its children.
+                for ch_id in to_children.remove(id).unwrap() {
+                    assert!(to_parents.get_mut(&ch_id).unwrap().remove(id));
+                }
+                // Add each unique child to the frontier.
                 for new_id in ch {
                     self.lemmas.insert(
                         new_lemmas.to_prefixes[new_id].clone(),
                         new_lemmas.to_bodies[new_id].clone(),
                     );
-                    for p in &parents.remove(new_id).unwrap() {
-                        // NOTE: this get_mut only returns None with indexmap;
-                        // is this a bug in indexmap?
-                        if let Some(child) = children.get_mut(p) {
-                            child.remove(new_id);
-                        }
-                    }
+                    // Remove the parents entry of this child (it should be empty because its only parent
+                    // was already removed.)
+                    assert!(to_parents.remove(new_id).unwrap().is_empty());
                 }
-                children.remove(id);
             } else {
                 break;
             }
@@ -1109,6 +1073,10 @@ where
     pub initial: LemmaSet<O, L, B>,
     /// The set of inductive lemmas found so far.
     pub inductive: LemmaSet<O, L, B>,
+    /// Whether to extend CTI traces, and how much.
+    pub extend: Option<(usize, usize)>,
+    /// A set of CTI's to extend.
+    pub ctis: VecDeque<Model>,
 }
 
 impl<O, L, B> IndividualLemmaSearch<O, L, B>
@@ -1125,7 +1093,7 @@ where
     pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_initial: Mutex<Vec<_>> = Mutex::new(vec![]);
         log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.iter_as(&self.initial.lemma_qf);
+        let weakest = self.weaken_set.iter();
         log::info!("Finding CTI...");
         let cti = weakest
             .into_par_iter()
@@ -1144,47 +1112,98 @@ where
 
         log::info!("Saving initially implied lemmas...");
         for (prefix, body) in new_initial.into_inner().unwrap() {
-            self.initial.insert_minimized(prefix, body);
+            self.initial.insert_minimized(prefix, body.clone());
         }
 
-        if let Some(model) = &cti {
+        if let Some(model) = cti {
             log::info!("Weakening...");
-            self.weaken_set.weaken(model);
+            self.weaken_set.weaken(&model);
+            if self.extend.is_some() {
+                self.ctis.push_back(model);
+            }
             true
         } else {
             false
         }
     }
 
+    /// Extend CTI traces and weaken the given lemmas accordingly,
+    /// until no more states can be sampled.
+    pub fn extend(&mut self, fo: &FOModule, conf: &SolverConf) {
+        let (width, depth) = self.extend.unwrap();
+
+        while let Some(state) = self.ctis.pop_front() {
+            let mut levels = vec![vec![(0, state)]];
+            log::info!(
+                "[{}] Extending CTI trace... (remaining CTI's = {})",
+                self.weaken_set.len(),
+                self.ctis.len()
+            );
+            for i in 0..depth {
+                let mut new_level = vec![];
+                for (j, state) in &levels[i] {
+                    new_level.extend(
+                        fo.simulate_from(conf, &state, width, 1)
+                            .into_iter()
+                            .map(|model| (*j, model)),
+                    );
+                }
+                levels.push(new_level);
+            }
+            log::info!(
+                "[{}] Weakening with {} samples...",
+                self.weaken_set.len(),
+                levels[1..].iter().map(|l| l.len()).sum::<usize>()
+            );
+            for i in 1..=depth {
+                for (j, poststate) in &levels[i] {
+                    if self.weaken_set.weaken_cti(&levels[i - 1][*j].1, &poststate) {
+                        log::info!("[{}] Weakened.", self.weaken_set.len());
+                        self.ctis.push_back(poststate.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
+        let cancel = Arc::new(RwLock::new(false));
         log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.iter_as(&self.inductive.lemma_qf);
+        let weakest = self.weaken_set.iter();
         log::info!("Finding CTI...");
         let cti = weakest
             .into_par_iter()
             .filter(|(prefix, body)| !self.inductive.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
                 let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
-                match fo.trans_cex(conf, &term, &term[0], false, false) {
-                    TransCexResult::CTI(pre, post) => Some((pre, post)),
+                match fo.trans_cex(conf, &term, &term[0], false, false, Some(cancel.clone())) {
+                    TransCexResult::CTI(pre, post) => {
+                        let mut lock = cancel.write().unwrap();
+                        *lock = true;
+                        return Some((pre, post));
+                    }
                     TransCexResult::UnsatCore(_) => {
                         let mut new_inductive_vec = new_inductive.lock().unwrap();
                         new_inductive_vec.push((prefix, body));
-
-                        None
                     }
+                    TransCexResult::Cancelled => (),
                 }
+
+                None
             });
 
         log::info!("Saving inductive lemmas...");
         for (prefix, body) in new_inductive.into_inner().unwrap() {
-            self.inductive.insert_minimized(prefix, body);
+            self.inductive.insert_minimized(prefix, body.clone());
         }
 
-        if let Some((prestate, poststate)) = &cti {
+        if let Some((prestate, poststate)) = cti {
             log::info!("Weakening...");
-            self.weaken_set.weaken_cti(prestate, poststate);
+            self.weaken_set.weaken_cti(&prestate, &poststate);
+            if self.extend.is_some() {
+                self.ctis.push_back(poststate);
+            }
             true
         } else {
             false
