@@ -1057,7 +1057,7 @@ where
     }
 }
 
-/// A [`SingleLemmaSearch`] manages the search for individually inductive lemmas.
+/// An [`IndividualLemmaSearch`] manages the search for individually inductive lemmas.
 pub struct IndividualLemmaSearch<O, L, B>
 where
     O: OrderSubsumption<Base = B>,
