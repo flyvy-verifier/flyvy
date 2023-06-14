@@ -204,22 +204,22 @@ impl QuantifierConfig {
                                 vec![Quantifier::Forall]
                             }
                         }
-                        Some(q) => vec![q.clone()],
+                        Some(q) => vec![*q],
                     })
                     .multi_cartesian_product()
                     .filter(|qs| {
-                        let e = count_exists(&qs);
+                        let e = count_exists(qs);
                         e >= min_existentials && e <= max_existentials
                     })
                     .map(|quantifiers| QuantifierPrefix {
                         signature: self.signature.clone(),
-                        quantifiers: quantifiers.clone(),
+                        quantifiers,
                         sorts: self.sorts.clone(),
                         names: self
                             .names
                             .iter()
                             .enumerate()
-                            .map(|(i, n)| n[..dist[i]].iter().cloned().collect())
+                            .map(|(i, n)| n[..dist[i]].to_vec())
                             .collect_vec(),
                     })
             })
@@ -238,15 +238,14 @@ impl Debug for QuantifierConfig {
         let mut parts = vec![];
         for i in 0..self.len() {
             if !self.names[i].is_empty() {
-                let mut q_vec = vec![];
-
-                q_vec.push(match self.quantifiers[i] {
-                    None => "******".to_string(),
-                    Some(Quantifier::Exists) => "exists".to_string(),
-                    Some(Quantifier::Forall) => "forall".to_string(),
-                });
-
-                q_vec.push(self.names[i].iter().join(", "));
+                let q_vec = vec![
+                    match self.quantifiers[i] {
+                        None => "******".to_string(),
+                        Some(Quantifier::Exists) => "exists".to_string(),
+                        Some(Quantifier::Forall) => "forall".to_string(),
+                    },
+                    self.names[i].iter().join(", "),
+                ];
 
                 parts.push(q_vec.into_iter().join(" "));
             }
@@ -323,14 +322,13 @@ impl Debug for QuantifierPrefix {
         let mut parts = vec![];
         for i in 0..self.len() {
             if !self.names[i].is_empty() {
-                let mut q_vec = vec![];
-
-                q_vec.push(match self.quantifiers[i] {
-                    Quantifier::Exists => "exists".to_string(),
-                    Quantifier::Forall => "forall".to_string(),
-                });
-
-                q_vec.push(self.names[i].iter().join(", "));
+                let q_vec = vec![
+                    match self.quantifiers[i] {
+                        Quantifier::Exists => "exists".to_string(),
+                        Quantifier::Forall => "forall".to_string(),
+                    },
+                    self.names[i].iter().join(", "),
+                ];
 
                 parts.push(q_vec.into_iter().join(" "));
             }

@@ -187,11 +187,8 @@ impl FOModule {
                     }
                     SatResp::Unsat => {
                         for ind in solver.get_unsat_core() {
-                            match ind.0 {
-                                Term::Id(s) => {
-                                    core.insert(s[6..].parse().unwrap());
-                                }
-                                _ => (),
+                            if let Term::Id(s) = ind.0 {
+                                core.insert(s[6..].parse().unwrap());
                             }
                         }
                     }
