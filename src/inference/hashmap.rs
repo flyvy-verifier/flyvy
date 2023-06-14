@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 use fxhash::FxBuildHasher;
 use std::hash::Hash;
 
