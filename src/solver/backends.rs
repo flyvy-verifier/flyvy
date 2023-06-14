@@ -37,19 +37,10 @@ pub enum SolverType {
     Cvc5,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct GenericOptions {
     timeout_ms: Option<usize>,
     seed: usize,
-}
-
-impl Default for GenericOptions {
-    fn default() -> Self {
-        Self {
-            timeout_ms: None,
-            seed: 0,
-        }
-    }
 }
 
 /// A Backend for launching and parsing Z3/CVC4/CVC5, with some hard-coded options.

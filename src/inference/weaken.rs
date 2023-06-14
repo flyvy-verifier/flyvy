@@ -306,7 +306,8 @@ where
         }
     }
 
-    fn weaken_add<'a>(
+    #[allow(clippy::too_many_arguments)]
+    fn weaken_add(
         &mut self,
         mut to_weaken: Self,
         model: &Model,
@@ -314,7 +315,7 @@ where
         index: usize,
         perm_index: usize,
         prev_exists: bool,
-        ignore: &Vec<IgnoreSubsumed<'a, O, L, B>>,
+        ignore: &Vec<IgnoreSubsumed<'_, O, L, B>>,
     ) {
         if to_weaken.is_empty() {
             return;
@@ -448,15 +449,7 @@ where
             to_weaken.insert(self.remove_by_id(i));
         }
 
-        self.weaken_add(
-            to_weaken,
-            model,
-            &Assignment::new(),
-            0,
-            0,
-            false,
-            &mut vec![],
-        );
+        self.weaken_add(to_weaken, model, &Assignment::new(), 0, 0, false, &vec![]);
 
         true
     }
@@ -484,7 +477,7 @@ where
             0,
             0,
             false,
-            &mut vec![],
+            &vec![],
         );
 
         true
@@ -619,7 +612,7 @@ where
         let is_universal = config.is_universal();
 
         Self {
-            config: config,
+            config,
             lemma_qf: Arc::new(L::new(infer_cfg, atoms, is_universal)),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
@@ -671,10 +664,7 @@ where
                 .get_subsuming(&perm_body)
                 .into_iter()
                 .flat_map(|(_, is)| is)
-                .copied()
-                .filter(|i| self.to_prefixes[i].subsumes(prefix))
-                .next()
-                .is_some()
+                .any(|i| self.to_prefixes[i].subsumes(prefix))
             {
                 return true;
             }

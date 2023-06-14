@@ -170,11 +170,11 @@ struct InferenceConfigArgs {
 
 impl InferenceConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
-        let qf_body = if self.qf_body.to_lowercase() == "cnf".to_string() {
+        let qf_body = if self.qf_body.to_lowercase() == *"cnf" {
             QfBody::CNF
-        } else if self.qf_body.to_lowercase() == "pdnf".to_string() {
+        } else if self.qf_body.to_lowercase() == *"pdnf" {
             QfBody::PDnf
-        } else if self.qf_body.to_lowercase() == "pdnf-naive".to_string() {
+        } else if self.qf_body.to_lowercase() == *"pdnf-naive" {
             QfBody::PDnfNaive
         } else {
             panic!("Invalid choice of quantifier-free body!")

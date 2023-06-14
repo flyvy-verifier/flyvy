@@ -85,7 +85,7 @@ where
                 restricted.clone(),
                 prefix.is_universal(),
             ));
-            (Arc::new(prefix), lemma_qf, restricted.clone())
+            (Arc::new(prefix), lemma_qf, restricted)
         })
         .collect_vec();
     let infer_cfg = Arc::new(infer_cfg);
@@ -99,11 +99,9 @@ where
     let start = std::time::Instant::now();
 
     let fixpoint = if infer_cfg.indiv {
-        run_individual::<O, L, B>(infer_cfg.clone(), conf, &fo, unrestricted, domains, extend)
-            .unwrap()
+        run_individual::<O, L, B>(infer_cfg, conf, &fo, unrestricted, domains, extend).unwrap()
     } else {
-        run_fixpoint::<O, L, B>(infer_cfg.clone(), conf, &fo, unrestricted, domains, extend)
-            .unwrap()
+        run_fixpoint::<O, L, B>(infer_cfg, conf, &fo, unrestricted, domains, extend).unwrap()
     };
     let total_time = start.elapsed().as_secs_f32();
     let proof = fixpoint.to_terms();
@@ -165,9 +163,9 @@ where
     println!("Number of individual domains: {}", domains.len());
 
     let mut active_domains: Vec<Domain<L>> = vec![];
-    for i in 0..domains.len() {
-        active_domains.retain(|d| !(domains[i].0.contains(&d.0) && domains[i].1.contains(&d.1)));
-        active_domains.push(domains[i].clone());
+    for (i, dom) in domains.iter().enumerate() {
+        active_domains.retain(|d| !(dom.0.contains(&d.0) && dom.1.contains(&d.1)));
+        active_domains.push(dom.clone());
 
         println!();
         println!("({}) Running fixpoint algorithm...", i + 1);
@@ -258,7 +256,7 @@ where
 
     // Begin by overapproximating the initial states.
     print(&frontier, &weaken_set, "Finding CTI...".to_string());
-    while let Some(cti) = frontier.init_cex(&fo, conf, &weaken_set) {
+    while let Some(cti) = frontier.init_cex(fo, conf, &weaken_set) {
         print(
             &frontier,
             &weaken_set,
@@ -290,7 +288,7 @@ where
 
         // Handle transition CTI's.
         print(&frontier, &weaken_set, "Finding CTI...".to_string());
-        while let Some(cti) = frontier.trans_cex(&fo, conf, &weaken_set) {
+        while let Some(cti) = frontier.trans_cex(fo, conf, &weaken_set) {
             print(
                 &frontier,
                 &weaken_set,

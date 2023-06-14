@@ -87,7 +87,7 @@ impl RestrictedAtoms {
                 let t2_sub = substitute_qf(t2, substitution);
 
                 let eq12 = Term::equals(t1_sub.clone(), t2_sub.clone());
-                let eq21 = Term::equals(t2_sub.clone(), t1_sub.clone());
+                let eq21 = Term::equals(t2_sub, t1_sub);
 
                 let mut res = None;
 

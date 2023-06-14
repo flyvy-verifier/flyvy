@@ -97,7 +97,7 @@ impl<O: OrderSubsumption> OrderSubsumption for Reversed<O> {
 
 impl<O: OrderSubsumption> Reversed<O> {
     fn vec_cloned(v: &[O]) -> Vec<Self> {
-        Self::vec(v.into_iter().cloned())
+        Self::vec(v.iter().cloned())
     }
 
     fn vec<I: DoubleEndedIterator<Item = O>>(iter: I) -> Vec<Self> {
@@ -125,7 +125,7 @@ impl<M: SubsumptionMap> SubsumptionMap for ReversedSubsumptionMap<M> {
     }
 
     fn keys(&self) -> Vec<Self::Key> {
-        self.0.keys().into_iter().map(|k| Reversed(k)).collect_vec()
+        self.0.keys().into_iter().map(Reversed).collect_vec()
     }
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) {
@@ -337,7 +337,7 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> TrieMap<O, V> {
             .flat_map(|(o, trie)| {
                 let new_key = key.iter().filter(|k| !o.subsumes(k)).cloned().collect_vec();
                 let mut new_path = path.clone();
-                new_path.push(o.clone());
+                new_path.push(o);
 
                 trie.get_subsuming_and(&new_key, new_path)
             })
@@ -352,7 +352,7 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> TrieMap<O, V> {
             .flat_map(|(o, trie)| {
                 let new_key = key.iter().filter(|&k| !k.leq(&o)).cloned().collect_vec();
                 let mut new_path = path.clone();
-                new_path.push(o.clone());
+                new_path.push(o);
 
                 trie.get_subsuming_or(&new_key, new_path)
             })
@@ -875,16 +875,19 @@ mod tests {
         let clause_size = 2;
         let clause_count = 2;
         let mut map: CnfMap<usize, usize> = CnfMap::new();
-        let mut next = 0;
 
         let clauses = (0..literal_count).combinations(clause_size).collect_vec();
 
-        for cl in clauses.iter().cloned().combinations(clause_count) {
+        for (next, cl) in clauses
+            .iter()
+            .cloned()
+            .combinations(clause_count)
+            .enumerate()
+        {
             let cnf = Cnf::from_base(cl);
             assert!(map.get_subsuming(&cnf).is_empty());
             assert!(map.get_subsumed(&cnf).is_empty());
             map.insert(cnf, next);
-            next += 1;
         }
     }
 }

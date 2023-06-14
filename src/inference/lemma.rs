@@ -29,7 +29,7 @@ use super::hashmap;
 use super::quant::{count_exists, QuantifierPrefix};
 
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
-    ((atoms - len + 1)..=atoms).fold(1, |a, b| a * b) * 2_usize.pow(len as u32)
+    ((atoms - len + 1)..=atoms).product::<usize>() * 2_usize.pow(len as u32)
 }
 
 #[derive(Clone)]
@@ -161,7 +161,7 @@ impl LemmaQf for LemmaCnf {
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
 
-        ((clauses - self.clauses + 1)..=clauses).fold(1, |a, b| a * b)
+        ((clauses - self.clauses + 1)..=clauses).product()
     }
 
     fn sub_spaces(&self) -> Vec<Self> {
@@ -257,7 +257,7 @@ impl LemmaPDnfNaive {
         let units: HashSet<Literal> = base
             .iter()
             .filter(|cb| cb.len() == 1)
-            .map(|cb| cb[0].clone())
+            .map(|cb| cb[0])
             .collect();
 
         if cube.iter().any(|lit| units.contains(lit)) {
@@ -463,7 +463,7 @@ impl LemmaQf for LemmaPDnfNaive {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(atoms, len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).fold(1, |a, b| a * b);
+            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
         }
 
         total
@@ -507,7 +507,7 @@ impl LemmaQf for LemmaPDnf {
 
     fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
         (
-            clause.iter().copied().collect(),
+            clause.to_vec(),
             clause.iter().map(|lit| vec![*lit]).collect(),
         )
     }
@@ -680,7 +680,7 @@ impl LemmaQf for LemmaPDnf {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(atoms, len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).fold(1, |a, b| a * b);
+            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
         }
 
         total
@@ -882,11 +882,7 @@ where
                     }
                     TransCexResult::UnsatCore(core) => {
                         let mut new_cores_vec = new_cores.lock().unwrap();
-                        new_cores_vec.push((
-                            prefix,
-                            body.clone(),
-                            hashmap::set_from_std(core.clone()),
-                        ));
+                        new_cores_vec.push((prefix, body.clone(), hashmap::set_from_std(core)));
                     }
                     TransCexResult::Cancelled => (),
                 }
@@ -1007,6 +1003,7 @@ where
             };
 
             let min = min_unique(&to_children, &to_parents);
+            #[allow(clippy::unnecessary_unwrap)]
             if min.is_some() && (grow || min.as_ref().unwrap().1.len() <= 1) {
                 // This is the replaced lemma.
                 let (id, ch) = &min.unwrap();
@@ -1143,7 +1140,7 @@ where
                 let mut new_level = vec![];
                 for (j, state) in &levels[i] {
                     new_level.extend(
-                        fo.simulate_from(conf, &state, width, 1)
+                        fo.simulate_from(conf, state, width, 1)
                             .into_iter()
                             .map(|model| (*j, model)),
                     );
@@ -1157,7 +1154,7 @@ where
             );
             for i in 1..=depth {
                 for (j, poststate) in &levels[i] {
-                    if self.weaken_set.weaken_cti(&levels[i - 1][*j].1, &poststate) {
+                    if self.weaken_set.weaken_cti(&levels[i - 1][*j].1, poststate) {
                         log::info!("[{}] Weakened.", self.weaken_set.len());
                         self.ctis.push_back(poststate.clone());
                     }
