@@ -4,6 +4,8 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::fs::create_dir_all;
+use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
@@ -15,6 +17,7 @@ use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
 use crate::solver::{log_dir, solver_path, SolverConf};
+use crate::solver::bounded::{interpret, translate, InterpreterResult};
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
@@ -257,6 +260,12 @@ enum Command {
         /// File name for a .fly file
         file: String,
     },
+    BoundedCheck {
+        /// File name for a .fly file
+        file: String,
+        /// Depth to run the checker to
+        depth: usize,
+    },
 }
 
 impl InferCommand {
@@ -275,6 +284,7 @@ impl Command {
             Command::Infer(InferArgs { infer_cmd, .. }) => infer_cmd.file(),
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
+            Command::BoundedCheck { file, .. } => file,
         }
     }
 }
@@ -504,6 +514,38 @@ impl App {
                 let mut m = m;
                 m.inline_defs();
                 println!("{}", printer::fmt(&m));
+            }
+            Command::BoundedCheck { depth, .. } => {
+                let mut universe = HashMap::new();
+                let stdin = std::io::stdin();
+                for sort in &m.signature.sorts {
+                    println!("how large should {} be?", sort);
+                    let input = stdin
+                        .lock()
+                        .lines()
+                        .next()
+                        .expect("no next line")
+                        .expect("could not read next line")
+                        .parse::<usize>();
+                    match input {
+                        Ok(input) => {
+                            universe.insert(sort.clone(), input);
+                        }
+                        Err(_) => {
+                            eprintln!("could not parse input as a number");
+                            process::exit(1);
+                        }
+                    }
+                }
+                match translate(&mut m, &universe) {
+                    Err(e) => eprintln!("{}", e),
+                    Ok(program) => match interpret(&program, depth) {
+                        InterpreterResult::Unknown => println!("no counterexample found"),
+                        InterpreterResult::Counterexample(trace) => {
+                            eprintln!("found counterexample: {:#?}", trace)
+                        }
+                    },
+                }
             }
         }
     }
