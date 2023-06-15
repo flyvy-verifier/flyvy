@@ -20,14 +20,14 @@ macro_rules! set {
 /// This is a tuple of semantics::Elements that represents the arguments to a relation
 type Element = Vec<usize>;
 
-//, Map from set names to their current values
+/// Map from set names to their current values
 type State = Map<String, Set<Element>>;
 
 /// A Program is a set of initial states, a set of transitions, and a safety property
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     /// List of initial states
-    pub inits: Set<State>,
+    inits: Set<State>,
     /// Set of transitions to potentially take at each timestep
     trs: Set<Transition>,
     /// Disjunction of conjunction of guards that the interpreter will verify always hold
@@ -1382,6 +1382,34 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         let output = interpret(&target, 1);
         assert_eq!(output, InterpreterResult::Unknown);
 
+        Ok(())
+    }
+
+    #[test]
+    fn interpreter_primes_in_inits() -> Result<(), TranslationError> {
+        let source = "
+mutable f: bool
+
+# inits:
+assume !f & !f'
+
+# transitions:
+assume always (f & f') | (!f & !f')
+
+# safety:
+assert always !f
+        ";
+
+        let mut m = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+        let target = translate(&mut m, &universe);
+        assert_eq!(
+            target,
+            Err(TranslationError::ExpectedGuard(Valued::NoOp(
+                "f".to_string(),
+                vec![]
+            )))
+        );
         Ok(())
     }
 }
