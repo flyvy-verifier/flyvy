@@ -194,6 +194,8 @@ pub enum TranslationError {
     UnknownSort(String, HashMap<String, usize>),
     #[error("all assumes should precede all asserts, but found {0:?}")]
     OutOfOrderStatement(ThmStmt),
+    #[error("expected no primes or only one prime in {0:#?}")]
+    TooFuture(Term),
     #[error("found an assert that isn't a safety property")]
     AssertWithoutAlways(Term),
     #[error("unknown identifier {0}")]
@@ -269,10 +271,14 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         match assume {
             Term::UnaryOp(UOp::Always, tr_or_axiom) => {
                 // for axioms, also restrict inits
-                if crate::term::count_primes(&tr_or_axiom) == 0 {
-                    inits.push(*tr_or_axiom.clone());
+                match crate::term::FirstOrder::unrolling(&tr_or_axiom) {
+                    Some(0) => {
+                        inits.push(*tr_or_axiom.clone());
+                        trs.push(*tr_or_axiom)
+                    }
+                    Some(1) => trs.push(*tr_or_axiom),
+                    _ => return Err(TranslationError::TooFuture(*tr_or_axiom)),
                 }
-                trs.push(*tr_or_axiom)
             }
             init => inits.push(init),
         }
