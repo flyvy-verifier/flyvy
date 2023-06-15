@@ -61,6 +61,27 @@ fn with_next(sig: &Signature, t: &Term, bound: im::HashSet<String>, next: usize)
     }
 }
 
+/// Returns the maximum number of nested primes
+pub fn count_primes(t: &Term) -> usize {
+    match t {
+        Term::UnaryOp(UOp::Prime, t) => count_primes(t) + 1,
+        Term::Id(_) => 0,
+        Term::App(_, p, xs) => *p.max(&xs.iter().map(count_primes).max().unwrap_or(0)),
+        Term::Literal(_) => 0,
+        Term::UnaryOp(_, t) => count_primes(t),
+        Term::BinOp(_, lhs, rhs) => count_primes(lhs).max(count_primes(rhs)),
+        Term::NAryOp(_, xs) => xs.iter().map(count_primes).max().unwrap_or(0),
+        Term::Ite { cond, then, else_ } => {
+            count_primes(cond).max(count_primes(then).max(count_primes(else_)))
+        }
+        Term::Quantified {
+            quantifier: _,
+            binders: _,
+            body,
+        } => count_primes(body),
+    }
+}
+
 /// Context for normalizing primes in terms.
 pub struct Next<'a> {
     sig: &'a Signature,

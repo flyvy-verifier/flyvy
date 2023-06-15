@@ -27,7 +27,7 @@ type State = Map<String, Set<Element>>;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     /// List of initial states
-    inits: Set<State>,
+    pub inits: Set<State>,
     /// Set of transitions to potentially take at each timestep
     trs: Set<Transition>,
     /// Disjunction of conjunction of guards that the interpreter will verify always hold
@@ -204,11 +204,11 @@ pub enum TranslationError {
     NoValue(Valued),
     #[error("we don't support negating no-ops, but found {0:?}")]
     NegatedNoOp(Valued),
-    #[error("expected guard, found: {0:#?}\nthis may have occurred because you are missing some part of your program")]
+    #[error("expected guard, found: {0:#?}")]
     ExpectedGuard(Valued),
-    #[error("expected update, found: {0:#?}\nthis may have occurred because you are missing some part of your program")]
+    #[error("expected update, found: {0:#?}")]
     ExpectedUpdate(Valued),
-    #[error("expected guard or update, found: {0:#?}\nthis may have occurred because you are missing some part of your program")]
+    #[error("expected guard or update, found: {0:#?}")]
     ExpectedGuardOrUpdate(Valued),
     #[error("one of the generated updates updated the immutable relation {0}")]
     UpdateViolatedImmutability(String),
@@ -267,7 +267,13 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
     let mut safes = Vec::new();
     for assume in assumes {
         match assume {
-            Term::UnaryOp(UOp::Always, tr) => trs.push(*tr),
+            Term::UnaryOp(UOp::Always, tr_or_axiom) => {
+                // for axioms, also restrict inits
+                if crate::term::count_primes(&tr_or_axiom) == 0 {
+                    inits.push(*tr_or_axiom.clone());
+                }
+                trs.push(*tr_or_axiom)
+            }
             init => inits.push(init),
         }
     }

@@ -9,4 +9,4 @@ mod prime;
 pub mod subst;
 pub use cnf::Cnf;
 pub use fo::FirstOrder;
-pub use prime::Next;
+pub use prime::{count_primes, Next};
