@@ -29,7 +29,7 @@ pub struct Program {
     /// List of initial states
     inits: Set<State>,
     /// Set of transitions to potentially take at each timestep
-    trs: Set<Transition>,
+    pub trs: Set<Transition>,
     /// Disjunction of conjunction of guards that the interpreter will verify always hold
     safes: Set<Set<Guard>>,
 }
@@ -381,7 +381,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         })
         .collect();
 
-    let trs = trs
+    let mut trs = trs
         .get_or()
         .into_iter()
         .map(|term| {
@@ -429,6 +429,16 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             Ok(tr)
         })
         .collect::<Result<Set<Transition>, _>>()?;
+
+    let old_trs = trs.clone();
+    for tr1 in &old_trs {
+        for tr2 in &old_trs {
+            if tr2.guards.is_subset(&tr1.guards) && !tr1.guards.is_subset(&tr2.guards) && tr1.updates == tr2.updates {
+                trs.remove(tr1);
+                break;
+            }
+        }
+    }
 
     // disjunction of conjunction of guards
     let safes: Set<Set<Guard>> = get_guards_from_dnf(safes)?;
