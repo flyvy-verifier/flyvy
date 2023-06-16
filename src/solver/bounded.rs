@@ -381,7 +381,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         })
         .collect();
 
-    let mut trs = trs
+    let trs = trs
         .get_or()
         .into_iter()
         .map(|term| {
@@ -429,16 +429,6 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             Ok(tr)
         })
         .collect::<Result<Set<Transition>, _>>()?;
-
-    let old_trs = trs.clone();
-    for tr1 in &old_trs {
-        for tr2 in &old_trs {
-            if tr2.guards.is_subset(&tr1.guards) && !tr1.guards.is_subset(&tr2.guards) && tr1.updates == tr2.updates {
-                trs.remove(tr1);
-                break;
-            }
-        }
-    }
 
     // disjunction of conjunction of guards
     let safes: Set<Set<Guard>> = get_guards_from_dnf(safes)?;
@@ -706,12 +696,20 @@ fn or(terms: Set<Valued>) -> Valued {
             return Valued::Value(1);
         }
     }
-    // check for `A or (A and B)`
+    // check for `(A and B) or (A and B and C)` and remove the superset
     let old = terms.clone();
-    terms.retain(|term| match term {
-        Valued::And(terms) => terms.iter().all(|term| !old.contains(term)),
-        _ => true,
-    });
+    for a in &old {
+        for b in &old {
+            if a != b {
+                let set1 = a.clone().get_and();
+                let set2 = b.clone().get_and();
+                if set2.is_subset(&set1) {
+                    terms.remove(a);
+                    break;
+                }
+            }
+        }
+    }
     // check for `(A and B) or (A and (not B))`
     'outer: loop {
         let old = terms.clone();
