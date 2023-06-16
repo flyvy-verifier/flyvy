@@ -16,9 +16,53 @@ macro_rules! set {
     }};
 }
 
+const ELEMENT_LEN: usize = 7;
 /// This is not the same as a semantics::Element
 /// This is a tuple of semantics::Elements that represents the arguments to a relation
-type Element = Vec<usize>;
+/// We use a fixed size array to avoid allocating a Vec
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Element {
+    len: u8,
+    data: [u8; ELEMENT_LEN],
+}
+impl Element {
+    /// Creates a new elemnt from the given vector
+    pub fn new(vec: Vec<usize>) -> Element {
+        let len = vec.len();
+        if len > ELEMENT_LEN {
+            todo!("raise ELEMENT_LEN to {}", (len >> 3) * 8 - 1);
+        }
+        let mut out = Element {
+            len: len as u8,
+            data: [0; 7],
+        };
+        for (i, x) in vec.into_iter().enumerate() {
+            if let Ok(x) = x.try_into() {
+                out.data[i] = x;
+            } else {
+                todo!("sort size was too large, increase Element data type");
+            }
+        }
+        out
+    }
+}
+impl std::fmt::Debug for Element {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[")?;
+        if self.len > 0 {
+            write!(f, "{:?}", self.data[0])?;
+            for x in &self.data[1..self.len as usize] {
+                write!(f, ", {:?}", x)?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+macro_rules! element {
+    ($($v:expr),* $(,)?) => {{
+        Element::new(vec![$($v,)*])
+    }};
+}
 
 /// Map from set names to their current values
 type State = Map<String, Set<Element>>;
@@ -68,7 +112,7 @@ pub struct Update {
 // are the same length, since we don't store any sort information
 fn assert_state_sorts(set: &Set<Element>, element: &Element) {
     for state in set {
-        assert_eq!(state.len(), element.len());
+        assert_eq!(state.len, element.len);
     }
 }
 
@@ -348,7 +392,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 .iter()
                 .flat_map(|relation| {
                     if relation.args.is_empty() {
-                        set![(&relation.name, (vec![]))]
+                        set![(&relation.name, (element![]))]
                     } else {
                         relation
                             .args
@@ -356,7 +400,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                             .map(|sort| cardinality(universe, sort))
                             .map(|card| (0..card).collect::<Vec<usize>>())
                             .multi_cartesian_product()
-                            .map(|element| (&relation.name, (element)))
+                            .map(|element| (&relation.name, Element::new(element)))
                             .collect()
                     }
                 })
@@ -404,7 +448,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             for relation in &module.signature.relations {
                 if relation.mutable {
                     if relation.args.is_empty() {
-                        if !constrained.contains(&(relation.name.clone(), (vec![]))) {
+                        if !constrained.contains(&(relation.name.clone(), (element![]))) {
                             return Err(TranslationError::UnconstrainedTransition(
                                 relation.name.clone(),
                             ));
@@ -417,7 +461,9 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                             .map(|card| (0..card).collect::<Vec<usize>>())
                             .multi_cartesian_product()
                         {
-                            if !constrained.contains(&(relation.name.clone(), elements)) {
+                            if !constrained
+                                .contains(&(relation.name.clone(), Element::new(elements)))
+                            {
                                 return Err(TranslationError::UnconstrainedTransition(
                                     relation.name.clone(),
                                 ));
@@ -774,15 +820,19 @@ fn expand_quantifiers(
         },
         Term::App(name, 0, args) => Ok(Valued::Includes(
             name.clone(),
-            args.iter()
-                .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
-                .collect::<Result<Vec<_>, _>>()?,
+            Element::new(
+                args.iter()
+                    .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
         )),
         Term::App(name, 1, args) => Ok(Valued::Insert(
             name.clone(),
-            args.iter()
-                .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
-                .collect::<Result<Vec<_>, _>>()?,
+            Element::new(
+                args.iter()
+                    .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
         )),
         Term::UnaryOp(UOp::Not, term) => Ok(not(expand_quantifiers(term, universe, context)?)?),
         Term::BinOp(BinOp::Iff, a, b) => {
@@ -942,9 +992,9 @@ mod tests {
             inits: set![state([("a", set![])])],
             trs: set![
                 Transition::new(set![], set![]),
-                Transition::new(set![], set![Update::insert("a", vec![])])
+                Transition::new(set![], set![Update::insert("a", element![])])
             ],
-            safes: set![set![Guard::excludes("a", vec![])]],
+            safes: set![set![Guard::excludes("a", element![])]],
         };
         let result0 = interpret(&program, 0);
         let result1 = interpret(&program, 1);
@@ -953,7 +1003,7 @@ mod tests {
             result1,
             InterpreterResult::Counterexample(vector![
                 state([("a", set![])]),
-                state([("a", set![(vec![])])])
+                state([("a", set![(element![])])])
             ])
         );
     }
@@ -962,30 +1012,42 @@ mod tests {
     fn interpreter_cycle_sets() {
         let program = Program {
             inits: set![state([
-                ("1", set![(vec![])]),
+                ("1", set![(element![])]),
                 ("2", set![]),
                 ("3", set![]),
                 ("4", set![]),
             ])],
             trs: set![
                 Transition::new(
-                    set![Guard::includes("1", vec![])],
-                    set![Update::remove("1", vec![]), Update::insert("2", vec![])],
+                    set![Guard::includes("1", element![])],
+                    set![
+                        Update::remove("1", element![]),
+                        Update::insert("2", element![])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("2", vec![])],
-                    set![Update::remove("2", vec![]), Update::insert("3", vec![])],
+                    set![Guard::includes("2", element![])],
+                    set![
+                        Update::remove("2", element![]),
+                        Update::insert("3", element![])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("3", vec![])],
-                    set![Update::remove("3", vec![]), Update::insert("4", vec![])],
+                    set![Guard::includes("3", element![])],
+                    set![
+                        Update::remove("3", element![]),
+                        Update::insert("4", element![])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("4", vec![])],
-                    set![Update::remove("4", vec![]), Update::insert("1", vec![])],
+                    set![Guard::includes("4", element![])],
+                    set![
+                        Update::remove("4", element![]),
+                        Update::insert("1", element![])
+                    ],
                 )
             ],
-            safes: set![set![Guard::excludes("4", vec![])]],
+            safes: set![set![Guard::excludes("4", element![])]],
         };
         let result1 = interpret(&program, 0);
         let result2 = interpret(&program, 1);
@@ -999,28 +1061,28 @@ mod tests {
             result4,
             InterpreterResult::Counterexample(vector![
                 state([
-                    ("1", set![(vec![])]),
+                    ("1", set![(element![])]),
                     ("2", set![]),
                     ("3", set![]),
                     ("4", set![])
                 ]),
                 state([
                     ("1", set![]),
-                    ("2", set![(vec![])]),
+                    ("2", set![(element![])]),
                     ("3", set![]),
                     ("4", set![])
                 ]),
                 state([
                     ("1", set![]),
                     ("2", set![]),
-                    ("3", set![(vec![])]),
+                    ("3", set![(element![])]),
                     ("4", set![])
                 ]),
                 state([
                     ("1", set![]),
                     ("2", set![]),
                     ("3", set![]),
-                    ("4", set![(vec![])])
+                    ("4", set![(element![])])
                 ]),
             ])
         );
@@ -1030,26 +1092,38 @@ mod tests {
     #[test]
     fn interpreter_cycle_vals() {
         let program = Program {
-            inits: set![state([("s", set![(vec![0])])])],
+            inits: set![state([("s", set![(element![0])])])],
             trs: set![
                 Transition::new(
-                    set![Guard::includes("s", vec![0])],
-                    set![Update::remove("s", vec![0]), Update::insert("s", vec![1])],
+                    set![Guard::includes("s", element![0])],
+                    set![
+                        Update::remove("s", element![0]),
+                        Update::insert("s", element![1])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("s", vec![1])],
-                    set![Update::remove("s", vec![1]), Update::insert("s", vec![2])],
+                    set![Guard::includes("s", element![1])],
+                    set![
+                        Update::remove("s", element![1]),
+                        Update::insert("s", element![2])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("s", vec![2])],
-                    set![Update::remove("s", vec![2]), Update::insert("s", vec![3])],
+                    set![Guard::includes("s", element![2])],
+                    set![
+                        Update::remove("s", element![2]),
+                        Update::insert("s", element![3])
+                    ],
                 ),
                 Transition::new(
-                    set![Guard::includes("s", vec![3])],
-                    set![Update::remove("s", vec![3]), Update::insert("s", vec![0])],
+                    set![Guard::includes("s", element![3])],
+                    set![
+                        Update::remove("s", element![3]),
+                        Update::insert("s", element![0])
+                    ],
                 )
             ],
-            safes: set![set![Guard::excludes("s", vec![3])]],
+            safes: set![set![Guard::excludes("s", element![3])]],
         };
         let result0 = interpret(&program, 0);
         let result1 = interpret(&program, 1);
@@ -1062,10 +1136,10 @@ mod tests {
         assert_eq!(
             result3,
             InterpreterResult::Counterexample(vector![
-                state([("s", set![(vec![0])])]),
-                state([("s", set![(vec![1])])]),
-                state([("s", set![(vec![2])])]),
-                state([("s", set![(vec![3])])]),
+                state([("s", set![(element![0])])]),
+                state([("s", set![(element![1])])]),
+                state([("s", set![(element![2])])]),
+                state([("s", set![(element![3])])]),
             ])
         );
         assert_eq!(result4, result3);
@@ -1133,8 +1207,8 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let mut trs = set![];
         // (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n)
         trs.extend(set![
-            Transition::new(set![], set![Update::insert("lock_msg", vec![0])]),
-            Transition::new(set![], set![Update::insert("lock_msg", vec![1])]),
+            Transition::new(set![], set![Update::insert("lock_msg", element![0])]),
+            Transition::new(set![], set![Update::insert("lock_msg", element![1])]),
         ]);
         // (forall N:node. server_holds_lock & lock_msg(n) &
         //     !((server_holds_lock)') &
@@ -1143,24 +1217,24 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         trs.extend(set![
             Transition::new(
                 set![
-                    Guard::includes("lock_msg", vec![1]),
-                    Guard::includes("server_holds_lock", vec![])
+                    Guard::includes("lock_msg", element![1]),
+                    Guard::includes("server_holds_lock", element![])
                 ],
                 set![
-                    Update::insert("grant_msg", vec![1]),
-                    Update::remove("lock_msg", vec![1]),
-                    Update::remove("server_holds_lock", vec![])
+                    Update::insert("grant_msg", element![1]),
+                    Update::remove("lock_msg", element![1]),
+                    Update::remove("server_holds_lock", element![])
                 ]
             ),
             Transition::new(
                 set![
-                    Guard::includes("lock_msg", vec![0]),
-                    Guard::includes("server_holds_lock", vec![])
+                    Guard::includes("lock_msg", element![0]),
+                    Guard::includes("server_holds_lock", element![])
                 ],
                 set![
-                    Update::insert("grant_msg", vec![0]),
-                    Update::remove("lock_msg", vec![0]),
-                    Update::remove("server_holds_lock", vec![])
+                    Update::insert("grant_msg", element![0]),
+                    Update::remove("lock_msg", element![0]),
+                    Update::remove("server_holds_lock", element![])
                 ]
             ),
         ]);
@@ -1169,17 +1243,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("grant_msg", vec![0]),],
+                set![Guard::includes("grant_msg", element![0]),],
                 set![
-                    Update::insert("holds_lock", vec![0]),
-                    Update::remove("grant_msg", vec![0])
+                    Update::insert("holds_lock", element![0]),
+                    Update::remove("grant_msg", element![0])
                 ]
             ),
             Transition::new(
-                set![Guard::includes("grant_msg", vec![1]),],
+                set![Guard::includes("grant_msg", element![1]),],
                 set![
-                    Update::insert("holds_lock", vec![1]),
-                    Update::remove("grant_msg", vec![1])
+                    Update::insert("holds_lock", element![1]),
+                    Update::remove("grant_msg", element![1])
                 ]
             ),
         ]);
@@ -1188,17 +1262,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("holds_lock", vec![0]),],
+                set![Guard::includes("holds_lock", element![0]),],
                 set![
-                    Update::insert("unlock_msg", vec![0]),
-                    Update::remove("holds_lock", vec![0])
+                    Update::insert("unlock_msg", element![0]),
+                    Update::remove("holds_lock", element![0])
                 ]
             ),
             Transition::new(
-                set![Guard::includes("holds_lock", vec![1]),],
+                set![Guard::includes("holds_lock", element![1]),],
                 set![
-                    Update::insert("unlock_msg", vec![1]),
-                    Update::remove("holds_lock", vec![1])
+                    Update::insert("unlock_msg", element![1]),
+                    Update::remove("holds_lock", element![1])
                 ]
             ),
         ]);
@@ -1207,17 +1281,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     ((server_holds_lock)'))
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("unlock_msg", vec![0]),],
+                set![Guard::includes("unlock_msg", element![0]),],
                 set![
-                    Update::insert("server_holds_lock", vec![]),
-                    Update::remove("unlock_msg", vec![0])
+                    Update::insert("server_holds_lock", element![]),
+                    Update::remove("unlock_msg", element![0])
                 ]
             ),
             Transition::new(
-                set![Guard::includes("unlock_msg", vec![1]),],
+                set![Guard::includes("unlock_msg", element![1]),],
                 set![
-                    Update::insert("server_holds_lock", vec![]),
-                    Update::remove("unlock_msg", vec![1])
+                    Update::insert("server_holds_lock", element![]),
+                    Update::remove("unlock_msg", element![1])
                 ]
             ),
         ]);
@@ -1228,12 +1302,12 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
                 ("grant_msg", set![]),
                 ("unlock_msg", set![]),
                 ("holds_lock", set![]),
-                ("server_holds_lock", set![(vec![])])
+                ("server_holds_lock", set![(element![])])
             ])],
             trs,
             safes: set![
-                set![Guard::excludes("holds_lock", vec![0])],
-                set![Guard::excludes("holds_lock", vec![1])]
+                set![Guard::excludes("holds_lock", element![0])],
+                set![Guard::excludes("holds_lock", element![1])]
             ],
         };
 
@@ -1420,7 +1494,7 @@ assert always !f
             target,
             Err(TranslationError::ExpectedGuard(Valued::NoOp(
                 "f".to_string(),
-                vec![]
+                element![]
             )))
         );
         Ok(())
