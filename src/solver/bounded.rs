@@ -699,11 +699,10 @@ fn or(terms: Set<Valued>) -> Valued {
     // check for `(A and B) or (A and B and C)` and remove the superset
     let old = terms.clone();
     for a in &old {
-        for b in &old {
-            if a != b {
-                let set1 = a.clone().get_and();
-                let set2 = b.clone().get_and();
-                if set2.is_subset(&set1) {
+        if let Valued::And(xs) = a {
+            for b in &old {
+                if a != b && (xs.contains(b) || matches!(b, Valued::And(ys) if xs.is_superset(ys)))
+                {
                     terms.remove(a);
                     break;
                 }
