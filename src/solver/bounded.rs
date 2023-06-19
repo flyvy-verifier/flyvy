@@ -108,14 +108,6 @@ pub struct Update {
     remove: bool,
 }
 
-// runtime check for making sure that the set at least contains elements that
-// are the same length, since we don't store any sort information
-fn assert_state_sorts(set: &Set<Element>, element: &Element) {
-    for state in set {
-        assert_eq!(state.len, element.len);
-    }
-}
-
 impl Guard {
     /// Helper function to create an inclusion assertion
     pub fn includes(set: &str, element: Element) -> Guard {
@@ -135,7 +127,6 @@ impl Guard {
     }
 
     fn run(&self, state: &State) -> bool {
-        assert_state_sorts(&state[&self.set], &self.element);
         if self.excludes {
             !state[&self.set].contains(&self.element)
         } else {
@@ -163,7 +154,6 @@ impl Update {
     }
 
     fn run(&self, state: &mut State) {
-        assert_state_sorts(&state[&self.set], &self.element);
         if self.remove {
             state.get_mut(&self.set).unwrap().remove(&self.element);
         } else {
