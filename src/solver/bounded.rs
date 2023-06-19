@@ -201,7 +201,20 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
     // cache stores states that have ever been present in the queue
     let mut cache: Cache<State> = program.inits.iter().cloned().collect();
 
+    let mut current_depth = 0;
+    let start_time = std::time::Instant::now();
+    let mut depth_time = start_time;
+    println!("considering depth {}. queue length is {}", current_depth, queue.len());
+
     while let Some(trace) = queue.pop_front() {
+        let depth = trace.len() - 1;
+        if depth > current_depth {
+            current_depth += 1;
+            let now = std::time::Instant::now();
+            let delta = now - depth_time;
+            depth_time = now;
+            println!("({:?} since last depth) considering depth {}. queue length is {}. visited {} states.", delta, current_depth, queue.len(), cache.len());
+        }
         let state = trace.last().unwrap();
         if !program
             .safes
@@ -210,13 +223,16 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
         {
             return InterpreterResult::Counterexample(trace);
         }
-        if trace.len() - 1 < max_depth {
+        if depth < max_depth {
             for tr in &program.trs {
                 if tr.guards.iter().all(|guard| guard.run(state)) {
                     let mut next = state.clone();
                     tr.updates.iter().for_each(|update| update.run(&mut next));
                     if !cache.contains(&next) {
                         cache.insert(next.clone());
+                        if cache.len() % 100000 == 0 {
+                            println!("intermediate cache update ({:?} since last depth) considering depth {}. queue length is {}. visited {} states.", depth_time.elapsed(), current_depth, queue.len(), cache.len()); 
+                        }
                         let mut trace = trace.clone();
                         trace.push_back(next);
                         queue.push_back(trace);
@@ -224,6 +240,7 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
                 }
             }
         }
+
     }
 
     InterpreterResult::Unknown
