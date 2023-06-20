@@ -17,7 +17,7 @@ macro_rules! set {
     }};
 }
 
-const ELEMENT_LEN: usize = 7;
+const ELEMENT_LEN: usize = 15;
 /// This is not the same as a semantics::Element
 /// This is a tuple of semantics::Elements that represents the arguments to a relation
 /// We use a fixed size array to avoid allocating a Vec
@@ -31,11 +31,11 @@ impl Element {
     pub fn new(vec: Vec<usize>) -> Element {
         let len = vec.len();
         if len > ELEMENT_LEN {
-            todo!("raise ELEMENT_LEN to {}", (len >> 3) * 8 - 1);
+            todo!("raise ELEMENT_LEN to {}", (len >> 3) * 8 + 15);
         }
         let mut out = Element {
             len: len as u8,
-            data: [0; 7],
+            data: [0; ELEMENT_LEN],
         };
         for (i, x) in vec.into_iter().enumerate() {
             if let Ok(x) = x.try_into() {
@@ -66,8 +66,17 @@ macro_rules! element {
 }
 
 /// Represents all (set, element) pairs with a bit for each one's inclusion
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct State(BitVec);
+
+impl std::hash::Hash for State {
+    fn hash<H>(&self, h: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        usize::hash_slice(self.0.as_raw_slice(), h)
+    }
+}
 
 impl State {
     fn new(indices: &Indices) -> State {
