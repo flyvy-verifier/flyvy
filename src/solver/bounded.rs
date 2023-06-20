@@ -84,14 +84,6 @@ impl State {
         out.resize(indices.len(), false); // cap vs. len
         State(out)
     }
-
-    fn get(&self, relation: &str, element: Element, indices: &Indices) -> bool {
-        self.0[indices[&(relation, element)]]
-    }
-
-    fn set(&mut self, relation: &str, element: Element, indices: &Indices, value: bool) {
-        self.0.set(indices[&(relation, element)], value);
-    }
 }
 
 // holds an ordering of all (relation, element) pairs
@@ -160,70 +152,24 @@ impl Transition {
 }
 
 /// A Guard is either an inclusion or an exclusion assertion of an element from a set
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Guard {
-    set: String,
-    element: Element,
-    excludes: bool,
+    index: usize,
+    value: bool,
 }
 
 /// An Update is either an insertion or a removal of an element from a set
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Update {
-    set: String,
-    element: Element,
-    remove: bool,
-}
-
-impl Guard {
-    /// Helper function to create an inclusion assertion
-    pub fn includes(set: &str, element: Element) -> Guard {
-        Guard {
-            set: set.to_string(),
-            element,
-            excludes: false,
-        }
-    }
-    /// Helper function to create an exclusion assertion
-    pub fn excludes(set: &str, element: Element) -> Guard {
-        Guard {
-            set: set.to_string(),
-            element,
-            excludes: true,
-        }
-    }
-}
-
-impl Update {
-    /// Helper function to create an insertion
-    pub fn insert(set: &str, element: Element) -> Update {
-        Update {
-            set: set.to_string(),
-            element,
-            remove: false,
-        }
-    }
-    /// Helper function to create a removal
-    pub fn remove(set: &str, element: Element) -> Update {
-        Update {
-            set: set.to_string(),
-            element,
-            remove: true,
-        }
-    }
+    index: usize,
+    value: bool,
 }
 
 /// We use a set trie to optimize looping over all guards
 #[derive(Clone, Debug)]
 struct Transitions<'a> {
     data: Vec<&'a Transition>,
-    children: HashMap<EdgeLabel, Transitions<'a>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct EdgeLabel {
-    index: usize,
-    value: bool,
+    children: HashMap<&'a Guard, Transitions<'a>>,
 }
 
 impl<'a> Transitions<'a> {
@@ -234,8 +180,8 @@ impl<'a> Transitions<'a> {
         }
     }
 
-    /// set must be sorted
-    fn insert(&mut self, mut set: impl Iterator<Item = EdgeLabel>, value: &'a Transition) {
+    /// set should be sorted
+    fn insert(&mut self, mut set: impl Iterator<Item = &'a Guard>, value: &'a Transition) {
         match set.next() {
             None => {
                 self.data.push(value);
@@ -258,15 +204,6 @@ impl<'a> Transitions<'a> {
     }
 }
 
-impl EdgeLabel {
-    fn new(relation: &str, element: Element, indices: &Indices, value: bool) -> EdgeLabel {
-        EdgeLabel {
-            index: indices[&(relation, element)],
-            value,
-        }
-    }
-}
-
 use im::{vector, Vector};
 type Trace = Vector<State>;
 
@@ -283,14 +220,7 @@ pub enum InterpreterResult {
 /// Note that max_depth refers to the number of timesteps,
 /// e.g. a max_depth of 0 means only evaluate the initial states
 #[allow(dead_code)]
-pub fn interpret(
-    program: &Program,
-    max_depth: usize,
-    signature: &Signature,
-    universe: &Universe,
-) -> InterpreterResult {
-    let indices = Indices::new(signature, universe);
-
+pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
     use std::collections::{HashSet as Cache, VecDeque as Queue};
     let mut queue: Queue<Trace> = program
         .inits
@@ -302,12 +232,7 @@ pub fn interpret(
 
     let mut transitions = Transitions::new();
     for tr in &program.trs {
-        let key_set = tr
-            .guards
-            .iter()
-            .map(|guard| EdgeLabel::new(&guard.set, guard.element, &indices, !guard.excludes))
-            .collect::<std::collections::BTreeSet<EdgeLabel>>();
-        transitions.insert(key_set.into_iter(), tr);
+        transitions.insert(tr.guards.iter(), tr);
     }
 
     let mut current_depth = 0;
@@ -335,14 +260,9 @@ pub fn interpret(
 
         let state = trace.last().unwrap();
         if !program.safes.iter().any(|guards| {
-            guards.iter().all(|guard| {
-                let included = state.get(&guard.set, guard.element, &indices);
-                if guard.excludes {
-                    !included
-                } else {
-                    included
-                }
-            })
+            guards
+                .iter()
+                .all(|guard| state.0[guard.index] == guard.value)
         }) {
             return InterpreterResult::Counterexample(trace);
         }
@@ -353,9 +273,9 @@ pub fn interpret(
 
             for tr in trs {
                 let mut next = state.clone();
-                tr.updates.iter().for_each(|update| {
-                    next.set(&update.set, update.element, &indices, !update.remove)
-                });
+                tr.updates
+                    .iter()
+                    .for_each(|update| next.0.set(update.index, update.value));
                 if !cache.contains(&next) {
                     cache.insert(next.clone());
                     if cache.len() % 100000 == 0 {
@@ -422,6 +342,8 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
     if let Err((e, _)) = sort_check_and_infer(module) {
         return Err(TranslationError::SortError(e));
     }
+
+    let indices = Indices::new(&module.signature, universe);
 
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
@@ -501,7 +423,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             .map(|term| {
                 term.get_and()
                     .into_iter()
-                    .map(|term| term.get_guard())
+                    .map(|term| term.get_guard(&indices))
                     .collect::<Result<Set<_>, _>>()
             })
             .collect::<Result<Set<_>, _>>()
@@ -509,7 +431,6 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
 
     // inits should just be guards at this point
     let inits: Set<Set<Guard>> = get_guards_from_dnf(inits)?;
-    let indices = Indices::new(&module.signature, universe);
 
     // change inits from guards over the state space to states
     let inits: Set<State> = inits
@@ -519,8 +440,8 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             let mut init = State::new(&indices);
             let mut constrained = set![];
             for guard in &conjunction {
-                init.set(&guard.set, guard.element, &indices, !guard.excludes);
-                constrained.insert((&guard.set, &guard.element));
+                init.0.set(guard.index, guard.value);
+                constrained.insert(guard.index);
             }
 
             let unconstrained = module
@@ -529,7 +450,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 .iter()
                 .flat_map(|relation| {
                     if relation.args.is_empty() {
-                        set![(&relation.name, (element![]))]
+                        set![(relation.name.as_str(), (element![]))]
                     } else {
                         relation
                             .args
@@ -537,11 +458,11 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                             .map(|sort| cardinality(universe, sort))
                             .map(|card| (0..card).collect::<Vec<usize>>())
                             .multi_cartesian_product()
-                            .map(|element| (&relation.name, Element::new(element)))
+                            .map(|element| (relation.name.as_str(), Element::new(element)))
                             .collect()
                     }
                 })
-                .filter(|(set, element)| !constrained.contains(&(set, element)));
+                .filter(|(set, element)| !constrained.contains(&indices[&(*set, *element)]));
 
             // compute all the unconstrained elements by doubling the number of states each time
             let mut inits: Set<State> = set![init];
@@ -550,7 +471,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                     .into_iter()
                     .flat_map(|state| {
                         let mut with_unconstrained = state.clone();
-                        with_unconstrained.set(set, element, &indices, true);
+                        with_unconstrained.0.set(indices[&(set, element)], true);
                         set![state, with_unconstrained]
                     })
                     .collect();
@@ -567,13 +488,13 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             let mut tr = Transition::new(set![], set![]);
             let mut constrained = set![];
             for term in term.get_and() {
-                if let Ok(guard) = term.clone().get_guard() {
+                if let Ok(guard) = term.clone().get_guard(&indices) {
                     tr.guards.insert(guard);
-                } else if let Ok(update) = term.clone().get_update() {
-                    constrained.insert((update.set.clone(), update.element));
+                } else if let Ok(update) = term.clone().get_update(&indices) {
+                    constrained.insert(update.index);
                     tr.updates.insert(update);
                 } else if let Valued::NoOp(set, element) = term {
-                    constrained.insert((set, element));
+                    constrained.insert(indices[&(set.as_str(), element)]);
                 } else {
                     return Err(TranslationError::ExpectedGuardOrUpdate(term));
                 }
@@ -582,7 +503,8 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             for relation in &module.signature.relations {
                 if relation.mutable {
                     if relation.args.is_empty() {
-                        if !constrained.contains(&(relation.name.clone(), (element![]))) {
+                        if !constrained.contains(&indices[&(relation.name.as_str(), (element![]))])
+                        {
                             return Err(TranslationError::UnconstrainedTransition(
                                 relation.name.clone(),
                             ));
@@ -595,9 +517,9 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                             .map(|card| (0..card).collect::<Vec<usize>>())
                             .multi_cartesian_product()
                         {
-                            if !constrained
-                                .contains(&(relation.name.clone(), Element::new(elements)))
-                            {
+                            if !constrained.contains(
+                                &indices[&(relation.name.as_str(), Element::new(elements))],
+                            ) {
                                 return Err(TranslationError::UnconstrainedTransition(
                                     relation.name.clone(),
                                 ));
@@ -614,18 +536,24 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
     let safes: Set<Set<Guard>> = get_guards_from_dnf(safes)?;
 
     for tr in &trs {
+        let mut indices_to_sets: Vec<&str> = Vec::with_capacity(indices.len());
+        indices_to_sets.resize(indices.len(), ""); // cap vs len
+        for ((r, _), i) in &indices.0 {
+            indices_to_sets[*i] = r;
+        }
+
         // check that none of the transitions violate immutability
         for update in &tr.updates {
             if !module
                 .signature
                 .relations
                 .iter()
-                .find(|r| r.name == update.set)
+                .find(|r| r.name == indices_to_sets[update.index])
                 .unwrap()
                 .mutable
             {
                 return Err(TranslationError::UpdateViolatedImmutability(
-                    update.set.clone(),
+                    indices_to_sets[update.index].to_string(),
                 ));
             }
         }
@@ -633,13 +561,13 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         for a in &tr.guards {
             if tr.guards.iter().any(|b| {
                 matches!((a, b), (
-                    Guard { set: a, element: b, excludes: true },
-                    Guard { set: c, element: d, excludes: false },
+                    Guard { index: a, value: false },
+                    Guard { index: b, value: true },
                 )
                 | (
-                    Guard { set: a, element: b, excludes: false },
-                    Guard { set: c, element: d, excludes: true },
-                ) if a == c && b == d)
+                    Guard { index: a, value: true, },
+                    Guard { index: b, value: false, },
+                ) if a == b)
             }) {
                 panic!("found an untakeable transition\n{:?}", tr);
             }
@@ -647,9 +575,8 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         // check that all redundant updates have been removed
         for a in &tr.guards {
             if tr.updates.contains(&Update {
-                set: a.set.clone(),
-                element: a.element,
-                remove: a.excludes,
+                index: a.index,
+                value: a.value,
             }) {
                 panic!("found an unremoved redundant update")
             }
@@ -756,18 +683,30 @@ impl Valued {
         }
     }
 
-    fn get_guard(self) -> Result<Guard, TranslationError> {
+    fn get_guard(self, indices: &Indices) -> Result<Guard, TranslationError> {
         match self {
-            Valued::Includes(set, element) => Ok(Guard::includes(&set, element)),
-            Valued::Excludes(set, element) => Ok(Guard::excludes(&set, element)),
+            Valued::Includes(set, element) => Ok(Guard {
+                index: indices[&(set.as_str(), element)],
+                value: true,
+            }),
+            Valued::Excludes(set, element) => Ok(Guard {
+                index: indices[&(set.as_str(), element)],
+                value: false,
+            }),
             _ => Err(TranslationError::ExpectedGuard(self)),
         }
     }
 
-    fn get_update(self) -> Result<Update, TranslationError> {
+    fn get_update(self, indices: &Indices) -> Result<Update, TranslationError> {
         match self {
-            Valued::Insert(set, element) => Ok(Update::insert(&set, element)),
-            Valued::Remove(set, element) => Ok(Update::remove(&set, element)),
+            Valued::Insert(set, element) => Ok(Update {
+                index: indices[&(set.as_str(), element)],
+                value: true,
+            }),
+            Valued::Remove(set, element) => Ok(Update {
+                index: indices[&(set.as_str(), element)],
+                value: false,
+            }),
             _ => Err(TranslationError::ExpectedUpdate(self)),
         }
     }
@@ -807,15 +746,18 @@ fn and(terms: Set<Valued>) -> Valued {
     let old = terms;
     let mut terms = set![];
     for term in &old {
-        if let Ok(update) = term.clone().get_update() {
-            if old.contains(&match update.remove {
-                false => Valued::Includes(update.set.clone(), update.element),
-                true => Valued::Excludes(update.set.clone(), update.element),
-            }) {
-                terms.insert(Valued::NoOp(update.set, update.element));
+        if let Valued::Insert(set, element) = term.clone() {
+            if old.contains(&Valued::Includes(set.clone(), element)) {
+                terms.insert(Valued::NoOp(set, element));
+                continue;
+            }
+        } else if let Valued::Remove(set, element) = term.clone() {
+            if old.contains(&Valued::Excludes(set.clone(), element)) {
+                terms.insert(Valued::NoOp(set, element));
                 continue;
             }
         }
+
         terms.insert(term.clone());
     }
     // check for `(A or B) and (A or C)`
@@ -1113,28 +1055,52 @@ fn distribute_conjunction(term: Valued) -> Valued {
 mod tests {
     use super::*;
 
+    fn includes(set: &str, element: Element, indices: &Indices) -> Guard {
+        Guard {
+            index: indices[&(set, element)],
+            value: true,
+        }
+    }
+    fn excludes(set: &str, element: Element, indices: &Indices) -> Guard {
+        Guard {
+            index: indices[&(set, element)],
+            value: false,
+        }
+    }
+    fn insert(set: &str, element: Element, indices: &Indices) -> Update {
+        Update {
+            index: indices[&(set, element)],
+            value: true,
+        }
+    }
+    fn remove(set: &str, element: Element, indices: &Indices) -> Update {
+        Update {
+            index: indices[&(set, element)],
+            value: false,
+        }
+    }
+
     #[test]
     fn interpreter_basic() {
         let program = Program {
             inits: set![State(bitvec![0])],
             trs: set![
                 Transition::new(set![], set![]),
-                Transition::new(set![], set![Update::insert("a", element![])])
+                Transition::new(
+                    set![],
+                    set![Update {
+                        index: 0,
+                        value: true,
+                    }]
+                )
             ],
-            safes: set![set![Guard::excludes("a", element![])]],
+            safes: set![set![Guard {
+                index: 0,
+                value: false
+            }]],
         };
-        let signature = Signature {
-            sorts: vec![],
-            relations: vec![RelationDecl {
-                name: "a".to_string(),
-                args: vec![],
-                sort: Sort::Bool,
-                mutable: true,
-            }],
-        };
-        let universe = HashMap::new();
-        let result0 = interpret(&program, 0, &signature, &universe);
-        let result1 = interpret(&program, 1, &signature, &universe);
+        let result0 = interpret(&program, 0);
+        let result1 = interpret(&program, 1);
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(
             result1,
@@ -1143,76 +1109,85 @@ mod tests {
     }
 
     #[test]
-    fn interpreter_cycle_sets() {
+    fn interpreter_cycle() {
         let program = Program {
             inits: set![State(bitvec![1, 0, 0, 0]),],
             trs: set![
                 Transition::new(
-                    set![Guard::includes("1", element![])],
+                    set![Guard {
+                        index: 0,
+                        value: true
+                    }],
                     set![
-                        Update::remove("1", element![]),
-                        Update::insert("2", element![])
+                        Update {
+                            index: 0,
+                            value: false
+                        },
+                        Update {
+                            index: 1,
+                            value: true
+                        },
                     ],
                 ),
                 Transition::new(
-                    set![Guard::includes("2", element![])],
+                    set![Guard {
+                        index: 1,
+                        value: true
+                    }],
                     set![
-                        Update::remove("2", element![]),
-                        Update::insert("3", element![])
+                        Update {
+                            index: 1,
+                            value: false
+                        },
+                        Update {
+                            index: 2,
+                            value: true
+                        },
                     ],
                 ),
                 Transition::new(
-                    set![Guard::includes("3", element![])],
+                    set![Guard {
+                        index: 2,
+                        value: true
+                    }],
                     set![
-                        Update::remove("3", element![]),
-                        Update::insert("4", element![])
+                        Update {
+                            index: 2,
+                            value: false
+                        },
+                        Update {
+                            index: 3,
+                            value: true
+                        },
                     ],
                 ),
                 Transition::new(
-                    set![Guard::includes("4", element![])],
+                    set![Guard {
+                        index: 3,
+                        value: true
+                    }],
                     set![
-                        Update::remove("4", element![]),
-                        Update::insert("1", element![])
+                        Update {
+                            index: 3,
+                            value: false
+                        },
+                        Update {
+                            index: 0,
+                            value: true
+                        },
                     ],
                 )
             ],
-            safes: set![set![Guard::excludes("4", element![])]],
+            safes: set![set![Guard {
+                index: 3,
+                value: false
+            }]],
         };
-        let signature = Signature {
-            sorts: vec![],
-            relations: vec![
-                RelationDecl {
-                    name: "1".to_string(),
-                    args: vec![],
-                    sort: Sort::Bool,
-                    mutable: true,
-                },
-                RelationDecl {
-                    name: "2".to_string(),
-                    args: vec![],
-                    sort: Sort::Bool,
-                    mutable: true,
-                },
-                RelationDecl {
-                    name: "3".to_string(),
-                    args: vec![],
-                    sort: Sort::Bool,
-                    mutable: true,
-                },
-                RelationDecl {
-                    name: "4".to_string(),
-                    args: vec![],
-                    sort: Sort::Bool,
-                    mutable: true,
-                },
-            ],
-        };
-        let universe = HashMap::new();
-        let result1 = interpret(&program, 0, &signature, &universe);
-        let result2 = interpret(&program, 1, &signature, &universe);
-        let result3 = interpret(&program, 2, &signature, &universe);
-        let result4 = interpret(&program, 3, &signature, &universe);
-        let result5 = interpret(&program, 4, &signature, &universe);
+        let result1 = interpret(&program, 0);
+        let result2 = interpret(&program, 1);
+        let result3 = interpret(&program, 2);
+        let result4 = interpret(&program, 3);
+        let result5 = interpret(&program, 4);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1226,72 +1201,6 @@ mod tests {
             ])
         );
         assert_eq!(result5, result4);
-    }
-
-    #[test]
-    fn interpreter_cycle_vals() {
-        let program = Program {
-            inits: set![State(bitvec![1, 0, 0, 0])],
-            trs: set![
-                Transition::new(
-                    set![Guard::includes("s", element![0])],
-                    set![
-                        Update::remove("s", element![0]),
-                        Update::insert("s", element![1])
-                    ],
-                ),
-                Transition::new(
-                    set![Guard::includes("s", element![1])],
-                    set![
-                        Update::remove("s", element![1]),
-                        Update::insert("s", element![2])
-                    ],
-                ),
-                Transition::new(
-                    set![Guard::includes("s", element![2])],
-                    set![
-                        Update::remove("s", element![2]),
-                        Update::insert("s", element![3])
-                    ],
-                ),
-                Transition::new(
-                    set![Guard::includes("s", element![3])],
-                    set![
-                        Update::remove("s", element![3]),
-                        Update::insert("s", element![0])
-                    ],
-                )
-            ],
-            safes: set![set![Guard::excludes("s", element![3])]],
-        };
-        let signature = Signature {
-            sorts: vec!["sort".to_string()],
-            relations: vec![RelationDecl {
-                name: "s".to_string(),
-                args: vec![Sort::Id("sort".to_string())],
-                sort: Sort::Bool,
-                mutable: true,
-            }],
-        };
-        let universe = HashMap::from([("sort".to_string(), 4)]);
-        let result0 = interpret(&program, 0, &signature, &universe);
-        let result1 = interpret(&program, 1, &signature, &universe);
-        let result2 = interpret(&program, 2, &signature, &universe);
-        let result3 = interpret(&program, 3, &signature, &universe);
-        let result4 = interpret(&program, 4, &signature, &universe);
-        assert_eq!(result0, InterpreterResult::Unknown);
-        assert_eq!(result1, InterpreterResult::Unknown);
-        assert_eq!(result2, InterpreterResult::Unknown);
-        assert_eq!(
-            result3,
-            InterpreterResult::Counterexample(vector![
-                State(bitvec![1, 0, 0, 0]),
-                State(bitvec![0, 1, 0, 0]),
-                State(bitvec![0, 0, 1, 0]),
-                State(bitvec![0, 0, 0, 1]),
-            ])
-        );
-        assert_eq!(result4, result3);
     }
 
     #[test]
@@ -1352,12 +1261,15 @@ assume always
 assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
         ";
 
-        // trs are loosely added by which exists I think generated them
+        let mut m = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+        let indices = Indices::new(&m.signature, &universe);
+
         let mut trs = set![];
         // (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n)
         trs.extend(set![
-            Transition::new(set![], set![Update::insert("lock_msg", element![0])]),
-            Transition::new(set![], set![Update::insert("lock_msg", element![1])]),
+            Transition::new(set![], set![insert("lock_msg", element![0], &indices)]),
+            Transition::new(set![], set![insert("lock_msg", element![1], &indices)]),
         ]);
         // (forall N:node. server_holds_lock & lock_msg(n) &
         //     !((server_holds_lock)') &
@@ -1366,24 +1278,24 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         trs.extend(set![
             Transition::new(
                 set![
-                    Guard::includes("lock_msg", element![1]),
-                    Guard::includes("server_holds_lock", element![])
+                    includes("lock_msg", element![1], &indices),
+                    includes("server_holds_lock", element![], &indices)
                 ],
                 set![
-                    Update::insert("grant_msg", element![1]),
-                    Update::remove("lock_msg", element![1]),
-                    Update::remove("server_holds_lock", element![])
+                    insert("grant_msg", element![1], &indices),
+                    remove("lock_msg", element![1], &indices),
+                    remove("server_holds_lock", element![], &indices)
                 ]
             ),
             Transition::new(
                 set![
-                    Guard::includes("lock_msg", element![0]),
-                    Guard::includes("server_holds_lock", element![])
+                    includes("lock_msg", element![0], &indices),
+                    includes("server_holds_lock", element![], &indices)
                 ],
                 set![
-                    Update::insert("grant_msg", element![0]),
-                    Update::remove("lock_msg", element![0]),
-                    Update::remove("server_holds_lock", element![])
+                    insert("grant_msg", element![0], &indices),
+                    remove("lock_msg", element![0], &indices),
+                    remove("server_holds_lock", element![], &indices)
                 ]
             ),
         ]);
@@ -1392,17 +1304,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("grant_msg", element![0]),],
+                set![includes("grant_msg", element![0], &indices)],
                 set![
-                    Update::insert("holds_lock", element![0]),
-                    Update::remove("grant_msg", element![0])
+                    insert("holds_lock", element![0], &indices),
+                    remove("grant_msg", element![0], &indices)
                 ]
             ),
             Transition::new(
-                set![Guard::includes("grant_msg", element![1]),],
+                set![includes("grant_msg", element![1], &indices)],
                 set![
-                    Update::insert("holds_lock", element![1]),
-                    Update::remove("grant_msg", element![1])
+                    insert("holds_lock", element![1], &indices),
+                    remove("grant_msg", element![1], &indices)
                 ]
             ),
         ]);
@@ -1411,17 +1323,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("holds_lock", element![0]),],
+                set![includes("holds_lock", element![0], &indices)],
                 set![
-                    Update::insert("unlock_msg", element![0]),
-                    Update::remove("holds_lock", element![0])
+                    insert("unlock_msg", element![0], &indices),
+                    remove("holds_lock", element![0], &indices)
                 ]
             ),
             Transition::new(
-                set![Guard::includes("holds_lock", element![1]),],
+                set![includes("holds_lock", element![1], &indices)],
                 set![
-                    Update::insert("unlock_msg", element![1]),
-                    Update::remove("holds_lock", element![1])
+                    insert("unlock_msg", element![1], &indices),
+                    remove("holds_lock", element![1], &indices)
                 ]
             ),
         ]);
@@ -1430,17 +1342,17 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         //     ((server_holds_lock)'))
         trs.extend(set![
             Transition::new(
-                set![Guard::includes("unlock_msg", element![0]),],
+                set![includes("unlock_msg", element![0], &indices)],
                 set![
-                    Update::insert("server_holds_lock", element![]),
-                    Update::remove("unlock_msg", element![0])
+                    insert("server_holds_lock", element![], &indices),
+                    remove("unlock_msg", element![0], &indices)
                 ]
             ),
             Transition::new(
-                set![Guard::includes("unlock_msg", element![1]),],
+                set![includes("unlock_msg", element![1], &indices)],
                 set![
-                    Update::insert("server_holds_lock", element![]),
-                    Update::remove("unlock_msg", element![1])
+                    insert("server_holds_lock", element![], &indices),
+                    remove("unlock_msg", element![1], &indices)
                 ]
             ),
         ]);
@@ -1449,13 +1361,11 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             inits: set![State(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
             safes: set![
-                set![Guard::excludes("holds_lock", element![0])],
-                set![Guard::excludes("holds_lock", element![1])]
+                set![excludes("holds_lock", element![0], &indices)],
+                set![excludes("holds_lock", element![1], &indices)]
             ],
         };
 
-        let mut m = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
         assert_eq!(target.inits, expected.inits);
         assert_eq!(target.safes, expected.safes);
@@ -1466,7 +1376,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(target.trs == expected.trs);
         }
 
-        let output = interpret(&target, 100, &m.signature, &universe);
+        let output = interpret(&target, 100);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1534,7 +1444,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
 
-        let bug = interpret(&target, 12, &m.signature, &universe);
+        let bug = interpret(&target, 12);
         if let InterpreterResult::Counterexample(trace) = &bug {
             println!("{:#?}", trace);
             assert_eq!(trace.len(), 13);
@@ -1542,7 +1452,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, 11, &m.signature, &universe);
+        let too_short = interpret(&target, 11);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1610,7 +1520,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("quorum".to_string(), 1),
         ]);
         let target = translate(&mut m, &universe)?;
-        let output = interpret(&target, 1, &m.signature, &universe);
+        let output = interpret(&target, 1);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
