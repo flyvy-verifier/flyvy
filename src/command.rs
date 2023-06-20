@@ -539,7 +539,7 @@ impl App {
                 }
                 match translate(&mut m, &universe) {
                     Err(e) => eprintln!("{}", e),
-                    Ok(program) => match interpret(&program, depth) {
+                    Ok(program) => match interpret(&program, depth, &m.signature, &universe) {
                         InterpreterResult::Unknown => println!("no counterexample found"),
                         InterpreterResult::Counterexample(trace) => {
                             eprintln!("found counterexample: {:#?}", trace)

@@ -165,6 +165,63 @@ impl Update {
     }
 }
 
+/// We use a set trie to optimize looping over all guards
+#[derive(Clone, Debug)]
+struct Transitions {
+    data: Set<Set<Update>>,
+    children: HashMap<Key, Transitions>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Keys are encoded based on the order of sorts and relations in the signature
+struct Key(usize);
+
+impl Transitions {
+    fn new() -> Transitions {
+        Transitions {
+            data: Set::new(),
+            children: HashMap::new(),
+        }
+    }
+
+    /// set must be sorted
+    fn insert(&mut self, mut set: impl Iterator<Item = Key>, value: Set<Update>) {
+        match set.next() {
+            None => {
+                self.data.insert(value);
+            }
+            Some(key) => self
+                .children
+                .entry(key)
+                .or_insert_with(Transitions::new)
+                .insert(set, value),
+        }
+    }
+
+    fn subsets(&self, set: &Set<Key>) -> Set<Set<Update>> {
+        let mut out = self.data.clone();
+        for (key, child) in &self.children {
+            if set.contains(key) {
+                out.extend(child.subsets(set));
+            }
+        }
+        out
+    }
+}
+impl Key {
+    fn new(relation: &str, element: &Element, out: bool, letters: &[(&String, Element)]) -> Key {
+        let key: usize = letters
+            .iter()
+            .position(|(r, e)| r == &relation && e == element)
+            .unwrap();
+        if out {
+            Key(key * 2 + 1)
+        } else {
+            Key(key * 2)
+        }
+    }
+}
+
 use im::{vector, Vector};
 type Trace = Vector<State>;
 
@@ -181,7 +238,12 @@ pub enum InterpreterResult {
 /// Note that max_depth refers to the number of timesteps,
 /// e.g. a max_depth of 0 means only evaluate the initial states
 #[allow(dead_code)]
-pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
+pub fn interpret(
+    program: &Program,
+    max_depth: usize,
+    signature: &Signature,
+    universe: &Universe,
+) -> InterpreterResult {
     use std::collections::{HashSet as Cache, VecDeque as Queue};
     let mut queue: Queue<Trace> = program
         .inits
@@ -190,6 +252,39 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
         .collect();
     // cache stores states that have ever been present in the queue
     let mut cache: Cache<State> = program.inits.iter().cloned().collect();
+
+    // holds the order of all (relation, element) pairs to use in transitions lookups
+    let letters: Vec<(&String, Element)> = signature
+        .relations
+        .iter()
+        .flat_map(|relation| {
+            if relation.args.is_empty() {
+                vec![(&relation.name, (element![]))]
+            } else {
+                relation
+                    .args
+                    .iter()
+                    .map(|sort| cardinality(universe, sort))
+                    .map(|card| (0..card).collect::<Vec<usize>>())
+                    .multi_cartesian_product()
+                    .map(|element| (&relation.name, Element::new(element)))
+                    .collect()
+            }
+        })
+        .collect();
+
+    let mut transitions = Transitions::new();
+    for tr in &program.trs {
+        let key_set = tr
+            .guards
+            .iter()
+            .map(|guard| Key::new(&guard.set, &guard.element, guard.excludes, &letters))
+            .collect::<std::collections::BTreeSet<Key>>();
+        transitions.insert(key_set.into_iter(), tr.updates.clone());
+    }
+
+    let mut string = Vec::with_capacity(letters.len());
+    string.resize(letters.len(), Key(0)); // cap vs. len
 
     let mut current_depth = 0;
     let start_time = std::time::Instant::now();
@@ -222,19 +317,21 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
             return InterpreterResult::Counterexample(trace);
         }
         if depth < max_depth {
-            for tr in &program.trs {
-                if tr.guards.iter().all(|guard| guard.run(state)) {
-                    let mut next = state.clone();
-                    tr.updates.iter().for_each(|update| update.run(&mut next));
-                    if !cache.contains(&next) {
-                        cache.insert(next.clone());
-                        if cache.len() % 100000 == 0 {
-                            println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
-                        }
-                        let mut trace = trace.clone();
-                        trace.push_back(next);
-                        queue.push_back(trace);
+            for (i, (r, e)) in letters.iter().enumerate() {
+                string[i] = Key::new(r, e, !state.get(r.as_str()).unwrap().contains(e), &letters);
+            }
+
+            for updates in transitions.subsets(&string.iter().cloned().collect()) {
+                let mut next = state.clone();
+                updates.iter().for_each(|update| update.run(&mut next));
+                if !cache.contains(&next) {
+                    cache.insert(next.clone());
+                    if cache.len() % 100000 == 0 {
+                        println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
                     }
+                    let mut trace = trace.clone();
+                    trace.push_back(next);
+                    queue.push_back(trace);
                 }
             }
         }
@@ -1010,8 +1107,18 @@ mod tests {
             ],
             safes: set![set![Guard::excludes("a", element![])]],
         };
-        let result0 = interpret(&program, 0);
-        let result1 = interpret(&program, 1);
+        let signature = Signature {
+            sorts: vec![],
+            relations: vec![RelationDecl {
+                name: "a".to_string(),
+                args: vec![],
+                sort: Sort::Bool,
+                mutable: true,
+            }],
+        };
+        let universe = HashMap::new();
+        let result0 = interpret(&program, 0, &signature, &universe);
+        let result1 = interpret(&program, 1, &signature, &universe);
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(
             result1,
@@ -1063,11 +1170,41 @@ mod tests {
             ],
             safes: set![set![Guard::excludes("4", element![])]],
         };
-        let result1 = interpret(&program, 0);
-        let result2 = interpret(&program, 1);
-        let result3 = interpret(&program, 2);
-        let result4 = interpret(&program, 3);
-        let result5 = interpret(&program, 4);
+        let signature = Signature {
+            sorts: vec![],
+            relations: vec![
+                RelationDecl {
+                    name: "1".to_string(),
+                    args: vec![],
+                    sort: Sort::Bool,
+                    mutable: true,
+                },
+                RelationDecl {
+                    name: "2".to_string(),
+                    args: vec![],
+                    sort: Sort::Bool,
+                    mutable: true,
+                },
+                RelationDecl {
+                    name: "3".to_string(),
+                    args: vec![],
+                    sort: Sort::Bool,
+                    mutable: true,
+                },
+                RelationDecl {
+                    name: "4".to_string(),
+                    args: vec![],
+                    sort: Sort::Bool,
+                    mutable: true,
+                },
+            ],
+        };
+        let universe = HashMap::new();
+        let result1 = interpret(&program, 0, &signature, &universe);
+        let result2 = interpret(&program, 1, &signature, &universe);
+        let result3 = interpret(&program, 2, &signature, &universe);
+        let result4 = interpret(&program, 3, &signature, &universe);
+        let result5 = interpret(&program, 4, &signature, &universe);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1139,11 +1276,21 @@ mod tests {
             ],
             safes: set![set![Guard::excludes("s", element![3])]],
         };
-        let result0 = interpret(&program, 0);
-        let result1 = interpret(&program, 1);
-        let result2 = interpret(&program, 2);
-        let result3 = interpret(&program, 3);
-        let result4 = interpret(&program, 4);
+        let signature = Signature {
+            sorts: vec!["sort".to_string()],
+            relations: vec![RelationDecl {
+                name: "s".to_string(),
+                args: vec![Sort::Id("sort".to_string())],
+                sort: Sort::Bool,
+                mutable: true,
+            }],
+        };
+        let universe = HashMap::from([("sort".to_string(), 4)]);
+        let result0 = interpret(&program, 0, &signature, &universe);
+        let result1 = interpret(&program, 1, &signature, &universe);
+        let result2 = interpret(&program, 2, &signature, &universe);
+        let result3 = interpret(&program, 3, &signature, &universe);
+        let result4 = interpret(&program, 4, &signature, &universe);
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
@@ -1337,7 +1484,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(target.trs == expected.trs);
         }
 
-        let output = interpret(&target, 100);
+        let output = interpret(&target, 100, &m.signature, &universe);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1405,14 +1552,15 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
 
-        let bug = interpret(&target, 12);
+        let bug = interpret(&target, 12, &m.signature, &universe);
         if let InterpreterResult::Counterexample(trace) = &bug {
+            println!("{:#?}", trace);
             assert_eq!(trace.len(), 13);
         } else {
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, 11);
+        let too_short = interpret(&target, 11, &m.signature, &universe);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1480,7 +1628,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("quorum".to_string(), 1),
         ]);
         let target = translate(&mut m, &universe)?;
-        let output = interpret(&target, 1);
+        let output = interpret(&target, 1, &m.signature, &universe);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
