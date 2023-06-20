@@ -42,8 +42,7 @@ fn verify_firstorder(
     assumes: &[&Term],
     assert: &Term,
 ) -> Result<(), QueryError> {
-    let mut solver =
-        Solver::new(sig, n, &conf.backend, conf.tee.as_deref()).expect("could not start solver");
+    let mut solver = conf.solver(sig, n);
     for assume in assumes {
         solver.assert(assume);
     }
@@ -62,6 +61,7 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
             solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv.x)));
             // TODO: break this down per invariant, as with consecutions()
             let res = verify_term(&mut solver, assert.initiation().0);
+            solver.save_tee();
             if let Err(cex) = res {
                 failures.push(AssertionFailure {
                     loc: pf.assert.span,
@@ -79,6 +79,7 @@ pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
                     let mut solver = conf.solver(&m.signature, 2);
                     solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv.x)));
                     let res = verify_term(&mut solver, t.0);
+                    solver.save_tee();
                     if let Err(cex) = res {
                         Some(AssertionFailure {
                             loc: span,
