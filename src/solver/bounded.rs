@@ -207,7 +207,7 @@ impl Update {
 /// We use a set trie to optimize looping over all guards
 #[derive(Clone, Debug)]
 struct Transitions {
-    data: Set<Set<Update>>,
+    data: Vec<Set<Update>>,
     children: HashMap<Key, Transitions>,
 }
 
@@ -218,7 +218,7 @@ struct Key(usize);
 impl Transitions {
     fn new() -> Transitions {
         Transitions {
-            data: Set::new(),
+            data: Vec::new(),
             children: HashMap::new(),
         }
     }
@@ -227,7 +227,7 @@ impl Transitions {
     fn insert(&mut self, mut set: impl Iterator<Item = Key>, value: Set<Update>) {
         match set.next() {
             None => {
-                self.data.insert(value);
+                self.data.push(value);
             }
             Some(key) => self
                 .children
@@ -237,14 +237,16 @@ impl Transitions {
         }
     }
 
-    fn subsets(&self, set: &Set<Key>) -> Set<Set<Update>> {
-        let mut out = self.data.clone();
-        for (key, child) in &self.children {
-            if set.contains(key) {
-                out.extend(child.subsets(set));
+    /// set must be sorted
+    fn subsets(&self, set: &[Key], out: &mut Vec<Set<Update>>) {
+        out.extend(self.data.iter().cloned());
+        let mut i = 0;
+        while i < set.len() {
+            if let Some(child) = self.children.get(&set[i]) {
+                child.subsets(&set[i + 1..], out);
             }
+            i += 1;
         }
-        out
     }
 }
 
@@ -345,7 +347,10 @@ pub fn interpret(
                 string[*i] = Key::new(r, *e, !state.get(r, *e, &indices), &indices);
             }
 
-            for updates in transitions.subsets(&string.iter().cloned().collect()) {
+            let mut updateses = vec![];
+            transitions.subsets(&string, &mut updateses);
+
+            for updates in updateses {
                 let mut next = state.clone();
                 updates.iter().for_each(|update| {
                     next.set(&update.set, update.element, &indices, !update.remove)
