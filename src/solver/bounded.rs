@@ -21,7 +21,7 @@ const ELEMENT_LEN: usize = 7;
 /// This is not the same as a semantics::Element
 /// This is a tuple of semantics::Elements that represents the arguments to a relation
 /// We use a fixed size array to avoid allocating a Vec
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Element {
     len: u8,
     data: [u8; ELEMENT_LEN],
@@ -65,26 +65,63 @@ macro_rules! element {
     }};
 }
 
-/// Map from set names to their current values
-type State = Map<String, Set<Element>>;
-
-/// Can represent all states for a given signature and universe with a bitvector
+/// Represents all (set, element) pairs with a bit for each one's inclusion
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct CompressedState(BitVec);
+pub struct State(BitVec);
 
-type Indices<'a> = HashMap<(&'a str, &'a Element), usize>;
-impl CompressedState {
-    fn from(state: &State, indices: &Indices) -> CompressedState {
+impl State {
+    fn new(indices: &Indices) -> State {
         let mut out = BitVec::with_capacity(indices.len());
         out.resize(indices.len(), false); // cap vs. len
+        State(out)
+    }
 
-        for (relation, elements) in state {
-            for element in elements {
-                out.set(indices[&(relation.as_str(), element)], true);
-            }
-        }
+    fn get(&self, relation: &str, element: Element, indices: &Indices) -> bool {
+        self.0[indices[&(relation, element)]]
+    }
 
-        CompressedState(out)
+    fn set(&mut self, relation: &str, element: Element, indices: &Indices, value: bool) {
+        self.0.set(indices[&(relation, element)], value);
+    }
+}
+
+// holds an ordering of all (relation, element) pairs
+struct Indices<'a>(HashMap<(&'a str, Element), usize>);
+
+impl Indices<'_> {
+    fn new<'a>(signature: &'a Signature, universe: &'a Universe) -> Indices<'a> {
+        let indices = signature
+            .relations
+            .iter()
+            .flat_map(|relation| {
+                if relation.args.is_empty() {
+                    vec![(relation.name.as_str(), (element![]))]
+                } else {
+                    relation
+                        .args
+                        .iter()
+                        .map(|sort| cardinality(universe, sort))
+                        .map(|card| (0..card).collect::<Vec<usize>>())
+                        .multi_cartesian_product()
+                        .map(|element| (relation.name.as_str(), Element::new(element)))
+                        .collect()
+                }
+            })
+            .enumerate()
+            .map(|(i, x)| (x, i))
+            .collect();
+        Indices(indices)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<'a> std::ops::Index<&'a (&'a str, Element)> for Indices<'a> {
+    type Output = usize;
+    fn index(&self, key: &'a (&'a str, Element)) -> &usize {
+        &self.0[key]
     }
 }
 
@@ -146,14 +183,6 @@ impl Guard {
             excludes: true,
         }
     }
-
-    fn run(&self, state: &State) -> bool {
-        if self.excludes {
-            !state[&self.set].contains(&self.element)
-        } else {
-            state[&self.set].contains(&self.element)
-        }
-    }
 }
 
 impl Update {
@@ -171,17 +200,6 @@ impl Update {
             set: set.to_string(),
             element,
             remove: true,
-        }
-    }
-
-    fn run(&self, state: &mut State) {
-        if self.remove {
-            state.get_mut(&self.set).unwrap().remove(&self.element);
-        } else {
-            state
-                .get_mut(&self.set)
-                .unwrap()
-                .insert(self.element.clone());
         }
     }
 }
@@ -231,7 +249,7 @@ impl Transitions {
 }
 
 impl Key {
-    fn new(relation: &str, element: &Element, out: bool, indices: &Indices) -> Key {
+    fn new(relation: &str, element: Element, out: bool, indices: &Indices) -> Key {
         let key = indices[&(relation, element)];
         if out {
             Key(key * 2 + 1)
@@ -263,31 +281,7 @@ pub fn interpret(
     signature: &Signature,
     universe: &Universe,
 ) -> InterpreterResult {
-    // holds the order of all (relation, element) pairs to use in transitions lookups
-    let letters: Vec<(&str, Element)> = signature
-        .relations
-        .iter()
-        .flat_map(|relation| {
-            if relation.args.is_empty() {
-                vec![(relation.name.as_str(), (element![]))]
-            } else {
-                relation
-                    .args
-                    .iter()
-                    .map(|sort| cardinality(universe, sort))
-                    .map(|card| (0..card).collect::<Vec<usize>>())
-                    .multi_cartesian_product()
-                    .map(|element| (relation.name.as_str(), Element::new(element)))
-                    .collect()
-            }
-        })
-        .collect();
-    // inverse map of letters
-    let indices: Indices = letters
-        .iter()
-        .enumerate()
-        .map(|(i, (r, e))| ((*r, e), i))
-        .collect();
+    let indices = Indices::new(signature, universe);
 
     use std::collections::{HashSet as Cache, VecDeque as Queue};
     let mut queue: Queue<Trace> = program
@@ -296,24 +290,20 @@ pub fn interpret(
         .map(|state| vector![state.clone()])
         .collect();
     // cache stores states that have ever been present in the queue
-    let mut cache: Cache<CompressedState> = program
-        .inits
-        .iter()
-        .map(|state| CompressedState::from(state, &indices))
-        .collect();
+    let mut cache: Cache<State> = program.inits.iter().cloned().collect();
 
     let mut transitions = Transitions::new();
     for tr in &program.trs {
         let key_set = tr
             .guards
             .iter()
-            .map(|guard| Key::new(&guard.set, &guard.element, guard.excludes, &indices))
+            .map(|guard| Key::new(&guard.set, guard.element, guard.excludes, &indices))
             .collect::<std::collections::BTreeSet<Key>>();
         transitions.insert(key_set.into_iter(), tr.updates.clone());
     }
 
-    let mut string = Vec::with_capacity(letters.len());
-    string.resize(letters.len(), Key(0)); // cap vs. len
+    let mut string = Vec::with_capacity(indices.len());
+    string.resize(indices.len(), Key(0)); // cap vs. len
 
     let mut current_depth = 0;
     let start_time = std::time::Instant::now();
@@ -338,24 +328,30 @@ pub fn interpret(
             );
         }
         let state = trace.last().unwrap();
-        if !program
-            .safes
-            .iter()
-            .any(|guards| guards.iter().all(|guard| guard.run(state)))
-        {
+        if !program.safes.iter().any(|guards| {
+            guards.iter().all(|guard| {
+                let included = state.get(&guard.set, guard.element, &indices);
+                if guard.excludes {
+                    !included
+                } else {
+                    included
+                }
+            })
+        }) {
             return InterpreterResult::Counterexample(trace);
         }
         if depth < max_depth {
-            for (i, (r, e)) in letters.iter().enumerate() {
-                string[i] = Key::new(r, e, !state.get(*r).unwrap().contains(e), &indices);
+            for ((r, e), i) in &indices.0 {
+                string[*i] = Key::new(r, *e, !state.get(r, *e, &indices), &indices);
             }
 
             for updates in transitions.subsets(&string.iter().cloned().collect()) {
                 let mut next = state.clone();
-                updates.iter().for_each(|update| update.run(&mut next));
-                let compressed = CompressedState::from(&next, &indices);
-                if !cache.contains(&compressed) {
-                    cache.insert(compressed);
+                updates.iter().for_each(|update| {
+                    next.set(&update.set, update.element, &indices, !update.remove)
+                });
+                if !cache.contains(&next) {
+                    cache.insert(next.clone());
                     if cache.len() % 100000 == 0 {
                         println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
                     }
@@ -507,23 +503,17 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
 
     // inits should just be guards at this point
     let inits: Set<Set<Guard>> = get_guards_from_dnf(inits)?;
+    let indices = Indices::new(&module.signature, universe);
 
     // change inits from guards over the state space to states
     let inits: Set<State> = inits
         .into_iter()
         .flat_map(|conjunction| {
             // compute all the constrained elements by adding them to a single state
-            let mut init: State = module
-                .signature
-                .relations
-                .iter()
-                .map(|relation| (relation.name.clone(), set![]))
-                .collect();
+            let mut init = State::new(&indices);
             let mut constrained = set![];
             for guard in &conjunction {
-                if !guard.excludes {
-                    Update::insert(&guard.set, guard.element.clone()).run(&mut init)
-                }
+                init.set(&guard.set, guard.element, &indices, !guard.excludes);
                 constrained.insert((&guard.set, &guard.element));
             }
 
@@ -554,10 +544,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                     .into_iter()
                     .flat_map(|state| {
                         let mut with_unconstrained = state.clone();
-                        with_unconstrained
-                            .get_mut(set)
-                            .unwrap()
-                            .insert(element.clone());
+                        with_unconstrained.set(set, element, &indices, true);
                         set![state, with_unconstrained]
                     })
                     .collect();
@@ -577,7 +564,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 if let Ok(guard) = term.clone().get_guard() {
                     tr.guards.insert(guard);
                 } else if let Ok(update) = term.clone().get_update() {
-                    constrained.insert((update.set.clone(), update.element.clone()));
+                    constrained.insert((update.set.clone(), update.element));
                     tr.updates.insert(update);
                 } else if let Valued::NoOp(set, element) = term {
                     constrained.insert((set, element));
@@ -655,7 +642,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         for a in &tr.guards {
             if tr.updates.contains(&Update {
                 set: a.set.clone(),
-                element: a.element.clone(),
+                element: a.element,
                 remove: a.excludes,
             }) {
                 panic!("found an unremoved redundant update")
@@ -816,8 +803,8 @@ fn and(terms: Set<Valued>) -> Valued {
     for term in &old {
         if let Ok(update) = term.clone().get_update() {
             if old.contains(&match update.remove {
-                false => Valued::Includes(update.set.clone(), update.element.clone()),
-                true => Valued::Excludes(update.set.clone(), update.element.clone()),
+                false => Valued::Includes(update.set.clone(), update.element),
+                true => Valued::Excludes(update.set.clone(), update.element),
             }) {
                 terms.insert(Valued::NoOp(update.set, update.element));
                 continue;
@@ -1120,17 +1107,10 @@ fn distribute_conjunction(term: Valued) -> Valued {
 mod tests {
     use super::*;
 
-    fn state<const N: usize>(entries: [(&str, Set<Element>); N]) -> State {
-        entries
-            .into_iter()
-            .map(|(key, value)| (key.to_string(), value))
-            .collect()
-    }
-
     #[test]
     fn interpreter_basic() {
         let program = Program {
-            inits: set![state([("a", set![])])],
+            inits: set![State(bitvec![0])],
             trs: set![
                 Transition::new(set![], set![]),
                 Transition::new(set![], set![Update::insert("a", element![])])
@@ -1152,22 +1132,14 @@ mod tests {
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(
             result1,
-            InterpreterResult::Counterexample(vector![
-                state([("a", set![])]),
-                state([("a", set![(element![])])])
-            ])
+            InterpreterResult::Counterexample(vector![State(bitvec![0]), State(bitvec![1]),])
         );
     }
 
     #[test]
     fn interpreter_cycle_sets() {
         let program = Program {
-            inits: set![state([
-                ("1", set![(element![])]),
-                ("2", set![]),
-                ("3", set![]),
-                ("4", set![]),
-            ])],
+            inits: set![State(bitvec![1, 0, 0, 0]),],
             trs: set![
                 Transition::new(
                     set![Guard::includes("1", element![])],
@@ -1241,30 +1213,10 @@ mod tests {
         assert_eq!(
             result4,
             InterpreterResult::Counterexample(vector![
-                state([
-                    ("1", set![(element![])]),
-                    ("2", set![]),
-                    ("3", set![]),
-                    ("4", set![])
-                ]),
-                state([
-                    ("1", set![]),
-                    ("2", set![(element![])]),
-                    ("3", set![]),
-                    ("4", set![])
-                ]),
-                state([
-                    ("1", set![]),
-                    ("2", set![]),
-                    ("3", set![(element![])]),
-                    ("4", set![])
-                ]),
-                state([
-                    ("1", set![]),
-                    ("2", set![]),
-                    ("3", set![]),
-                    ("4", set![(element![])])
-                ]),
+                State(bitvec![1, 0, 0, 0]),
+                State(bitvec![0, 1, 0, 0]),
+                State(bitvec![0, 0, 1, 0]),
+                State(bitvec![0, 0, 0, 1]),
             ])
         );
         assert_eq!(result5, result4);
@@ -1273,7 +1225,7 @@ mod tests {
     #[test]
     fn interpreter_cycle_vals() {
         let program = Program {
-            inits: set![state([("s", set![(element![0])])])],
+            inits: set![State(bitvec![1, 0, 0, 0])],
             trs: set![
                 Transition::new(
                     set![Guard::includes("s", element![0])],
@@ -1327,10 +1279,10 @@ mod tests {
         assert_eq!(
             result3,
             InterpreterResult::Counterexample(vector![
-                state([("s", set![(element![0])])]),
-                state([("s", set![(element![1])])]),
-                state([("s", set![(element![2])])]),
-                state([("s", set![(element![3])])]),
+                State(bitvec![1, 0, 0, 0]),
+                State(bitvec![0, 1, 0, 0]),
+                State(bitvec![0, 0, 1, 0]),
+                State(bitvec![0, 0, 0, 1]),
             ])
         );
         assert_eq!(result4, result3);
@@ -1488,13 +1440,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ]);
 
         let expected = Program {
-            inits: set![state([
-                ("lock_msg", set![]),
-                ("grant_msg", set![]),
-                ("unlock_msg", set![]),
-                ("holds_lock", set![]),
-                ("server_holds_lock", set![(element![])])
-            ])],
+            inits: set![State(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
             safes: set![
                 set![Guard::excludes("holds_lock", element![0])],
