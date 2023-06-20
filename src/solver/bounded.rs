@@ -206,17 +206,19 @@ impl Update {
 
 /// We use a set trie to optimize looping over all guards
 #[derive(Clone, Debug)]
-struct Transitions {
-    data: Vec<Set<Update>>,
-    children: HashMap<Key, Transitions>,
+struct Transitions<'a> {
+    data: Vec<&'a Transition>,
+    children: HashMap<EdgeLabel, Transitions<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-/// Keys are encoded based on the order of sorts and relations in the signature
-struct Key(usize);
+struct EdgeLabel {
+    index: usize,
+    value: bool,
+}
 
-impl Transitions {
-    fn new() -> Transitions {
+impl<'a> Transitions<'a> {
+    fn new() -> Transitions<'a> {
         Transitions {
             data: Vec::new(),
             children: HashMap::new(),
@@ -224,7 +226,7 @@ impl Transitions {
     }
 
     /// set must be sorted
-    fn insert(&mut self, mut set: impl Iterator<Item = Key>, value: Set<Update>) {
+    fn insert(&mut self, mut set: impl Iterator<Item = EdgeLabel>, value: &'a Transition) {
         match set.next() {
             None => {
                 self.data.push(value);
@@ -237,26 +239,21 @@ impl Transitions {
         }
     }
 
-    /// set must be sorted
-    fn subsets(&self, set: &[Key], out: &mut Vec<Set<Update>>) {
+    fn get(&self, set: &State, out: &mut Vec<&'a Transition>) {
         out.extend(self.data.iter().cloned());
-        let mut i = 0;
-        while i < set.len() {
-            if let Some(child) = self.children.get(&set[i]) {
-                child.subsets(&set[i + 1..], out);
+        for (key, child) in &self.children {
+            if set.0[key.index] == key.value {
+                child.get(set, out);
             }
-            i += 1;
         }
     }
 }
 
-impl Key {
-    fn new(relation: &str, element: Element, out: bool, indices: &Indices) -> Key {
-        let key = indices[&(relation, element)];
-        if out {
-            Key(key * 2 + 1)
-        } else {
-            Key(key * 2)
+impl EdgeLabel {
+    fn new(relation: &str, element: Element, indices: &Indices, value: bool) -> EdgeLabel {
+        EdgeLabel {
+            index: indices[&(relation, element)],
+            value,
         }
     }
 }
@@ -299,13 +296,10 @@ pub fn interpret(
         let key_set = tr
             .guards
             .iter()
-            .map(|guard| Key::new(&guard.set, guard.element, guard.excludes, &indices))
-            .collect::<std::collections::BTreeSet<Key>>();
-        transitions.insert(key_set.into_iter(), tr.updates.clone());
+            .map(|guard| EdgeLabel::new(&guard.set, guard.element, &indices, !guard.excludes))
+            .collect::<std::collections::BTreeSet<EdgeLabel>>();
+        transitions.insert(key_set.into_iter(), tr);
     }
-
-    let mut string = Vec::with_capacity(indices.len());
-    string.resize(indices.len(), Key(0)); // cap vs. len
 
     let mut current_depth = 0;
     let start_time = std::time::Instant::now();
@@ -329,6 +323,7 @@ pub fn interpret(
                 cache.len()
             );
         }
+
         let state = trace.last().unwrap();
         if !program.safes.iter().any(|guards| {
             guards.iter().all(|guard| {
@@ -342,17 +337,14 @@ pub fn interpret(
         }) {
             return InterpreterResult::Counterexample(trace);
         }
+
         if depth < max_depth {
-            for ((r, e), i) in &indices.0 {
-                string[*i] = Key::new(r, *e, !state.get(r, *e, &indices), &indices);
-            }
+            let mut trs = vec![];
+            transitions.get(state, &mut trs);
 
-            let mut updateses = vec![];
-            transitions.subsets(&string, &mut updateses);
-
-            for updates in updateses {
+            for tr in trs {
                 let mut next = state.clone();
-                updates.iter().for_each(|update| {
+                tr.updates.iter().for_each(|update| {
                     next.set(&update.set, update.element, &indices, !update.remove)
                 });
                 if !cache.contains(&next) {
