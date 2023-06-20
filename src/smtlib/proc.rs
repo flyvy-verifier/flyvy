@@ -12,7 +12,7 @@ use nix::{errno::Errno, sys::signal, unistd::Pid};
 use std::{
     ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, ErrorKind, Write},
     path::Path,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
@@ -66,7 +66,7 @@ pub enum SatResp {
 /// panic.
 pub enum SolverError {
     /// I/O went wrong
-    #[error("some io went wrong")]
+    #[error("some io went wrong: {0}")]
     Io(#[from] io::Error),
     /// Solver died for some reason
     #[error("solver returned an error:\n{0}")]
@@ -396,6 +396,7 @@ impl SmtProc {
                 .expect("could not get :reason-unknown");
             return Ok(SatResp::Unknown(reason.to_string()));
         }
+        self.check_killed()?;
         let msg = Self::parse_error(resp);
         return Err(SolverError::UnexpectedClose(msg));
     }
@@ -458,8 +459,15 @@ impl SmtProc {
     where
         F: FnOnce(&str) -> T,
     {
-        writeln!(self.stdin, r#"(echo "{}")"#, Self::DONE)
-            .expect("I/O error: failed to send to solver");
+        match writeln!(self.stdin, r#"(echo "{}")"#, Self::DONE) {
+            Ok(_) => {}
+            Err(err) => {
+                if err.kind() == ErrorKind::BrokenPipe {
+                    self.check_killed()?
+                }
+                return Err(SolverError::from(err));
+            }
+        }
         self.stdin
             .flush()
             .expect("I/O error: failed to send to solver");
@@ -534,7 +542,7 @@ impl SmtPid {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, thread, time::Duration};
+    use std::{sync::mpsc, thread};
 
     use crate::{
         smtlib::{
@@ -631,7 +639,12 @@ mod tests {
         insta::assert_display_snapshot!(r.unwrap_err());
     }
 
-    // TODO: this test is not robust for some reason
+    // TODO: this test is not robust: killing the solver at the wrong time
+    // results in a broken pipe error somewhere in the code which isn't caught
+    //
+    // A more systematic solution is needed, either checking if the solver was
+    // killed on any broken pipe error, or arranging to only kill the solver if
+    // it's in a check_sat call.
     #[test]
     #[ignore]
     fn test_z3_kill() {
@@ -661,7 +674,6 @@ mod tests {
             let r = proc.get_response(|s| s.to_string());
             send.send(r).unwrap();
         });
-        thread::sleep(Duration::from_millis(100));
         pid.kill();
         let r = recv.recv().unwrap();
         match r {
