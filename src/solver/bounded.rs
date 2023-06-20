@@ -5,6 +5,7 @@
 //! into a bounded::Program, then use `interpret` to evaluate it.
 
 use crate::fly::{sorts::*, syntax::*};
+use bitvec::prelude::*;
 use itertools::Itertools;
 use std::collections::{BTreeMap as Map, BTreeSet as Set};
 use std::{collections::HashMap, iter::zip};
@@ -66,6 +67,26 @@ macro_rules! element {
 
 /// Map from set names to their current values
 type State = Map<String, Set<Element>>;
+
+/// Can represent all states for a given signature and universe with a bitvector
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct CompressedState(BitVec);
+
+type Indices<'a> = HashMap<(&'a str, &'a Element), usize>;
+impl CompressedState {
+    fn from(state: &State, indices: &Indices) -> CompressedState {
+        let mut out = BitVec::with_capacity(indices.len());
+        out.resize(indices.len(), false); // cap vs. len
+
+        for (relation, elements) in state {
+            for element in elements {
+                out.set(indices[&(relation.as_str(), element)], true);
+            }
+        }
+
+        CompressedState(out)
+    }
+}
 
 /// A Program is a set of initial states, a set of transitions, and a safety property
 #[derive(Clone, Debug, PartialEq)]
@@ -208,12 +229,10 @@ impl Transitions {
         out
     }
 }
+
 impl Key {
-    fn new(relation: &str, element: &Element, out: bool, letters: &[(&String, Element)]) -> Key {
-        let key: usize = letters
-            .iter()
-            .position(|(r, e)| r == &relation && e == element)
-            .unwrap();
+    fn new(relation: &str, element: &Element, out: bool, indices: &Indices) -> Key {
+        let key = indices[&(relation, element)];
         if out {
             Key(key * 2 + 1)
         } else {
@@ -244,22 +263,13 @@ pub fn interpret(
     signature: &Signature,
     universe: &Universe,
 ) -> InterpreterResult {
-    use std::collections::{HashSet as Cache, VecDeque as Queue};
-    let mut queue: Queue<Trace> = program
-        .inits
-        .iter()
-        .map(|state| vector![state.clone()])
-        .collect();
-    // cache stores states that have ever been present in the queue
-    let mut cache: Cache<State> = program.inits.iter().cloned().collect();
-
     // holds the order of all (relation, element) pairs to use in transitions lookups
-    let letters: Vec<(&String, Element)> = signature
+    let letters: Vec<(&str, Element)> = signature
         .relations
         .iter()
         .flat_map(|relation| {
             if relation.args.is_empty() {
-                vec![(&relation.name, (element![]))]
+                vec![(relation.name.as_str(), (element![]))]
             } else {
                 relation
                     .args
@@ -267,10 +277,29 @@ pub fn interpret(
                     .map(|sort| cardinality(universe, sort))
                     .map(|card| (0..card).collect::<Vec<usize>>())
                     .multi_cartesian_product()
-                    .map(|element| (&relation.name, Element::new(element)))
+                    .map(|element| (relation.name.as_str(), Element::new(element)))
                     .collect()
             }
         })
+        .collect();
+    // inverse map of letters
+    let indices: Indices = letters
+        .iter()
+        .enumerate()
+        .map(|(i, (r, e))| ((*r, e), i))
+        .collect();
+
+    use std::collections::{HashSet as Cache, VecDeque as Queue};
+    let mut queue: Queue<Trace> = program
+        .inits
+        .iter()
+        .map(|state| vector![state.clone()])
+        .collect();
+    // cache stores states that have ever been present in the queue
+    let mut cache: Cache<CompressedState> = program
+        .inits
+        .iter()
+        .map(|state| CompressedState::from(state, &indices))
         .collect();
 
     let mut transitions = Transitions::new();
@@ -278,7 +307,7 @@ pub fn interpret(
         let key_set = tr
             .guards
             .iter()
-            .map(|guard| Key::new(&guard.set, &guard.element, guard.excludes, &letters))
+            .map(|guard| Key::new(&guard.set, &guard.element, guard.excludes, &indices))
             .collect::<std::collections::BTreeSet<Key>>();
         transitions.insert(key_set.into_iter(), tr.updates.clone());
     }
@@ -318,14 +347,15 @@ pub fn interpret(
         }
         if depth < max_depth {
             for (i, (r, e)) in letters.iter().enumerate() {
-                string[i] = Key::new(r, e, !state.get(r.as_str()).unwrap().contains(e), &letters);
+                string[i] = Key::new(r, e, !state.get(*r).unwrap().contains(e), &indices);
             }
 
             for updates in transitions.subsets(&string.iter().cloned().collect()) {
                 let mut next = state.clone();
                 updates.iter().for_each(|update| update.run(&mut next));
-                if !cache.contains(&next) {
-                    cache.insert(next.clone());
+                let compressed = CompressedState::from(&next, &indices);
+                if !cache.contains(&compressed) {
+                    cache.insert(compressed);
                     if cache.len() % 100000 == 0 {
                         println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
                     }

@@ -3,8 +3,8 @@
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
-use std::fs::create_dir_all;
 use std::collections::HashMap;
+use std::fs::create_dir_all;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
@@ -16,8 +16,8 @@ use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
-use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::solver::bounded::{interpret, translate, InterpreterResult};
+use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
