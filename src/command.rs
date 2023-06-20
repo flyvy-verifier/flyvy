@@ -3,6 +3,7 @@
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
+use std::fs::create_dir_all;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
@@ -13,7 +14,7 @@ use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
-use crate::solver::{solver_path, SolverConf};
+use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::timing;
 use crate::{
     fly::{self, parser::parse_error_diagonistic, printer, sorts},
@@ -51,10 +52,6 @@ struct SolverArgs {
     #[arg(value_enum, long, default_value_t = SolverType::Z3, global = true)]
     /// Solver to use
     solver: SolverType,
-
-    #[arg(long)]
-    /// Full path to output SMT file to
-    smt_file: Option<PathBuf>,
 
     #[arg(long, global = true)]
     /// Output smt2 file alongside input file
@@ -298,11 +295,20 @@ impl SolverArgs {
             SolverType::Cvc4 => backends::SolverType::Cvc4,
         };
         let solver_bin = solver_path(solver_default_bin(self.solver));
-        let tee: Option<PathBuf> = if let Some(path) = &self.smt_file {
-            Some(path.to_path_buf())
-        } else if self.smt {
-            let path = PathBuf::from(fname).with_extension("smt2");
-            Some(path)
+        let tee: Option<PathBuf> = if self.smt {
+            let dir = log_dir(Path::new(fname));
+            create_dir_all(&dir).expect("could not create log dir");
+            if let Ok(rdir) = dir.read_dir() {
+                for entry in rdir {
+                    match entry {
+                        Err(_) => {}
+                        Ok(name) => {
+                            _ = fs::remove_file(name.path());
+                        }
+                    }
+                }
+            }
+            Some(dir)
         } else {
             None
         };

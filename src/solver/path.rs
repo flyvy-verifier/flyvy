@@ -1,7 +1,15 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-use std::{env, path::Path};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
+
+#[allow(non_snake_case)]
+fn REPO_ROOT_PATH() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
 
 /// Get the right invocation of the solver with binary name bin.
 ///
@@ -19,10 +27,17 @@ pub fn solver_path(bin: &str) -> String {
     } else {
         bin.to_owned()
     };
-    let src_dir = env!("CARGO_MANIFEST_DIR");
-    let src_bin_path = Path::new(src_dir).join("solvers").join(&bin);
+    let src_bin_path = REPO_ROOT_PATH().join("solvers").join(&bin);
     if src_bin_path.exists() {
         return src_bin_path.to_string_lossy().into();
     }
     bin
+}
+
+/// Get the log directory for a flyvy file
+pub fn log_dir(fly_path: &Path) -> PathBuf {
+    let log_base = REPO_ROOT_PATH().join(".flyvy-log");
+    let Some(fname) = fly_path.file_name()
+    else { return log_base; };
+    log_base.join(Path::new(fname).with_extension(""))
 }

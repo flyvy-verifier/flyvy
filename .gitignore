@@ -1,6 +1,7 @@
 *~
 /pegviz.html
 *.smt2
+/.flyvy-log
 /solvers/
 # coverage report
 lcov.info

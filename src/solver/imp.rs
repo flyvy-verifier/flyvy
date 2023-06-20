@@ -3,7 +3,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -96,6 +96,11 @@ impl<B: Backend> Solver<B> {
     /// Return a handle to cancel the solver
     pub fn pid(&self) -> SmtPid {
         self.proc.pid()
+    }
+
+    /// Save the solver state so far to a tee file.
+    pub fn save_tee(&self) -> Option<PathBuf> {
+        self.proc.save_tee()
     }
 
     /// Emit encoding of signature, using `n_states` to determine how many times

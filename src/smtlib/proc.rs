@@ -9,11 +9,13 @@
 
 use crate::smtlib::sexp;
 use nix::{errno::Errno, sys::signal, unistd::Pid};
+use std::hash::{Hash, Hasher};
 use std::{
+    collections::hash_map::DefaultHasher,
     ffi::{OsStr, OsString},
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{self, BufRead, BufReader, ErrorKind, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
 };
@@ -23,13 +25,70 @@ use std::os::unix::process::ExitStatusExt;
 
 use super::sexp::{app, atom_s, sexp_l, Sexp};
 
+#[derive(Debug)]
+struct Tee {
+    dir: PathBuf,
+    contents: Vec<Sexp>,
+}
+
+fn calculate_hash<T: Hash>(v: T) -> String {
+    let mut hash_state = DefaultHasher::new();
+    v.hash(&mut hash_state);
+    let h = hash_state.finish();
+    return format!("{:016x}", h)[..8].to_string();
+}
+
+impl Tee {
+    fn new<P: AsRef<Path>>(dir: P) -> Self {
+        Self {
+            dir: dir.as_ref().to_path_buf(),
+            contents: vec![],
+        }
+    }
+
+    fn append(&mut self, s: Sexp) {
+        self.contents.push(s)
+    }
+
+    /// Save the SMT2 input currently sent to the solver to a file based on
+    /// content hash. Returns the saved file name.
+    fn save(&self) -> io::Result<PathBuf> {
+        let contents = self
+            .contents
+            .iter()
+            .map(|s| {
+                if let Sexp::Comment(c) = s {
+                    #[allow(clippy::comparison_to_empty)]
+                    if c == "" {
+                        return "".to_string();
+                    }
+                    return format!(";; {c}");
+                }
+                // TODO: this should be pretty-printed
+                s.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let hash = calculate_hash(&contents);
+        let fname = PathBuf::from(format!("query-{hash}.smt2"));
+        let dest = self.dir.join(&fname);
+        let mut f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(dest)?;
+        write!(&mut f, "{contents}")?;
+        Ok(fname)
+    }
+}
+
 /// SmtProc wraps an instance of a solver process.
 #[derive(Debug)]
 pub struct SmtProc {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
-    tee: Option<File>,
+    tee: Option<Tee>,
     // signal to SmtPids that this process has terminated (so we don't try to
     // kill the process long afterward when the pid might have been reused)
     terminated: Arc<Mutex<bool>>,
@@ -256,8 +315,8 @@ impl SmtProc {
             .map_err(SolverError::from)?;
         let tee = match tee {
             Some(path) => {
-                let mut f = Self::tee(path)?;
-                _ = writeln!(&mut f, ";; {}", cmd.cmdline());
+                let mut f = Tee::new(path);
+                f.append(Sexp::Comment(cmd.cmdline()));
                 Some(f)
             }
             None => None,
@@ -296,15 +355,19 @@ impl SmtProc {
         }
     }
 
-    /// Create the tee file.
-    fn tee<P: AsRef<Path>>(path: P) -> Result<File> {
-        let f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .map_err(SolverError::from)?;
-        Ok(f)
+    /// Save the current tee file, if there is one. Returns the name of the
+    /// created file (or None if there is no tee'd output setup).
+    ///
+    /// Errors are purely the result of I/O trying to save the file.
+    pub fn save_tee(&self) -> Option<PathBuf> {
+        self.tee.as_ref().and_then(|tee| match tee.save() {
+            Ok(name) => Some(name),
+            Err(err) => {
+                // report this error but this isn't fatal so don't panic
+                eprintln!("failed to save tee: {err}");
+                None
+            }
+        })
     }
 
     /// Low-level API to send the solver a command as an s-expression. This
@@ -312,8 +375,7 @@ impl SmtProc {
     pub fn send(&mut self, data: &sexp::Sexp) {
         writeln!(self.stdin, "{data}").expect("I/O error: failed to send to solver");
         if let Some(f) = &mut self.tee {
-            // TODO: this should be pretty-printed
-            writeln!(f, "{data}").unwrap();
+            f.append(data.clone());
         }
     }
 
@@ -334,8 +396,8 @@ impl SmtProc {
     {
         if let Some(f) = &mut self.tee {
             let comment = comment();
-            _ = writeln!(f);
-            _ = writeln!(f, ";; {comment}");
+            f.append(Sexp::Comment("".to_string()));
+            f.append(Sexp::Comment(comment));
         }
     }
 
@@ -404,9 +466,7 @@ impl SmtProc {
     /// Send the solver `(check-sat)`. For unknown gets a reason, but does not
     /// call `(get-model)` for sat.
     pub fn check_sat(&mut self) -> Result<SatResp> {
-        self.send(&app("check-sat", []));
-        let resp = self.get_response(|s| s.to_string())?;
-        self.parse_sat(&resp)
+        self.check_sat_assuming(&[])
     }
 
     /// Send the solver `(check-sat-assuming)` with some assumed variables
@@ -414,12 +474,20 @@ impl SmtProc {
     ///
     /// The assumptions do not affect subsequent use of the solver.
     pub fn check_sat_assuming(&mut self, assumptions: &[Sexp]) -> Result<SatResp> {
-        self.send(&app(
-            "check-sat-assuming",
-            vec![sexp_l(assumptions.to_vec())],
-        ));
-        let resp = self.get_response(|s| s.to_string())?;
-        self.parse_sat(&resp)
+        let cmd = if assumptions.is_empty() {
+            app("check-sat", [])
+        } else {
+            app("check-sat-assuming", vec![sexp_l(assumptions.to_vec())])
+        };
+        self.send(&cmd);
+        let sexp_resp = self.get_response(|s| s.to_string())?;
+        let resp = self.parse_sat(&sexp_resp)?;
+        if matches!(resp, SatResp::Unknown(_)) {
+            if let Some(name) = self.save_tee() {
+                eprintln!("unknown response to {}", name.display());
+            }
+        }
+        Ok(resp)
     }
 
     /// Run `(get-unsat-assumptions)` following an unsat response to get the
@@ -427,7 +495,6 @@ impl SmtProc {
     ///
     /// Fails if the previous command wasn't a check_sat or check_sat_assuming
     /// that returned unsat.
-    #[allow(dead_code)]
     pub fn get_unsat_assumptions(&mut self) -> Result<Vec<Sexp>> {
         let sexp = self.send_with_reply(&app("get-unsat-assumptions", vec![]))?;
         if let Sexp::List(ss) = sexp {
