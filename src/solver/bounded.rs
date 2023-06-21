@@ -18,7 +18,10 @@ macro_rules! btreeset {
     }};
 }
 
-const ELEMENT_LEN: usize = 15;
+/// Upper bounds on sizes of arrays
+const ELEMENT_LEN: usize = 15; // should be 1 less than a multiple of 8
+const STATE_LEN: usize = 128; // should be a multiple of 64
+
 /// This is not the same as a semantics::Element
 /// This is a tuple of semantics::Elements that represents the arguments to a relation
 /// We use a fixed size array to avoid allocating a Vec
@@ -67,8 +70,8 @@ macro_rules! element {
 }
 
 /// Represents all (set, element) pairs with a bit for each one's inclusion
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct State(BitVec);
+#[derive(Clone, Debug, Eq, PartialOrd, Ord)]
+pub struct State(BitArr!(for STATE_LEN));
 
 impl std::hash::Hash for State {
     fn hash<H>(&self, h: &mut H)
@@ -79,11 +82,18 @@ impl std::hash::Hash for State {
     }
 }
 
-impl State {
-    fn new(indices: &Indices) -> State {
-        let mut out = BitVec::with_capacity(indices.len());
-        out.resize(indices.len(), false); // cap vs. len
-        State(out)
+impl PartialEq for State {
+    fn eq(&self, other: &State) -> bool {
+        let xs = self.0.as_raw_slice();
+        let ys = other.0.as_raw_slice();
+        let mut i = 0;
+        while i < xs.len() {
+            if xs[i] != ys[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 }
 
@@ -438,7 +448,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         .into_iter()
         .flat_map(|conjunction| {
             // compute all the constrained elements by adding them to a single state
-            let mut init = State::new(&indices);
+            let mut init = State(BitArray::ZERO);
             let mut constrained = btreeset![];
             for guard in &conjunction {
                 init.0.set(guard.index, guard.value);
@@ -1080,11 +1090,18 @@ mod tests {
             value: false,
         }
     }
+    fn state(iter: impl IntoIterator<Item = u8>) -> State {
+        let mut out = State(BitArray::ZERO);
+        for (i, x) in iter.into_iter().enumerate() {
+            out.0.set(i, x == 1);
+        }
+        out
+    }
 
     #[test]
     fn interpreter_basic() {
         let program = Program {
-            inits: vec![State(bitvec![0])],
+            inits: vec![state([0])],
             trs: vec![
                 Transition::new(vec![], vec![]),
                 Transition::new(
@@ -1105,14 +1122,14 @@ mod tests {
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(
             result1,
-            InterpreterResult::Counterexample(vec![State(bitvec![0]), State(bitvec![1]),])
+            InterpreterResult::Counterexample(vec![state([0]), state([1]),])
         );
     }
 
     #[test]
     fn interpreter_cycle() {
         let program = Program {
-            inits: vec![State(bitvec![1, 0, 0, 0])],
+            inits: vec![state([1, 0, 0, 0])],
             trs: vec![
                 Transition::new(
                     vec![Guard {
@@ -1195,10 +1212,10 @@ mod tests {
         assert_eq!(
             result4,
             InterpreterResult::Counterexample(vec![
-                State(bitvec![1, 0, 0, 0]),
-                State(bitvec![0, 1, 0, 0]),
-                State(bitvec![0, 0, 1, 0]),
-                State(bitvec![0, 0, 0, 1]),
+                state([1, 0, 0, 0]),
+                state([0, 1, 0, 0]),
+                state([0, 0, 1, 0]),
+                state([0, 0, 0, 1]),
             ])
         );
         assert_eq!(result5, result4);
@@ -1359,7 +1376,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ]);
 
         let expected = Program {
-            inits: vec![State(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 1])],
+            inits: vec![state([0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
             safes: vec![
                 vec![excludes("holds_lock", element![0], &indices)],
