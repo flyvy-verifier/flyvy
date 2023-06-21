@@ -204,8 +204,7 @@ impl<'a> Transitions<'a> {
     }
 }
 
-use im::{vector, Vector};
-type Trace = Vector<State>;
+type Trace = Vec<State>;
 
 /// A bounded model checker will either find a counterexample or else not tell us anything
 #[derive(Debug, PartialEq)]
@@ -225,7 +224,7 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
     let mut queue: Queue<Trace> = program
         .inits
         .iter()
-        .map(|state| vector![state.clone()])
+        .map(|state| vec![state.clone()])
         .collect();
     // cache stores states that have ever been present in the queue
     let mut cache: Cache<State> = program.inits.iter().cloned().collect();
@@ -282,7 +281,7 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
                         println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
                     }
                     let mut trace = trace.clone();
-                    trace.push_back(next);
+                    trace.push(next);
                     queue.push_back(trace);
                 }
             }
@@ -1104,7 +1103,7 @@ mod tests {
         assert_eq!(result0, InterpreterResult::Unknown);
         assert_eq!(
             result1,
-            InterpreterResult::Counterexample(vector![State(bitvec![0]), State(bitvec![1]),])
+            InterpreterResult::Counterexample(vec![State(bitvec![0]), State(bitvec![1]),])
         );
     }
 
@@ -1193,7 +1192,7 @@ mod tests {
         assert_eq!(result3, InterpreterResult::Unknown);
         assert_eq!(
             result4,
-            InterpreterResult::Counterexample(vector![
+            InterpreterResult::Counterexample(vec![
                 State(bitvec![1, 0, 0, 0]),
                 State(bitvec![0, 1, 0, 0]),
                 State(bitvec![0, 0, 1, 0]),
