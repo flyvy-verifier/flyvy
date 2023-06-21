@@ -6,14 +6,15 @@
 
 use crate::fly::{sorts::*, syntax::*};
 use bitvec::prelude::*;
+use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use itertools::Itertools;
-use std::collections::{BTreeMap as Map, BTreeSet as Set};
-use std::{collections::HashMap, iter::zip};
+use std::collections::{BTreeSet, VecDeque};
+use std::iter::zip;
 use thiserror::Error;
 
-macro_rules! set {
+macro_rules! btreeset {
     ($($v:expr),* $(,)?) => {{
-        Set::from([$($v,)*])
+        BTreeSet::from([$($v,)*])
     }};
 }
 
@@ -130,23 +131,23 @@ impl<'a> std::ops::Index<&'a (&'a str, Element)> for Indices<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     /// List of initial states
-    inits: Set<State>,
+    inits: Vec<State>,
     /// Set of transitions to potentially take at each timestep
-    pub trs: Set<Transition>,
+    pub trs: Vec<Transition>,
     /// Disjunction of conjunction of guards that the interpreter will verify always hold
-    safes: Set<Set<Guard>>,
+    safes: Vec<Vec<Guard>>,
 }
 
 /// A Transition is a guarded function from one state to another
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Transition {
-    guards: Set<Guard>,
-    updates: Set<Update>,
+    guards: Vec<Guard>,
+    updates: Vec<Update>,
 }
 
 impl Transition {
     /// Helper function to initialize a Transition
-    pub fn new(guards: Set<Guard>, updates: Set<Update>) -> Transition {
+    pub fn new(guards: Vec<Guard>, updates: Vec<Update>) -> Transition {
         Transition { guards, updates }
     }
 }
@@ -176,7 +177,7 @@ impl<'a> Transitions<'a> {
     fn new() -> Transitions<'a> {
         Transitions {
             data: Vec::new(),
-            children: HashMap::new(),
+            children: HashMap::default(),
         }
     }
 
@@ -220,14 +221,13 @@ pub enum InterpreterResult {
 /// e.g. a max_depth of 0 means only evaluate the initial states
 #[allow(dead_code)]
 pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
-    use std::collections::{HashSet as Cache, VecDeque as Queue};
-    let mut queue: Queue<Trace> = program
+    let mut queue: VecDeque<Trace> = program
         .inits
         .iter()
         .map(|state| vec![state.clone()])
         .collect();
     // cache stores states that have ever been present in the queue
-    let mut cache: Cache<State> = program.inits.iter().cloned().collect();
+    let mut cache: HashSet<State> = program.inits.iter().cloned().collect();
 
     let mut transitions = Transitions::new();
     for tr in &program.trs {
@@ -277,7 +277,7 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
                     .for_each(|update| next.0.set(update.index, update.value));
                 if !cache.contains(&next) {
                     cache.insert(next.clone());
-                    if cache.len() % 100000 == 0 {
+                    if cache.len() % 1_000_000 == 0 {
                         println!("intermediate cache update ({:?} since start) considering depth {}. queue length is {}. visited {} states.", start_time.elapsed(), current_depth, queue.len(), cache.len());
                     }
                     let mut trace = trace.clone();
@@ -297,7 +297,7 @@ pub enum TranslationError {
     #[error("sort checking error: {0}")]
     SortError(SortError),
     #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, HashMap<String, usize>),
+    UnknownSort(String, Universe),
     #[error("all assumes should precede all asserts, but found {0:?}")]
     OutOfOrderStatement(ThmStmt),
     #[error("expected no primes or only one prime in {0:#?}")]
@@ -307,7 +307,7 @@ pub enum TranslationError {
     #[error("unknown identifier {0}")]
     UnknownId(String),
     #[error("can't translate term ({0}) with context {1:#?}")]
-    UnsupportedTerm(Term, Map<String, usize>),
+    UnsupportedTerm(Term, HashMap<String, usize>),
     #[error("could not reduce term {0:#?} to an element")]
     NoValue(Valued),
     #[error("we don't support negating no-ops, but found {0:?}")]
@@ -324,7 +324,9 @@ pub enum TranslationError {
     UnconstrainedTransition(String),
 }
 
-type Universe = HashMap<String, usize>;
+/// Map from uninterpreted sort names to sizes
+// We use a std HashMap because this isn't hot and it's part of the API
+type Universe = std::collections::HashMap<String, usize>;
 
 /// Translate a flyvy module into a bounded::Program, given the bounds on the sort sizes.
 /// Universe should contain the sizes of all the sorts in module.signature.sorts.
@@ -406,7 +408,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         // push primes inwards
         let term = crate::term::Next::new(&module.signature).normalize(&term);
         // convert Forall to And and Exists to Or, eagerly evaluating when possible
-        let term = expand_quantifiers(&term, universe, &Map::new())?;
+        let term = expand_quantifiers(&term, universe, &HashMap::default())?;
         // simplify Ands and Ors into DNF
         Ok(distribute_conjunction(term))
     };
@@ -423,21 +425,21 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 term.get_and()
                     .into_iter()
                     .map(|term| term.get_guard(&indices))
-                    .collect::<Result<Set<_>, _>>()
+                    .collect::<Result<Vec<_>, _>>()
             })
-            .collect::<Result<Set<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()
     };
 
     // inits should just be guards at this point
-    let inits: Set<Set<Guard>> = get_guards_from_dnf(inits)?;
+    let inits: Vec<Vec<Guard>> = get_guards_from_dnf(inits)?;
 
     // change inits from guards over the state space to states
-    let inits: Set<State> = inits
+    let inits: Vec<State> = inits
         .into_iter()
         .flat_map(|conjunction| {
             // compute all the constrained elements by adding them to a single state
             let mut init = State::new(&indices);
-            let mut constrained = set![];
+            let mut constrained = btreeset![];
             for guard in &conjunction {
                 init.0.set(guard.index, guard.value);
                 constrained.insert(guard.index);
@@ -449,7 +451,7 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 .iter()
                 .flat_map(|relation| {
                     if relation.args.is_empty() {
-                        set![(relation.name.as_str(), (element![]))]
+                        btreeset![(relation.name.as_str(), (element![]))]
                     } else {
                         relation
                             .args
@@ -464,14 +466,14 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
                 .filter(|(set, element)| !constrained.contains(&indices[&(*set, *element)]));
 
             // compute all the unconstrained elements by doubling the number of states each time
-            let mut inits: Set<State> = set![init];
+            let mut inits: BTreeSet<State> = btreeset![init];
             for (set, element) in unconstrained {
                 inits = inits
                     .into_iter()
                     .flat_map(|state| {
                         let mut with_unconstrained = state.clone();
                         with_unconstrained.0.set(indices[&(set, element)], true);
-                        set![state, with_unconstrained]
+                        btreeset![state, with_unconstrained]
                     })
                     .collect();
             }
@@ -484,14 +486,14 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
         .into_iter()
         .map(|term| {
             // build transitions from constrained elements
-            let mut tr = Transition::new(set![], set![]);
-            let mut constrained = set![];
+            let mut tr = Transition::new(vec![], vec![]);
+            let mut constrained = btreeset![];
             for term in term.get_and() {
                 if let Ok(guard) = term.clone().get_guard(&indices) {
-                    tr.guards.insert(guard);
+                    tr.guards.push(guard);
                 } else if let Ok(update) = term.clone().get_update(&indices) {
                     constrained.insert(update.index);
-                    tr.updates.insert(update);
+                    tr.updates.push(update);
                 } else if let Valued::NoOp(set, element) = term {
                     constrained.insert(indices[&(set.as_str(), element)]);
                 } else {
@@ -529,10 +531,10 @@ pub fn translate(module: &mut Module, universe: &Universe) -> Result<Program, Tr
             }
             Ok(tr)
         })
-        .collect::<Result<Set<Transition>, _>>()?;
+        .collect::<Result<Vec<Transition>, _>>()?;
 
     // disjunction of conjunction of guards
-    let safes: Set<Set<Guard>> = get_guards_from_dnf(safes)?;
+    let safes: Vec<Vec<Guard>> = get_guards_from_dnf(safes)?;
 
     for tr in &trs {
         let mut indices_to_sets: Vec<&str> = Vec::with_capacity(indices.len());
@@ -640,9 +642,9 @@ pub enum Valued {
     /// An element of some sort
     Value(usize),
     /// A conjunction of terms
-    And(Set<Valued>),
+    And(BTreeSet<Valued>),
     /// A disjunction of terms
-    Or(Set<Valued>),
+    Or(BTreeSet<Valued>),
 
     // guards
     /// An inclusion test
@@ -668,17 +670,17 @@ impl Valued {
         }
     }
 
-    fn get_and(self) -> Set<Valued> {
+    fn get_and(self) -> BTreeSet<Valued> {
         match self {
             Valued::And(terms) => terms,
-            _ => set![self],
+            _ => btreeset![self],
         }
     }
 
-    fn get_or(self) -> Set<Valued> {
+    fn get_or(self) -> BTreeSet<Valued> {
         match self {
             Valued::Or(terms) => terms,
-            _ => set![self],
+            _ => btreeset![self],
         }
     }
 
@@ -725,14 +727,14 @@ impl Valued {
     }
 }
 
-fn and(terms: Set<Valued>) -> Valued {
+fn and(terms: BTreeSet<Valued>) -> Valued {
     // flatten
-    let terms: Set<Valued> = terms
+    let terms: BTreeSet<Valued> = terms
         .into_iter()
         .flat_map(|term| match term {
             Valued::And(terms) => terms,
-            Valued::Value(1) => set![], // remove identity
-            term => set![term],
+            Valued::Value(1) => btreeset![], // remove identity
+            term => btreeset![term],
         })
         .collect();
     // short circuit if possible
@@ -743,7 +745,7 @@ fn and(terms: Set<Valued>) -> Valued {
     }
     // remove redundant updates
     let old = terms;
-    let mut terms = set![];
+    let mut terms = btreeset![];
     for term in &old {
         if let Valued::Insert(set, element) = term.clone() {
             if old.contains(&Valued::Includes(set.clone(), element)) {
@@ -774,7 +776,7 @@ fn and(terms: Set<Valued>) -> Valued {
                                     xs.remove(x);
                                     ys.remove(x);
 
-                                    let c = and(set![or(xs), or(ys)]);
+                                    let c = and(btreeset![or(xs), or(ys)]);
                                     let mut zs = distribute_conjunction(c).get_or();
                                     zs.insert(x.clone());
 
@@ -801,14 +803,14 @@ fn and(terms: Set<Valued>) -> Valued {
     }
 }
 
-fn or(terms: Set<Valued>) -> Valued {
+fn or(terms: BTreeSet<Valued>) -> Valued {
     // flatten
-    let mut terms: Set<Valued> = terms
+    let mut terms: BTreeSet<Valued> = terms
         .into_iter()
         .flat_map(|term| match term {
             Valued::Or(terms) => terms,
-            Valued::Value(0) => set![], // remove identity
-            term => set![term],
+            Valued::Value(0) => btreeset![], // remove identity
+            term => btreeset![term],
         })
         .collect();
     // short circuit if possible
@@ -884,7 +886,7 @@ fn not(term: Valued) -> Result<Valued, TranslationError> {
 fn expand_quantifiers(
     term: &Term,
     universe: &Universe,
-    context: &Map<String, usize>,
+    context: &HashMap<String, usize>,
 ) -> Result<Valued, TranslationError> {
     match term {
         Term::Literal(true) => Ok(Valued::Value(1)),
@@ -913,9 +915,9 @@ fn expand_quantifiers(
         Term::BinOp(BinOp::Iff, a, b) => {
             let a = expand_quantifiers(a, universe, context)?;
             let b = expand_quantifiers(b, universe, context)?;
-            Ok(or(set![
-                and(set![a.clone(), b.clone()]),
-                and(set![not(a)?, not(b)?])
+            Ok(or(btreeset![
+                and(btreeset![a.clone(), b.clone()]),
+                and(btreeset![not(a)?, not(b)?])
             ]))
         }
         Term::BinOp(BinOp::Equals, a, b) => {
@@ -954,7 +956,7 @@ fn expand_quantifiers(
             universe,
             context,
         )?)?),
-        Term::BinOp(BinOp::Implies, a, b) => Ok(or(set![
+        Term::BinOp(BinOp::Implies, a, b) => Ok(or(btreeset![
             not(expand_quantifiers(a, universe, context)?)?,
             expand_quantifiers(b, universe, context)?
         ])),
@@ -966,12 +968,12 @@ fn expand_quantifiers(
             .iter()
             .map(|arg| expand_quantifiers(arg, universe, context))
             .collect::<Result<_, _>>()?)),
-        Term::Ite { cond, then, else_ } => Ok(or(set![
-            and(set![
+        Term::Ite { cond, then, else_ } => Ok(or(btreeset![
+            and(btreeset![
                 expand_quantifiers(cond, universe, context)?,
                 expand_quantifiers(then, universe, context)?
             ]),
-            and(set![
+            and(btreeset![
                 not(expand_quantifiers(cond, universe, context)?)?,
                 expand_quantifiers(else_, universe, context)?
             ])
@@ -1001,7 +1003,7 @@ fn expand_quantifiers(
                     }
                     expand_quantifiers(body, universe, &context)
                 })
-                .collect::<Result<Set<_>, _>>()?;
+                .collect::<Result<BTreeSet<_>, _>>()?;
             match quantifier {
                 Quantifier::Forall => Ok(and(set)),
                 Quantifier::Exists => Ok(or(set)),
@@ -1039,7 +1041,7 @@ fn distribute_conjunction(term: Valued) -> Valued {
                 .map(distribute_conjunction)
                 .map(|term| term.get_or().into_iter().collect::<Vec<_>>())
                 .multi_cartesian_product()
-                .map(|vec| and(vec.into_iter().collect::<Set<_>>()))
+                .map(|vec| and(vec.into_iter().collect::<BTreeSet<_>>()))
                 .collect())
         }
         Valued::Or(terms) => {
@@ -1082,20 +1084,20 @@ mod tests {
     #[test]
     fn interpreter_basic() {
         let program = Program {
-            inits: set![State(bitvec![0])],
-            trs: set![
-                Transition::new(set![], set![]),
+            inits: vec![State(bitvec![0])],
+            trs: vec![
+                Transition::new(vec![], vec![]),
                 Transition::new(
-                    set![],
-                    set![Update {
+                    vec![],
+                    vec![Update {
                         index: 0,
                         value: true,
-                    }]
-                )
+                    }],
+                ),
             ],
-            safes: set![set![Guard {
+            safes: vec![vec![Guard {
                 index: 0,
-                value: false
+                value: false,
             }]],
         };
         let result0 = interpret(&program, 0);
@@ -1110,76 +1112,76 @@ mod tests {
     #[test]
     fn interpreter_cycle() {
         let program = Program {
-            inits: set![State(bitvec![1, 0, 0, 0]),],
-            trs: set![
+            inits: vec![State(bitvec![1, 0, 0, 0])],
+            trs: vec![
                 Transition::new(
-                    set![Guard {
+                    vec![Guard {
                         index: 0,
-                        value: true
+                        value: true,
                     }],
-                    set![
+                    vec![
                         Update {
                             index: 0,
-                            value: false
+                            value: false,
                         },
                         Update {
                             index: 1,
-                            value: true
+                            value: true,
                         },
                     ],
                 ),
                 Transition::new(
-                    set![Guard {
+                    vec![Guard {
                         index: 1,
-                        value: true
+                        value: true,
                     }],
-                    set![
+                    vec![
                         Update {
                             index: 1,
-                            value: false
+                            value: false,
                         },
                         Update {
                             index: 2,
-                            value: true
+                            value: true,
                         },
                     ],
                 ),
                 Transition::new(
-                    set![Guard {
+                    vec![Guard {
                         index: 2,
-                        value: true
+                        value: true,
                     }],
-                    set![
+                    vec![
                         Update {
                             index: 2,
-                            value: false
+                            value: false,
                         },
                         Update {
                             index: 3,
-                            value: true
+                            value: true,
                         },
                     ],
                 ),
                 Transition::new(
-                    set![Guard {
+                    vec![Guard {
                         index: 3,
-                        value: true
+                        value: true,
                     }],
-                    set![
+                    vec![
                         Update {
                             index: 3,
-                            value: false
+                            value: false,
                         },
                         Update {
                             index: 0,
-                            value: true
+                            value: true,
                         },
                     ],
-                )
+                ),
             ],
-            safes: set![set![Guard {
+            safes: vec![vec![Guard {
                 index: 3,
-                value: false
+                value: false,
             }]],
         };
         let result1 = interpret(&program, 0);
@@ -1261,119 +1263,117 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
+        let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let indices = Indices::new(&m.signature, &universe);
 
-        let mut trs = set![];
+        let mut trs = vec![];
         // (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n)
-        trs.extend(set![
-            Transition::new(set![], set![insert("lock_msg", element![0], &indices)]),
-            Transition::new(set![], set![insert("lock_msg", element![1], &indices)]),
+        trs.extend(vec![
+            Transition::new(vec![], vec![insert("lock_msg", element![0], &indices)]),
+            Transition::new(vec![], vec![insert("lock_msg", element![1], &indices)]),
         ]);
         // (forall N:node. server_holds_lock & lock_msg(n) &
         //     !((server_holds_lock)') &
         //     (((lock_msg(N))') <-> lock_msg(N) & N != n) &
         //     (((grant_msg(N))') <-> grant_msg(N) | N = n)) &
-        trs.extend(set![
+        trs.extend(vec![
             Transition::new(
-                set![
+                vec![
                     includes("lock_msg", element![1], &indices),
-                    includes("server_holds_lock", element![], &indices)
+                    includes("server_holds_lock", element![], &indices),
                 ],
-                set![
+                vec![
                     insert("grant_msg", element![1], &indices),
                     remove("lock_msg", element![1], &indices),
-                    remove("server_holds_lock", element![], &indices)
-                ]
+                    remove("server_holds_lock", element![], &indices),
+                ],
             ),
             Transition::new(
-                set![
+                vec![
                     includes("lock_msg", element![0], &indices),
-                    includes("server_holds_lock", element![], &indices)
+                    includes("server_holds_lock", element![], &indices),
                 ],
-                set![
+                vec![
                     insert("grant_msg", element![0], &indices),
                     remove("lock_msg", element![0], &indices),
-                    remove("server_holds_lock", element![], &indices)
-                ]
+                    remove("server_holds_lock", element![], &indices),
+                ],
             ),
         ]);
         // (forall N:node. grant_msg(n) &
         //     (((grant_msg(N))') <-> grant_msg(N) & N != n) &
         //     (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
-        trs.extend(set![
+        trs.extend(vec![
             Transition::new(
-                set![includes("grant_msg", element![0], &indices)],
-                set![
+                vec![includes("grant_msg", element![0], &indices)],
+                vec![
                     insert("holds_lock", element![0], &indices),
-                    remove("grant_msg", element![0], &indices)
-                ]
+                    remove("grant_msg", element![0], &indices),
+                ],
             ),
             Transition::new(
-                set![includes("grant_msg", element![1], &indices)],
-                set![
+                vec![includes("grant_msg", element![1], &indices)],
+                vec![
                     insert("holds_lock", element![1], &indices),
-                    remove("grant_msg", element![1], &indices)
-                ]
+                    remove("grant_msg", element![1], &indices),
+                ],
             ),
         ]);
         // (forall N:node. holds_lock(n) &
         //     (((holds_lock(N))') <-> holds_lock(N) & N != n) &
         //     (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
-        trs.extend(set![
+        trs.extend(vec![
             Transition::new(
-                set![includes("holds_lock", element![0], &indices)],
-                set![
+                vec![includes("holds_lock", element![0], &indices)],
+                vec![
                     insert("unlock_msg", element![0], &indices),
-                    remove("holds_lock", element![0], &indices)
-                ]
+                    remove("holds_lock", element![0], &indices),
+                ],
             ),
             Transition::new(
-                set![includes("holds_lock", element![1], &indices)],
-                set![
+                vec![includes("holds_lock", element![1], &indices)],
+                vec![
                     insert("unlock_msg", element![1], &indices),
-                    remove("holds_lock", element![1], &indices)
-                ]
+                    remove("holds_lock", element![1], &indices),
+                ],
             ),
         ]);
         // (forall N:node. unlock_msg(n) &
         //     (((unlock_msg(N))') <-> unlock_msg(N) & N != n) &
         //     ((server_holds_lock)'))
-        trs.extend(set![
+        trs.extend(vec![
             Transition::new(
-                set![includes("unlock_msg", element![0], &indices)],
-                set![
+                vec![includes("unlock_msg", element![0], &indices)],
+                vec![
                     insert("server_holds_lock", element![], &indices),
-                    remove("unlock_msg", element![0], &indices)
-                ]
+                    remove("unlock_msg", element![0], &indices),
+                ],
             ),
             Transition::new(
-                set![includes("unlock_msg", element![1], &indices)],
-                set![
+                vec![includes("unlock_msg", element![1], &indices)],
+                vec![
                     insert("server_holds_lock", element![], &indices),
-                    remove("unlock_msg", element![1], &indices)
-                ]
+                    remove("unlock_msg", element![1], &indices),
+                ],
             ),
         ]);
 
         let expected = Program {
-            inits: set![State(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 1])],
+            inits: vec![State(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
-            safes: set![
-                set![excludes("holds_lock", element![0], &indices)],
-                set![excludes("holds_lock", element![1], &indices)]
+            safes: vec![
+                vec![excludes("holds_lock", element![0], &indices)],
+                vec![excludes("holds_lock", element![1], &indices)],
             ],
         };
 
         let target = translate(&mut m, &universe)?;
         assert_eq!(target.inits, expected.inits);
         assert_eq!(target.safes, expected.safes);
-        if target.trs != expected.trs {
-            let diff: Set<_> = target.trs.difference(&expected.trs).collect();
-            println!("|target - expected|: {:?}", diff.len());
-            println!(" target - expected: {:#?}", diff);
-            assert!(target.trs == expected.trs);
-        }
+        assert_eq!(
+            target.trs.iter().collect::<BTreeSet<_>>(),
+            expected.trs.iter().collect::<BTreeSet<_>>()
+        );
 
         let output = interpret(&target, 100);
         assert_eq!(output, InterpreterResult::Unknown);
@@ -1440,7 +1440,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
+        let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
 
         let bug = interpret(&target, 12);
@@ -1513,7 +1513,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([
+        let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("value".to_string(), 2),
             ("quorum".to_string(), 1),
@@ -1541,7 +1541,7 @@ assert always !f
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
+        let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe);
         assert_eq!(
             target,
