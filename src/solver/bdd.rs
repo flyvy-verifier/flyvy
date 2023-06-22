@@ -202,9 +202,17 @@ pub fn check(
         let term = crate::term::Next::new(&module.signature).normalize(&term);
         term_to_bdd(&term, &context, &HashMap::new())
     };
+
+    println!("starting translation...");
+    let time = std::time::Instant::now();
+
     let init = translate(inits)?;
     let tr = translate(trs)?;
     let not_safe = translate(safes)?.not();
+
+    println!("translation finished in {:?}", time.elapsed());
+    println!("starting iteration...");
+    let time = std::time::Instant::now();
 
     let mut current = init;
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
@@ -227,6 +235,8 @@ pub fn check(
             return Ok(CheckerAnswer::Counterexample(valuation));
         }
     }
+
+    println!("iteration finished in {:?}", time.elapsed());
 
     Ok(CheckerAnswer::Unknown)
 }
@@ -533,6 +543,73 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
 
         let too_short = check(&mut module, &universe, 11)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_consensus() -> Result<(), CheckerError> {
+        let source = "
+sort node
+sort quorum
+sort value
+
+# relations:
+immutable member(node, quorum): bool
+mutable vote_request_msg(node, node): bool
+mutable voted(node): bool
+mutable vote_msg(node, node): bool
+mutable votes(node, node): bool
+mutable leader(node): bool
+mutable decided(node, value): bool
+
+# init:
+assume (forall N1:node, N2:node. !vote_request_msg(N1, N2)) & (forall N:node. !voted(N)) &
+    (forall N1:node, N2:node. !vote_msg(N1, N2)) & (forall N1:node, N2:node. !votes(N1, N2)) &
+    (forall N1:node. !leader(N1)) & (forall N:node, V:value. !decided(N, V))
+
+# transitions:
+assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_request_msg(N1, N2))' <->
+    vote_request_msg(N1, N2) | N1 = src & N2 = dst) & (forall x0:node. (voted(x0))' = voted(x0)) &
+    (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) &
+    (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists src:node, dst:node.
+    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & !vote_request_msg'(dst, src) & 
+    ((vote_msg(N1, N2))' <->
+    vote_msg(N1, N2) | N1 = src & N2 = dst) & ((voted(N))' <-> voted(N) | N = src) & (!(N1 = dst &
+    N2 = src) -> ((vote_request_msg(N1, N2))' <-> vote_request_msg(N1, N2)))) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) & (forall x0:node,
+    x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, sender:node. (forall N1:node, N2:node.
+    vote_msg(sender, n) & ((votes(N1, N2))' <-> votes(N1, N2) | N1 = n & N2 = sender)) & (forall x0:node,
+    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
+    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node. (leader(x0))' =
+    leader(x0)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, q:quorum.
+    (forall N:node. (member(N, q) -> votes(n, N)) & ((leader(N))' <-> leader(N) | N = n)) & (forall x0:node,
+    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
+    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) |
+    (exists n:node, v:value. (forall V:value, N:node. leader(n) & !decided(n, V) & ((decided(N, V))' <->
+    decided(N, V) | N = n & V = v)) & (forall x0:node, x1:node. (vote_request_msg(x0, x1))' =
+    vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0)) & (forall x0:node, x1:node.
+    (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node. (votes(x0, x1))' = votes(x0, x1)) &
+    (forall x0:node. (leader(x0))' = leader(x0)))
+
+# added by hand
+# axiom
+assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# safety:
+assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = std::collections::HashMap::from([
+            ("node".to_string(), 1),
+            ("quorum".to_string(), 1),
+            ("value".to_string(), 1),
+        ]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
 
         Ok(())
     }
