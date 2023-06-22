@@ -67,7 +67,7 @@ impl Context<'_> {
 }
 
 /// The result of a successful run of the bounded model checker
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
     Counterexample(BddValuation),
@@ -362,4 +362,33 @@ fn term_to_bdd(
         _ => return Err(CheckerError::UnsupportedTerm(term.clone())),
     };
     Ok(BddOrElement::Bdd(bdd))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checker_basic() -> Result<(), CheckerError> {
+        let source = "
+mutable x: bool
+
+assume x
+
+assume always (x -> !x')
+
+assert always x
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+        assert_eq!(
+            CheckerAnswer::Counterexample(BddValuation::new(vec![false, false])),
+            check(&mut module, &universe, 1)?
+        );
+
+        Ok(())
+    }
 }
