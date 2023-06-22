@@ -150,4 +150,20 @@ impl RestrictedAtoms {
             None
         }
     }
+
+    pub fn containing_vars(
+        &self,
+        mut literals: Vec<Literal>,
+        vars: &HashSet<String>,
+    ) -> Vec<Literal> {
+        literals.retain(|(i, _)| !self.atoms.to_term[*i].ids().is_disjoint(vars));
+        literals
+    }
+
+    pub fn atoms_containing_vars(&self, vars: &HashSet<String>) -> usize {
+        self.allowed
+            .iter()
+            .filter(|i| !self.atoms.to_term[**i].ids().is_disjoint(vars))
+            .count()
+    }
 }

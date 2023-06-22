@@ -69,7 +69,11 @@ pub trait LemmaQf: Clone + Sync + Send {
     fn base_to_term(&self, base: &Self::Base) -> Term;
 
     /// Create a new instance given the following configuration.
-    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self;
+    fn new(
+        cfg: &InferenceConfig,
+        atoms: Arc<RestrictedAtoms>,
+        non_universal_vars: HashSet<String>,
+    ) -> Self;
 
     /// Return the strongest instances of the associated [`Self::Base`]
     fn strongest(&self) -> Vec<Self::Base>;
@@ -79,7 +83,7 @@ pub trait LemmaQf: Clone + Sync + Send {
     where
         I: Fn(&Self::Base) -> bool;
 
-    fn approx_space_size(&self, atoms: usize) -> usize;
+    fn approx_space_size(&self) -> usize;
 
     fn sub_spaces(&self) -> Vec<Self>;
 
@@ -609,11 +613,11 @@ where
         infer_cfg: &InferenceConfig,
         atoms: Arc<RestrictedAtoms>,
     ) -> Self {
-        let is_universal = config.is_universal();
+        let non_universal_vars = config.non_universal_vars();
 
         Self {
             config,
-            lemma_qf: Arc::new(L::new(infer_cfg, atoms, is_universal)),
+            lemma_qf: Arc::new(L::new(infer_cfg, atoms, non_universal_vars)),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
             bodies: O::Map::new(),

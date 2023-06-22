@@ -85,9 +85,13 @@ impl LemmaQf for LemmaCnf {
         }))
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
+    fn new(
+        cfg: &InferenceConfig,
+        atoms: Arc<RestrictedAtoms>,
+        non_universal_vars: HashSet<String>,
+    ) -> Self {
         Self {
-            clauses: if is_universal {
+            clauses: if non_universal_vars.is_empty() {
                 1
             } else {
                 cfg.clauses
@@ -156,7 +160,8 @@ impl LemmaQf for LemmaCnf {
             .collect_vec()
     }
 
-    fn approx_space_size(&self, atoms: usize) -> usize {
+    fn approx_space_size(&self) -> usize {
+        let atoms = self.atoms.len();
         let clauses: usize = (0..=self.clause_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
@@ -374,7 +379,11 @@ impl LemmaQf for LemmaPDnfNaive {
         }))
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
+    fn new(
+        cfg: &InferenceConfig,
+        atoms: Arc<RestrictedAtoms>,
+        non_universal_vars: HashSet<String>,
+    ) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut non_unit = cfg
             .non_unit
@@ -383,7 +392,7 @@ impl LemmaQf for LemmaPDnfNaive {
             .cube_size
             .expect("Maximum size of non-unit cubes not provided.");
 
-        if is_universal {
+        if non_universal_vars.is_empty() {
             non_unit = 0;
         }
 
@@ -453,7 +462,8 @@ impl LemmaQf for LemmaPDnfNaive {
         weakened
     }
 
-    fn approx_space_size(&self, atoms: usize) -> usize {
+    fn approx_space_size(&self) -> usize {
+        let atoms = self.atoms.len();
         let cubes: usize = (0..=self.cube_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
@@ -500,6 +510,7 @@ pub struct LemmaPDnf {
     pub cube_size: usize,
     pub non_unit: usize,
     atoms: Arc<RestrictedAtoms>,
+    non_universal_vars: HashSet<String>,
 }
 
 impl LemmaQf for LemmaPDnf {
@@ -563,7 +574,11 @@ impl LemmaQf for LemmaPDnf {
         )
     }
 
-    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self {
+    fn new(
+        cfg: &InferenceConfig,
+        atoms: Arc<RestrictedAtoms>,
+        non_universal_vars: HashSet<String>,
+    ) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut cube_size = cfg
             .cube_size
@@ -572,7 +587,7 @@ impl LemmaQf for LemmaPDnf {
             .non_unit
             .expect("Number of pDNF non-unit cubes not provided.");
 
-        if is_universal {
+        if non_universal_vars.is_empty() {
             non_unit = 0;
         }
 
@@ -587,6 +602,7 @@ impl LemmaQf for LemmaPDnf {
             non_unit,
             cube_size,
             atoms,
+            non_universal_vars,
         }
     }
 
@@ -648,15 +664,20 @@ impl LemmaQf for LemmaPDnf {
         }
 
         // Weaken by adding a cube
-        if units.len() + non_units.len() < self.cubes && non_units.len() < self.non_unit {
-            let cube = cube
+        if units.len() + non_units.len() < self.cubes
+            && non_units.len() < self.non_unit
+            && self.cube_size > 1
+        {
+            let mut cube = cube
                 .iter()
                 .filter(|lit| !units.contains(&(lit.0, !lit.1)))
                 .copied()
                 .collect_vec();
-            let cube_len = cube.len();
-            if cube_len > 1 && self.cube_size > 1 {
-                for comb in cube.into_iter().combinations(self.cube_size.min(cube_len)) {
+            cube = self.atoms.containing_vars(cube, &self.non_universal_vars);
+
+            let comb_len = self.cube_size.min(cube.len());
+            if comb_len > 1 {
+                for comb in cube.into_iter().combinations(self.cube_size.min(comb_len)) {
                     let mut new_non_units = non_units.clone();
                     new_non_units.push(comb);
                     let new_base = (units.clone(), new_non_units);
@@ -670,15 +691,20 @@ impl LemmaQf for LemmaPDnf {
         weakened
     }
 
-    fn approx_space_size(&self, atoms: usize) -> usize {
+    fn approx_space_size(&self) -> usize {
         let cubes: usize = (0..=self.cube_size)
-            .map(|len| clauses_cubes_count(atoms, len))
+            .map(|len| {
+                clauses_cubes_count(
+                    self.atoms.atoms_containing_vars(&self.non_universal_vars),
+                    len,
+                )
+            })
             .sum();
 
         let mut total = 0;
         for non_unit in 0..=self.non_unit {
             let literals: usize = (0..=(self.cubes - non_unit))
-                .map(|len| clauses_cubes_count(atoms, len))
+                .map(|len| clauses_cubes_count(self.atoms.len(), len))
                 .sum();
             total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
         }
@@ -699,6 +725,7 @@ impl LemmaQf for LemmaPDnf {
                     cube_size,
                     non_unit,
                     atoms: self.atoms.clone(),
+                    non_universal_vars: self.non_universal_vars.clone(),
                 })
             })
             .collect_vec()
