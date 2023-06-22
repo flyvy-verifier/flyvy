@@ -47,7 +47,7 @@ impl Context<'_> {
             idxs.entry(r).or_default().insert(e, i);
         }
 
-        let bdds = BddVariableSet::new_anonymous((idxs.len() * 2).try_into().unwrap());
+        let bdds = BddVariableSet::new_anonymous((len * 2).try_into().unwrap());
         let vars = bdds.variables();
 
         Context {
@@ -397,6 +397,142 @@ assert always x
             CheckerAnswer::Counterexample(BddValuation::new(vec![false, false])),
             check(&mut module, &universe, 1)?
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_lockserver() -> Result<(), CheckerError> {
+        let source = "
+sort node
+
+mutable lock_msg(node): bool
+mutable grant_msg(node): bool
+mutable unlock_msg(node): bool
+mutable holds_lock(node): bool
+mutable server_holds_lock: bool
+
+# inits:
+assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
+    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
+
+# transitions:
+assume always
+    (exists n:node. 
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
+        ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. server_holds_lock & lock_msg(n) & 
+            !((server_holds_lock)') & 
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
+    (exists n:node. 
+        (forall N:node. grant_msg(n) & 
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. 
+            ((unlock_msg(x0))') = unlock_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. holds_lock(n) & 
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. 
+            ((grant_msg(x0))') = grant_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. unlock_msg(n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) & 
+            ((server_holds_lock)')) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
+
+# safety:
+assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_lockserver_buggy() -> Result<(), CheckerError> {
+        let source = "
+sort node
+
+mutable lock_msg(node): bool
+mutable grant_msg(node): bool
+mutable unlock_msg(node): bool
+mutable holds_lock(node): bool
+mutable server_holds_lock: bool
+
+# inits:
+assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
+    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
+
+# transitions:
+assume always
+    (exists n:node. 
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
+        ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. server_holds_lock & lock_msg(n) & 
+            !((server_holds_lock)') & 
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
+    (exists n:node. 
+        (forall N:node. grant_msg(n) & 
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. 
+            ((unlock_msg(x0))') = unlock_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. holds_lock(n) & 
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. 
+            ((grant_msg(x0))') = grant_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. unlock_msg(n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N)) & 
+            ((server_holds_lock)')) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
+
+# safety:
+assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        let bug = check(&mut module, &universe, 12)?;
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
+
+        let too_short = check(&mut module, &universe, 11)?;
+        assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
     }
