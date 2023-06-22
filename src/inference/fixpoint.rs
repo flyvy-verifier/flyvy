@@ -66,9 +66,8 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let atoms = Arc::new(Atoms::new(
-        infer_cfg.cfg.atoms(infer_cfg.nesting, infer_cfg.include_eq),
-    ));
+    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
+    let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg
         .cfg
@@ -90,7 +89,6 @@ where
         })
         .collect_vec();
     let infer_cfg = Arc::new(infer_cfg);
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),
@@ -145,9 +143,8 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let atoms = Arc::new(Atoms::new(
-        infer_cfg.cfg.atoms(infer_cfg.nesting, infer_cfg.include_eq),
-    ));
+    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
+    let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg
         .cfg
@@ -165,7 +162,6 @@ where
         .sorted_by_key(|(p, lemma_qf, _)| (p.existentials(), lemma_qf.approx_space_size()))
         .collect_vec();
     let infer_cfg = Arc::new(infer_cfg);
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),

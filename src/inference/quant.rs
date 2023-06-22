@@ -157,6 +157,15 @@ impl<Q: Clone> QuantifierSequence<Q> {
             })
             .collect_vec()
     }
+
+    pub fn as_universal(&self) -> QuantifierPrefix {
+        QuantifierPrefix {
+            signature: self.signature.clone(),
+            quantifiers: vec![Quantifier::Forall; self.len()],
+            sorts: self.sorts.clone(),
+            names: self.names.clone(),
+        }
+    }
 }
 
 impl QuantifierConfig {

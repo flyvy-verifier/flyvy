@@ -929,6 +929,7 @@ where
                             let mut total_unsat_lock = total_unsat.lock().unwrap();
                             *total_unsat_lock += 1;
                         }
+
                         let mut new_cores_vec = new_cores.lock().unwrap();
                         new_cores_vec.push((prefix, body.clone(), hashmap::set_from_std(core)));
                     }
@@ -939,7 +940,7 @@ where
             });
 
         log::info!(
-            "SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
+            "    SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
             (Instant::now() - start_time).as_secs_f64(),
             (first_sat.into_inner().unwrap().unwrap_or(start_time) - start_time).as_secs_f64(),
             total_sat.into_inner().unwrap(),
