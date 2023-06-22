@@ -265,6 +265,9 @@ enum Command {
         file: String,
         /// Depth to run the checker to
         depth: usize,
+        /// Whether to only keep track of the last state of the trace
+        #[arg(long)]
+        compress_traces: bool,
     },
 }
 
@@ -515,7 +518,11 @@ impl App {
                 m.inline_defs();
                 println!("{}", printer::fmt(&m));
             }
-            Command::BoundedCheck { depth, .. } => {
+            Command::BoundedCheck {
+                depth,
+                compress_traces,
+                ..
+            } => {
                 let mut universe = HashMap::new();
                 let stdin = std::io::stdin();
                 for sort in &m.signature.sorts {
@@ -539,7 +546,7 @@ impl App {
                 }
                 match translate(&mut m, &universe) {
                     Err(e) => eprintln!("{}", e),
-                    Ok(program) => match interpret(&program, depth) {
+                    Ok(program) => match interpret(&program, depth, compress_traces) {
                         InterpreterResult::Unknown => println!("no counterexample found"),
                         InterpreterResult::Counterexample(trace) => {
                             eprintln!("found counterexample: {:#?}", trace)

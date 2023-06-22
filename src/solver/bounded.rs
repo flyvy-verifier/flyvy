@@ -215,7 +215,52 @@ impl<'a> Transitions<'a> {
     }
 }
 
-type Trace = Vec<State>;
+/// A sequence of states that may or may not be compressed only the last state.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Trace {
+    /// Uncompressed trace, which keeps all states
+    Trace(Vec<State>),
+    /// Compressed trace, keeping only the last state and its depth
+    CompressedTrace(State, usize),
+}
+
+impl Trace {
+    fn new(state: State, compressed: bool) -> Trace {
+        if compressed {
+            Trace::CompressedTrace(state, 1)
+        } else {
+            Trace::Trace(vec![state])
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Trace::CompressedTrace(_, n) => *n,
+            Trace::Trace(v) => v.len(),
+        }
+    }
+
+    fn last(&self) -> &State {
+        match self {
+            Trace::CompressedTrace(s, _) => s,
+
+            // unwrap is safe here since there's no way to construct an empty trace
+            Trace::Trace(v) => v.last().unwrap(),
+        }
+    }
+
+    fn push(&mut self, state: State) {
+        match self {
+            Trace::CompressedTrace(s, n) => {
+                *s = state;
+                *n += 1;
+            }
+            Trace::Trace(v) => {
+                v.push(state);
+            }
+        }
+    }
+}
 
 /// A bounded model checker will either find a counterexample or else not tell us anything
 #[derive(Debug, PartialEq)]
@@ -230,11 +275,11 @@ pub enum InterpreterResult {
 /// Note that max_depth refers to the number of timesteps,
 /// e.g. a max_depth of 0 means only evaluate the initial states
 #[allow(dead_code)]
-pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
+pub fn interpret(program: &Program, max_depth: usize, compress_traces: bool) -> InterpreterResult {
     let mut queue: VecDeque<Trace> = program
         .inits
         .iter()
-        .map(|state| vec![state.clone()])
+        .map(|state| Trace::new(state.clone(), compress_traces))
         .collect();
     // cache stores states that have ever been present in the queue
     let mut cache: HashSet<State> = program.inits.iter().cloned().collect();
@@ -267,7 +312,7 @@ pub fn interpret(program: &Program, max_depth: usize) -> InterpreterResult {
             );
         }
 
-        let state = trace.last().unwrap();
+        let state = trace.last();
         if !program.safes.iter().any(|guards| {
             guards
                 .iter()
@@ -1117,13 +1162,12 @@ mod tests {
                 value: false,
             }]],
         };
-        let result0 = interpret(&program, 0);
-        let result1 = interpret(&program, 1);
+        let result0 = interpret(&program, 0, false);
+        let result1 = interpret(&program, 1, false);
         assert_eq!(result0, InterpreterResult::Unknown);
-        assert_eq!(
-            result1,
-            InterpreterResult::Counterexample(vec![state([0]), state([1]),])
-        );
+        let mut expected1 = Trace::new(state([0]), false);
+        expected1.push(state([1]));
+        assert_eq!(result1, InterpreterResult::Counterexample(expected1));
     }
 
     #[test]
@@ -1201,23 +1245,23 @@ mod tests {
                 value: false,
             }]],
         };
-        let result1 = interpret(&program, 0);
-        let result2 = interpret(&program, 1);
-        let result3 = interpret(&program, 2);
-        let result4 = interpret(&program, 3);
-        let result5 = interpret(&program, 4);
+        let result1 = interpret(&program, 0, false);
+        let result2 = interpret(&program, 1, false);
+        let result3 = interpret(&program, 2, false);
+        let result4 = interpret(&program, 3, false);
+        let result5 = interpret(&program, 4, false);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
-        assert_eq!(
-            result4,
-            InterpreterResult::Counterexample(vec![
-                state([1, 0, 0, 0]),
-                state([0, 1, 0, 0]),
-                state([0, 0, 1, 0]),
-                state([0, 0, 0, 1]),
-            ])
-        );
+        let mut expected4 = Trace::new(state([1, 0, 0, 0]), false);
+        for state in vec![
+            state([0, 1, 0, 0]),
+            state([0, 0, 1, 0]),
+            state([0, 0, 0, 1]),
+        ] {
+            expected4.push(state);
+        }
+        assert_eq!(result4, InterpreterResult::Counterexample(expected4));
         assert_eq!(result5, result4);
     }
 
@@ -1392,7 +1436,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             expected.trs.iter().collect::<BTreeSet<_>>()
         );
 
-        let output = interpret(&target, 100);
+        let output = interpret(&target, 100, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1460,7 +1504,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
 
-        let bug = interpret(&target, 12);
+        let bug = interpret(&target, 12, false);
         if let InterpreterResult::Counterexample(trace) = &bug {
             println!("{:#?}", trace);
             assert_eq!(trace.len(), 13);
@@ -1468,7 +1512,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, 11);
+        let too_short = interpret(&target, 11, false);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1536,7 +1580,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("quorum".to_string(), 1),
         ]);
         let target = translate(&mut m, &universe)?;
-        let output = interpret(&target, 1);
+        let output = interpret(&target, 1, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
