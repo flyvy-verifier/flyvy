@@ -7,6 +7,7 @@ use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 use crate::{
     fly::semantics::Model,
@@ -893,21 +894,41 @@ where
             self.lemmas.to_terms_ids().into_iter().unzip();
 
         let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
-        let cancel = Arc::new(RwLock::new(false));
+        let cancel = RwLock::new(false);
+        let first_sat = Mutex::new(None);
+        let total_sat = Mutex::new(0_usize);
+        let total_unsat = Mutex::new(0_usize);
 
+        let start_time = Instant::now();
         let res = lemmas
             .iter()
             .into_par_iter()
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
-                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(cancel.clone())) {
+                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&cancel)) {
                     TransCexResult::CTI(_, model) => {
-                        let mut lock = cancel.write().unwrap();
-                        *lock = true;
+                        {
+                            let mut cancel_lock = cancel.write().unwrap();
+                            *cancel_lock = true;
+                        }
+                        {
+                            let mut first_sat_lock = first_sat.lock().unwrap();
+                            if first_sat_lock.is_none() {
+                                *first_sat_lock = Some(Instant::now());
+                            }
+                        }
+                        {
+                            let mut total_sat_lock = total_sat.lock().unwrap();
+                            *total_sat_lock += 1;
+                        }
                         return Some(model);
                     }
                     TransCexResult::UnsatCore(core) => {
+                        {
+                            let mut total_unsat_lock = total_unsat.lock().unwrap();
+                            *total_unsat_lock += 1;
+                        }
                         let mut new_cores_vec = new_cores.lock().unwrap();
                         new_cores_vec.push((prefix, body.clone(), hashmap::set_from_std(core)));
                     }
@@ -916,6 +937,14 @@ where
 
                 None
             });
+
+        log::info!(
+            "SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
+            (Instant::now() - start_time).as_secs_f64(),
+            (first_sat.into_inner().unwrap().unwrap_or(start_time) - start_time).as_secs_f64(),
+            total_sat.into_inner().unwrap(),
+            total_unsat.into_inner().unwrap(),
+        );
 
         for (prefix, body, core) in new_cores.into_inner().unwrap() {
             let core = core.into_iter().map(|i| pre_ids[i]).collect();
@@ -1192,7 +1221,7 @@ where
 
     pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
-        let cancel = Arc::new(RwLock::new(false));
+        let cancel = RwLock::new(false);
         log::info!("Getting weakest lemmas...");
         let weakest = self.weaken_set.iter();
         log::info!("Finding CTI...");
@@ -1201,7 +1230,7 @@ where
             .filter(|(prefix, body)| !self.inductive.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
                 let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
-                match fo.trans_cex(conf, &term, &term[0], false, false, Some(cancel.clone())) {
+                match fo.trans_cex(conf, &term, &term[0], false, false, Some(&cancel)) {
                     TransCexResult::CTI(pre, post) => {
                         let mut lock = cancel.write().unwrap();
                         *lock = true;

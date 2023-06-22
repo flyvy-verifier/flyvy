@@ -4,7 +4,7 @@
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::RwLock,
 };
 
 use crate::{
@@ -106,7 +106,7 @@ impl FOModule {
         t: &Term,
         with_init: bool,
         with_safety: bool,
-        cancel: Option<Arc<RwLock<bool>>>,
+        cancel: Option<&RwLock<bool>>,
     ) -> TransCexResult {
         let cancelled = || match &cancel {
             None => false,
@@ -182,6 +182,10 @@ impl FOModule {
                         {
                             new_participants.insert(i);
                         } else {
+                            log::debug!(
+                                "Found SAT with {} formulas in prestate.",
+                                participants.len()
+                            );
                             return TransCexResult::CTI(pre, post);
                         }
                     }
@@ -191,6 +195,10 @@ impl FOModule {
                                 core.insert(s[6..].parse().unwrap());
                             }
                         }
+                        log::debug!(
+                            "Found UNSAT with {} formulas in prestate.",
+                            participants.len()
+                        );
                     }
                     SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
                 }
