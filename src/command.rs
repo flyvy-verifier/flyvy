@@ -20,7 +20,7 @@ use crate::solver::bounded::{interpret, translate, InterpreterResult};
 use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::timing;
 use crate::{
-    fly::{self, parser::parse_error_diagonistic, printer, sorts},
+    fly::{self, parser::parse_error_diagnostic, printer, sorts},
     inference::{fixpoint_multi, fixpoint_single, QfBody},
     solver::backends::{self, GenericBackend},
     verify::verify_module,
@@ -386,7 +386,7 @@ impl App {
         let mut m = match fly::parse(&file) {
             Ok(v) => v,
             Err(err) => {
-                let diagnostic = parse_error_diagonistic((), &err);
+                let diagnostic = parse_error_diagnostic((), &err);
                 terminal::emit(&mut writer.lock(), &config, &files, &diagnostic).unwrap();
                 process::exit(1);
             }
@@ -547,7 +547,7 @@ impl App {
                 }
                 match translate(&mut m, &universe) {
                     Err(e) => eprintln!("{}", e),
-                    Ok(program) => match interpret(&program, depth, compress_traces) {
+                    Ok(program) => match interpret(&program, depth, compress_traces.into()) {
                         InterpreterResult::Unknown => println!("no counterexample found"),
                         InterpreterResult::Counterexample(trace) => {
                             eprintln!("found counterexample: {:#?}", trace)
