@@ -271,11 +271,13 @@ pub enum InterpreterResult {
     Unknown,
 }
 
-/// Run a given Program out to some depth
-/// Note that max_depth refers to the number of timesteps,
-/// e.g. a max_depth of 0 means only evaluate the initial states
+/// Explore reachable states of a Program up to the given max_depth.
+/// Note that max_depth refers to the number of transitions, not the number of states,
+/// so if max_depth is Some(3), it means there will be 3 transitions (so 4 states).
+/// If max_depth is None, it means "no upper bound". The program will run until its
+/// state space is exhausted or the process is killed.
 #[allow(dead_code)]
-pub fn interpret(program: &Program, max_depth: usize, compress_traces: bool) -> InterpreterResult {
+pub fn interpret(program: &Program, max_depth: Option<usize>, compress_traces: bool) -> InterpreterResult {
     let mut queue: VecDeque<Trace> = program
         .inits
         .iter()
@@ -321,7 +323,7 @@ pub fn interpret(program: &Program, max_depth: usize, compress_traces: bool) -> 
             return InterpreterResult::Counterexample(trace);
         }
 
-        if depth < max_depth {
+        if max_depth.map(|md| depth < md).unwrap_or(true) {
             let mut trs = vec![];
             transitions.get(state, &mut trs);
 
@@ -1164,8 +1166,8 @@ mod tests {
                 value: false,
             }]],
         };
-        let result0 = interpret(&program, 0, false);
-        let result1 = interpret(&program, 1, false);
+        let result0 = interpret(&program, Some(0), false);
+        let result1 = interpret(&program, Some(1), false);
         assert_eq!(result0, InterpreterResult::Unknown);
         let mut expected1 = Trace::new(state([0]), false);
         expected1.push(state([1]));
@@ -1247,11 +1249,11 @@ mod tests {
                 value: false,
             }]],
         };
-        let result1 = interpret(&program, 0, false);
-        let result2 = interpret(&program, 1, false);
-        let result3 = interpret(&program, 2, false);
-        let result4 = interpret(&program, 3, false);
-        let result5 = interpret(&program, 4, false);
+        let result1 = interpret(&program, Some(0), false);
+        let result2 = interpret(&program, Some(1), false);
+        let result3 = interpret(&program, Some(2), false);
+        let result4 = interpret(&program, Some(3), false);
+        let result5 = interpret(&program, Some(4), false);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1438,7 +1440,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             expected.trs.iter().collect::<BTreeSet<_>>()
         );
 
-        let output = interpret(&target, 100, false);
+        let output = interpret(&target, None, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1506,7 +1508,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let target = translate(&mut m, &universe)?;
 
-        let bug = interpret(&target, 12, false);
+        let bug = interpret(&target, Some(12), false);
         if let InterpreterResult::Counterexample(trace) = &bug {
             println!("{:#?}", trace);
             assert_eq!(trace.len(), 13);
@@ -1514,7 +1516,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, 11, false);
+        let too_short = interpret(&target, Some(11), false);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1582,7 +1584,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 1),
         ]);
         let target = translate(&mut m, &universe)?;
-        let output = interpret(&target, 1, false);
+        let output = interpret(&target, Some(1), false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())

@@ -263,8 +263,9 @@ enum Command {
     BoundedCheck {
         /// File name for a .fly file
         file: String,
-        /// Depth to run the checker to
-        depth: usize,
+        /// Maximum number of transitions to consider during model checking
+        #[arg(long)]
+        depth: Option<usize>,
         /// Whether to only keep track of the last state of the trace
         #[arg(long)]
         compress_traces: bool,
