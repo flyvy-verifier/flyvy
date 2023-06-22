@@ -728,6 +728,7 @@ impl Valued {
     fn get_and(self) -> BTreeSet<Valued> {
         match self {
             Valued::And(terms) => terms,
+            Valued::Value(1) => btreeset![],
             _ => btreeset![self],
         }
     }
@@ -735,6 +736,7 @@ impl Valued {
     fn get_or(self) -> BTreeSet<Valued> {
         match self {
             Valued::Or(terms) => terms,
+            Valued::Value(0) => btreeset![],
             _ => btreeset![self],
         }
     }
@@ -1576,8 +1578,8 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         let mut m = crate::fly::parse(source).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
-            ("value".to_string(), 2),
             ("quorum".to_string(), 1),
+            ("value".to_string(), 1),
         ]);
         let target = translate(&mut m, &universe)?;
         let output = interpret(&target, 1, false);
