@@ -68,9 +68,9 @@ impl Context<'_> {
 
 /// The result of a successful run of the bounded model checker
 #[derive(Debug)]
-pub enum CheckerResult {
+pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample,
+    Counterexample(BddValuation),
     /// The checker did not find a counterexample
     Unknown,
 }
@@ -115,8 +115,8 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 pub fn check(
     module: &mut Module,
     universe: &Universe,
-    _depth: usize,
-) -> Result<CheckerResult, CheckerError> {
+    depth: usize,
+) -> Result<CheckerAnswer, CheckerError> {
     if let Err((error, _)) = sort_check_and_infer(module) {
         return Err(CheckerError::SortError(error));
     }
@@ -188,11 +188,33 @@ pub fn check(
         let term = crate::term::Next::new(&module.signature).normalize(&term);
         term_to_bdd(&term, &context, &HashMap::new())?.bdd()
     };
-    let _init = translate(inits)?;
-    let _tr = translate(trs)?;
-    let _safe = translate(safes)?;
+    let init = translate(inits)?;
+    let tr = translate(trs)?;
+    let not_safe = translate(safes)?.not();
 
-    todo!()
+    let mut current = init;
+    if let Some(valuation) = current.and(&not_safe).sat_witness() {
+        return Ok(CheckerAnswer::Counterexample(valuation));
+    }
+    for _ in 0..depth {
+        current = Bdd::binary_op_with_exists(
+            &current,
+            &tr,
+            op_function::and,
+            &context.vars[0..context.len],
+        );
+        for i in 0..context.len {
+            unsafe {
+                current.rename_variable(context.vars[i + context.len], context.vars[i]);
+            }
+        }
+
+        if let Some(valuation) = current.and(&not_safe).sat_witness() {
+            return Ok(CheckerAnswer::Counterexample(valuation));
+        }
+    }
+
+    Ok(CheckerAnswer::Unknown)
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
