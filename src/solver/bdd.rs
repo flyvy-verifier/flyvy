@@ -64,6 +64,23 @@ impl Context<'_> {
         self.bdds
             .mk_var(self.vars[self.idxs[relation][element] + if prime { self.len } else { 0 }])
     }
+
+    fn mk_bool(&self, value: bool) -> Bdd {
+        match value {
+            true => self.bdds.mk_true(),
+            false => self.bdds.mk_false(),
+        }
+    }
+
+    fn mk_and(&self, bdds: impl IntoIterator<Item = Bdd>) -> Bdd {
+        bdds.into_iter()
+            .fold(self.bdds.mk_true(), |acc, term| acc.and(&term))
+    }
+
+    fn mk_or(&self, bdds: impl IntoIterator<Item = Bdd>) -> Bdd {
+        bdds.into_iter()
+            .fold(self.bdds.mk_false(), |acc, term| acc.or(&term))
+    }
 }
 
 /// The result of a successful run of the bounded model checker
@@ -85,7 +102,6 @@ pub enum CheckerError {
 
     #[error("all assumes should precede all asserts, but found {0:?}")]
     OutOfOrderStatement(ThmStmt),
-
     #[error("expected no primes in {0}")]
     AnyFuture(Term),
     #[error("expected no primes or only one prime in {0}")]
@@ -93,12 +109,10 @@ pub enum CheckerError {
     #[error("expected all asserts be safety properties but found {0}")]
     AssertWithoutAlways(Term),
 
-    #[error("expected a boolean expression but found an element")]
-    ExpectedBdd,
-    #[error("expected an element of a sort but found an expression {0:?}")]
-    ExpectedElement(Bdd),
-    #[error("could not translate term {0}")]
-    UnsupportedTerm(Term),
+    #[error("could not translate to bdd {0}")]
+    CouldNotTranslateToBdd(Term),
+    #[error("could not translate to element {0}")]
+    CouldNotTranslateToElement(Term),
 }
 
 /// Map from uninterpreted sort names to sizes
@@ -186,7 +200,7 @@ pub fn check(
         let term = Term::NAryOp(NOp::And, terms);
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = crate::term::Next::new(&module.signature).normalize(&term);
-        term_to_bdd(&term, &context, &HashMap::new())?.bdd()
+        term_to_bdd(&term, &context, &HashMap::new())
     };
     let init = translate(inits)?;
     let tr = translate(trs)?;
@@ -257,74 +271,39 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
     }
 }
 
-#[derive(Debug)]
-enum BddOrElement {
-    Bdd(Bdd),
-    Element(usize),
-}
-
-impl BddOrElement {
-    fn bdd(self) -> Result<Bdd, CheckerError> {
-        match self {
-            BddOrElement::Bdd(bdd) => Ok(bdd),
-            BddOrElement::Element(_) => Err(CheckerError::ExpectedBdd),
-        }
-    }
-
-    fn element(self) -> Result<usize, CheckerError> {
-        match self {
-            BddOrElement::Element(element) => Ok(element),
-            BddOrElement::Bdd(bdd) => Err(CheckerError::ExpectedElement(bdd)),
-        }
-    }
-}
-
 fn term_to_bdd(
     term: &Term,
     context: &Context,
     assignments: &HashMap<String, usize>,
-) -> Result<BddOrElement, CheckerError> {
-    let go = |term| term_to_bdd(term, context, assignments);
+) -> Result<Bdd, CheckerError> {
+    let bdd = |term| term_to_bdd(term, context, assignments);
+    let element = |term| term_to_element(term, context, assignments);
 
     let bdd: Bdd = match term {
-        Term::Literal(true) => context.bdds.mk_true(),
-        Term::Literal(false) => context.bdds.mk_false(),
-        Term::Id(id) => return Ok(BddOrElement::Element(assignments[id])),
+        Term::Literal(value) => context.mk_bool(*value),
         Term::App(relation, primes, args) => context.get(
             relation,
-            &args
-                .iter()
-                .map(|arg| go(arg)?.element())
-                .collect::<Result<Vec<_>, _>>()?,
+            &args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
             *primes == 1,
         ),
-        Term::UnaryOp(UOp::Not, term) => go(term)?.bdd()?.not(),
-        Term::BinOp(BinOp::Iff, a, b) => go(a)?.bdd()?.iff(&go(b)?.bdd()?),
-        Term::BinOp(BinOp::Equals, a, b) => match (go(a)?, go(b)?) {
-            (BddOrElement::Bdd(a), BddOrElement::Bdd(b)) => a.iff(&b),
-            (BddOrElement::Element(a), BddOrElement::Element(b)) if a == b => {
-                context.bdds.mk_true()
-            }
-            (BddOrElement::Element(a), BddOrElement::Element(b)) if a == b => {
-                context.bdds.mk_false()
-            }
-            _ => return Err(CheckerError::UnsupportedTerm(term.clone())),
+        Term::UnaryOp(UOp::Not, term) => bdd(term)?.not(),
+        Term::BinOp(BinOp::Iff, a, b) => bdd(a)?.iff(&bdd(b)?),
+        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
+            (Ok(a), Ok(b)) => context.mk_bool(a == b),
+            _ => bdd(a)?.iff(&bdd(b)?),
         },
         Term::BinOp(BinOp::NotEquals, a, b) => {
-            go(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?
-                .bdd()?
-                .not()
+            bdd(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
         }
-        Term::BinOp(BinOp::Implies, a, b) => go(a)?.bdd()?.imp(&go(b)?.bdd()?),
+        Term::BinOp(BinOp::Implies, a, b) => bdd(a)?.imp(&bdd(b)?),
         Term::NAryOp(NOp::And, terms) => {
-            terms.iter().fold(Ok(context.bdds.mk_true()), |and, term| {
-                Ok(and?.and(&go(term)?.bdd()?))
-            })?
+            context.mk_and(terms.iter().map(bdd).collect::<Result<Vec<_>, _>>()?)
         }
         Term::NAryOp(NOp::Or, terms) => {
-            terms.iter().fold(Ok(context.bdds.mk_false()), |or, term| {
-                Ok(or?.or(&go(term)?.bdd()?))
-            })?
+            context.mk_or(terms.iter().map(bdd).collect::<Result<Vec<_>, _>>()?)
+        }
+        Term::Ite { cond, then, else_ } => {
+            Bdd::if_then_else(&bdd(cond)?, &bdd(then)?, &bdd(else_)?)
         }
         Term::Quantified {
             quantifier,
@@ -342,26 +321,56 @@ fn term_to_bdd(
                 .map(|&card| (0..card).collect::<Vec<usize>>())
                 .multi_cartesian_product()
                 .map(|elements| {
-                    // extend assignments with all variables bound to these `elements`
-                    let mut assignments = assignments.clone();
+                    let mut new_assignments = assignments.clone();
                     for (name, element) in names.iter().zip(elements) {
-                        assignments.insert(name.to_string(), element);
+                        new_assignments.insert(name.to_string(), element);
                     }
-                    go(body)?.bdd()
+                    term_to_bdd(body, context, &new_assignments)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             match quantifier {
-                Quantifier::Forall => bodies
-                    .into_iter()
-                    .fold(context.bdds.mk_true(), |and, term| and.and(&term)),
-                Quantifier::Exists => bodies
-                    .into_iter()
-                    .fold(context.bdds.mk_false(), |or, term| or.or(&term)),
+                Quantifier::Forall => context.mk_and(bodies),
+                Quantifier::Exists => context.mk_or(bodies),
             }
         }
-        _ => return Err(CheckerError::UnsupportedTerm(term.clone())),
+        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
+        | Term::Id(_) => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
     };
-    Ok(BddOrElement::Bdd(bdd))
+    Ok(bdd)
+}
+
+fn term_to_element(
+    term: &Term,
+    context: &Context,
+    assignments: &HashMap<String, usize>,
+) -> Result<usize, CheckerError> {
+    let bdd = |term| term_to_bdd(term, context, assignments);
+    let element = |term| term_to_element(term, context, assignments);
+
+    let element: usize = match term {
+        Term::Literal(_)
+        | Term::UnaryOp(UOp::Not, ..)
+        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
+        | Term::NAryOp(NOp::And | NOp::Or, ..)
+        | Term::Quantified { .. } => match bdd(term)? {
+            bdd if bdd.is_true() => 1,
+            bdd if bdd.is_false() => 0,
+            _ => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
+        },
+        Term::Id(id) => assignments[id],
+        Term::Ite { cond, then, else_ } => match element(cond)? {
+            1 => element(then)?,
+            0 => element(else_)?,
+            _ => unreachable!(),
+        },
+        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
+        | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
+    };
+    Ok(element)
 }
 
 #[cfg(test)]
