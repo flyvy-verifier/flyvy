@@ -276,15 +276,6 @@ impl Ast {
             Ast::And(vec![Ast::Not(Box::new(x)), Ast::Not(Box::new(y))]),
         ])
     }
-    fn imp(x: Ast, y: Ast) -> Ast {
-        Ast::Or(vec![Ast::Not(Box::new(x)), y])
-    }
-    fn ite(cond: Ast, then: Ast, else_: Ast) -> Ast {
-        Ast::Or(vec![
-            Ast::And(vec![cond.clone(), then]),
-            Ast::And(vec![Ast::Not(Box::new(cond)), else_]),
-        ])
-    }
 
     fn truth(&self) -> Option<bool> {
         match self {
@@ -309,6 +300,7 @@ impl Ast {
             Ast::Not(ast) => ast.truth().map(|b| !b),
         }
     }
+
     fn prime(self, depth: usize) -> Ast {
         match self {
             Ast::Bool(b) => Ast::Bool(b),
@@ -351,14 +343,17 @@ fn term_to_ast(
             a.clone(),
             b.clone(),
         ))?)),
-        Term::BinOp(BinOp::Implies, a, b) => Ast::imp(ast(a)?, ast(b)?),
+        Term::BinOp(BinOp::Implies, a, b) => Ast::Or(vec![Ast::Not(Box::new(ast(a)?)), ast(b)?]),
         Term::NAryOp(NOp::And, terms) => {
             Ast::And(terms.iter().map(ast).collect::<Result<Vec<_>, _>>()?)
         }
         Term::NAryOp(NOp::Or, terms) => {
             Ast::Or(terms.iter().map(ast).collect::<Result<Vec<_>, _>>()?)
         }
-        Term::Ite { cond, then, else_ } => Ast::ite(ast(cond)?, ast(then)?, ast(else_)?),
+        Term::Ite { cond, then, else_ } => Ast::Or(vec![
+            Ast::And(vec![ast(cond)?, ast(then)?]),
+            Ast::And(vec![Ast::Not(Box::new(ast(cond)?)), ast(else_)?]),
+        ]),
         Term::Quantified {
             quantifier,
             binders,
@@ -460,9 +455,9 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
                 for old in &olds {
                     out.push(vec![Literal::t(*old), Literal::f(new)]);
                 }
-                let mut olds: Vec<_> = olds.into_iter().map(Literal::f).collect();
-                olds.push(Literal::t(new));
-                out.push(olds);
+                let mut clause: Vec<_> = olds.into_iter().map(Literal::f).collect();
+                clause.push(Literal::t(new));
+                out.push(clause);
                 new
             }
             Ast::Or(vec) => {
@@ -471,9 +466,9 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
                 for old in &olds {
                     out.push(vec![Literal::f(*old), Literal::t(new)]);
                 }
-                let mut olds: Vec<_> = olds.into_iter().map(Literal::t).collect();
-                olds.push(Literal::f(new));
-                out.push(olds);
+                let mut clause: Vec<_> = olds.into_iter().map(Literal::t).collect();
+                clause.push(Literal::f(new));
+                out.push(clause);
                 new
             }
             Ast::Not(ast) => {
@@ -501,8 +496,8 @@ fn dimacs(cnf: &Cnf, context: &Context) -> String {
                 clause
                     .iter()
                     .map(|literal| match literal {
-                        Literal { var: x, pos: true } => format!("{}", x),
-                        Literal { var: x, pos: false } => format!("-{}", x),
+                        Literal { var, pos: true } => format!("{}", var),
+                        Literal { var, pos: false } => format!("-{}", var),
                     })
                     .join(" ")
             })
