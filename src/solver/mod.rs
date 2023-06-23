@@ -7,6 +7,7 @@ pub mod backends;
 mod imp;
 mod models;
 mod path;
+mod sat;
 mod sexp;
 pub use imp::{Backend, FOModel, Solver};
 pub use path::{log_dir, solver_path};
