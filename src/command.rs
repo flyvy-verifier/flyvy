@@ -5,7 +5,6 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::collections::HashMap;
 use std::fs::create_dir_all;
-use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
@@ -269,6 +268,9 @@ enum Command {
         /// Whether to only keep track of the last state of the trace
         #[arg(long)]
         compress_traces: bool,
+        /// What size bound to use for the given sort, given as SORT=N as in --bound node=2
+        #[arg(long)]
+        bound: Vec<String>,
     },
 }
 
@@ -522,29 +524,41 @@ impl App {
             Command::BoundedCheck {
                 depth,
                 compress_traces,
+                bound,
                 ..
             } => {
-                let mut universe = HashMap::new();
-                let stdin = std::io::stdin();
-                for sort in &m.signature.sorts {
-                    println!("how large should {} be?", sort);
-                    let input = stdin
-                        .lock()
-                        .lines()
-                        .next()
-                        .expect("no next line")
-                        .expect("could not read next line")
-                        .parse::<usize>();
-                    match input {
-                        Ok(input) => {
-                            universe.insert(sort.clone(), input);
-                        }
-                        Err(_) => {
-                            eprintln!("could not parse input as a number");
+                let mut universe: HashMap<String, usize> = HashMap::new();
+                for b in &bound {
+                    if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
+                        let sort_name = sort_name.to_string();
+                        if !m.signature.sorts.contains(&sort_name) {
+                            eprintln!("unknown sort name {} in bound {}", sort_name, b);
                             process::exit(1);
                         }
+                        if let Ok(bound_size) = bound_size.parse::<usize>() {
+                            universe.insert(sort_name, bound_size);
+                        } else {
+                            eprintln!("could not parse bound as integer in {}", b);
+                            process::exit(1);
+                        }
+                    } else {
+                        eprintln!("expected exactly one '=' in bound {}", b);
+                        process::exit(1);
                     }
                 }
+                if let Some(unbounded_sort) = m
+                    .signature
+                    .sorts
+                    .iter()
+                    .find(|&s| !universe.contains_key(s))
+                {
+                    eprintln!(
+                        "need a bound for sort {} on the command line, as in --bound {}=N",
+                        unbounded_sort, unbounded_sort
+                    );
+                    process::exit(1);
+                }
+
                 match translate(&mut m, &universe) {
                     Err(e) => eprintln!("{}", e),
                     Ok(program) => match interpret(&program, depth, compress_traces.into()) {
