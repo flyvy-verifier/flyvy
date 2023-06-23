@@ -183,14 +183,15 @@ pub fn check(
         let term = Term::NAryOp(NOp::And, terms);
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = crate::term::Next::new(&module.signature).normalize(&term);
-        term_to_ast(&term, &context, &HashMap::new())
+        let ast = term_to_ast(&term, &context, &HashMap::new())?;
+        Ok(tseytin(ast))
     };
 
     let _init = translate(inits)?;
     let _tr = translate(trs)?;
     let _not_safe = translate(safes)?;
 
-    todo!()
+    Ok(CheckerAnswer::Unknown)
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
@@ -235,24 +236,18 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
-    Boolean(bool),
-    Literal(Literal),
+    Bool(bool),
+    Var(Variable),
     And(Vec<Ast>),
     Or(Vec<Ast>),
     Not(Box<Ast>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct Literal {
-    var: Variable,
-    neg: bool,
-}
-
 impl Ast {
     fn truth(&self) -> Option<bool> {
         match self {
-            Ast::Boolean(b) => Some(*b),
-            Ast::Literal(_) => None,
+            Ast::Bool(b) => Some(*b),
+            Ast::Var(_) => None,
             Ast::And(vec) => vec
                 .iter()
                 .fold(Some(true), |acc, ast| match (acc, ast.truth()) {
@@ -271,9 +266,6 @@ impl Ast {
                 }),
             Ast::Not(ast) => ast.truth().map(|b| !b),
         }
-    }
-    fn lit(var: Variable, neg: bool) -> Ast {
-        Ast::Literal(Literal { var, neg })
     }
     fn iff(x: Ast, y: Ast) -> Ast {
         Ast::Or(vec![
@@ -301,15 +293,15 @@ fn term_to_ast(
     let element = |term| term_to_element(term, context, assignments);
 
     let ast: Ast = match term {
-        Term::Literal(value) => Ast::Boolean(*value),
+        Term::Literal(value) => Ast::Bool(*value),
         Term::App(relation, primes, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::lit(context.get(relation, &args, *primes), false)
+            Ast::Var(context.get(relation, &args, *primes))
         }
         Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
         Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
         Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) => Ast::Boolean(a == b),
+            (Ok(a), Ok(b)) => Ast::Bool(a == b),
             _ => Ast::iff(ast(a)?, ast(b)?),
         },
         Term::BinOp(BinOp::NotEquals, a, b) => Ast::Not(Box::new(ast(&Term::BinOp(
@@ -391,6 +383,18 @@ fn term_to_element(
         | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
     };
     Ok(element)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Literal {
+    var: Variable,
+    neg: bool,
+}
+type Clause = Vec<Literal>;
+type Cnf = Vec<Clause>;
+
+fn tseytin(_ast: Ast) -> Cnf {
+    todo!()
 }
 
 #[cfg(test)]
