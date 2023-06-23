@@ -481,8 +481,6 @@ pub enum TranslationError {
     ExpectedGuardOrUpdate(Valued),
     #[error("one of the generated updates updated the immutable relation {0}")]
     UpdateViolatedImmutability(String),
-    #[error("transition did not constrain all elements in relation {0}")]
-    UnconstrainedTransition(String),
 }
 
 /// Map from uninterpreted sort names to sizes
@@ -610,43 +608,26 @@ pub fn translate(
                 constrained.insert(guard.index);
             }
 
-            let unconstrained = module
-                .signature
-                .relations
-                .iter()
-                .flat_map(|relation| {
-                    if relation.args.is_empty() {
-                        btreeset![(relation.name.as_str(), (element![]))]
-                    } else {
-                        relation
-                            .args
-                            .iter()
-                            .map(|sort| cardinality(universe, sort))
-                            .map(|card| (0..card).collect::<Vec<usize>>())
-                            .multi_cartesian_product()
-                            .map(|element| (relation.name.as_str(), Elements::new(element)))
-                            .collect()
-                    }
-                })
-                .filter(|(set, element)| !constrained.contains(&indices[&(*set, *element)]));
-
             // compute all the unconstrained elements by doubling the number of states each time
-            let mut inits: BTreeSet<BoundedState> = btreeset![init];
-            for (set, element) in unconstrained {
-                inits = inits
-                    .into_iter()
-                    .flat_map(|state| {
-                        let mut with_unconstrained = state.clone();
-                        with_unconstrained.0.set(indices[&(set, element)], true);
-                        btreeset![state, with_unconstrained]
-                    })
-                    .collect();
+            let mut inits = vec![init];
+            for index in 0..indices.len() {
+                if !constrained.contains(&index) {
+                    inits = inits
+                        .into_iter()
+                        .flat_map(|state| {
+                            let mut with_unconstrained = state.clone();
+                            with_unconstrained.0.set(index, true);
+                            vec![state, with_unconstrained]
+                        })
+                        .collect();
+                }
             }
             inits
         })
         .collect();
 
-    let trs = trs
+    let mut unconstrained_delta = 0;
+    let trs: Vec<Transition> = trs
         .get_or()
         .into_iter()
         .map(|term: Valued| {
@@ -665,38 +646,49 @@ pub fn translate(
                     return Err(TranslationError::ExpectedGuardOrUpdate(term));
                 }
             }
-            // check that constrained contains every element of every set
-            for relation in &module.signature.relations {
-                if relation.mutable {
-                    if relation.args.is_empty() {
-                        if !constrained.contains(&indices[&(relation.name.as_str(), (element![]))])
-                        {
-                            return Err(TranslationError::UnconstrainedTransition(
-                                relation.name.clone(),
-                            ));
-                        }
-                    } else {
-                        for elements in relation
-                            .args
-                            .iter()
-                            .map(|sort| cardinality(universe, sort))
-                            .map(|card| (0..card).collect::<Vec<usize>>())
-                            .multi_cartesian_product()
-                        {
-                            if !constrained.contains(
-                                &indices[&(relation.name.as_str(), Elements::new(elements))],
-                            ) {
-                                return Err(TranslationError::UnconstrainedTransition(
-                                    relation.name.clone(),
-                                ));
-                            }
-                        }
+
+            // compute all the unconstrained future elements by doubling
+            let mut trs = vec![tr];
+            for index in 0..indices.len() {
+                if !constrained.contains(&index) {
+                    let ((relation, _), _) = indices.0.iter().find(|(_, i)| **i == index).unwrap();
+                    let mut relations = module.signature.relations.iter();
+                    if relations.find(|r| &r.name == relation).unwrap().mutable {
+                        trs = trs
+                            .into_iter()
+                            .flat_map(|tr| {
+                                let mut a = tr.clone();
+                                let mut b = tr;
+                                let matches = |g: &Guard, value| *g == Guard { index, value };
+                                if !a.guards.iter().any(|g| matches(g, true)) {
+                                    a.updates.push(Update { index, value: true });
+                                }
+                                if !b.guards.iter().any(|g| matches(g, false)) {
+                                    b.updates.push(Update {
+                                        index,
+                                        value: false,
+                                    });
+                                }
+                                vec![a, b]
+                            })
+                            .collect();
                     }
                 }
             }
-            Ok(tr)
+            unconstrained_delta += trs.len() - 1;
+            Ok(trs)
         })
-        .collect::<Result<Vec<Transition>, _>>()?;
+        .collect::<Result<Vec<Vec<Transition>>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+
+    if unconstrained_delta > 0 {
+        println!(
+            "some relations were unconstrained, added {} transitions to constrain them",
+            unconstrained_delta
+        );
+    }
 
     // disjunction of conjunction of guards
     let safes: Vec<Vec<Guard>> = get_guards_from_dnf(safes)?;
@@ -739,11 +731,8 @@ pub fn translate(
             }
         }
         // check that all redundant updates have been removed
-        for a in &tr.guards {
-            if tr.updates.contains(&Update {
-                index: a.index,
-                value: a.value,
-            }) {
+        for &Guard { index, value } in &tr.guards {
+            if tr.updates.contains(&Update { index, value }) {
                 panic!("found an unremoved redundant update")
             }
         }
@@ -1671,8 +1660,7 @@ assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_reques
     (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
     (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) &
     (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists src:node, dst:node.
-    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & !vote_request_msg'(dst, src) &
-    ((vote_msg(N1, N2))' <->
+    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & ((vote_msg(N1, N2))' <->
     vote_msg(N1, N2) | N1 = src & N2 = dst) & ((voted(N))' <-> voted(N) | N = src) & (!(N1 = dst &
     N2 = src) -> ((vote_request_msg(N1, N2))' <-> vote_request_msg(N1, N2)))) & (forall x0:node, x1:node.
     (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) & (forall x0:node,
