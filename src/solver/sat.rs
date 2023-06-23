@@ -15,7 +15,7 @@ struct Context<'a> {
     signature: &'a Signature,
     universe: &'a Universe,
 
-    len: usize,
+    vars: usize,
     indices: HashMap<&'a str, HashMap<Vec<usize>, usize>>,
 }
 
@@ -42,24 +42,32 @@ impl Context<'_> {
             }
         });
 
-        let mut len = 0;
+        let mut vars = 0;
         let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
         for (i, (r, e)) in order.enumerate() {
-            len += 1;
+            vars += 1;
             indices.entry(r).or_default().insert(e, i);
         }
 
         Context {
             signature,
             universe,
-            len,
+            vars,
             indices,
         }
     }
 
-    fn get(&self, relation: &str, element: &[usize], primes: usize) -> Variable {
+    fn get_var(&self, relation: &str, element: &[usize], primes: usize) -> Variable {
         Variable {
             index: self.indices[relation][element],
+            primes,
+        }
+    }
+
+    fn new_var(&mut self, primes: usize) -> Variable {
+        self.vars += 1;
+        Variable {
+            index: self.vars - 1,
             primes,
         }
     }
@@ -177,14 +185,14 @@ pub fn check(
         }
     }
 
-    let context = Context::new(&module.signature, universe);
+    let mut context = Context::new(&module.signature, universe);
 
-    let translate = |terms| {
+    let mut translate = |terms| {
         let term = Term::NAryOp(NOp::And, terms);
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = crate::term::Next::new(&module.signature).normalize(&term);
         let ast = term_to_ast(&term, &context, &HashMap::new())?;
-        Ok(tseytin(ast))
+        Ok(tseytin(ast, &mut context))
     };
 
     let _init = translate(inits)?;
@@ -296,7 +304,7 @@ fn term_to_ast(
         Term::Literal(value) => Ast::Bool(*value),
         Term::App(relation, primes, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::Var(context.get(relation, &args, *primes))
+            Ast::Var(context.get_var(relation, &args, *primes))
         }
         Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
         Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
@@ -388,13 +396,66 @@ fn term_to_element(
 #[derive(Clone, Debug, PartialEq)]
 struct Literal {
     var: Variable,
-    neg: bool,
+    pos: bool,
 }
 type Clause = Vec<Literal>;
 type Cnf = Vec<Clause>;
 
-fn tseytin(_ast: Ast) -> Cnf {
-    todo!()
+impl Literal {
+    fn t(var: Variable) -> Literal {
+        Literal { var, pos: true }
+    }
+    fn f(var: Variable) -> Literal {
+        Literal { var, pos: false }
+    }
+}
+
+fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
+    fn inner(ast: Ast, context: &mut Context, out: &mut Cnf) -> Variable {
+        let mut go = |ast| inner(ast, context, out);
+        match ast {
+            Ast::Bool(pos) => {
+                let var = context.new_var(0);
+                out.push(vec![Literal { var, pos }]);
+                var
+            }
+            Ast::Var(var) => var,
+            Ast::And(vec) => {
+                let olds: Vec<_> = vec.into_iter().map(go).collect();
+                let new = context.new_var(0);
+                for old in &olds {
+                    out.push(vec![Literal::t(*old), Literal::f(new)]);
+                }
+                let mut olds: Vec<_> = olds.into_iter().map(Literal::f).collect();
+                olds.push(Literal::t(new));
+                out.push(olds);
+                new
+            }
+            Ast::Or(vec) => {
+                let olds: Vec<_> = vec.into_iter().map(go).collect();
+                let new = context.new_var(0);
+                for old in &olds {
+                    out.push(vec![Literal::f(*old), Literal::t(new)]);
+                }
+                let mut olds: Vec<_> = olds.into_iter().map(Literal::t).collect();
+                olds.push(Literal::f(new));
+                out.push(olds);
+                new
+            }
+            Ast::Not(ast) => {
+                let old = go(*ast);
+                let new = context.new_var(0);
+                out.push(vec![Literal::t(old), Literal::t(new)]);
+                out.push(vec![Literal::f(old), Literal::f(new)]);
+                new
+            }
+        }
+    }
+
+    let mut out = vec![];
+    let var = inner(ast, context, &mut out);
+    out.push(vec![Literal::t(var)]);
+    out
 }
 
 #[cfg(test)]
