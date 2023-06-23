@@ -5,6 +5,7 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::collections::HashMap;
 use std::fs::create_dir_all;
+use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
@@ -273,6 +274,12 @@ enum Command {
         #[arg(long)]
         bound: Vec<String>,
     },
+    BoundedCheck {
+        /// File name for a .fly file
+        file: String,
+        /// Depth to run the checker to
+        depth: usize,
+    },
 }
 
 impl InferCommand {
@@ -293,6 +300,7 @@ impl Command {
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
             Command::SetCheck { file, .. } => file,
+            Command::BoundedCheck { file, .. } => file,
         }
     }
 }
@@ -567,6 +575,33 @@ impl App {
                 let conf = Arc::new(args.get_solver_conf());
                 let mut updr = Updr::new(conf);
                 let _result = updr.search(&m);
+            }
+            Command::BoundedCheck { depth, .. } => {
+                let mut universe = HashMap::new();
+                let stdin = std::io::stdin();
+                for sort in &m.signature.sorts {
+                    println!("how large should {} be?", sort);
+                    let input = stdin
+                        .lock()
+                        .lines()
+                        .next()
+                        .expect("no next line")
+                        .expect("could not read next line")
+                        .parse::<usize>();
+                    match input {
+                        Ok(input) => {
+                            universe.insert(sort.clone(), input);
+                        }
+                        Err(_) => {
+                            eprintln!("could not parse input as a number");
+                            process::exit(1);
+                        }
+                    }
+                }
+                match crate::solver::sat::check(&mut m, &universe, depth) {
+                    Ok(result) => println!("answer: {:?}", result),
+                    Err(error) => eprintln!("{}", error),
+                }
             }
         }
     }

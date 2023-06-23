@@ -86,6 +86,9 @@ pub enum CheckerError {
     CouldNotTranslateToAst(Term),
     #[error("could not translate to element {0}")]
     CouldNotTranslateToElement(Term),
+
+    #[error("solver failed, likely a timeout")]
+    SolverFailed,
 }
 
 /// Map from uninterpreted sort names to sizes
@@ -98,13 +101,22 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     }
 }
 
+/// The result of a successful run of the bounded model checker
+#[derive(Debug, PartialEq)]
+pub enum CheckerAnswer {
+    /// The checker found a counterexample
+    Counterexample,
+    /// The checker did not find a counterexample
+    Unknown,
+}
+
 /// Check a given Module out to some depth
 #[allow(dead_code)]
 pub fn check(
     module: &mut Module,
     universe: &Universe,
     depth: usize,
-) -> Result<String, CheckerError> {
+) -> Result<CheckerAnswer, CheckerError> {
     if let Err((error, _)) = sort_check_and_infer(module) {
         return Err(CheckerError::SortError(error));
     }
@@ -179,18 +191,33 @@ pub fn check(
 
     let init = translate(inits)?;
     let tr = translate(trs)?;
-    let safe = translate(safes)?;
+    let not_safe = Ast::Not(Box::new(translate(safes)?));
 
     let mut program = vec![init];
     for i in 0..depth {
         program.push(tr.clone().prime(i));
     }
-    program.push(safe.prime(depth));
+    program.push(not_safe.prime(depth));
 
     let cnf = tseytin(Ast::And(program), &mut context);
-    let dimacs = dimacs(&cnf, &context);
 
-    Ok(dimacs)
+    let mut sat: cadical::Solver = Default::default();
+    for clause in &cnf {
+        sat.add_clause(
+            clause
+                .iter()
+                .map(|l| (l.var as i32 + 1) * if l.pos { 1 } else { -1 }),
+        );
+    }
+
+    assert_eq!(sat.max_variable(), context.vars as i32);
+
+    let answer = match sat.solve() {
+        None => return Err(CheckerError::SolverFailed),
+        Some(false) => CheckerAnswer::Unknown,
+        Some(true) => CheckerAnswer::Counterexample,
+    };
+    Ok(answer)
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
@@ -402,17 +429,17 @@ fn term_to_element(
 
 #[derive(Clone, Debug, PartialEq)]
 struct Literal {
-    var: Variable,
+    var: usize,
     pos: bool,
 }
 type Clause = Vec<Literal>;
 type Cnf = Vec<Clause>;
 
 impl Literal {
-    fn t(var: Variable) -> Literal {
+    fn t(Variable(var): Variable) -> Literal {
         Literal { var, pos: true }
     }
-    fn f(var: Variable) -> Literal {
+    fn f(Variable(var): Variable) -> Literal {
         Literal { var, pos: false }
     }
 }
@@ -422,9 +449,9 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
         let mut go = |ast| inner(ast, context, out);
         match ast {
             Ast::Bool(pos) => {
-                let var = context.new_var();
+                let Variable(var) = context.new_var();
                 out.push(vec![Literal { var, pos }]);
-                var
+                Variable(var)
             }
             Ast::Var { index, primes } => context.get_var(index, primes),
             Ast::And(vec) => {
@@ -465,6 +492,7 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
     out
 }
 
+#[allow(dead_code)]
 fn dimacs(cnf: &Cnf, context: &Context) -> String {
     let mut out = format!("p cnf {} {}", context.vars, cnf.len());
     out.push_str(
@@ -473,18 +501,245 @@ fn dimacs(cnf: &Cnf, context: &Context) -> String {
                 clause
                     .iter()
                     .map(|literal| match literal {
-                        Literal {
-                            var: Variable(x),
-                            pos: true,
-                        } => format!("{}", x),
-                        Literal {
-                            var: Variable(x),
-                            pos: false,
-                        } => format!("-{}", x),
+                        Literal { var: x, pos: true } => format!("{}", x),
+                        Literal { var: x, pos: false } => format!("-{}", x),
                     })
                     .join(" ")
             })
             .join("\n"),
     );
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checker_basic() -> Result<(), CheckerError> {
+        let source = "
+mutable x: bool
+
+assume x
+
+assume always (x -> !x')
+
+assert always x
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+        assert_eq!(
+            CheckerAnswer::Counterexample,
+            check(&mut module, &universe, 1)?
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_lockserver() -> Result<(), CheckerError> {
+        let source = "
+sort node
+
+mutable lock_msg(node): bool
+mutable grant_msg(node): bool
+mutable unlock_msg(node): bool
+mutable holds_lock(node): bool
+mutable server_holds_lock: bool
+
+# inits:
+assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
+    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
+
+# transitions:
+assume always
+    (exists n:node. 
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
+        ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. server_holds_lock & lock_msg(n) & 
+            !((server_holds_lock)') & 
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
+    (exists n:node. 
+        (forall N:node. grant_msg(n) & 
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. 
+            ((unlock_msg(x0))') = unlock_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. holds_lock(n) & 
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. 
+            ((grant_msg(x0))') = grant_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. unlock_msg(n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) & 
+            ((server_holds_lock)')) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
+
+# safety:
+assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
+
+        Ok(())
+    }
+
+    #[ignore]
+    #[test]
+    fn checker_lockserver_buggy() -> Result<(), CheckerError> {
+        let source = "
+sort node
+
+mutable lock_msg(node): bool
+mutable grant_msg(node): bool
+mutable unlock_msg(node): bool
+mutable holds_lock(node): bool
+mutable server_holds_lock: bool
+
+# inits:
+assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
+    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
+
+# transitions:
+assume always
+    (exists n:node. 
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
+        ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. server_holds_lock & lock_msg(n) & 
+            !((server_holds_lock)') & 
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
+    (exists n:node. 
+        (forall N:node. grant_msg(n) & 
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. 
+            ((unlock_msg(x0))') = unlock_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. holds_lock(n) & 
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. 
+            ((grant_msg(x0))') = grant_msg(x0)) & 
+            ((server_holds_lock)') = server_holds_lock) | 
+    (exists n:node. 
+        (forall N:node. unlock_msg(n) & 
+            (((unlock_msg(N))') <-> unlock_msg(N)) & 
+            ((server_holds_lock)')) & 
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
+
+# safety:
+assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        let bug = check(&mut module, &universe, 12)?;
+        assert_eq!(CheckerAnswer::Counterexample, bug);
+
+        let too_short = check(&mut module, &universe, 11)?;
+        assert_eq!(CheckerAnswer::Unknown, too_short);
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_consensus() -> Result<(), CheckerError> {
+        let source = "
+sort node
+sort quorum
+sort value
+
+# relations:
+immutable member(node, quorum): bool
+mutable vote_request_msg(node, node): bool
+mutable voted(node): bool
+mutable vote_msg(node, node): bool
+mutable votes(node, node): bool
+mutable leader(node): bool
+mutable decided(node, value): bool
+
+# init:
+assume (forall N1:node, N2:node. !vote_request_msg(N1, N2)) & (forall N:node. !voted(N)) &
+    (forall N1:node, N2:node. !vote_msg(N1, N2)) & (forall N1:node, N2:node. !votes(N1, N2)) &
+    (forall N1:node. !leader(N1)) & (forall N:node, V:value. !decided(N, V))
+
+# transitions:
+assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_request_msg(N1, N2))' <->
+    vote_request_msg(N1, N2) | N1 = src & N2 = dst) & (forall x0:node. (voted(x0))' = voted(x0)) &
+    (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) &
+    (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists src:node, dst:node.
+    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & !vote_request_msg'(dst, src) & 
+    ((vote_msg(N1, N2))' <->
+    vote_msg(N1, N2) | N1 = src & N2 = dst) & ((voted(N))' <-> voted(N) | N = src) & (!(N1 = dst &
+    N2 = src) -> ((vote_request_msg(N1, N2))' <-> vote_request_msg(N1, N2)))) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) & (forall x0:node,
+    x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, sender:node. (forall N1:node, N2:node.
+    vote_msg(sender, n) & ((votes(N1, N2))' <-> votes(N1, N2) | N1 = n & N2 = sender)) & (forall x0:node,
+    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
+    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node. (leader(x0))' =
+    leader(x0)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, q:quorum.
+    (forall N:node. (member(N, q) -> votes(n, N)) & ((leader(N))' <-> leader(N) | N = n)) & (forall x0:node,
+    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
+    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
+    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) |
+    (exists n:node, v:value. (forall V:value, N:node. leader(n) & !decided(n, V) & ((decided(N, V))' <->
+    decided(N, V) | N = n & V = v)) & (forall x0:node, x1:node. (vote_request_msg(x0, x1))' =
+    vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0)) & (forall x0:node, x1:node.
+    (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node. (votes(x0, x1))' = votes(x0, x1)) &
+    (forall x0:node. (leader(x0))' = leader(x0)))
+
+# added by hand
+# axiom
+assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# safety:
+assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
+        ";
+
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = std::collections::HashMap::from([
+            ("node".to_string(), 1),
+            ("quorum".to_string(), 1),
+            ("value".to_string(), 1),
+        ]);
+
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+
+        Ok(())
+    }
 }
