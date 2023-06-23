@@ -14,19 +14,16 @@ use thiserror::Error;
 struct Context<'a> {
     signature: &'a Signature,
     universe: &'a Universe,
-
-    vars: usize,
     indices: HashMap<&'a str, HashMap<Vec<usize>, usize>>,
+    indices_flat_len: usize,
+    vars: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Variable {
-    index: usize,
-    primes: usize,
-}
+struct Variable(usize);
 
 impl Context<'_> {
-    fn new<'a>(signature: &'a Signature, universe: &'a Universe) -> Context<'a> {
+    fn new<'a>(signature: &'a Signature, universe: &'a Universe, depth: usize) -> Context<'a> {
         let order = signature.relations.iter().flat_map(|relation| {
             if relation.args.is_empty() {
                 vec![(relation.name.as_str(), (vec![]))]
@@ -42,44 +39,30 @@ impl Context<'_> {
             }
         });
 
-        let mut vars = 0;
+        let mut indices_flat_len = 0;
         let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
         for (i, (r, e)) in order.enumerate() {
-            vars += 1;
+            indices_flat_len += 1;
             indices.entry(r).or_default().insert(e, i);
         }
 
         Context {
             signature,
             universe,
-            vars,
             indices,
+            indices_flat_len,
+            vars: indices_flat_len * depth,
         }
     }
 
-    fn get_var(&self, relation: &str, element: &[usize], primes: usize) -> Variable {
-        Variable {
-            index: self.indices[relation][element],
-            primes,
-        }
+    fn get_var(&self, index: usize, primes: usize) -> Variable {
+        Variable(index + primes * self.indices_flat_len)
     }
 
-    fn new_var(&mut self, primes: usize) -> Variable {
+    fn new_var(&mut self) -> Variable {
         self.vars += 1;
-        Variable {
-            index: self.vars - 1,
-            primes,
-        }
+        Variable(self.vars - 1)
     }
-}
-
-/// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
-    /// The checker found a counterexample
-    Counterexample,
-    /// The checker did not find a counterexample
-    Unknown,
 }
 
 #[allow(missing_docs)]
@@ -120,8 +103,8 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 pub fn check(
     module: &mut Module,
     universe: &Universe,
-    _depth: usize,
-) -> Result<CheckerAnswer, CheckerError> {
+    depth: usize,
+) -> Result<String, CheckerError> {
     if let Err((error, _)) = sort_check_and_infer(module) {
         return Err(CheckerError::SortError(error));
     }
@@ -185,21 +168,29 @@ pub fn check(
         }
     }
 
-    let mut context = Context::new(&module.signature, universe);
+    let mut context = Context::new(&module.signature, universe, depth);
 
-    let mut translate = |terms| {
+    let translate = |terms| {
         let term = Term::NAryOp(NOp::And, terms);
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = crate::term::Next::new(&module.signature).normalize(&term);
-        let ast = term_to_ast(&term, &context, &HashMap::new())?;
-        Ok(tseytin(ast, &mut context))
+        term_to_ast(&term, &context, &HashMap::new())
     };
 
-    let _init = translate(inits)?;
-    let _tr = translate(trs)?;
-    let _not_safe = translate(safes)?;
+    let init = translate(inits)?;
+    let tr = translate(trs)?;
+    let safe = translate(safes)?;
 
-    Ok(CheckerAnswer::Unknown)
+    let mut program = vec![init];
+    for i in 0..depth {
+        program.push(tr.clone().prime(i));
+    }
+    program.push(safe.prime(depth));
+
+    let cnf = tseytin(Ast::And(program), &mut context);
+    let dimacs = dimacs(&cnf, &context);
+
+    Ok(dimacs)
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
@@ -245,17 +236,33 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
     Bool(bool),
-    Var(Variable),
+    Var { index: usize, primes: usize },
     And(Vec<Ast>),
     Or(Vec<Ast>),
     Not(Box<Ast>),
 }
 
 impl Ast {
+    fn iff(x: Ast, y: Ast) -> Ast {
+        Ast::Or(vec![
+            Ast::And(vec![x.clone(), y.clone()]),
+            Ast::And(vec![Ast::Not(Box::new(x)), Ast::Not(Box::new(y))]),
+        ])
+    }
+    fn imp(x: Ast, y: Ast) -> Ast {
+        Ast::Or(vec![Ast::Not(Box::new(x)), y])
+    }
+    fn ite(cond: Ast, then: Ast, else_: Ast) -> Ast {
+        Ast::Or(vec![
+            Ast::And(vec![cond.clone(), then]),
+            Ast::And(vec![Ast::Not(Box::new(cond)), else_]),
+        ])
+    }
+
     fn truth(&self) -> Option<bool> {
         match self {
             Ast::Bool(b) => Some(*b),
-            Ast::Var(_) => None,
+            Ast::Var { .. } => None,
             Ast::And(vec) => vec
                 .iter()
                 .fold(Some(true), |acc, ast| match (acc, ast.truth()) {
@@ -275,20 +282,17 @@ impl Ast {
             Ast::Not(ast) => ast.truth().map(|b| !b),
         }
     }
-    fn iff(x: Ast, y: Ast) -> Ast {
-        Ast::Or(vec![
-            Ast::And(vec![x.clone(), y.clone()]),
-            Ast::And(vec![Ast::Not(Box::new(x)), Ast::Not(Box::new(y))]),
-        ])
-    }
-    fn imp(x: Ast, y: Ast) -> Ast {
-        Ast::Or(vec![Ast::Not(Box::new(x)), y])
-    }
-    fn ite(cond: Ast, then: Ast, else_: Ast) -> Ast {
-        Ast::Or(vec![
-            Ast::And(vec![cond.clone(), then]),
-            Ast::And(vec![Ast::Not(Box::new(cond)), else_]),
-        ])
+    fn prime(self, depth: usize) -> Ast {
+        match self {
+            Ast::Bool(b) => Ast::Bool(b),
+            Ast::Var { index, primes } => Ast::Var {
+                index,
+                primes: primes + depth,
+            },
+            Ast::And(vec) => Ast::And(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
+            Ast::Or(vec) => Ast::Or(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
+            Ast::Not(ast) => Ast::Not(Box::new(ast.prime(depth))),
+        }
     }
 }
 
@@ -304,7 +308,10 @@ fn term_to_ast(
         Term::Literal(value) => Ast::Bool(*value),
         Term::App(relation, primes, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::Var(context.get_var(relation, &args, *primes))
+            Ast::Var {
+                index: context.indices[relation.as_str()][&args],
+                primes: *primes,
+            }
         }
         Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
         Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
@@ -415,14 +422,14 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
         let mut go = |ast| inner(ast, context, out);
         match ast {
             Ast::Bool(pos) => {
-                let var = context.new_var(0);
+                let var = context.new_var();
                 out.push(vec![Literal { var, pos }]);
                 var
             }
-            Ast::Var(var) => var,
+            Ast::Var { index, primes } => context.get_var(index, primes),
             Ast::And(vec) => {
                 let olds: Vec<_> = vec.into_iter().map(go).collect();
-                let new = context.new_var(0);
+                let new = context.new_var();
                 for old in &olds {
                     out.push(vec![Literal::t(*old), Literal::f(new)]);
                 }
@@ -433,7 +440,7 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
             }
             Ast::Or(vec) => {
                 let olds: Vec<_> = vec.into_iter().map(go).collect();
-                let new = context.new_var(0);
+                let new = context.new_var();
                 for old in &olds {
                     out.push(vec![Literal::f(*old), Literal::t(new)]);
                 }
@@ -444,7 +451,7 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
             }
             Ast::Not(ast) => {
                 let old = go(*ast);
-                let new = context.new_var(0);
+                let new = context.new_var();
                 out.push(vec![Literal::t(old), Literal::t(new)]);
                 out.push(vec![Literal::f(old), Literal::f(new)]);
                 new
@@ -458,234 +465,26 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn checker_basic() -> Result<(), CheckerError> {
-        let source = "
-mutable x: bool
-
-assume x
-
-assume always (x -> !x')
-
-assert always x
-        ";
-
-        let mut module = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([]);
-
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
-        assert_eq!(
-            CheckerAnswer::Counterexample,
-            check(&mut module, &universe, 1)?
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn checker_lockserver() -> Result<(), CheckerError> {
-        let source = "
-sort node
-
-mutable lock_msg(node): bool
-mutable grant_msg(node): bool
-mutable unlock_msg(node): bool
-mutable holds_lock(node): bool
-mutable server_holds_lock: bool
-
-# inits:
-assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
-    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
-
-# transitions:
-assume always
-    (exists n:node. 
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
-        ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. server_holds_lock & lock_msg(n) & 
-            !((server_holds_lock)') & 
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
-    (exists n:node. 
-        (forall N:node. grant_msg(n) & 
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. 
-            ((unlock_msg(x0))') = unlock_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. holds_lock(n) & 
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. 
-            ((grant_msg(x0))') = grant_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. unlock_msg(n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) & 
-            ((server_holds_lock)')) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
-
-# safety:
-assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
-        ";
-
-        let mut module = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
-
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
-
-        Ok(())
-    }
-
-    #[test]
-    fn checker_lockserver_buggy() -> Result<(), CheckerError> {
-        let source = "
-sort node
-
-mutable lock_msg(node): bool
-mutable grant_msg(node): bool
-mutable unlock_msg(node): bool
-mutable holds_lock(node): bool
-mutable server_holds_lock: bool
-
-# inits:
-assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
-    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
-
-# transitions:
-assume always
-    (exists n:node. 
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
-        ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. server_holds_lock & lock_msg(n) & 
-            !((server_holds_lock)') & 
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
-    (exists n:node. 
-        (forall N:node. grant_msg(n) & 
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. 
-            ((unlock_msg(x0))') = unlock_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. holds_lock(n) & 
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. 
-            ((grant_msg(x0))') = grant_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. unlock_msg(n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N)) & 
-            ((server_holds_lock)')) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
-
-# safety:
-assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
-        ";
-
-        let mut module = crate::fly::parse(source).unwrap();
-        let universe = HashMap::from([("node".to_string(), 2)]);
-
-        let bug = check(&mut module, &universe, 12)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
-
-        let too_short = check(&mut module, &universe, 11)?;
-        assert_eq!(CheckerAnswer::Unknown, too_short);
-
-        Ok(())
-    }
-
-    #[test]
-    fn checker_consensus() -> Result<(), CheckerError> {
-        let source = "
-sort node
-sort quorum
-sort value
-
-# relations:
-immutable member(node, quorum): bool
-mutable vote_request_msg(node, node): bool
-mutable voted(node): bool
-mutable vote_msg(node, node): bool
-mutable votes(node, node): bool
-mutable leader(node): bool
-mutable decided(node, value): bool
-
-# init:
-assume (forall N1:node, N2:node. !vote_request_msg(N1, N2)) & (forall N:node. !voted(N)) &
-    (forall N1:node, N2:node. !vote_msg(N1, N2)) & (forall N1:node, N2:node. !votes(N1, N2)) &
-    (forall N1:node. !leader(N1)) & (forall N:node, V:value. !decided(N, V))
-
-# transitions:
-assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_request_msg(N1, N2))' <->
-    vote_request_msg(N1, N2) | N1 = src & N2 = dst) & (forall x0:node. (voted(x0))' = voted(x0)) &
-    (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) &
-    (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists src:node, dst:node.
-    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & !vote_request_msg'(dst, src) & 
-    ((vote_msg(N1, N2))' <->
-    vote_msg(N1, N2) | N1 = src & N2 = dst) & ((voted(N))' <-> voted(N) | N = src) & (!(N1 = dst &
-    N2 = src) -> ((vote_request_msg(N1, N2))' <-> vote_request_msg(N1, N2)))) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) & (forall x0:node,
-    x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, sender:node. (forall N1:node, N2:node.
-    vote_msg(sender, n) & ((votes(N1, N2))' <-> votes(N1, N2) | N1 = n & N2 = sender)) & (forall x0:node,
-    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
-    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node. (leader(x0))' =
-    leader(x0)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, q:quorum.
-    (forall N:node. (member(N, q) -> votes(n, N)) & ((leader(N))' <-> leader(N) | N = n)) & (forall x0:node,
-    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
-    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) |
-    (exists n:node, v:value. (forall V:value, N:node. leader(n) & !decided(n, V) & ((decided(N, V))' <->
-    decided(N, V) | N = n & V = v)) & (forall x0:node, x1:node. (vote_request_msg(x0, x1))' =
-    vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0)) & (forall x0:node, x1:node.
-    (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node. (votes(x0, x1))' = votes(x0, x1)) &
-    (forall x0:node. (leader(x0))' = leader(x0)))
-
-# added by hand
-# axiom
-assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
-
-# safety:
-assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
-        ";
-
-        let mut module = crate::fly::parse(source).unwrap();
-        let universe = std::collections::HashMap::from([
-            ("node".to_string(), 1),
-            ("quorum".to_string(), 1),
-            ("value".to_string(), 1),
-        ]);
-
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
-
-        Ok(())
-    }
+fn dimacs(cnf: &Cnf, context: &Context) -> String {
+    let mut out = format!("p cnf {} {}", context.vars, cnf.len());
+    out.push_str(
+        &cnf.iter()
+            .map(|clause| {
+                clause
+                    .iter()
+                    .map(|literal| match literal {
+                        Literal {
+                            var: Variable(x),
+                            pos: true,
+                        } => format!("{}", x),
+                        Literal {
+                            var: Variable(x),
+                            pos: false,
+                        } => format!("-{}", x),
+                    })
+                    .join(" ")
+            })
+            .join("\n"),
+    );
+    out
 }
