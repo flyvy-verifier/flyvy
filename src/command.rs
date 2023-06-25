@@ -9,13 +9,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
 
+use crate::bounded::set::{interpret, translate, InterpreterResult};
 use crate::fly::syntax::Signature;
 use crate::inference::atoms;
 use crate::inference::lemma;
 use crate::inference::quant::QuantifierConfig;
 use crate::inference::subsume;
 use crate::inference::{houdini, parse_quantifier, InferenceConfig};
-use crate::solver::bounded::{interpret, translate, InterpreterResult};
 use crate::solver::{log_dir, solver_path, SolverConf};
 use crate::timing;
 use crate::{

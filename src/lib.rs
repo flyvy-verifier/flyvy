@@ -16,6 +16,7 @@
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod bounded;
 mod command;
 mod fly;
 mod inference;
