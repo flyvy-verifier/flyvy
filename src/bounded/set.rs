@@ -1140,7 +1140,7 @@ fn term_to_element(
 //    - what this function does
 fn distribute_conjunction(term: Ast) -> Ast {
     match term {
-        Ast::And(terms) => {
+        Ast::And(terms) if !terms.is_empty() => {
             // A and (B or C or D) and (E or F) =
             // (A and B and E) or (A and C and E) or (A and D and E) or
             // (A and B and F) or (A and C and F) or (A and D and F)
