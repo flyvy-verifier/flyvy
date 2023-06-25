@@ -269,9 +269,9 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
     }
 }
 
+// true is empty And; false is empty Or
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
-    Bool(bool),
     Var { index: usize, primes: usize },
     And(Vec<Ast>),
     Or(Vec<Ast>),
@@ -288,7 +288,6 @@ impl Ast {
 
     fn truth(&self) -> Option<bool> {
         match self {
-            Ast::Bool(b) => Some(*b),
             Ast::Var { .. } => None,
             Ast::And(vec) => vec
                 .iter()
@@ -312,7 +311,6 @@ impl Ast {
 
     fn prime(self, depth: usize) -> Ast {
         match self {
-            Ast::Bool(b) => Ast::Bool(b),
             Ast::Var { index, primes } => Ast::Var {
                 index,
                 primes: primes + depth,
@@ -333,7 +331,8 @@ fn term_to_ast(
     let element = |term| term_to_element(term, context, assignments);
 
     let ast: Ast = match term {
-        Term::Literal(value) => Ast::Bool(*value),
+        Term::Literal(true) => Ast::And(vec![]),
+        Term::Literal(false) => Ast::Or(vec![]),
         Term::App(relation, primes, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
             Ast::Var {
@@ -344,7 +343,8 @@ fn term_to_ast(
         Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
         Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
         Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) => Ast::Bool(a == b),
+            (Ok(a), Ok(b)) if a == b => Ast::And(vec![]),
+            (Ok(a), Ok(b)) if a != b => Ast::Or(vec![]),
             _ => Ast::iff(ast(a)?, ast(b)?),
         },
         Term::BinOp(BinOp::NotEquals, a, b) => Ast::Not(Box::new(ast(&Term::BinOp(
@@ -452,42 +452,29 @@ fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
     fn inner(ast: &Ast, context: &mut Context, out: &mut Cnf) -> Variable {
         let mut go = |ast| inner(ast, context, out);
         match ast {
-            &Ast::Bool(pos) => {
-                let Variable(var) = context.new_var();
-                out.push(vec![Literal { var, pos }]);
-                Variable(var)
-            }
             &Ast::Var { index, primes } => context.get_var(index, primes),
-            Ast::And(vec) => match vec.len() {
-                0 => go(&Ast::Bool(true)),
-                1 => go(&vec[0]),
-                _ => {
-                    let olds: Vec<_> = vec.iter().map(go).collect();
-                    let new = context.new_var();
-                    for old in &olds {
-                        out.push(vec![Literal::t(*old), Literal::f(new)]);
-                    }
-                    let mut clause: Vec<_> = olds.into_iter().map(Literal::f).collect();
-                    clause.push(Literal::t(new));
-                    out.push(clause);
-                    new
+            Ast::And(vec) => {
+                let olds: Vec<_> = vec.iter().map(go).collect();
+                let new = context.new_var();
+                for old in &olds {
+                    out.push(vec![Literal::t(*old), Literal::f(new)]);
                 }
-            },
-            Ast::Or(vec) => match vec.len() {
-                0 => go(&Ast::Bool(false)),
-                1 => go(&vec[0]),
-                _ => {
-                    let olds: Vec<_> = vec.iter().map(go).collect();
-                    let new = context.new_var();
-                    for old in &olds {
-                        out.push(vec![Literal::f(*old), Literal::t(new)]);
-                    }
-                    let mut clause: Vec<_> = olds.into_iter().map(Literal::t).collect();
-                    clause.push(Literal::f(new));
-                    out.push(clause);
-                    new
+                let mut clause: Vec<_> = olds.into_iter().map(Literal::f).collect();
+                clause.push(Literal::t(new));
+                out.push(clause);
+                new
+            }
+            Ast::Or(vec) => {
+                let olds: Vec<_> = vec.iter().map(go).collect();
+                let new = context.new_var();
+                for old in &olds {
+                    out.push(vec![Literal::f(*old), Literal::t(new)]);
                 }
-            },
+                let mut clause: Vec<_> = olds.into_iter().map(Literal::t).collect();
+                clause.push(Literal::f(new));
+                out.push(clause);
+                new
+            }
             Ast::Not(ast) => {
                 let old = go(ast);
                 let new = context.new_var();
