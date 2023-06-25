@@ -149,8 +149,12 @@ struct InferenceConfigArgs {
     disj: bool,
 
     #[arg(long)]
-    /// Perform SAT queries gradually
-    gradual: bool,
+    /// Perform SMT queries gradually
+    gradual_smt: bool,
+
+    #[arg(long)]
+    /// Advance the prestate frontier gradually
+    gradual_advance: bool,
 
     #[arg(long)]
     /// Try to find individually inductive lemmas
@@ -190,7 +194,8 @@ impl InferenceConfigArgs {
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
             disj: self.disj,
-            gradual: self.gradual,
+            gradual_smt: self.gradual_smt,
+            gradual_advance: self.gradual_advance,
             indiv: self.indiv,
             extend_width: self.extend_width,
             extend_depth: self.extend_depth,

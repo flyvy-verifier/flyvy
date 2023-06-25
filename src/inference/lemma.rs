@@ -27,7 +27,7 @@ use rayon::prelude::*;
 
 use super::basics::TransCexResult;
 use super::hashmap;
-use super::quant::{count_exists, QuantifierPrefix};
+use super::quant::QuantifierPrefix;
 
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
     ((atoms - len + 1)..=atoms).product::<usize>() * 2_usize.pow(len as u32)
@@ -775,6 +775,8 @@ where
     blocked_to_core: HashMap<usize, HashSet<usize>>,
     /// A mapping between frontier elements and the blocked lemmas they block.
     core_to_blocked: HashMap<usize, HashSet<usize>>,
+    /// Whether to advance all lemmas or do so minimally.
+    gradual_advance: bool,
     /// Whether to extend CTI traces, and how much.
     extend: Option<(usize, usize)>,
     /// A set of CTI's to extend.
@@ -788,7 +790,11 @@ where
     B: Clone + Debug + Send,
 {
     /// Create a new frontier from the given set of lemmas.
-    pub fn new(lemmas_init: LemmaSet<O, L, B>, extend: Option<(usize, usize)>) -> Self {
+    pub fn new(
+        lemmas_init: LemmaSet<O, L, B>,
+        gradual_advance: bool,
+        extend: Option<(usize, usize)>,
+    ) -> Self {
         let blocked = lemmas_init.clone_empty();
 
         Frontier {
@@ -796,6 +802,7 @@ where
             blocked,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
+            gradual_advance,
             extend,
             ctis: VecDeque::new(),
         }
@@ -817,7 +824,7 @@ where
         let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
 
         let res = lemmas
-            .iter()
+            .as_vec()
             .into_par_iter()
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
@@ -901,7 +908,7 @@ where
 
         let start_time = Instant::now();
         let res = lemmas
-            .iter()
+            .as_vec()
             .into_par_iter()
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
@@ -968,19 +975,48 @@ where
         res
     }
 
+    fn remove_lemma(&mut self, id: &usize) {
+        // Remove the lemma from the frontier.
+        self.lemmas.remove(id);
+        // Remove blocking cores that contain the replaced lemma.
+        if let Some(unblocked) = self.core_to_blocked.remove(id) {
+            for lemma in &unblocked {
+                // Signal that the lemma isn't blocked anymore.
+                self.blocked.remove(lemma);
+                // For any other frontier element in the core, signal that it doesn't block the lemma anymore.
+                for in_core in &self.blocked_to_core.remove(lemma).unwrap() {
+                    if in_core != id {
+                        let blocked_by_in_core = self.core_to_blocked.get_mut(in_core).unwrap();
+                        blocked_by_in_core.remove(lemma);
+                        if blocked_by_in_core.is_empty() {
+                            self.core_to_blocked.remove(in_core);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Advance the fontier using the new lemmas.
     ///
-    /// Advancing a lemma involves replacing it with the new lemmas subsumed by it.
-    /// If there are none, the lemma is dropped. If there is only one, the original lemma is substituted.
-    /// When advancing the entire frontier, we always do these zero-cost replacements,
-    /// and if `grow` is enabled, and there are no such substitions available, we advance
-    /// the lemma that would cause the least growth in the length of the frontier.
+    /// Advancing a lemma involves replacing it with the new lemmas uniquely subsumed by it.
+    /// If there are none, the lemma is dropped.
+    ///
+    /// If `gradual_advance` is enabled, we first do these "dropping" replacements.
+    /// We consider the frontier "advanced" if some lemma participating in an UNSAT-core
+    /// has been weakened (or dropped.) If no advancement has been achieved in the dropping stage,
+    /// and `grow` is enabled, we advance using the lemma with the fewest unique subsumed lemmas
+    /// which participates in some UNSAT-core.
+    ///
+    /// If `gradual_advance` is disabled, we perform all possible weakenenings.
     ///
     /// Return whether such an advancement was possible.
-    pub fn advance(&mut self, new_lemmas: &LemmaSet<O, L, B>, mut grow: bool) -> bool {
+    pub fn advance(&mut self, new_lemmas: &WeakenLemmaSet<O, L, B>, grow: bool) -> bool {
+        let mut advanced = false;
+
         // If there are no lemmas in the frontier, it cannot be advanced.
         if self.lemmas.len() == 0 {
-            return false;
+            return advanced;
         }
 
         // Find all lemmas in the frontier (parents) which have been weakened in the new lemmas.
@@ -990,32 +1026,35 @@ where
             .to_prefixes
             .keys()
             .filter(|&id| {
-                !new_lemmas.subsumes(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
+                !new_lemmas.contains(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
             })
             .cloned()
             .collect();
 
-        // Compute the mapping from parents to their weakenings (children).
-        let mut to_children: HashMap<usize, HashSet<usize>> = weakened_parents
-            .par_iter()
-            .map(|&id| {
-                (
-                    id,
-                    new_lemmas
-                        .get_subsumed(&self.lemmas.to_prefixes[&id], &self.lemmas.to_bodies[&id]),
-                )
-            })
-            .collect();
+        if !self.gradual_advance {
+            advanced = !weakened_parents.is_empty();
+            for id in &weakened_parents {
+                self.remove_lemma(id)
+            }
+            for (prefix, body) in new_lemmas.as_vec() {
+                if !self.lemmas.subsumes(prefix.as_ref(), body) {
+                    self.lemmas.insert(prefix.clone(), body.clone());
+                }
+            }
+            return advanced;
+        }
+
+        let new_lemmas_vec = new_lemmas.as_vec();
 
         // Compute the mapping from children to parents.
-        let mut to_parents: HashMap<usize, HashSet<usize>> = new_lemmas
-            .to_prefixes
-            .par_iter()
-            .map(|(id, prefix)| {
+        let mut to_parents: HashMap<usize, HashSet<usize>> = new_lemmas_vec
+            .iter()
+            .enumerate()
+            .map(|(i, (prefix, body))| {
                 (
-                    *id,
+                    i,
                     self.lemmas
-                        .get_subsuming(prefix, &new_lemmas.to_bodies[id])
+                        .get_subsuming(prefix, body)
                         .intersection(&weakened_parents)
                         .cloned()
                         .collect(),
@@ -1023,90 +1062,87 @@ where
             })
             .collect();
 
-        assert!(to_children
-            .iter()
-            .all(|(p, ch)| ch.iter().all(|c| to_parents[c].contains(p))));
-        assert!(to_parents
-            .iter()
-            .all(|(c, pr)| pr.iter().all(|p| to_children[p].contains(c))));
+        // Compute the mapping from parents to their weakenings (children).
+        let mut to_children: HashMap<usize, HashSet<usize>> = weakened_parents
+            .into_iter()
+            .map(|p| (p, HashSet::default()))
+            .collect();
+        for (child, parents) in &to_parents {
+            for parent in parents {
+                to_children.get_mut(parent).unwrap().insert(*child);
+            }
+        }
 
-        let mut advanced = false;
-        loop {
-            // Given a children and parents mapping, compute the parent with the least unique children,
-            // i.e. the least number of children which are uniquely theirs.
-            let min_unique = |to_children_local: &HashMap<usize, HashSet<usize>>,
-                              to_parents_local: &HashMap<usize, HashSet<usize>>|
-             -> Option<(usize, Vec<usize>)> {
-                to_children_local
+        // Given a children and parents mapping, compute the number of unique children of each parent.
+        let to_unique_children =
+            |to_children: &HashMap<usize, HashSet<usize>>,
+             to_parents: &HashMap<usize, HashSet<usize>>| {
+                to_children
                     .iter()
-                    .map(|(id, ch)| {
-                        let unique_ch: Vec<usize> = ch
-                            .iter()
-                            .cloned()
-                            .filter(|ch_id| to_parents_local[ch_id].len() == 1)
-                            .collect();
-
-                        (*id, unique_ch)
-                    })
-                    .min_by_key(|(id, ch)| {
+                    .map(|(parent, children)| {
                         (
-                            ch.iter()
-                                .map(|i| count_exists(&new_lemmas.to_prefixes[i].quantifiers))
-                                .sum::<usize>(),
-                            ch.len(),
-                            *id,
+                            *parent,
+                            children
+                                .iter()
+                                .copied()
+                                .filter(|ch| to_parents[ch].len() == 1)
+                                .collect_vec(),
                         )
                     })
+                    .collect_vec()
             };
+        let remove_parent = |to_children: &mut HashMap<usize, HashSet<usize>>,
+                             to_parents: &mut HashMap<usize, HashSet<usize>>,
+                             parent: &usize| {
+            for ch in &to_children.remove(parent).unwrap() {
+                let parents = to_parents.get_mut(ch).unwrap();
+                parents.remove(parent);
+                if parents.is_empty() {
+                    assert!(to_parents.remove(ch).unwrap().is_empty());
+                }
+            }
+        };
 
-            let min = min_unique(&to_children, &to_parents);
-            #[allow(clippy::unnecessary_unwrap)]
-            if min.is_some() && (grow || min.as_ref().unwrap().1.len() <= 1) {
-                // This is the replaced lemma.
-                let (id, ch) = &min.unwrap();
+        while let Some((id, _)) = to_unique_children(&to_children, &to_parents)
+            .into_iter()
+            .find(|(_, ch)| ch.is_empty())
+        {
+            advanced = advanced || self.core_to_blocked.contains_key(&id);
+            self.remove_lemma(&id);
+            remove_parent(&mut to_children, &mut to_parents, &id);
+        }
 
-                // The frontier is advanced.
-                advanced = true;
-                // Never grow twice.
-                grow = false;
-
-                // Remove the lemma from the frontier.
-                self.lemmas.remove(id);
-                // Remove blocking cores that contain the replaced lemma.
-                if let Some(unblocked) = self.core_to_blocked.remove(id) {
-                    for lemma in &unblocked {
-                        // Signal that the lemma isn't blocked anymore.
-                        self.blocked.remove(lemma);
-                        // For any other frontier element in the core, signal that it doesn't block the lemma anymore.
-                        for in_core in &self.blocked_to_core.remove(lemma).unwrap() {
-                            if in_core != id {
-                                let blocked_by_in_core =
-                                    self.core_to_blocked.get_mut(in_core).unwrap();
-                                blocked_by_in_core.remove(lemma);
-                                if blocked_by_in_core.is_empty() {
-                                    self.core_to_blocked.remove(in_core);
-                                }
-                            }
-                        }
+        if !advanced && grow {
+            let min = to_unique_children(&to_children, &to_parents)
+                .into_iter()
+                .filter(|(p, _)| self.core_to_blocked.contains_key(p))
+                .map(|(p, children)| {
+                    let mut minimized = self.lemmas.clone_empty();
+                    for ch_idx in children {
+                        minimized.insert_minimized(
+                            new_lemmas_vec[ch_idx].0.clone(),
+                            new_lemmas_vec[ch_idx].1.clone(),
+                        );
                     }
-                }
 
-                // Remove the parent lemma and disconnect it from its children.
-                for ch_id in to_children.remove(id).unwrap() {
-                    assert!(to_parents.get_mut(&ch_id).unwrap().remove(id));
+                    (p, minimized.as_vec())
+                })
+                .min_by_key(|(p, children)| {
+                    (
+                        children
+                            .iter()
+                            .map(|(prefix, _)| prefix.existentials())
+                            .sum::<usize>(),
+                        children.len(),
+                        *p,
+                    )
+                });
+            if let Some((id, children)) = min {
+                advanced = true;
+                self.remove_lemma(&id);
+                for (prefix, body) in children {
+                    self.lemmas.insert_minimized(prefix, body);
                 }
-                // Add each unique child to the frontier.
-                for new_id in ch {
-                    self.lemmas.insert(
-                        new_lemmas.to_prefixes[new_id].clone(),
-                        new_lemmas.to_bodies[new_id].clone(),
-                    );
-                    // Remove the parents entry of this child (it should be empty because its only parent
-                    // was already removed.)
-                    assert!(to_parents.remove(new_id).unwrap().is_empty());
-                }
-            } else {
-                break;
             }
         }
 
@@ -1147,7 +1183,7 @@ where
     pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_initial: Mutex<Vec<_>> = Mutex::new(vec![]);
         log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.iter();
+        let weakest = self.weaken_set.as_vec();
         log::info!("Finding CTI...");
         let cti = weakest
             .into_par_iter()
@@ -1224,7 +1260,7 @@ where
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
         let cancel = RwLock::new(false);
         log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.iter();
+        let weakest = self.weaken_set.as_vec();
         log::info!("Finding CTI...");
         let cti = weakest
             .into_par_iter()

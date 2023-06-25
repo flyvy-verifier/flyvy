@@ -223,22 +223,39 @@ impl FOModule {
     }
 
     pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
-        let mut solver = conf.solver(&self.signature, 1);
-        for a in self.axioms.iter().chain(hyp.iter()) {
-            solver.assert(a);
-        }
-        solver.assert(&Term::negate(t.clone()));
+        let mut participants: Vec<usize> = if self.gradual {
+            vec![]
+        } else {
+            (0..hyp.len()).collect()
+        };
 
-        let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-        match resp {
-            SatResp::Sat => {
-                let mut states = solver.get_minimal_model();
-                assert_eq!(states.len(), 1);
-
-                Some(states.remove(0))
+        loop {
+            let mut solver = conf.solver(&self.signature, 1);
+            for a in &self.axioms {
+                solver.assert(a);
             }
-            SatResp::Unsat => None,
-            SatResp::Unknown(_) => panic!(),
+            for &i in &participants {
+                solver.assert(&hyp[i])
+            }
+            solver.assert(&Term::negate(t.clone()));
+
+            let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+            match resp {
+                SatResp::Sat => {
+                    let mut states = solver.get_minimal_model();
+                    assert_eq!(states.len(), 1);
+
+                    if let Some(i) = (0..hyp.len())
+                        .find(|i| !participants.contains(i) && states[0].eval(&hyp[*i]) == 0)
+                    {
+                        participants.push(i);
+                    } else {
+                        return Some(states.pop().unwrap());
+                    }
+                }
+                SatResp::Unsat => return None,
+                SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
+            }
         }
     }
 
@@ -336,7 +353,8 @@ pub struct InferenceConfig {
     pub include_eq: bool,
 
     pub disj: bool,
-    pub gradual: bool,
+    pub gradual_smt: bool,
+    pub gradual_advance: bool,
     pub indiv: bool,
 
     pub extend_width: Option<usize>,

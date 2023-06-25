@@ -53,6 +53,7 @@ fn invariant_cover(
 }
 
 /// Check how many of the given lemmas are trivial, i.e. valid given the axioms.
+#[allow(dead_code)]
 fn count_trivial(conf: &SolverConf, fo: &FOModule, lemmas: &[Term]) -> usize {
     lemmas
         .par_iter()
@@ -66,7 +67,7 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
+    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual_smt);
     let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg
@@ -129,12 +130,12 @@ where
     }
 
     let (covered, size) = invariant_cover(m, conf, &fo, &proof);
-    let trivial = count_trivial(conf, &fo, &proof);
+    // let trivial = count_trivial(conf, &fo, &proof);
 
     log::info!("    Fixpoint size = {}", proof.len());
     log::info!("    Fixpoint runtime = {:.2}s", total_time);
     log::info!("    Covers {covered} / {size} of handwritten invariant.");
-    log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
+    // log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
 }
 
 pub fn fixpoint_multi<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
@@ -143,7 +144,7 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual);
+    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual_smt);
     let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg
@@ -206,12 +207,12 @@ where
         }
 
         let (covered, size) = invariant_cover(m, conf, &fo, &proof);
-        let trivial = count_trivial(conf, &fo, &proof);
+        // let trivial = count_trivial(conf, &fo, &proof);
 
         log::info!("    Fixpoint size = {}", proof.len());
         log::info!("    Fixpoint runtime = {:.2}s", total_time);
         log::info!("    Covers {covered} / {size} of handwritten invariant.");
-        log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
+        // log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
     }
 
     println!();
@@ -263,8 +264,8 @@ where
         domains,
     );
     weaken_set.init();
-    let mut weakest;
-    let mut frontier: Frontier<O, L, B> = Frontier::new(weaken_set.minimized(), extend);
+    let mut frontier: Frontier<O, L, B> =
+        Frontier::new(weaken_set.minimized(), infer_cfg.gradual_advance, extend);
 
     // Begin by overapproximating the initial states.
     print(&frontier, &weaken_set, "Finding CTI...".to_string());
@@ -281,22 +282,13 @@ where
         print(&frontier, &weaken_set, "Finding CTI...".to_string());
     }
 
-    print(&frontier, &weaken_set, "Computing lemmas...".to_string());
-    weakest = weaken_set.minimized();
-
     print(&frontier, &weaken_set, "Advancing...".to_string());
-    while frontier.advance(&weakest, true) {
+    while frontier.advance(&weaken_set, true) {
         // If enabled, extend CTI traces.
         if extend.is_some() {
             frontier.extend(fo, conf, &mut weaken_set);
-            print(&frontier, &weaken_set, "Computing lemmas...".to_string());
-            weakest = weaken_set.minimized();
-            print(
-                &frontier,
-                &weaken_set,
-                "Advancing (no growth)...".to_string(),
-            );
-            frontier.advance(&weakest, false);
+            print(&frontier, &weaken_set, "Advancing...".to_string());
+            frontier.advance(&weaken_set, false);
         }
 
         // Handle transition CTI's.
@@ -311,28 +303,21 @@ where
             print(&frontier, &weaken_set, "Weakening...".to_string());
             weaken_set.weaken(&cti);
 
+            // If enabled, extend CTI traces.
             if extend.is_some() {
                 frontier.extend(fo, conf, &mut weaken_set);
             }
 
-            print(&frontier, &weaken_set, "Computing lemmas...".to_string());
-            weakest = weaken_set.minimized();
-            print(
-                &frontier,
-                &weaken_set,
-                "Advancing (no growth)...".to_string(),
-            );
-            frontier.advance(&weakest, false);
+            print(&frontier, &weaken_set, "Advancing...".to_string());
+            frontier.advance(&weaken_set, false);
 
             print(&frontier, &weaken_set, "Finding CTI...".to_string());
         }
 
-        print(&frontier, &weaken_set, "Computing lemmas...".to_string());
-        weakest = weaken_set.minimized();
         print(&frontier, &weaken_set, "Advancing...".to_string());
     }
 
-    Some(weakest)
+    Some(weaken_set.minimized())
 }
 
 /// Run a simple fixpoint algorithm on the configured lemma domains.

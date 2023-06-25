@@ -121,9 +121,9 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    pub prefix: Arc<QuantifierPrefix>,
-    pub lemma_qf: Arc<L>,
-    pub atoms: Arc<RestrictedAtoms>,
+    prefix: Arc<QuantifierPrefix>,
+    lemma_qf: Arc<L>,
+    atoms: Arc<RestrictedAtoms>,
     bodies: Box<O::Map<usize>>,
     by_id: HashMap<usize, O>,
     next: usize,
@@ -491,7 +491,7 @@ where
         self.by_id.values().map(|o| o.to_base()).collect_vec()
     }
 
-    pub fn iter(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
         self.by_id
             .values()
             .map(|body| (self.prefix.clone(), body))
@@ -509,7 +509,7 @@ where
     config: Arc<QuantifierConfig>,
     infer_cfg: Arc<InferenceConfig>,
     atoms: Arc<RestrictedAtoms>,
-    pub sets: Vec<PrefixLemmaSet<O, L, B>>,
+    sets: Vec<PrefixLemmaSet<O, L, B>>,
 }
 
 impl<O, L, B> WeakenLemmaSet<O, L, B>
@@ -567,22 +567,28 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn iter(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
         self.sets
             .iter()
             .sorted_by_key(|set| set.prefix.existentials())
-            .flat_map(|set| set.iter())
+            .flat_map(|set| set.as_vec())
             .collect_vec()
     }
 
     pub fn minimized(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> =
             LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
-        for (prefix, body) in self.iter() {
+        for (prefix, body) in self.as_vec() {
             lemmas.insert_minimized(prefix.clone(), body.clone());
         }
 
         lemmas
+    }
+
+    pub fn contains(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
+        self.sets
+            .iter()
+            .any(|set| set.prefix.as_ref() == prefix && set.bodies.get(body).is_some())
     }
 }
 
@@ -598,7 +604,7 @@ where
     pub lemma_qf: Arc<L>,
     pub to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
     pub to_bodies: HashMap<usize, O>,
-    pub bodies: O::Map<HashSet<usize>>,
+    bodies: O::Map<HashSet<usize>>,
     next: usize,
 }
 
@@ -655,6 +661,13 @@ where
 
     pub fn to_terms(&self) -> Vec<Term> {
         self.to_terms_ids().into_iter().map(|(_, t)| t).collect()
+    }
+
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, O)> {
+        self.to_prefixes
+            .iter()
+            .map(|(id, prefix)| (prefix.clone(), self.to_bodies[id].clone()))
+            .collect_vec()
     }
 
     pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
