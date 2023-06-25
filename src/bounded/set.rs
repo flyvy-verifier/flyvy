@@ -5,16 +5,15 @@
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
 use crate::fly::{sorts::*, syntax::*};
+use crate::term::FirstOrder;
 use bitvec::prelude::*;
+use itertools::Itertools;
+use std::collections::{BTreeSet, VecDeque};
+use thiserror::Error;
 
 // We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
 // and the bounded model checker is essentially a hashing microbenchmark :)
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-
-use itertools::Itertools;
-use std::collections::{BTreeSet, VecDeque};
-use std::iter::zip;
-use thiserror::Error;
 
 macro_rules! btreeset {
     ($($v:expr),* $(,)?) => {{
@@ -461,24 +460,26 @@ pub enum TranslationError {
     UnknownSort(String, UniverseBounds),
     #[error("all assumes should precede all asserts, but found {0:?}")]
     OutOfOrderStatement(ThmStmt),
-    #[error("expected no primes or only one prime in {0:#?}")]
+    #[error("expected no primes in {0}")]
+    AnyFuture(Term),
+    #[error("expected no primes or only one prime in {0}")]
     TooFuture(Term),
     #[error("found an assert that isn't a safety property")]
     AssertWithoutAlways(Term),
     #[error("unknown identifier {0}")]
     UnknownId(String),
-    #[error("can't translate term ({0}) with context {1:#?}")]
-    UnsupportedTerm(Term, HashMap<String, usize>),
-    #[error("could not reduce term {0:#?} to an element")]
-    NoValue(Valued),
+    #[error("could not translate to propositional logic {0}")]
+    CouldNotTranslateToAst(Term),
+    #[error("could not translate to element {0}")]
+    CouldNotTranslateToElement(Term),
     #[error("we don't support negating no-ops, but found {0:?}")]
-    NegatedNoOp(Valued),
+    NegatedNoOp(Ast),
     #[error("expected guard, found: {0:#?}")]
-    ExpectedGuard(Valued),
+    ExpectedGuard(Ast),
     #[error("expected update, found: {0:#?}")]
-    ExpectedUpdate(Valued),
+    ExpectedUpdate(Ast),
     #[error("expected guard or update, found: {0:#?}")]
-    ExpectedGuardOrUpdate(Valued),
+    ExpectedGuardOrUpdate(Ast),
     #[error("one of the generated updates updated the immutable relation {0}")]
     UpdateViolatedImmutability(String),
 }
@@ -539,31 +540,33 @@ pub fn translate(
 
     let mut inits = Vec::new();
     let mut trs = Vec::new();
-    let mut safes = Vec::new();
     for assume in assumes {
         match assume {
-            Term::UnaryOp(UOp::Always, tr_or_axiom) => {
-                // for axioms, also restrict inits
-                match crate::term::FirstOrder::unrolling(&tr_or_axiom) {
-                    Some(0) => {
-                        inits.push(*tr_or_axiom.clone());
-                        trs.push(*tr_or_axiom)
-                    }
-                    Some(1) => trs.push(*tr_or_axiom),
-                    _ => return Err(TranslationError::TooFuture(*tr_or_axiom)),
-                }
+            Term::UnaryOp(UOp::Always, axiom) if FirstOrder::unrolling(&axiom) == Some(0) => {
+                inits.push(*axiom.clone());
+                trs.push(*axiom);
             }
-            init => inits.push(init),
+            Term::UnaryOp(UOp::Always, tr) if FirstOrder::unrolling(&tr) == Some(1) => {
+                trs.push(*tr)
+            }
+            Term::UnaryOp(UOp::Always, term) => return Err(TranslationError::TooFuture(*term)),
+            init if FirstOrder::unrolling(&init) == Some(0) => inits.push(init),
+            init => return Err(TranslationError::AnyFuture(init)),
         }
     }
+
+    let mut safes = Vec::new();
     for assert in asserts {
         match assert {
-            Term::UnaryOp(UOp::Always, safe) => safes.push(*safe),
+            Term::UnaryOp(UOp::Always, safe) if FirstOrder::unrolling(&safe) == Some(0) => {
+                safes.push(*safe)
+            }
+            Term::UnaryOp(UOp::Always, safe) => return Err(TranslationError::AnyFuture(*safe)),
             assert => return Err(TranslationError::AssertWithoutAlways(assert)),
         }
     }
 
-    let normalize = |term: Term| -> Result<Valued, TranslationError> {
+    let normalize = |term: Term| -> Result<Ast, TranslationError> {
         // change uses of nullary relations from Term::Id(name) to Term::App(name, 0, vec![])
         // because expand_quantifiers doesn't know about what names correspond to relations
         // and only cares about Apps with 0 vs. 1 prime
@@ -571,7 +574,7 @@ pub fn translate(
         // push primes inwards
         let term = crate::term::Next::new(&module.signature).normalize(&term);
         // convert Forall to And and Exists to Or, eagerly evaluating when possible
-        let term = expand_quantifiers(&term, universe, &HashMap::default())?;
+        let term = term_to_ast(&term, universe, &HashMap::default())?;
         // simplify Ands and Ors into DNF
         Ok(distribute_conjunction(term))
     };
@@ -580,7 +583,7 @@ pub fn translate(
     let trs = normalize(Term::NAryOp(NOp::And, trs))?;
     let safes = normalize(Term::NAryOp(NOp::And, safes))?;
 
-    let get_guards_from_dnf = |valued: Valued| -> Result<Vec<Vec<Guard>>, TranslationError> {
+    let get_guards_from_dnf = |valued: Ast| -> Result<Vec<Vec<Guard>>, TranslationError> {
         valued
             .get_or()
             .into_iter()
@@ -630,7 +633,7 @@ pub fn translate(
     let trs: Vec<Transition> = trs
         .get_or()
         .into_iter()
-        .map(|term: Valued| {
+        .map(|term: Ast| {
             // build transitions from constrained elements
             let mut tr = Transition::new(vec![], vec![]);
             let mut constrained = btreeset![];
@@ -640,7 +643,7 @@ pub fn translate(
                 } else if let Ok(update) = term.clone().get_update(&indices) {
                     constrained.insert(update.index);
                     tr.updates.push(update);
-                } else if let Valued::NoOp(set, element) = term {
+                } else if let Ast::NoOp(set, element) = term {
                     constrained.insert(indices[&(set.as_str(), element)]);
                 } else {
                     return Err(TranslationError::ExpectedGuardOrUpdate(term));
@@ -788,17 +791,15 @@ fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
     }
 }
 
-/// A simplified syntax::Term that disallows quantifiers and also supports Values.
+/// A simplified syntax::Term that appears after quantifier enumeration.
 /// It structurally enforces negation normal form, and has logical semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Valued {
+pub enum Ast {
     // logic
-    /// An element of some sort
-    Value(usize),
-    /// A conjunction of terms
-    And(BTreeSet<Valued>),
-    /// A disjunction of terms
-    Or(BTreeSet<Valued>),
+    /// A conjunction of terms. True is represented by And(set![]).
+    And(BTreeSet<Ast>),
+    /// A disjunction of terms. False is represented by Or(set![]).
+    Or(BTreeSet<Ast>),
 
     // guards
     /// An inclusion test
@@ -816,37 +817,28 @@ pub enum Valued {
                             // r'(x) != r(x) could exist but isn't supported
 }
 
-impl Valued {
-    fn get_value(&self) -> Result<usize, TranslationError> {
+impl Ast {
+    fn get_and(self) -> BTreeSet<Ast> {
         match self {
-            Valued::Value(v) => Ok(*v),
-            _ => Err(TranslationError::NoValue(self.clone())),
-        }
-    }
-
-    fn get_and(self) -> BTreeSet<Valued> {
-        match self {
-            Valued::And(terms) => terms,
-            Valued::Value(1) => btreeset![],
+            Ast::And(terms) => terms,
             _ => btreeset![self],
         }
     }
 
-    fn get_or(self) -> BTreeSet<Valued> {
+    fn get_or(self) -> BTreeSet<Ast> {
         match self {
-            Valued::Or(terms) => terms,
-            Valued::Value(0) => btreeset![],
+            Ast::Or(terms) => terms,
             _ => btreeset![self],
         }
     }
 
     fn get_guard(self, indices: &Indices) -> Result<Guard, TranslationError> {
         match self {
-            Valued::Includes(set, element) => Ok(Guard {
+            Ast::Includes(set, element) => Ok(Guard {
                 index: indices[&(set.as_str(), element)],
                 value: true,
             }),
-            Valued::Excludes(set, element) => Ok(Guard {
+            Ast::Excludes(set, element) => Ok(Guard {
                 index: indices[&(set.as_str(), element)],
                 value: false,
             }),
@@ -856,11 +848,11 @@ impl Valued {
 
     fn get_update(self, indices: &Indices) -> Result<Update, TranslationError> {
         match self {
-            Valued::Insert(set, element) => Ok(Update {
+            Ast::Insert(set, element) => Ok(Update {
                 index: indices[&(set.as_str(), element)],
                 value: true,
             }),
-            Valued::Remove(set, element) => Ok(Update {
+            Ast::Remove(set, element) => Ok(Update {
                 index: indices[&(set.as_str(), element)],
                 value: false,
             }),
@@ -868,49 +860,42 @@ impl Valued {
         }
     }
 
-    fn contradicts(&self, other: &Valued) -> bool {
+    fn contradicts(&self, other: &Ast) -> bool {
         matches!((self, other),
-            (Valued::Includes(a, b), Valued::Excludes(c, d))
-            | (Valued::Excludes(a, b), Valued::Includes(c, d))
-            | (Valued::Insert(a, b), Valued::Remove(c, d))
-            | (Valued::Insert(a, b), Valued::NoOp(c, d))
-            | (Valued::Remove(a, b), Valued::Insert(c, d))
-            | (Valued::Remove(a, b), Valued::NoOp(c, d))
-            | (Valued::NoOp(a, b), Valued::Insert(c, d))
-            | (Valued::NoOp(a, b), Valued::Remove(c, d))
+            (Ast::Includes(a, b), Ast::Excludes(c, d))
+            | (Ast::Excludes(a, b), Ast::Includes(c, d))
+            | (Ast::Insert(a, b), Ast::Remove(c, d))
+            | (Ast::Insert(a, b), Ast::NoOp(c, d))
+            | (Ast::Remove(a, b), Ast::Insert(c, d))
+            | (Ast::Remove(a, b), Ast::NoOp(c, d))
+            | (Ast::NoOp(a, b), Ast::Insert(c, d))
+            | (Ast::NoOp(a, b), Ast::Remove(c, d))
                 if a == c && b == d
         )
     }
 }
 
-fn and(terms: BTreeSet<Valued>) -> Valued {
+fn and(terms: BTreeSet<Ast>) -> Ast {
     // flatten
-    let terms: BTreeSet<Valued> = terms
-        .into_iter()
-        .flat_map(|term| match term {
-            Valued::And(terms) => terms,
-            Valued::Value(1) => btreeset![], // remove identity
-            term => btreeset![term],
-        })
-        .collect();
+    let terms: BTreeSet<Ast> = terms.into_iter().flat_map(Ast::get_and).collect();
     // short circuit if possible
     for a in &terms {
-        if *a == Valued::Value(0) || terms.iter().any(|b| a.contradicts(b)) {
-            return Valued::Value(0);
+        if *a == Ast::Or(btreeset![]) || terms.iter().any(|b| a.contradicts(b)) {
+            return Ast::Or(btreeset![]);
         }
     }
     // remove redundant updates
     let old = terms;
     let mut terms = btreeset![];
     for term in &old {
-        if let Valued::Insert(set, element) = term.clone() {
-            if old.contains(&Valued::Includes(set.clone(), element)) {
-                terms.insert(Valued::NoOp(set, element));
+        if let Ast::Insert(set, element) = term.clone() {
+            if old.contains(&Ast::Includes(set.clone(), element)) {
+                terms.insert(Ast::NoOp(set, element));
                 continue;
             }
-        } else if let Valued::Remove(set, element) = term.clone() {
-            if old.contains(&Valued::Excludes(set.clone(), element)) {
-                terms.insert(Valued::NoOp(set, element));
+        } else if let Ast::Remove(set, element) = term.clone() {
+            if old.contains(&Ast::Excludes(set.clone(), element)) {
+                terms.insert(Ast::NoOp(set, element));
                 continue;
             }
         }
@@ -921,10 +906,10 @@ fn and(terms: BTreeSet<Valued>) -> Valued {
     'outer: loop {
         let old = terms.clone();
         for a in &old {
-            if let Valued::Or(xs) = a {
+            if let Ast::Or(xs) = a {
                 for b in &old {
                     if a != b {
-                        if let Valued::Or(ys) = b {
+                        if let Ast::Or(ys) = b {
                             for x in xs {
                                 if ys.contains(x) {
                                     let mut xs = xs.clone();
@@ -949,39 +934,29 @@ fn and(terms: BTreeSet<Valued>) -> Valued {
         }
         break;
     }
-    // true and true = true
-    if terms.is_empty() {
-        Valued::Value(1)
-    } else if terms.len() == 1 {
+    // unwrap if there's just one element
+    if terms.len() == 1 {
         terms.pop_last().unwrap()
     } else {
-        Valued::And(terms)
+        Ast::And(terms)
     }
 }
 
-fn or(terms: BTreeSet<Valued>) -> Valued {
+fn or(terms: BTreeSet<Ast>) -> Ast {
     // flatten
-    let mut terms: BTreeSet<Valued> = terms
-        .into_iter()
-        .flat_map(|term| match term {
-            Valued::Or(terms) => terms,
-            Valued::Value(0) => btreeset![], // remove identity
-            term => btreeset![term],
-        })
-        .collect();
+    let mut terms: BTreeSet<Ast> = terms.into_iter().flat_map(Ast::get_or).collect();
     // short circuit if possible
     for a in &terms {
-        if *a == Valued::Value(1) || terms.iter().any(|b| a.contradicts(b)) {
-            return Valued::Value(1);
+        if *a == Ast::And(btreeset![]) || terms.iter().any(|b| a.contradicts(b)) {
+            return Ast::And(btreeset![]);
         }
     }
     // check for `(A and B) or (A and B and C)` and remove the superset
     let old = terms.clone();
     for a in &old {
-        if let Valued::And(xs) = a {
+        if let Ast::And(xs) = a {
             for b in &old {
-                if a != b && (xs.contains(b) || matches!(b, Valued::And(ys) if xs.is_superset(ys)))
-                {
+                if a != b && (xs.contains(b) || matches!(b, Ast::And(ys) if xs.is_superset(ys))) {
                     terms.remove(a);
                     break;
                 }
@@ -992,10 +967,10 @@ fn or(terms: BTreeSet<Valued>) -> Valued {
     'outer: loop {
         let old = terms.clone();
         for a in &old {
-            if let Valued::And(xs) = a {
+            if let Ast::And(xs) = a {
                 for b in &old {
                     if a != b {
-                        if let Valued::And(ys) = b {
+                        if let Ast::And(ys) = b {
                             if xs.len() == ys.len() {
                                 let mut unique = xs.symmetric_difference(ys);
                                 let p = unique.next().unwrap();
@@ -1015,125 +990,70 @@ fn or(terms: BTreeSet<Valued>) -> Valued {
         }
         break;
     }
-    // false or false = false
-    if terms.is_empty() {
-        Valued::Value(0)
-    } else if terms.len() == 1 {
+    // unwrap if there's just one element
+    if terms.len() == 1 {
         terms.pop_last().unwrap()
     } else {
-        Valued::Or(terms)
+        Ast::Or(terms)
     }
 }
 
-fn not(term: Valued) -> Result<Valued, TranslationError> {
+fn not(term: Ast) -> Result<Ast, TranslationError> {
     match term {
-        Valued::Value(v) => Ok(Valued::Value(1 - v)),
-        Valued::And(terms) => Ok(or(terms.into_iter().map(not).collect::<Result<_, _>>()?)),
-        Valued::Or(terms) => Ok(and(terms.into_iter().map(not).collect::<Result<_, _>>()?)),
-        Valued::Includes(set, element) => Ok(Valued::Excludes(set, element)),
-        Valued::Excludes(set, element) => Ok(Valued::Includes(set, element)),
-        // this makes sense because Valued has logical semantics
-        Valued::Insert(set, element) => Ok(Valued::Remove(set, element)),
-        Valued::Remove(set, element) => Ok(Valued::Insert(set, element)),
-        Valued::NoOp(_, _) => Err(TranslationError::NegatedNoOp(term)),
+        Ast::And(terms) => Ok(or(terms.into_iter().map(not).collect::<Result<_, _>>()?)),
+        Ast::Or(terms) => Ok(and(terms.into_iter().map(not).collect::<Result<_, _>>()?)),
+        Ast::Includes(set, element) => Ok(Ast::Excludes(set, element)),
+        Ast::Excludes(set, element) => Ok(Ast::Includes(set, element)),
+        // this makes sense because Ast has logical semantics
+        Ast::Insert(set, element) => Ok(Ast::Remove(set, element)),
+        Ast::Remove(set, element) => Ok(Ast::Insert(set, element)),
+        Ast::NoOp(_, _) => Err(TranslationError::NegatedNoOp(term)),
     }
 }
 
-fn expand_quantifiers(
+fn iff(x: Ast, y: Ast) -> Result<Ast, TranslationError> {
+    Ok(or(btreeset![
+        and(btreeset![x.clone(), y.clone()]),
+        and(btreeset![not(x)?, not(y)?]),
+    ]))
+}
+
+fn term_to_ast(
     term: &Term,
     universe: &UniverseBounds,
-    context: &HashMap<String, usize>,
-) -> Result<Valued, TranslationError> {
-    match term {
-        Term::Literal(true) => Ok(Valued::Value(1)),
-        Term::Literal(false) => Ok(Valued::Value(0)),
-        Term::Id(id) => match context.get(id) {
-            Some(v) => Ok(Valued::Value(*v)),
-            None => Err(TranslationError::UnknownId(id.clone())),
+    assignments: &HashMap<String, usize>,
+) -> Result<Ast, TranslationError> {
+    let ast = |term| term_to_ast(term, universe, assignments);
+    let element = |term| term_to_element(term, universe, assignments);
+
+    let ast: Ast = match term {
+        Term::Literal(true) => Ast::And(btreeset![]),
+        Term::Literal(false) => Ast::Or(btreeset![]),
+        Term::App(name, 0, args) => {
+            let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
+            Ast::Includes(name.clone(), Elements::new(args))
+        }
+        Term::App(name, 1, args) => {
+            let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
+            Ast::Insert(name.clone(), Elements::new(args))
+        }
+        Term::UnaryOp(UOp::Not, term) => not(ast(term)?)?,
+        Term::BinOp(BinOp::Iff, a, b) => iff(ast(a)?, ast(b)?)?,
+        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
+            (Ok(a), Ok(b)) if a == b => Ast::And(btreeset![]),
+            (Ok(a), Ok(b)) if a != b => Ast::Or(btreeset![]),
+            _ => iff(ast(a)?, ast(b)?)?,
         },
-        Term::App(name, 0, args) => Ok(Valued::Includes(
-            name.clone(),
-            Elements::new(
-                args.iter()
-                    .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-        )),
-        Term::App(name, 1, args) => Ok(Valued::Insert(
-            name.clone(),
-            Elements::new(
-                args.iter()
-                    .map(|arg| expand_quantifiers(arg, universe, context)?.get_value())
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-        )),
-        Term::UnaryOp(UOp::Not, term) => Ok(not(expand_quantifiers(term, universe, context)?)?),
-        Term::BinOp(BinOp::Iff, a, b) => {
-            let a = expand_quantifiers(a, universe, context)?;
-            let b = expand_quantifiers(b, universe, context)?;
-            Ok(or(btreeset![
-                and(btreeset![a.clone(), b.clone()]),
-                and(btreeset![not(a)?, not(b)?])
-            ]))
+        Term::BinOp(BinOp::NotEquals, a, b) => {
+            not(ast(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?)?
         }
-        Term::BinOp(BinOp::Equals, a, b) => {
-            let a = expand_quantifiers(a, universe, context)?;
-            let b = expand_quantifiers(b, universe, context)?;
-            if let Valued::Insert(insert_set, insert_element) = &a {
-                let b = match b {
-                    Valued::And(terms) if terms.len() == 1 => terms.into_iter().next().unwrap(),
-                    Valued::Or(terms) if terms.len() == 1 => terms.into_iter().next().unwrap(),
-                    b => b,
-                };
-                match b {
-                    Valued::Value(1) => Ok(a),
-                    Valued::Value(0) => Ok(not(a)?),
-                    Valued::Includes(includes_set, includes_element)
-                        if includes_set == *insert_set && includes_element == *insert_element =>
-                    {
-                        Ok(Valued::NoOp(includes_set, includes_element))
-                    }
-                    _ => Err(TranslationError::UnsupportedTerm(
-                        term.clone(),
-                        context.clone(),
-                    )),
-                }
-            } else if let (Valued::Value(a), Valued::Value(b)) = (&a, &b) {
-                Ok(Valued::Value(if a == b { 1 } else { 0 }))
-            } else {
-                Err(TranslationError::UnsupportedTerm(
-                    term.clone(),
-                    context.clone(),
-                ))
-            }
-        }
-        Term::BinOp(BinOp::NotEquals, a, b) => Ok(not(expand_quantifiers(
-            &Term::BinOp(BinOp::Equals, a.clone(), b.clone()),
-            universe,
-            context,
-        )?)?),
-        Term::BinOp(BinOp::Implies, a, b) => Ok(or(btreeset![
-            not(expand_quantifiers(a, universe, context)?)?,
-            expand_quantifiers(b, universe, context)?
-        ])),
-        Term::NAryOp(NOp::And, terms) => Ok(and(terms
-            .iter()
-            .map(|arg| expand_quantifiers(arg, universe, context))
-            .collect::<Result<_, _>>()?)),
-        Term::NAryOp(NOp::Or, terms) => Ok(or(terms
-            .iter()
-            .map(|arg| expand_quantifiers(arg, universe, context))
-            .collect::<Result<_, _>>()?)),
-        Term::Ite { cond, then, else_ } => Ok(or(btreeset![
-            and(btreeset![
-                expand_quantifiers(cond, universe, context)?,
-                expand_quantifiers(then, universe, context)?
-            ]),
-            and(btreeset![
-                not(expand_quantifiers(cond, universe, context)?)?,
-                expand_quantifiers(else_, universe, context)?
-            ])
-        ])),
+        Term::BinOp(BinOp::Implies, a, b) => or(btreeset![not(ast(a)?)?, ast(b)?]),
+        Term::NAryOp(NOp::And, terms) => and(terms.iter().map(ast).collect::<Result<_, _>>()?),
+        Term::NAryOp(NOp::Or, terms) => or(terms.iter().map(ast).collect::<Result<_, _>>()?),
+        Term::Ite { cond, then, else_ } => or(btreeset![
+            and(btreeset![ast(cond)?, ast(then)?]),
+            and(btreeset![not(ast(cond)?)?, ast(else_)?])
+        ]),
         Term::Quantified {
             quantifier,
             binders,
@@ -1153,23 +1073,57 @@ fn expand_quantifiers(
                 .multi_cartesian_product()
                 .map(|elements| {
                     // extend context with all variables bound to these `elements`
-                    let mut context = context.clone();
-                    for (name, element) in zip(&names, elements) {
-                        context.insert(name.to_string(), element);
+                    let mut new_assignments = assignments.clone();
+                    for (name, element) in names.iter().zip(elements) {
+                        new_assignments.insert(name.to_string(), element);
                     }
-                    expand_quantifiers(body, universe, &context)
+                    term_to_ast(body, universe, &new_assignments)
                 })
                 .collect::<Result<BTreeSet<_>, _>>()?;
             match quantifier {
-                Quantifier::Forall => Ok(and(set)),
-                Quantifier::Exists => Ok(or(set)),
+                Quantifier::Forall => and(set),
+                Quantifier::Exists => or(set),
             }
         }
-        _ => Err(TranslationError::UnsupportedTerm(
-            term.clone(),
-            context.clone(),
-        )),
-    }
+        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
+        | Term::Id(_)
+        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToAst(term.clone())),
+    };
+    Ok(ast)
+}
+
+fn term_to_element(
+    term: &Term,
+    universe: &UniverseBounds,
+    assignments: &HashMap<String, usize>,
+) -> Result<usize, TranslationError> {
+    let ast = |term| term_to_ast(term, universe, assignments);
+    let element = |term| term_to_element(term, universe, assignments);
+
+    let element: usize = match term {
+        Term::Literal(_)
+        | Term::UnaryOp(UOp::Not, ..)
+        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
+        | Term::NAryOp(NOp::And | NOp::Or, ..)
+        | Term::Quantified { .. } => match ast(term)? {
+            Ast::And(set) if set.is_empty() => 1,
+            Ast::Or(set) if set.is_empty() => 0,
+            _ => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
+        },
+        Term::Id(id) => assignments[id],
+        Term::Ite { cond, then, else_ } => match element(cond)? {
+            1 => element(then)?,
+            0 => element(else_)?,
+            _ => unreachable!(),
+        },
+        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
+        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
+    };
+    Ok(element)
 }
 
 // this actually ends up converting to DNF in context
@@ -1184,9 +1138,9 @@ fn expand_quantifiers(
 //    - expand_quantifiers() deals with this
 // 5. Distribute ORs inwards over ANDs
 //    - what this function does
-fn distribute_conjunction(term: Valued) -> Valued {
+fn distribute_conjunction(term: Ast) -> Ast {
     match term {
-        Valued::And(terms) => {
+        Ast::And(terms) => {
             // A and (B or C or D) and (E or F) =
             // (A and B and E) or (A and C and E) or (A and D and E) or
             // (A and B and F) or (A and C and F) or (A and D and F)
@@ -1200,7 +1154,7 @@ fn distribute_conjunction(term: Valued) -> Valued {
                 .map(|vec| and(vec.into_iter().collect::<BTreeSet<_>>()))
                 .collect())
         }
-        Valued::Or(terms) => {
+        Ast::Or(terms) => {
             // or() internally flattens nested Ors
             or(terms.into_iter().map(distribute_conjunction).collect())
         }
@@ -1697,34 +1651,6 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         let output = interpret(&target, Some(1), TraceCompression::No);
         assert_eq!(output, InterpreterResult::Unknown);
 
-        Ok(())
-    }
-
-    #[test]
-    fn interpreter_primes_in_inits() -> Result<(), TranslationError> {
-        let source = "
-mutable f: bool
-
-# inits:
-assume !f & !f'
-
-# transitions:
-assume always (f & f') | (!f & !f')
-
-# safety:
-assert always !f
-        ";
-
-        let mut m = crate::fly::parse(source).unwrap();
-        let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let target = translate(&mut m, &universe);
-        assert_eq!(
-            target,
-            Err(TranslationError::ExpectedGuard(Valued::NoOp(
-                "f".to_string(),
-                element![]
-            )))
-        );
         Ok(())
     }
 }
