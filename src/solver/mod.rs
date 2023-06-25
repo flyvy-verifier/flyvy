@@ -4,7 +4,6 @@
 //! High-level interface to an SMT solver using [`Term`](crate::fly::syntax::Term).
 
 pub mod backends;
-pub mod bdd;
 mod imp;
 mod models;
 mod path;

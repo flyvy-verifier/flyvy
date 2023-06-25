@@ -634,7 +634,7 @@ impl App {
                         }
                     }
                 }
-                match crate::solver::bdd::check(&mut m, &universe, depth) {
+                match crate::bounded::bdd::check(&mut m, &universe, depth) {
                     Ok(result) => println!("result: {:?}", result),
                     Err(error) => eprintln!("{}", error),
                 }

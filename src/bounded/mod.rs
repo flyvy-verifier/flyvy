@@ -3,5 +3,6 @@
 
 //! A collection of bounded model checkers.
 
+pub mod bdd;
 pub mod sat;
 pub mod set;
