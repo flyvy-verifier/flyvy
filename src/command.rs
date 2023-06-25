@@ -598,7 +598,7 @@ impl App {
                         }
                     }
                 }
-                match crate::solver::sat::check(&mut m, &universe, depth) {
+                match crate::bounded::sat::check(&mut m, &universe, depth) {
                     Ok(result) => println!("answer: {:?}", result),
                     Err(error) => eprintln!("{}", error),
                 }
