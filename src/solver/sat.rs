@@ -189,6 +189,9 @@ pub fn check(
         term_to_ast(&term, &context, &HashMap::new())
     };
 
+    println!("starting translation...");
+    let translation = std::time::Instant::now();
+
     let init = translate(inits)?;
     let tr = translate(trs)?;
     let not_safe = Ast::Not(Box::new(translate(safes)?));
@@ -201,6 +204,10 @@ pub fn check(
 
     let cnf = tseytin(&Ast::And(program), &mut context);
 
+    println!("translation finished in {:?}", translation.elapsed());
+    println!("starting search...");
+    let search = std::time::Instant::now();
+
     let mut sat: cadical::Solver = Default::default();
     for clause in &cnf {
         sat.add_clause(
@@ -209,7 +216,6 @@ pub fn check(
                 .map(|l| (l.var as i32 + 1) * if l.pos { 1 } else { -1 }),
         );
     }
-
     assert_eq!(sat.max_variable(), context.vars as i32);
 
     let answer = match sat.solve() {
@@ -217,6 +223,9 @@ pub fn check(
         Some(false) => CheckerAnswer::Unknown,
         Some(true) => CheckerAnswer::Counterexample,
     };
+
+    println!("search finished in {:?}", search.elapsed());
+
     Ok(answer)
 }
 
