@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! A bounded model checker for flyvy programs using symbolic evaluation.
+//! A bounded model checker for flyvy programs using an SAT solver.
 
 use crate::fly::{sorts::*, syntax::*};
 use crate::term::FirstOrder;
@@ -199,7 +199,7 @@ pub fn check(
     }
     program.push(not_safe.prime(depth));
 
-    let cnf = tseytin(Ast::And(program), &mut context);
+    let cnf = tseytin(&Ast::And(program), &mut context);
 
     let mut sat: cadical::Solver = Default::default();
     for clause in &cnf {
@@ -439,40 +439,48 @@ impl Literal {
     }
 }
 
-fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
-    fn inner(ast: Ast, context: &mut Context, out: &mut Cnf) -> Variable {
+fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
+    fn inner(ast: &Ast, context: &mut Context, out: &mut Cnf) -> Variable {
         let mut go = |ast| inner(ast, context, out);
         match ast {
-            Ast::Bool(pos) => {
+            &Ast::Bool(pos) => {
                 let Variable(var) = context.new_var();
                 out.push(vec![Literal { var, pos }]);
                 Variable(var)
             }
-            Ast::Var { index, primes } => context.get_var(index, primes),
-            Ast::And(vec) => {
-                let olds: Vec<_> = vec.into_iter().map(go).collect();
-                let new = context.new_var();
-                for old in &olds {
-                    out.push(vec![Literal::t(*old), Literal::f(new)]);
+            &Ast::Var { index, primes } => context.get_var(index, primes),
+            Ast::And(vec) => match vec.len() {
+                0 => go(&Ast::Bool(true)),
+                1 => go(&vec[0]),
+                _ => {
+                    let olds: Vec<_> = vec.iter().map(go).collect();
+                    let new = context.new_var();
+                    for old in &olds {
+                        out.push(vec![Literal::t(*old), Literal::f(new)]);
+                    }
+                    let mut clause: Vec<_> = olds.into_iter().map(Literal::f).collect();
+                    clause.push(Literal::t(new));
+                    out.push(clause);
+                    new
                 }
-                let mut clause: Vec<_> = olds.into_iter().map(Literal::f).collect();
-                clause.push(Literal::t(new));
-                out.push(clause);
-                new
-            }
-            Ast::Or(vec) => {
-                let olds: Vec<_> = vec.into_iter().map(go).collect();
-                let new = context.new_var();
-                for old in &olds {
-                    out.push(vec![Literal::f(*old), Literal::t(new)]);
+            },
+            Ast::Or(vec) => match vec.len() {
+                0 => go(&Ast::Bool(false)),
+                1 => go(&vec[0]),
+                _ => {
+                    let olds: Vec<_> = vec.iter().map(go).collect();
+                    let new = context.new_var();
+                    for old in &olds {
+                        out.push(vec![Literal::f(*old), Literal::t(new)]);
+                    }
+                    let mut clause: Vec<_> = olds.into_iter().map(Literal::t).collect();
+                    clause.push(Literal::f(new));
+                    out.push(clause);
+                    new
                 }
-                let mut clause: Vec<_> = olds.into_iter().map(Literal::t).collect();
-                clause.push(Literal::f(new));
-                out.push(clause);
-                new
-            }
+            },
             Ast::Not(ast) => {
-                let old = go(*ast);
+                let old = go(ast);
                 let new = context.new_var();
                 out.push(vec![Literal::t(old), Literal::t(new)]);
                 out.push(vec![Literal::f(old), Literal::f(new)]);
@@ -489,15 +497,15 @@ fn tseytin(ast: Ast, context: &mut Context) -> Cnf {
 
 #[allow(dead_code)]
 fn dimacs(cnf: &Cnf, context: &Context) -> String {
-    let mut out = format!("p cnf {} {}", context.vars, cnf.len());
+    let mut out = format!("p cnf {} {}\n", context.vars, cnf.len());
     out.push_str(
         &cnf.iter()
             .map(|clause| {
                 clause
                     .iter()
                     .map(|literal| match literal {
-                        Literal { var, pos: true } => format!("{}", var),
-                        Literal { var, pos: false } => format!("-{}", var),
+                        Literal { var, pos: true } => format!("{}", var + 1),
+                        Literal { var, pos: false } => format!("-{}", var + 1),
                     })
                     .join(" ")
             })
@@ -600,7 +608,6 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         Ok(())
     }
 
-    #[ignore]
     #[test]
     fn checker_lockserver_buggy() -> Result<(), CheckerError> {
         let source = "
