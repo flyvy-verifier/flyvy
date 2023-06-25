@@ -51,7 +51,7 @@ impl Context<'_> {
             universe,
             indices,
             indices_flat_len,
-            vars: indices_flat_len * depth,
+            vars: indices_flat_len * (depth + 1),
         }
     }
 
