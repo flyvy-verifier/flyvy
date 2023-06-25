@@ -126,16 +126,16 @@ where
     if fo.trans_safe_cex(conf, &proof).is_none() {
         println!("Fixpoint SAFE!");
     } else {
-        log::info!("Fixpoint UNSAFE!");
+        println!("Fixpoint UNSAFE!");
     }
 
     let (covered, size) = invariant_cover(m, conf, &fo, &proof);
     // let trivial = count_trivial(conf, &fo, &proof);
 
-    log::info!("    Fixpoint size = {}", proof.len());
-    log::info!("    Fixpoint runtime = {:.2}s", total_time);
-    log::info!("    Covers {covered} / {size} of handwritten invariant.");
-    // log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
+    println!("Fixpoint size = {}", proof.len());
+    println!("Fixpoint runtime = {:.2}s", total_time);
+    println!("Covers {covered} / {size} of handwritten invariant.");
+    // println!("{trivial} out of {} lemmas are trivial.", proof.len());
 }
 
 pub fn fixpoint_multi<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
@@ -201,18 +201,18 @@ where
         let total_time = start.elapsed().as_secs_f32();
         let proof = fixpoint.to_terms();
         if fo.trans_safe_cex(conf, &proof).is_none() {
-            println!("    Fixpoint SAFE!");
+            println!("({}) Fixpoint SAFE!", i + 1);
         } else {
-            log::info!("({}) Fixpoint UNSAFE!", i + 1);
+            println!("({}) Fixpoint UNSAFE!", i + 1);
         }
 
         let (covered, size) = invariant_cover(m, conf, &fo, &proof);
         // let trivial = count_trivial(conf, &fo, &proof);
 
-        log::info!("    Fixpoint size = {}", proof.len());
-        log::info!("    Fixpoint runtime = {:.2}s", total_time);
-        log::info!("    Covers {covered} / {size} of handwritten invariant.");
-        // log::info!("    {trivial} out of {} lemmas are trivial.", proof.len());
+        println!("    Fixpoint size = {}", proof.len());
+        println!("    Fixpoint runtime = {:.2}s", total_time);
+        println!("    Covers {covered} / {size} of handwritten invariant.");
+        // println!("    {trivial} out of {} lemmas are trivial.", proof.len());
     }
 
     println!();
