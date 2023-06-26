@@ -30,7 +30,11 @@ use super::hashmap;
 use super::quant::QuantifierPrefix;
 
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
-    ((atoms - len + 1)..=atoms).product::<usize>() * 2_usize.pow(len as u32)
+    if len > atoms {
+        0
+    } else {
+        ((atoms - len + 1)..=atoms).product::<usize>() * 2_usize.pow(len as u32)
+    }
 }
 
 #[derive(Clone)]
