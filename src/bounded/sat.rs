@@ -255,7 +255,9 @@ pub fn check(
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
     match term {
+        Term::Literal(b) => Term::Literal(b),
         Term::Id(id) if relations.iter().any(|r| r.name == id) => Term::App(id, 0, vec![]),
+        Term::Id(id) => Term::Id(id),
         Term::App(name, primes, args) => Term::App(
             name,
             primes,
@@ -289,7 +291,6 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
             binders,
             body: Box::new(nullary_id_to_app(*body, relations)),
         },
-        term => term,
     }
 }
 
@@ -316,18 +317,16 @@ impl Ast {
             Ast::And(vec) => vec
                 .iter()
                 .fold(Some(true), |acc, ast| match (acc, ast.truth()) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
                     (Some(true), x) => x,
-                    (Some(false), _) => Some(false),
-                    (None, Some(false)) => Some(false),
-                    (None, Some(true) | None) => None,
+                    (None, _) => None,
                 }),
             Ast::Or(vec) => vec
                 .iter()
                 .fold(Some(false), |acc, ast| match (acc, ast.truth()) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
                     (Some(false), x) => x,
-                    (Some(true), _) => Some(true),
-                    (None, Some(true)) => Some(true),
-                    (None, Some(false) | None) => None,
+                    (None, _) => None,
                 }),
             Ast::Not(ast) => ast.truth().map(|b| !b),
         }
