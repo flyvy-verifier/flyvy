@@ -205,28 +205,52 @@ pub fn check(
     let cnf = tseytin(&Ast::And(program), &mut context);
 
     println!("translation finished in {:?}", translation.elapsed());
-    println!("starting search...");
-    let search = std::time::Instant::now();
 
-    let mut sat: cadical::Solver = Default::default();
+    println!("starting cadical search...");
+    let cadical_search = std::time::Instant::now();
+
+    let mut solver: cadical::Solver = Default::default();
     for clause in &cnf {
-        sat.add_clause(
-            clause
-                .iter()
-                .map(|l| (l.var as i32 + 1) * if l.pos { 1 } else { -1 }),
-        );
+        let cadical_clause = clause
+            .iter()
+            .map(|l| (l.var as i32 + 1) * if l.pos { 1 } else { -1 });
+        solver.add_clause(cadical_clause);
     }
-    assert_eq!(sat.max_variable(), context.vars as i32);
+    assert_eq!(solver.max_variable(), context.vars as i32);
 
-    let answer = match sat.solve() {
+    let cadical_answer = match solver.solve() {
         None => return Err(CheckerError::SolverFailed),
         Some(false) => CheckerAnswer::Unknown,
         Some(true) => CheckerAnswer::Counterexample,
     };
 
-    println!("search finished in {:?}", search.elapsed());
+    println!("cadical search finished in {:?}", cadical_search.elapsed());
 
-    Ok(answer)
+    println!("starting kissat search...");
+    let kissat_search = std::time::Instant::now();
+
+    let mut solver: kissat::Solver = Default::default();
+    let vars: Vec<kissat::Var> = (0..context.vars).map(|_| solver.var()).collect();
+    for clause in &cnf {
+        let kissat_clause = clause
+            .iter()
+            .map(|l| if l.pos { vars[l.var] } else { !vars[l.var] })
+            .collect::<Vec<_>>();
+        solver.add(&kissat_clause);
+    }
+
+    let kissat_answer = match solver.sat() {
+        Some(_) => CheckerAnswer::Counterexample,
+        None => CheckerAnswer::Unknown,
+    };
+
+    println!("kissat search finished in {:?}", kissat_search.elapsed());
+
+    if kissat_answer != cadical_answer {
+        panic!("solvers disagreed!")
+    }
+
+    Ok(cadical_answer)
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
@@ -731,12 +755,12 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
 
         let mut module = crate::fly::parse(source).unwrap();
         let universe = std::collections::HashMap::from([
-            ("node".to_string(), 1),
-            ("quorum".to_string(), 1),
-            ("value".to_string(), 1),
+            ("node".to_string(), 2),
+            ("quorum".to_string(), 2),
+            ("value".to_string(), 2),
         ]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
 
         Ok(())
     }
