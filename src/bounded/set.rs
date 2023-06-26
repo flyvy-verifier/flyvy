@@ -1644,11 +1644,11 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         let mut m = crate::fly::parse(source).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
-            ("quorum".to_string(), 1),
-            ("value".to_string(), 1),
+            ("quorum".to_string(), 2),
+            ("value".to_string(), 2),
         ]);
         let target = translate(&mut m, &universe)?;
-        let output = interpret(&target, Some(1), TraceCompression::No);
+        let output = interpret(&target, Some(10), TraceCompression::No);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
