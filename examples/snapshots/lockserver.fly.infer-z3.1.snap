@@ -1,6 +1,6 @@
 ---
 source: tests/test_examples.rs
-description: "--name=infer-z3.1 -- infer qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 examples/lockserver.fly"
+description: "--name=infer-z3.1 -- infer qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 --gradual-advance examples/lockserver.fly"
 expression: combined_stdout_stderr
 ---
 proof {
@@ -21,7 +21,6 @@ Fixpoint SAFE!
 Fixpoint size = 12
 Fixpoint runtime = ###s
 Covers 9 / 9 of handwritten invariant.
-0 out of 12 lemmas are trivial.
 
 ======== STDERR: ===========
 
