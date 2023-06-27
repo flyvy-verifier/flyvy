@@ -9,13 +9,11 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
 
-/// Holds an ordering of all (relation, elements) pairs
-#[allow(dead_code)]
+/// Holds an ordering of all variables, as well as other context
 struct Context<'a> {
-    signature: &'a Signature,
     universe: &'a Universe,
-    indices: HashMap<&'a str, HashMap<Vec<usize>, usize>>,
-    indices_flat_len: usize,
+    indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
+    mutables: usize,
     vars: usize,
 }
 
@@ -24,7 +22,11 @@ struct Variable(usize);
 
 impl Context<'_> {
     fn new<'a>(signature: &'a Signature, universe: &'a Universe, depth: usize) -> Context<'a> {
-        let order = signature.relations.iter().flat_map(|relation| {
+        let (mutable, immutable): (Vec<_>, Vec<_>) = signature
+            .relations
+            .iter()
+            .partition(|relation| relation.mutable);
+        let elements = |relation: &&'a RelationDecl| {
             if relation.args.is_empty() {
                 vec![(relation.name.as_str(), (vec![]))]
             } else {
@@ -37,26 +39,38 @@ impl Context<'_> {
                     .map(|element| (relation.name.as_str(), element))
                     .collect()
             }
-        });
+        };
 
-        let mut indices_flat_len = 0;
         let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
-        for (i, (r, e)) in order.enumerate() {
-            indices_flat_len += 1;
-            indices.entry(r).or_default().insert(e, i);
+
+        let mut mutables = 0;
+        for (i, (r, e)) in mutable.iter().flat_map(elements).enumerate() {
+            mutables += 1;
+            indices.entry(r).or_default().insert(e, (i, true));
+        }
+        let mut immutables = 0;
+        for (i, (r, e)) in immutable.iter().flat_map(elements).enumerate() {
+            immutables += 1;
+            indices
+                .entry(r)
+                .or_default()
+                .insert(e, (mutables * (depth + 1) + i, false));
         }
 
         Context {
-            signature,
             universe,
             indices,
-            indices_flat_len,
-            vars: indices_flat_len * (depth + 1),
+            mutables,
+            vars: mutables * (depth + 1) + immutables,
         }
     }
 
-    fn get_var(&self, index: usize, primes: usize) -> Variable {
-        Variable(index + primes * self.indices_flat_len)
+    fn get_var(&self, relation: &str, elements: &[usize], primes: usize) -> Variable {
+        let (mut i, mutable) = self.indices[relation][elements];
+        if mutable {
+            i += primes * self.mutables;
+        }
+        Variable(i)
     }
 
     fn new_var(&mut self) -> Variable {
@@ -297,7 +311,7 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
 // true is empty And; false is empty Or
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
-    Var { index: usize, primes: usize },
+    Var(String, Vec<usize>, usize),
     And(Vec<Ast>),
     Or(Vec<Ast>),
     Not(Box<Ast>),
@@ -334,10 +348,7 @@ impl Ast {
 
     fn prime(self, depth: usize) -> Ast {
         match self {
-            Ast::Var { index, primes } => Ast::Var {
-                index,
-                primes: primes + depth,
-            },
+            Ast::Var(relation, elements, primes) => Ast::Var(relation, elements, primes + depth),
             Ast::And(vec) => Ast::And(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
             Ast::Or(vec) => Ast::Or(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
             Ast::Not(ast) => Ast::Not(Box::new(ast.prime(depth))),
@@ -356,13 +367,11 @@ fn term_to_ast(
     let ast: Ast = match term {
         Term::Literal(true) => Ast::And(vec![]),
         Term::Literal(false) => Ast::Or(vec![]),
-        Term::App(relation, primes, args) => {
-            let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::Var {
-                index: context.indices[relation.as_str()][&args],
-                primes: *primes,
-            }
-        }
+        Term::App(relation, primes, args) => Ast::Var(
+            relation.to_string(),
+            args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
+            *primes,
+        ),
         Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
         Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
         Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
@@ -475,7 +484,7 @@ fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
     fn inner(ast: &Ast, context: &mut Context, out: &mut Cnf) -> Variable {
         let mut go = |ast| inner(ast, context, out);
         match ast {
-            &Ast::Var { index, primes } => context.get_var(index, primes),
+            Ast::Var(relation, elements, primes) => context.get_var(relation, elements, *primes),
             Ast::And(vec) => {
                 let olds: Vec<_> = vec.iter().map(go).collect();
                 let new = context.new_var();
