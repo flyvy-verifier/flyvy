@@ -11,13 +11,11 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 /// Holds an ordering of all (relation, elements) pairs
-#[allow(dead_code)]
 struct Context<'a> {
-    signature: &'a Signature,
     universe: &'a Universe,
 
-    len: usize,
-    idxs: HashMap<&'a str, HashMap<Vec<usize>, usize>>,
+    mutables: usize,
+    indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
 
     bdds: BddVariableSet,
     vars: Vec<BddVariable>,
@@ -25,7 +23,11 @@ struct Context<'a> {
 
 impl Context<'_> {
     fn new<'a>(signature: &'a Signature, universe: &'a Universe) -> Context<'a> {
-        let order = signature.relations.iter().flat_map(|relation| {
+        let (mutable, immutable): (Vec<_>, Vec<_>) = signature
+            .relations
+            .iter()
+            .partition(|relation| relation.mutable);
+        let elements = |relation: &&'a RelationDecl| {
             if relation.args.is_empty() {
                 vec![(relation.name.as_str(), (vec![]))]
             } else {
@@ -38,31 +40,42 @@ impl Context<'_> {
                     .map(|element| (relation.name.as_str(), element))
                     .collect()
             }
-        });
+        };
 
-        let mut len = 0;
-        let mut idxs: HashMap<_, HashMap<_, _>> = HashMap::new();
-        for (i, (r, e)) in order.enumerate() {
-            len += 1;
-            idxs.entry(r).or_default().insert(e, i);
+        let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
+
+        let mut mutables = 0;
+        for (i, (r, e)) in mutable.iter().flat_map(elements).enumerate() {
+            mutables += 1;
+            indices.entry(r).or_default().insert(e, (i, true));
+        }
+        let mut immutables = 0;
+        for (i, (r, e)) in immutable.iter().flat_map(elements).enumerate() {
+            immutables += 1;
+            indices
+                .entry(r)
+                .or_default()
+                .insert(e, (mutables * 2 + i, false));
         }
 
-        let bdds = BddVariableSet::new_anonymous((len * 2).try_into().unwrap());
+        let bdds = BddVariableSet::new_anonymous((mutables * 2 + immutables).try_into().unwrap());
         let vars = bdds.variables();
 
         Context {
-            signature,
             universe,
-            len,
-            idxs,
+            mutables,
+            indices,
             bdds,
             vars,
         }
     }
 
     fn get(&self, relation: &str, element: &[usize], prime: bool) -> Bdd {
-        self.bdds
-            .mk_var(self.vars[self.idxs[relation][element] + if prime { self.len } else { 0 }])
+        let (mut i, mutable) = self.indices[relation][element];
+        if mutable && prime {
+            i += self.mutables;
+        }
+        self.bdds.mk_var(self.vars[i])
     }
 
     fn mk_bool(&self, value: bool) -> Bdd {
@@ -223,11 +236,11 @@ pub fn check(
             &current,
             &tr,
             op_function::and,
-            &context.vars[0..context.len],
+            &context.vars[0..context.mutables],
         );
-        for i in 0..context.len {
+        for i in 0..context.mutables {
             unsafe {
-                current.rename_variable(context.vars[i + context.len], context.vars[i]);
+                current.rename_variable(context.vars[i + context.mutables], context.vars[i]);
             }
         }
 
