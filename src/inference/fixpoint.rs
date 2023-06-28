@@ -52,15 +52,6 @@ fn invariant_cover(
     (covered, proof.invariants.len())
 }
 
-/// Check how many of the given lemmas are trivial, i.e. valid given the axioms.
-#[allow(dead_code)]
-fn count_trivial(conf: &SolverConf, fo: &FOModule, lemmas: &[Term]) -> usize {
-    lemmas
-        .par_iter()
-        .filter(|t| fo.implication_cex(conf, &[], t).is_none())
-        .count()
-}
-
 pub fn fixpoint_single<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
 where
     O: OrderSubsumption<Base = B>,
@@ -130,12 +121,10 @@ where
     }
 
     let (covered, size) = invariant_cover(m, conf, &fo, &proof);
-    // let trivial = count_trivial(conf, &fo, &proof);
 
     println!("Fixpoint size = {}", proof.len());
     println!("Fixpoint runtime = {:.2}s", total_time);
     println!("Covers {covered} / {size} of handwritten invariant.");
-    // println!("{trivial} out of {} lemmas are trivial.", proof.len());
 }
 
 pub fn fixpoint_multi<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
@@ -207,12 +196,10 @@ where
         }
 
         let (covered, size) = invariant_cover(m, conf, &fo, &proof);
-        // let trivial = count_trivial(conf, &fo, &proof);
 
         println!("    Fixpoint size = {}", proof.len());
         println!("    Fixpoint runtime = {:.2}s", total_time);
         println!("    Covers {covered} / {size} of handwritten invariant.");
-        // println!("    {trivial} out of {} lemmas are trivial.", proof.len());
     }
 
     println!();
