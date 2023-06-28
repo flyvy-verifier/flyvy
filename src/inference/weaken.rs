@@ -491,11 +491,8 @@ where
         self.by_id.values().map(|o| o.to_base()).collect_vec()
     }
 
-    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
-        self.by_id
-            .values()
-            .map(|body| (self.prefix.clone(), body))
-            .collect_vec()
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
+        self.by_id.values().map(|body| (self.prefix.clone(), body))
     }
 }
 
@@ -567,12 +564,15 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
         self.sets
             .iter()
             .sorted_by_key(|set| set.prefix.existentials())
-            .flat_map(|set| set.as_vec())
-            .collect_vec()
+            .flat_map(|set| set.as_iter())
+    }
+
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+        self.as_iter().collect_vec()
     }
 
     pub fn minimized(&self) -> LemmaSet<O, L, B> {

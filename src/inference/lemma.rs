@@ -1040,9 +1040,9 @@ where
             for id in &weakened_parents {
                 self.remove_lemma(id)
             }
-            for (prefix, body) in new_lemmas.as_vec() {
+            for (prefix, body) in new_lemmas.as_iter() {
                 if !self.lemmas.subsumes(prefix.as_ref(), body) {
-                    self.lemmas.insert(prefix.clone(), body.clone());
+                    self.lemmas.insert(prefix, body.clone());
                 }
             }
             return advanced;
