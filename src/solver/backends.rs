@@ -8,7 +8,6 @@
 use std::{
     collections::{HashMap, HashSet},
     iter::zip,
-    time::Instant,
 };
 
 use crate::{
@@ -156,7 +155,6 @@ impl Backend for &GenericBackend {
             if indicators.contains(symbol) {
                 continue;
             }
-            let start = Instant::now();
             let ModelSymbol {
                 binders,
                 body,
@@ -218,10 +216,6 @@ impl Backend for &GenericBackend {
             part_interp
                 .interps
                 .insert(symbol.clone(), (interp, ret_sort.clone()));
-            log::debug!(
-                "evaluated {symbol} in {:.1}s",
-                Instant::now().duration_since(start).as_secs_f64()
-            )
         }
 
         let interp = part_interp
