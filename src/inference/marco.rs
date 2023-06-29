@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 #[allow(dead_code)]
-pub fn marco<const N: usize, F: Fn([bool; N]) -> bool + 'static>(func: F) -> MarcoIterator<N> {
+pub fn marco<'a, const N: usize>(func: impl Fn([bool; N]) -> bool + 'a) -> MarcoIterator<'a, N> {
     MarcoIterator {
         func: Box::new(func),
         map: vec![],
     }
 }
 
-pub struct MarcoIterator<const N: usize> {
-    func: Box<dyn Fn([bool; N]) -> bool>,
+pub struct MarcoIterator<'a, const N: usize> {
+    func: Box<dyn Fn([bool; N]) -> bool + 'a>,
     map: Cnf,
 }
 
@@ -26,7 +26,7 @@ impl MarcoLiteral {
     }
 }
 
-impl<const N: usize> Iterator for MarcoIterator<N> {
+impl<const N: usize> Iterator for MarcoIterator<'_, N> {
     type Item = [bool; N];
     fn next(&mut self) -> Option<[bool; N]> {
         loop {
