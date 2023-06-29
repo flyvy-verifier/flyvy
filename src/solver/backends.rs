@@ -342,7 +342,9 @@ mod tests {
         assumptions.insert(ind, true);
         let resp = solver.check_sat(assumptions).unwrap();
         assert!(resp == SatResp::Sat);
-        let model = &solver.get_minimal_model()[0];
+        let model = &solver
+            .get_minimal_model()
+            .expect("solver error while minimizing")[0];
         assert_eq!(
             model.eval(&parser::term("p(x)")),
             1,

@@ -25,7 +25,9 @@ fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryE
     match resp {
         SatResp::Sat { .. } => {
             // TODO: should be configurable whether to minimize or not
-            let states = solver.get_minimal_model();
+            let states = solver
+                .get_minimal_model()
+                .expect("solver error while minimizing");
             // TODO: need a way to report traces rather than just single models
             let s0 = states.into_iter().next().unwrap();
             Err(QueryError::Sat(s0))

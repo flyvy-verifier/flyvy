@@ -172,7 +172,10 @@ impl FOModule {
                 let resp = solver.check_sat(assumptions).expect("error in solver");
                 match resp {
                     SatResp::Sat => {
-                        let mut states = solver.get_minimal_model().into_iter();
+                        let mut states = solver
+                            .get_minimal_model()
+                            .expect("solver error while minimizing")
+                            .into_iter();
                         let pre = states.next().unwrap();
                         let post = states.next().unwrap();
                         assert_eq!(states.next(), None);
@@ -242,7 +245,9 @@ impl FOModule {
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
                 SatResp::Sat => {
-                    let mut states = solver.get_minimal_model();
+                    let mut states = solver
+                        .get_minimal_model()
+                        .expect("solver error while minimizing");
                     assert_eq!(states.len(), 1);
 
                     if let Some(i) = (0..hyp.len())
