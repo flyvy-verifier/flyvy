@@ -26,24 +26,29 @@ impl MarcoLiteral {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MssOrMus<const N: usize> {
+    Mss([bool; N]),
+    Mus([bool; N]),
+}
+
 impl<const N: usize> Iterator for MarcoIterator<'_, N> {
-    type Item = [bool; N];
-    fn next(&mut self) -> Option<[bool; N]> {
-        loop {
-            match is_sat(&self.map) {
-                None => return None,
-                Some(seed) => match (self.func)(seed) {
-                    true => {
-                        let mss = grow(seed, &self.func);
-                        self.map.push(block_down(mss));
-                        return Some(mss);
-                    }
-                    false => {
-                        let mus = shrink(seed, &self.func);
-                        self.map.push(block_up(mus));
-                    }
-                },
-            }
+    type Item = MssOrMus<N>;
+    fn next(&mut self) -> Option<MssOrMus<N>> {
+        match is_sat(&self.map) {
+            None => None,
+            Some(seed) => match (self.func)(seed) {
+                true => {
+                    let mss = grow(seed, &self.func);
+                    self.map.push(block_down(mss));
+                    Some(MssOrMus::Mss(mss))
+                }
+                false => {
+                    let mus = shrink(seed, &self.func);
+                    self.map.push(block_up(mus));
+                    Some(MssOrMus::Mus(mus))
+                }
+            },
         }
     }
 }
@@ -138,10 +143,13 @@ mod tests {
         }
 
         let expected = HashSet::from([
-            [false, true, true, false, true],
-            [true, false, true, false, true],
-            [true, false, false, true, true],
-            [false, true, false, true, false],
+            MssOrMus::Mss([false, true, true, false, true]),
+            MssOrMus::Mss([true, false, true, false, true]),
+            MssOrMus::Mss([true, false, false, true, true]),
+            MssOrMus::Mss([false, true, false, true, false]),
+            MssOrMus::Mus([false, false, true, true, false]),
+            MssOrMus::Mus([false, true, false, true, true]),
+            MssOrMus::Mus([true, true, false, false, false]),
         ]);
         let found: HashSet<_> = marco(f).collect();
         assert_eq!(expected, found);
