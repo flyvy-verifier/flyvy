@@ -280,7 +280,7 @@ enum Command {
         /// Depth to run the checker to
         depth: usize,
     },
-    BoundedCheck {
+    BddCheck {
         /// File name for a .fly file
         file: String,
         /// Depth to run the checker to
@@ -307,7 +307,7 @@ impl Command {
             Command::Inline { file, .. } => file,
             Command::SatCheck { file, .. } => file,
             Command::SetCheck { file, .. } => file,
-            Command::BoundedCheck { file, .. } => file,
+            Command::BddCheck { file, .. } => file,
         }
     }
 }
@@ -610,9 +610,10 @@ impl App {
                     Ok(crate::bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
                     }
+                    Err(error) => eprintln!("{}", error),
                 }
             }
-            Command::BoundedCheck { depth, .. } => {
+            Command::BddCheck { depth, .. } => {
                 let mut universe = HashMap::new();
                 let stdin = std::io::stdin();
                 for sort in &m.signature.sorts {

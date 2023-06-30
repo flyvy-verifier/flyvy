@@ -78,6 +78,19 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
+    fn print_counterexample(&self, valuation: BddValuation) {
+        println!("found counterexample!");
+        for (relation, map) in &self.indices {
+            print!("{}: {{", relation);
+            for (elements, (i, _mutable)) in map {
+                if valuation.value(self.vars[*i]) {
+                    print!("{:?}, ", elements);
+                }
+            }
+            println!("}}");
+        }
+    }
+
     fn mk_bool(&self, value: bool) -> Bdd {
         match value {
             true => self.bdds.mk_true(),
@@ -100,7 +113,7 @@ impl Context<'_> {
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample(BddValuation),
+    Counterexample,
     /// The checker did not find a counterexample
     Unknown,
 }
@@ -224,12 +237,13 @@ pub fn check(
     let not_safe = translate(safes)?.not();
 
     println!("translation finished in {:?}", time.elapsed());
-    println!("starting iteration...");
+    println!("starting search...");
     let time = std::time::Instant::now();
 
     let mut current = init;
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        return Ok(CheckerAnswer::Counterexample(valuation));
+        context.print_counterexample(valuation);
+        return Ok(CheckerAnswer::Counterexample);
     }
     for _ in 0..depth {
         current = Bdd::binary_op_with_exists(
@@ -245,11 +259,12 @@ pub fn check(
         }
 
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            return Ok(CheckerAnswer::Counterexample(valuation));
+            context.print_counterexample(valuation);
+            return Ok(CheckerAnswer::Counterexample);
         }
     }
 
-    println!("iteration finished in {:?}", time.elapsed());
+    println!("search finished in {:?}", time.elapsed());
 
     Ok(CheckerAnswer::Unknown)
 }
@@ -417,7 +432,7 @@ assert always x
 
         assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
         assert_eq!(
-            CheckerAnswer::Counterexample(BddValuation::new(vec![false, false])),
+            CheckerAnswer::Counterexample,
             check(&mut module, &universe, 1)?
         );
 
@@ -552,7 +567,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&mut module, &universe, 12)?;
-        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
+        assert_eq!(CheckerAnswer::Counterexample, bug);
 
         let too_short = check(&mut module, &universe, 11)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
