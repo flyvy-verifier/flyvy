@@ -274,7 +274,7 @@ enum Command {
         #[arg(long)]
         bound: Vec<String>,
     },
-    BoundedCheck {
+    SatCheck {
         /// File name for a .fly file
         file: String,
         /// Depth to run the checker to
@@ -299,8 +299,8 @@ impl Command {
             Command::UpdrVerify(VerifyArgs { file, .. }) => file,
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
+            Command::SatCheck { file, .. } => file,
             Command::SetCheck { file, .. } => file,
-            Command::BoundedCheck { file, .. } => file,
         }
     }
 }
@@ -576,7 +576,7 @@ impl App {
                 let mut updr = Updr::new(conf);
                 let _result = updr.search(&m);
             }
-            Command::BoundedCheck { depth, .. } => {
+            Command::SatCheck { depth, .. } => {
                 let mut universe = HashMap::new();
                 let stdin = std::io::stdin();
                 for sort in &m.signature.sorts {

@@ -77,6 +77,19 @@ impl Context<'_> {
         self.vars += 1;
         Variable(self.vars - 1)
     }
+
+    fn print_counterexample(&self, solver: cadical::Solver) {
+        println!("found counterexample!");
+        for (relation, map) in &self.indices {
+            print!("{}: {{", relation);
+            for (elements, (i, _mutable)) in map {
+                if solver.value(*i as i32 + 1) == Some(true) {
+                    print!("{:?}, ", elements);
+                }
+            }
+            println!("}}");
+        }
+    }
 }
 
 #[allow(missing_docs)]
@@ -235,7 +248,10 @@ pub fn check(
     let cadical_answer = match solver.solve() {
         None => return Err(CheckerError::SolverFailed),
         Some(false) => CheckerAnswer::Unknown,
-        Some(true) => CheckerAnswer::Counterexample,
+        Some(true) => {
+            context.print_counterexample(solver);
+            CheckerAnswer::Counterexample
+        }
     };
 
     println!("cadical search finished in {:?}", cadical_search.elapsed());
