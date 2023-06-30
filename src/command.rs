@@ -259,7 +259,7 @@ enum Command {
         /// File name for a .fly file
         file: String,
     },
-    BoundedCheck {
+    SetCheck {
         /// File name for a .fly file
         file: String,
         /// Maximum number of transitions to consider during model checking
@@ -290,7 +290,7 @@ impl Command {
             Command::Infer(InferArgs { infer_cmd, .. }) => infer_cmd.file(),
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
-            Command::BoundedCheck { file, .. } => file,
+            Command::SetCheck { file, .. } => file,
         }
     }
 }
@@ -521,7 +521,7 @@ impl App {
                 m.inline_defs();
                 println!("{}", printer::fmt(&m));
             }
-            Command::BoundedCheck {
+            Command::SetCheck {
                 depth,
                 compress_traces,
                 bound,
