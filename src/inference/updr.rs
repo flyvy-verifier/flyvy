@@ -244,14 +244,93 @@ impl Updr {
         frame_index: usize,
         module: &FOModule,
     ) -> CexOrCore {
-        // let as_term: Term = match term_or_model {
-        //     TermOrModel::Term(t) => t.clone(),
-        //     TermOrModel::Model(m) => m.to_term(),
-        // };
-        // println!("pred for {}", as_term);
+        // run UPDR
         let prev_frame = &self.frames[frame_index];
-        // if let Some((prev, curr)) =
-        return module.get_pred(&self.solver_conf, &prev_frame.terms, term_or_model);
+        let out = module.get_pred(&self.solver_conf, &prev_frame.terms, term_or_model);
+
+        // run MARCO on cores without affecting UPDR
+        if let CexOrCore::Core(out) = &out {
+            let as_term: Term = match term_or_model {
+                TermOrModel::Term(t) => t.clone(),
+                TermOrModel::Model(m) => m.to_term(),
+            };
+            if let Term::Quantified {
+                quantifier,
+                binders,
+                body,
+            } = &as_term
+            {
+                if *quantifier == Quantifier::Exists {
+                    if let Term::NAryOp(NOp::And, conj) = &**body {
+                        let func = |array: [bool; 100]| {
+                            // unused array elements must be false
+                            assert!(array.len() >= conj.len());
+                            for b in array.iter().skip(conj.len()) {
+                                if *b {
+                                    return false;
+                                }
+                            }
+                            // only enable terms in conj that match array
+                            let conj: Vec<Term> = (0..conj.len())
+                                .filter(|i| array[*i])
+                                .map(|i| conj[i].clone())
+                                .collect();
+                            let term = Term::Quantified {
+                                quantifier: Quantifier::Exists,
+                                binders: binders.clone(),
+                                body: Box::new(Term::NAryOp(NOp::And, conj)),
+                            };
+                            let term = TermOrModel::Term(term);
+                            let out = module.get_pred(&self.solver_conf, &prev_frame.terms, &term);
+                            matches!(out, CexOrCore::Core(_))
+                        };
+
+                        use crate::inference::marco::*;
+                        // we use !func because func is monotone in the wrong direction
+                        let results: Vec<_> = marco(|array| !func(array))
+                            // therefore we also want MUS instead of MSS
+                            .filter_map(|mss_or_mus| match mss_or_mus {
+                                MssOrMus::Mus(array) => Some(array),
+                                MssOrMus::Mss(_) => None,
+                            })
+                            // then we map each array to a difference from the unsat core
+                            .map(|array| {
+                                (
+                                    (0..conj.len())
+                                        .filter(move |i| array[*i] && !out.contains_key(&conj[*i]))
+                                        .collect::<Vec<_>>()
+                                        .len(),
+                                    (0..conj.len())
+                                        .filter(move |i| !array[*i] && out.contains_key(&conj[*i]))
+                                        .collect::<Vec<_>>()
+                                        .len(),
+                                )
+                            })
+                            .collect();
+                        if results.len() == 1 && results[0] == (0, 0) {
+                            println!("\nMARCO: only one core, and was identical to unsat core\n");
+                        } else {
+                            println!("\nMARCO: {} cores", results.len());
+                            for (x, y) in results {
+                                println!("terms in MARCO but not unsat: {}", x);
+                                println!("terms in unsat but not MARCO: {}\n", y);
+                            }
+                        }
+                    } else {
+                        panic!("MARCO: bad diagram");
+                    }
+                } else {
+                    panic!("MARCO: bad diagram");
+                }
+            } else {
+                panic!("MARCO: bad diagram");
+            }
+        } else {
+            println!("MARCO: not run due to counterexample");
+        }
+
+        // return the actual UPDR output
+        out
     }
 
     pub fn search(&mut self, m: &Module) -> Option<Frame> {
