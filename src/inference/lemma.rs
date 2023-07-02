@@ -906,6 +906,7 @@ where
 
         let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
         let cancel = RwLock::new(false);
+        let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
         let total_unsat = Mutex::new(0_usize);
@@ -945,10 +946,15 @@ where
                         new_cores_vec.push((prefix, body.clone(), hashmap::set_from_std(core)));
                     }
                     TransCexResult::Cancelled => (),
+                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
                 }
 
                 None
             });
+
+        if res.is_none() && unknown.into_inner().unwrap() {
+            panic!("SMT queries got 'unknown' and no SAT results.")
+        }
 
         log::info!(
             "    SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
@@ -1263,6 +1269,7 @@ where
     pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
         let cancel = RwLock::new(false);
+        let unknown = Mutex::new(false);
         log::info!("Getting weakest lemmas...");
         let weakest = self.weaken_set.as_vec();
         log::info!("Finding CTI...");
@@ -1282,10 +1289,15 @@ where
                         new_inductive_vec.push((prefix, body));
                     }
                     TransCexResult::Cancelled => (),
+                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
                 }
 
                 None
             });
+
+        if cti.is_none() && unknown.into_inner().unwrap() {
+            panic!("SMT queries got 'unknown' and no SAT results.")
+        }
 
         log::info!("Saving inductive lemmas...");
         for (prefix, body) in new_inductive.into_inner().unwrap() {

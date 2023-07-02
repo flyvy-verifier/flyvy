@@ -58,7 +58,12 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual_smt);
+    let fo = FOModule::new(
+        m,
+        infer_cfg.disj,
+        infer_cfg.gradual_smt,
+        infer_cfg.minimal_smt,
+    );
     let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg
@@ -133,7 +138,12 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let fo = FOModule::new(m, infer_cfg.disj, infer_cfg.gradual_smt);
+    let fo = FOModule::new(
+        m,
+        infer_cfg.disj,
+        infer_cfg.gradual_smt,
+        infer_cfg.minimal_smt,
+    );
     let atoms = Arc::new(Atoms::new(&infer_cfg, conf, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let domains: Vec<Domain<L>> = infer_cfg

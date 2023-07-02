@@ -153,6 +153,10 @@ struct InferenceConfigArgs {
     gradual_smt: bool,
 
     #[arg(long)]
+    /// Perform SMT queries gradually and minimally
+    minimal_smt: bool,
+
+    #[arg(long)]
     /// Advance the prestate frontier gradually
     gradual_advance: bool,
 
@@ -194,7 +198,8 @@ impl InferenceConfigArgs {
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
             disj: self.disj,
-            gradual_smt: self.gradual_smt,
+            gradual_smt: self.gradual_smt || self.minimal_smt,
+            minimal_smt: self.minimal_smt,
             gradual_advance: self.gradual_advance,
             indiv: self.indiv,
             extend_width: self.extend_width,
