@@ -873,24 +873,48 @@ where
         lemmas: &mut WeakenLemmaSet<O, L, B>,
     ) {
         let (width, depth) = self.extend.unwrap();
-        while let Some(state) = self.ctis.pop_front() {
-            log::info!(
-                "[{}] Extending CTI trace... (remaining CTI's = {})",
+        while !self.ctis.is_empty() {
+            let mut new_ctis = VecDeque::new();
+            log::debug!(
+                "[{}] Extending traces from {} CTI's...",
                 lemmas.len(),
                 self.ctis.len()
             );
-            let samples = fo.simulate_from(conf, &state, width, depth);
-            log::info!(
-                "[{}] Weakening with {} samples...",
+            let samples: Vec<Model> = self
+                .ctis
+                .par_iter()
+                .enumerate()
+                .flat_map_iter(|(id, state)| {
+                    log::debug!("[{}] Extending CTI trace #{id}...", lemmas.len());
+                    let samples = fo.simulate_from(conf, &state, width, depth);
+                    log::debug!(
+                        "[{}] Found {} simulated samples from CTI #{id}...",
+                        lemmas.len(),
+                        samples.len(),
+                    );
+
+                    samples
+                })
+                .collect();
+
+            let samples_len = samples.len();
+            log::debug!(
+                "[{}] Found a total of {samples_len} simulated samples from {} CTI's...",
                 lemmas.len(),
-                samples.len()
+                self.ctis.len(),
             );
-            for sample in samples {
-                if lemmas.weaken(&sample) {
-                    log::info!("[{}] Weakened.", lemmas.len());
-                    self.ctis.push_back(sample);
-                }
+            let mut idx = 0;
+            while let Some(i) = (idx..samples.len())
+                .into_par_iter()
+                .find_first(|i| lemmas.unsat(&samples[*i]))
+            {
+                assert!(lemmas.weaken(&samples[i]));
+                log::debug!("[{}] Weakened ({} / {samples_len}).", lemmas.len(), i + 1);
+                new_ctis.push_back(samples[i].clone());
+                idx = i + 1;
             }
+
+            self.ctis = new_ctis;
         }
     }
 

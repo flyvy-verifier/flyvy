@@ -575,6 +575,12 @@ where
         self.as_iter().collect_vec()
     }
 
+    pub fn unsat(&self, model: &Model) -> bool {
+        self.sets
+            .par_iter()
+            .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
+    }
+
     pub fn minimized(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> =
             LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
