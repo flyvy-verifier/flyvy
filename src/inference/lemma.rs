@@ -886,7 +886,7 @@ where
                 .enumerate()
                 .flat_map_iter(|(id, state)| {
                     log::debug!("[{}] Extending CTI trace #{id}...", lemmas.len());
-                    let samples = fo.simulate_from(conf, &state, width, depth);
+                    let samples = fo.simulate_from(conf, state, width, depth);
                     log::debug!(
                         "[{}] Found {} simulated samples from CTI #{id}...",
                         lemmas.len(),

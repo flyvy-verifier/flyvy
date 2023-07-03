@@ -237,6 +237,10 @@ struct InferArgs {
     /// Print timing statistics
     time: bool,
 
+    #[arg(long)]
+    /// Don't print the found invariant (for testing)
+    no_print_invariant: bool,
+
     #[command(subcommand)]
     infer_cmd: InferCommand,
 }
@@ -469,7 +473,7 @@ impl App {
                         >(infer_cfg, &conf, &m),
                     }
                 } else {
-                    match infer_cfg.qf_body {
+                    let fixpoint = match infer_cfg.qf_body {
                         QfBody::CNF => fixpoint_single::<
                             subsume::Cnf<atoms::Literal>,
                             lemma::LemmaCnf,
@@ -485,6 +489,11 @@ impl App {
                             lemma::LemmaPDnfNaive,
                             Vec<Vec<atoms::Literal>>,
                         >(infer_cfg, &conf, &m),
+                    };
+                    if args.no_print_invariant {
+                        fixpoint.test_report();
+                    } else {
+                        fixpoint.report();
                     }
                 }
                 if args.time {

@@ -5,6 +5,7 @@
 //! lemma domain.
 
 use std::sync::Arc;
+use std::time::Duration;
 use std::{collections::VecDeque, fmt::Debug};
 
 use itertools::Itertools;
@@ -52,7 +53,20 @@ fn invariant_cover(
     (covered, proof.invariants.len())
 }
 
-pub fn fixpoint_single<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
+pub struct FoundFixpoint {
+    pub proof: Vec<Term>,
+    pub safe: bool,
+    pub time_taken: Duration,
+    // How much of fixpoint covers handwritten invariant
+    pub covered_handwritten: usize,
+    pub size_handwritten: usize,
+}
+
+pub fn fixpoint_single<O, L, B>(
+    infer_cfg: InferenceConfig,
+    conf: &SolverConf,
+    m: &Module,
+) -> FoundFixpoint
 where
     O: OrderSubsumption<Base = B>,
     L: LemmaQf<Base = B>,
@@ -110,26 +124,55 @@ where
     } else {
         run_fixpoint::<O, L, B>(infer_cfg, conf, &fo, unrestricted, domains, extend).unwrap()
     };
-    let total_time = start.elapsed().as_secs_f32();
+    let time_taken = start.elapsed();
     let proof = fixpoint.to_terms();
-
-    println!("proof {{");
-    for lemma in &proof {
-        println!("  invariant {lemma}");
-    }
-    println!("}}");
-
-    if fo.trans_safe_cex(conf, &proof).is_none() {
-        println!("Fixpoint SAFE!");
-    } else {
-        println!("Fixpoint UNSAFE!");
-    }
-
+    let safe = fo.trans_safe_cex(conf, &proof).is_none();
     let (covered, size) = invariant_cover(m, conf, &fo, &proof);
 
-    println!("Fixpoint size = {}", proof.len());
-    println!("Fixpoint runtime = {:.2}s", total_time);
-    println!("Covers {covered} / {size} of handwritten invariant.");
+    FoundFixpoint {
+        proof,
+        safe,
+        time_taken,
+        covered_handwritten: covered,
+        size_handwritten: size,
+    }
+}
+
+impl FoundFixpoint {
+    pub fn report(&self) {
+        println!("proof {{");
+        for lemma in &self.proof {
+            println!("  invariant {lemma}");
+        }
+        println!("}}");
+
+        if self.safe {
+            println!("Fixpoint SAFE!");
+        } else {
+            println!("Fixpoint UNSAFE!");
+        }
+
+        println!("Fixpoint size = {}", self.proof.len());
+        println!("Fixpoint runtime = {:.2}s", self.time_taken.as_secs_f64());
+        println!(
+            "Covers {} / {} of handwritten invariant.",
+            self.covered_handwritten, self.size_handwritten
+        );
+    }
+
+    pub fn test_report(&self) {
+        if self.safe {
+            println!("Fixpoint SAFE!");
+        } else {
+            println!("Fixpoint UNSAFE!");
+        }
+
+        println!("Fixpoint size = {}", self.proof.len());
+        println!(
+            "Covers {} / {} of handwritten invariant.",
+            self.covered_handwritten, self.size_handwritten
+        );
+    }
 }
 
 pub fn fixpoint_multi<O, L, B>(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module)
