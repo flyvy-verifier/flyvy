@@ -9,35 +9,35 @@ trace = ["peg/trace"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.1.8", features = ["derive"] }
+clap = { version = "4.3.4", features = ["derive"] }
 codespan-reporting = "0.11.1"
-ena = "0.14.1"
+ena = "0.14.2"
 eyre = "0.6.8"
 fxhash = "0.2.1"
 im = "15.1.0"
 indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
-log = "0.4.17"
+log = "0.4.19"
 nix = { version = "0.26.2", default-features = false, features = ["resource", "process", "signal"] }
 path-slash = "0.2.1"
 peg = "0.8.1"
-pretty_env_logger = "0.4.0"
+pretty_env_logger = "0.5.0"
 rayon = "1.7.0"
-regex = "1.7.1"
-serde = { version = "1.0.154", features = ["derive"] }
-serde_derive = "1.0.154"
-thiserror = "1.0.39"
-walkdir = "2.3.2"
+regex = "1.8.4"
+serde = { version = "1.0.164", features = ["derive"] }
+serde_derive = "1.0.164"
+thiserror = "1.0.40"
+walkdir = "2.3.3"
 
 [dev-dependencies]
-criterion = "0.4.0"
+criterion = "0.5.1"
 env_logger = "0.10.0"
-insta = { version = "1.28.0", features = ["yaml", "redactions"] }
-regex = "1.7.1"
+insta = { version = "1.29.0", features = ["yaml", "redactions"] }
+regex = "1.8.4"
 shell-words = "1.1.0"
 test-log = "0.2.11"
-toml = "0.7.2"
+toml = "0.7.4"
 
 [profile.dev.package.insta]
 opt-level = 3
