@@ -459,7 +459,7 @@ impl FOModule {
     pub fn get_pred(&self, conf: &SolverConf, hyp: &[Term], t: &TermOrModel) -> CexOrCore {
         let as_term: Term = match t {
             TermOrModel::Term(t) => t.clone(),
-            TermOrModel::Model(m) => m.to_term(),
+            TermOrModel::Model(m) => m.to_diagram(),
         };
         assert_eq!(self.transitions.len(), 1);
         if let NAryOp(NOp::Or, _) = self.transitions[0].clone() {

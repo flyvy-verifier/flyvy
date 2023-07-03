@@ -76,7 +76,7 @@ impl Updr {
                     }
                 }
                 TermOrModel::Model(m) => {
-                    // println!("m: {}", m.to_term());
+                    // println!("m: {}", m.to_diagram());
                     if m.eval(&NAryOp(
                         NOp::And,
                         self.frames[found_state.known_absent_until_frame + 1]
@@ -105,7 +105,7 @@ impl Updr {
         }
         // println!(
         //     "counter_example: {}",
-        //     &counter_example.as_ref().unwrap().to_term()
+        //     &counter_example.as_ref().unwrap().to_diagram()
         // );
         let new_state = BackwardsReachableState {
             id: self.backwards_reachable_states.len(),
@@ -145,7 +145,7 @@ impl Updr {
     ) {
         let as_term: Term = match term_or_model {
             TermOrModel::Term(t) => t.clone(),
-            TermOrModel::Model(m) => m.to_term(),
+            TermOrModel::Model(m) => m.to_diagram(),
         };
         // println!("blocking as term: {} at index {}", as_term, frame_index);
         if frame_index == 0
@@ -255,7 +255,7 @@ impl Updr {
                     quantifier,
                     binders,
                     body,
-                } = &model.to_term()
+                } = &model.to_diagram()
                 {
                     if *quantifier == Quantifier::Exists {
                         if let Term::NAryOp(NOp::And, conj) = &**body {
@@ -440,7 +440,7 @@ impl Updr {
                 "term: {} ",
                 match state.term_or_model.clone() {
                     TermOrModel::Term(t) => t,
-                    TermOrModel::Model(m) => m.to_term(),
+                    TermOrModel::Model(m) => m.to_diagram(),
                 }
             );
             println!(

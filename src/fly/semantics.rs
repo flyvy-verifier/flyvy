@@ -316,6 +316,17 @@ impl Model {
 
     /// Represent the model as a term.
     pub fn to_term(&self) -> Term {
+        self.to_term_internal(true)
+    }
+
+    /// Represent the model as a diagram.
+    /// This is the same as `to_term` without the cardinality constraints.
+    pub fn to_diagram(&self) -> Term {
+        self.to_term_internal(false)
+    }
+
+    /// This function is called by `to_term` and `to_diagram`.    
+    fn to_term_internal(&self, include_cardinalities: bool) -> Term {
         let sort_cnt = self.signature.sorts.len();
 
         let mut exists_vars: Vec<Vec<String>> = vec![];
@@ -364,26 +375,28 @@ impl Model {
                     Box::new(terms[i][elem].clone()),
                 ));
             }
-            // Add size constraint for sort i.
-            new_terms.push(Term::Quantified {
-                quantifier: Quantifier::Forall,
-                binders: vec![Binder {
-                    name: univ_vars[i].clone(),
-                    sort: Sort::Id(self.signature.sorts[i].clone()),
-                }],
-                body: Box::new(Term::NAryOp(
-                    NOp::Or,
-                    (0..self.universe[i])
-                        .map(|j| {
-                            Term::BinOp(
-                                BinOp::Equals,
-                                Box::new(Term::Id(univ_vars[i].clone())),
-                                Box::new(Term::Id(exists_vars[i][j].clone())),
-                            )
-                        })
-                        .collect(),
-                )),
-            });
+            if include_cardinalities {
+                // Add size constraint for sort i.
+                new_terms.push(Term::Quantified {
+                    quantifier: Quantifier::Forall,
+                    binders: vec![Binder {
+                        name: univ_vars[i].clone(),
+                        sort: Sort::Id(self.signature.sorts[i].clone()),
+                    }],
+                    body: Box::new(Term::NAryOp(
+                        NOp::Or,
+                        (0..self.universe[i])
+                            .map(|j| {
+                                Term::BinOp(
+                                    BinOp::Equals,
+                                    Box::new(Term::Id(univ_vars[i].clone())),
+                                    Box::new(Term::Id(exists_vars[i][j].clone())),
+                                )
+                            })
+                            .collect(),
+                    )),
+                });
+            }
             // Add the above to the Bool terms.
             terms[sort_cnt].append(&mut new_terms);
         }
