@@ -70,24 +70,48 @@ impl Context<'_> {
         }
     }
 
-    fn get(&self, relation: &str, element: &[usize], prime: bool) -> Bdd {
-        let (mut i, mutable) = self.indices[relation][element];
+    fn get(&self, relation: &str, elements: &[usize], prime: bool) -> Bdd {
+        let (mut i, mutable) = self.indices[relation][elements];
         if mutable && prime {
             i += self.mutables;
         }
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(&self, valuation: BddValuation) {
+    fn print_counterexample(&self, valuation: BddValuation, trace: &[Bdd], tr: &Bdd) {
+        let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
+        valuations.resize(trace.len(), None);
+        *valuations.last_mut().unwrap() = Some(valuation);
+
+        for i in (1..trace.len()).rev() {
+            let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
+                map.iter().map(|(elements, (v, _))| {
+                    let var = self.get(relation, elements, true);
+                    if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
+                        var
+                    } else {
+                        var.not()
+                    }
+                })
+            }));
+            let bdd = self.mk_and([primed, trace[i - 1].clone(), tr.clone()]);
+            valuations[i - 1] = Some(bdd.sat_witness().unwrap());
+        }
+
         println!("found counterexample!");
-        for (relation, map) in &self.indices {
-            print!("{}: {{", relation);
-            for (elements, (i, _mutable)) in map {
-                if valuation.value(self.vars[*i]) {
-                    print!("{:?}, ", elements);
+        for (i, valuation) in valuations.iter().enumerate() {
+            println!("state {}:", i);
+            let valuation = valuation.clone().unwrap();
+            for (relation, map) in &self.indices {
+                print!("{}: {{", relation);
+                for (elements, (i, _mutable)) in map {
+                    if valuation.value(self.vars[*i]) {
+                        print!("{:?}, ", elements);
+                    }
                 }
+                println!("}}");
             }
-            println!("}}");
+            println!();
         }
     }
 
@@ -240,9 +264,11 @@ pub fn check(
     println!("starting search...");
     let time = std::time::Instant::now();
 
+    let mut trace = vec![init.clone()];
+
     let mut current = init;
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(valuation);
+        context.print_counterexample(valuation, &trace, &tr);
         return Ok(CheckerAnswer::Counterexample);
     }
     for _ in 0..depth {
@@ -258,8 +284,9 @@ pub fn check(
             }
         }
 
+        trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(valuation);
+            context.print_counterexample(valuation, &trace, &tr);
             return Ok(CheckerAnswer::Counterexample);
         }
     }
