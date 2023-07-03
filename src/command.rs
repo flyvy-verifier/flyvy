@@ -9,7 +9,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
 
-use crate::bounded::set::{interpret, translate, InterpreterResult};
 use crate::fly::syntax::Signature;
 use crate::inference::atoms;
 use crate::inference::lemma;
@@ -559,15 +558,7 @@ impl App {
                     process::exit(1);
                 }
 
-                match translate(&mut m, &universe) {
-                    Err(e) => eprintln!("{}", e),
-                    Ok(program) => match interpret(&program, depth, compress_traces.into()) {
-                        InterpreterResult::Unknown => println!("no counterexample found"),
-                        InterpreterResult::Counterexample(trace) => {
-                            eprintln!("found counterexample: {:#?}", trace)
-                        }
-                    },
-                }
+                crate::bounded::set::check(&mut m, &universe, depth, compress_traces.into());
             }
         }
     }

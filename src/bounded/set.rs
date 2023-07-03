@@ -11,6 +11,33 @@ use itertools::Itertools;
 use std::collections::{BTreeSet, VecDeque};
 use thiserror::Error;
 
+/// The result of a successful run of the bounded model checker
+#[derive(Debug, PartialEq)]
+pub enum CheckerAnswer {
+    /// The checker found a counterexample
+    Counterexample,
+    /// The checker did not find a counterexample
+    Unknown,
+}
+
+/// Combined entry point to both translate and search the module.
+pub fn check(
+    module: &mut Module,
+    universe: &UniverseBounds,
+    depth: Option<usize>,
+    compress_traces: TraceCompression,
+) {
+    match translate(module, universe) {
+        Err(e) => eprintln!("{}", e),
+        Ok(program) => match interpret(&program, depth, compress_traces) {
+            InterpreterResult::Unknown => println!("no counterexample found"),
+            InterpreterResult::Counterexample(trace) => {
+                eprintln!("found counterexample: {:#?}", trace)
+            }
+        },
+    }
+}
+
 // We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
 // and the bounded model checker is essentially a hashing microbenchmark :)
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
