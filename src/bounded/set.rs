@@ -26,13 +26,20 @@ pub fn check(
     universe: &UniverseBounds,
     depth: Option<usize>,
     compress_traces: TraceCompression,
-) {
+) -> Option<CheckerAnswer> {
     match translate(module, universe) {
-        Err(e) => eprintln!("{}", e),
+        Err(e) => {
+            eprintln!("{}", e);
+            None
+        }
         Ok(program) => match interpret(&program, depth, compress_traces) {
-            InterpreterResult::Unknown => println!("no counterexample found"),
+            InterpreterResult::Unknown => {
+                println!("no counterexample found");
+                Some(CheckerAnswer::Unknown)
+            }
             InterpreterResult::Counterexample(trace) => {
-                eprintln!("found counterexample: {:#?}", trace)
+                println!("found counterexample: {:#?}", trace);
+                Some(CheckerAnswer::Counterexample)
             }
         },
     }
@@ -1679,5 +1686,20 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
+    }
+
+    #[test]
+    fn interpreter_immutability() {
+        let source = "
+immutable r: bool
+assume r
+assert always r
+        ";
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = std::collections::HashMap::new();
+        assert_eq!(
+            Some(CheckerAnswer::Unknown),
+            check(&mut module, &universe, Some(10), true.into())
+        );
     }
 }
