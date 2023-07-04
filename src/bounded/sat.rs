@@ -78,16 +78,24 @@ impl Context<'_> {
         Variable(self.vars - 1)
     }
 
-    fn print_counterexample(&self, solver: cadical::Solver) {
+    fn print_counterexample(&self, solver: cadical::Solver, depth: usize) {
         println!("found counterexample!");
-        for (relation, map) in &self.indices {
-            print!("{}: {{", relation);
-            for (elements, (i, _mutable)) in map {
-                if solver.value(*i as i32 + 1) == Some(true) {
-                    print!("{:?}, ", elements);
+        for state in 0..=depth {
+            println!("state {}:", state);
+            for (relation, map) in &self.indices {
+                print!("{}: {{", relation);
+                for (elements, (i, mutable)) in map {
+                    let mut var = *i;
+                    if *mutable {
+                        var += state * self.mutables;
+                    }
+                    if solver.value(var as i32 + 1) == Some(true) {
+                        print!("{:?}, ", elements);
+                    }
                 }
+                println!("}}");
             }
-            println!("}}");
+            println!();
         }
     }
 }
@@ -249,7 +257,7 @@ pub fn check(
         None => return Err(CheckerError::SolverFailed),
         Some(false) => CheckerAnswer::Unknown,
         Some(true) => {
-            context.print_counterexample(solver);
+            context.print_counterexample(solver, depth);
             CheckerAnswer::Counterexample
         }
     };
