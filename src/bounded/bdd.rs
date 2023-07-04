@@ -668,4 +668,17 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
 
         Ok(())
     }
+
+    #[test]
+    fn checker_immutability() -> Result<(), CheckerError> {
+        let source = "
+immutable r: bool
+assume r
+assert always r
+        ";
+        let mut module = crate::fly::parse(source).unwrap();
+        let universe = std::collections::HashMap::new();
+        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
+        Ok(())
+    }
 }
