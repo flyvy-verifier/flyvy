@@ -12,7 +12,14 @@ use crate::{
 use itertools::Itertools;
 use std::sync::Arc;
 
-use super::quant::{QuantifierConfig, QuantifierPrefix};
+use crate::{
+    inference::{
+        basics::FOModule,
+        quant::{QuantifierConfig, QuantifierPrefix},
+        InferenceConfig,
+    },
+    solver::SolverConf,
+};
 
 /// An [`Atom`] is referred to via a certain index.
 pub type Atom = usize;
@@ -54,7 +61,20 @@ pub struct Atoms {
 }
 
 impl Atoms {
-    pub fn new(to_term: Vec<Term>) -> Self {
+    pub fn new(infer_cfg: &InferenceConfig, conf: &SolverConf, fo: &FOModule) -> Self {
+        let univ_prefix = infer_cfg.cfg.as_universal();
+        let to_term = infer_cfg
+            .cfg
+            .atoms(infer_cfg.nesting, infer_cfg.include_eq)
+            .into_iter()
+            .filter(|t| {
+                let univ_t = univ_prefix.quantify(t.clone());
+                let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
+
+                fo.implication_cex(conf, &[], &univ_t).is_some()
+                    && fo.implication_cex(conf, &[], &univ_not_t).is_some()
+            })
+            .collect_vec();
         let to_index = to_term
             .iter()
             .enumerate()
@@ -149,5 +169,21 @@ impl RestrictedAtoms {
         } else {
             None
         }
+    }
+
+    pub fn containing_vars(
+        &self,
+        mut literals: Vec<Literal>,
+        vars: &HashSet<String>,
+    ) -> Vec<Literal> {
+        literals.retain(|(i, _)| !self.atoms.to_term[*i].ids().is_disjoint(vars));
+        literals
+    }
+
+    pub fn atoms_containing_vars(&self, vars: &HashSet<String>) -> usize {
+        self.allowed
+            .iter()
+            .filter(|i| !self.atoms.to_term[**i].ids().is_disjoint(vars))
+            .count()
     }
 }

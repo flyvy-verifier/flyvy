@@ -4,7 +4,7 @@
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::RwLock,
 };
 
 use crate::{
@@ -19,6 +19,104 @@ use crate::{
 };
 
 use rayon::prelude::*;
+pub enum TransCexResult {
+    CTI(Model, Model),
+    UnsatCore(HashSet<usize>),
+    Cancelled,
+    Unknown,
+}
+
+/// Manages a subset of constraints, based on the counter-models they do not satisfy.
+struct Core<'a> {
+    formulas: &'a [Term],
+    participants: HashSet<usize>,
+    counter_models: Vec<Model>,
+    to_participants: HashMap<usize, HashSet<usize>>,
+    to_counter_models: HashMap<usize, HashSet<usize>>,
+    minimal: bool,
+}
+
+impl<'a> Core<'a> {
+    fn new(terms: &'a [Term], initial: HashSet<usize>, minimal: bool) -> Self {
+        Core {
+            formulas: terms,
+            participants: initial,
+            counter_models: vec![],
+            to_participants: HashMap::new(),
+            to_counter_models: HashMap::new(),
+            minimal,
+        }
+    }
+
+    fn add_counter_model(&mut self, counter_model: Model) -> bool {
+        // We assume that the new counter-model satisfies all previous formulas.
+        for &p_idx in &self.participants {
+            assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
+        }
+
+        let new_participant = (0..self.formulas.len()).find(|i| {
+            !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
+        });
+
+        match new_participant {
+            Some(p_idx) => {
+                let model_idx = self.counter_models.len();
+                self.participants.insert(p_idx);
+                self.to_participants.insert(model_idx, HashSet::new());
+                let mut counter_models: HashSet<usize> = (0..self.counter_models.len())
+                    .filter(|i| self.counter_models[*i].eval(&self.formulas[p_idx]) == 0)
+                    .collect();
+                counter_models.insert(model_idx);
+                self.counter_models.push(counter_model);
+                for m_idx in &counter_models {
+                    self.to_participants.get_mut(m_idx).unwrap().insert(p_idx);
+                }
+                self.to_counter_models.insert(p_idx, counter_models);
+
+                if self.minimal {
+                    while self.reduce() {}
+
+                    assert!(self.participants.iter().all(|p_idx| {
+                        self.to_counter_models[p_idx]
+                            .iter()
+                            .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*p_idx]))
+                    }));
+                }
+
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn reduce(&mut self) -> bool {
+        if let Some(p_idx) = self
+            .participants
+            .iter()
+            .copied()
+            .sorted()
+            .rev()
+            .find(|p_idx| {
+                self.to_counter_models[p_idx]
+                    .iter()
+                    .all(|m_idx| self.to_participants[m_idx].len() > 1)
+            })
+        {
+            assert!(self.participants.remove(&p_idx));
+            for m_idx in self.to_counter_models.remove(&p_idx).unwrap() {
+                assert!(self.to_participants.get_mut(&m_idx).unwrap().remove(&p_idx));
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.participants.len()
+    }
+}
 
 /// A first-order module is represented using first-order formulas,
 /// namely single-vocabulary axioms, initial assertions and safety assertions,
@@ -32,16 +130,11 @@ pub struct FOModule {
     pub safeties: Vec<Term>,
     disj: bool,
     gradual: bool,
-}
-
-pub enum TransCexResult {
-    CTI(Model, Model),
-    UnsatCore(HashSet<usize>),
-    Cancelled,
+    minimal: bool,
 }
 
 impl FOModule {
-    pub fn new(m: &Module, disj: bool, gradual: bool) -> Self {
+    pub fn new(m: &Module, disj: bool, gradual: bool, minimal: bool) -> Self {
         let mut fo = FOModule {
             signature: m.signature.clone(),
             axioms: vec![],
@@ -50,6 +143,7 @@ impl FOModule {
             safeties: vec![],
             disj,
             gradual,
+            minimal,
         };
 
         for statement in &m.statements {
@@ -106,31 +200,32 @@ impl FOModule {
         t: &Term,
         with_init: bool,
         with_safety: bool,
-        cancel: Option<Arc<RwLock<bool>>>,
+        cancel: Option<&RwLock<bool>>,
     ) -> TransCexResult {
         let cancelled = || match &cancel {
             None => false,
             Some(lock) => *lock.read().unwrap(),
         };
-        let mut participants: Vec<usize> = if self.gradual {
-            vec![]
+
+        let mut core: Core = if self.gradual {
+            Core::new(hyp, HashSet::new(), self.minimal)
         } else {
-            (0..hyp.len()).collect()
+            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
         };
 
-        loop {
-            let mut core: HashSet<usize> = HashSet::new();
-            let mut new_participants: HashSet<usize> = HashSet::new();
-            for trans in self.disj_trans() {
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
+        let transitions = self.disj_trans();
+        let mut check_transition: Vec<bool> = vec![true; transitions.len()];
+        let mut unsat_cores: Vec<HashSet<usize>> = vec![HashSet::new(); transitions.len()];
+        let mut unknown = false;
 
+        while let Some(t_idx) = (0..transitions.len()).find(|i| check_transition[*i]) {
+            check_transition[t_idx] = false;
+            'inner: loop {
                 let mut solver = conf.solver(&self.signature, 2);
                 let mut assumptions = HashMap::new();
 
                 let mut prestate = vec![];
-                for &i in &participants {
+                for &i in &core.participants {
                     let ind = solver.get_indicator(i.to_string().as_str());
                     assumptions.insert(ind.clone(), true);
                     prestate.push(Term::BinOp(
@@ -144,15 +239,17 @@ impl FOModule {
                     let init = Term::and(self.inits.iter().cloned());
                     solver.assert(&Term::or([init, Term::and(prestate)]));
                 } else {
-                    solver.assert(&Term::and(prestate));
+                    for p in &prestate {
+                        solver.assert(p)
+                    }
                 }
 
-                for a in self.axioms.iter() {
+                for a in &self.axioms {
                     solver.assert(a);
                     solver.assert(&Next::new(&self.signature).prime(a));
                 }
 
-                for a in trans {
+                for a in &transitions[t_idx] {
                     solver.assert(a);
                 }
 
@@ -169,39 +266,78 @@ impl FOModule {
 
                 solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
 
+                if cancelled() {
+                    return TransCexResult::Cancelled;
+                }
                 let resp = solver.check_sat(assumptions).expect("error in solver");
+                if cancelled() {
+                    return TransCexResult::Cancelled;
+                }
                 match resp {
-                    SatResp::Sat => {
-                        let mut states = solver.get_minimal_model().into_iter();
-                        let pre = states.next().unwrap();
-                        let post = states.next().unwrap();
-                        assert_eq!(states.next(), None);
+                    SatResp::Sat => match solver.get_minimal_model() {
+                        Ok(states_vec) => {
+                            let mut states = states_vec.into_iter();
+                            let pre = states.next().unwrap();
+                            let post = states.next().unwrap();
+                            assert_eq!(states.next(), None);
 
-                        if let Some(i) = (0..hyp.len())
-                            .find(|i| !participants.contains(i) && pre.eval(&hyp[*i]) == 0)
-                        {
-                            new_participants.insert(i);
-                        } else {
-                            return TransCexResult::CTI(pre, post);
-                        }
-                    }
-                    SatResp::Unsat => {
-                        for ind in solver.get_unsat_core() {
-                            if let Term::Id(s) = ind.0 {
-                                core.insert(s[6..].parse().unwrap());
+                            if !core.add_counter_model(pre.clone()) {
+                                log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                                return TransCexResult::CTI(pre, post);
+                            }
+
+                            for i in 0..transitions.len() {
+                                if i != t_idx
+                                    && !check_transition[i]
+                                    && !unsat_cores[i].is_subset(&core.participants)
+                                {
+                                    check_transition[i] = true;
+                                    unsat_cores[i] = HashSet::new();
+                                }
                             }
                         }
+                        _ => {
+                            unknown = true;
+                            break 'inner;
+                        }
+                    },
+                    SatResp::Unsat => {
+                        assert!(unsat_cores[t_idx].is_empty());
+                        for ind in solver.get_unsat_core() {
+                            if let Term::Id(s) = ind.0 {
+                                unsat_cores[t_idx].insert(s[6..].parse().unwrap());
+                            }
+                        }
+                        break 'inner;
                     }
-                    SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
+                    SatResp::Unknown(_) => {
+                        unknown = true;
+                        break 'inner;
+                    }
                 }
             }
-
-            if new_participants.is_empty() {
-                return TransCexResult::UnsatCore(core);
-            } else {
-                participants.extend(new_participants);
-            }
         }
+
+        if unknown {
+            log::debug!("Found unknown.");
+            return TransCexResult::Unknown;
+        }
+
+        let unsat_core = unsat_cores
+            .into_iter()
+            .reduce(|x, y| x.union(&y).cloned().collect())
+            .unwrap();
+
+        log::debug!(
+            "Found UNSAT with {} formulas in prestate.",
+            unsat_core.len()
+        );
+
+        if self.minimal {
+            assert_eq!(unsat_core, core.participants);
+        }
+
+        TransCexResult::UnsatCore(unsat_core)
     }
 
     pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
@@ -215,22 +351,37 @@ impl FOModule {
     }
 
     pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
-        let mut solver = conf.solver(&self.signature, 1);
-        for a in self.axioms.iter().chain(hyp.iter()) {
-            solver.assert(a);
-        }
-        solver.assert(&Term::negate(t.clone()));
+        let mut core: Core = if self.gradual {
+            Core::new(hyp, HashSet::new(), self.minimal)
+        } else {
+            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+        };
 
-        let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-        match resp {
-            SatResp::Sat => {
-                let mut states = solver.get_minimal_model();
-                assert_eq!(states.len(), 1);
-
-                Some(states.remove(0))
+        loop {
+            let mut solver = conf.solver(&self.signature, 1);
+            for a in &self.axioms {
+                solver.assert(a);
             }
-            SatResp::Unsat => None,
-            SatResp::Unknown(_) => panic!(),
+            for &i in &core.participants {
+                solver.assert(&hyp[i])
+            }
+            solver.assert(&Term::negate(t.clone()));
+
+            let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+            match resp {
+                SatResp::Sat => {
+                    let mut states = solver
+                        .get_minimal_model()
+                        .expect("solver error while minimizing");
+                    assert_eq!(states.len(), 1);
+
+                    if !core.add_counter_model(states[0].clone()) {
+                        return Some(states.pop().unwrap());
+                    }
+                }
+                SatResp::Unsat => return None,
+                SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
+            }
         }
     }
 
@@ -275,10 +426,9 @@ impl FOModule {
 
                         new_sample = states.pop();
                     }
-                    SatResp::Unsat => {
+                    SatResp::Unsat | SatResp::Unknown(_) => {
                         unblocked_trans.remove(&i);
                     }
-                    SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
                 }
 
                 solver.pop();
@@ -328,7 +478,9 @@ pub struct InferenceConfig {
     pub include_eq: bool,
 
     pub disj: bool,
-    pub gradual: bool,
+    pub gradual_smt: bool,
+    pub minimal_smt: bool,
+    pub gradual_advance: bool,
     pub indiv: bool,
 
     pub extend_width: Option<usize>,

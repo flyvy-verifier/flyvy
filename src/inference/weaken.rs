@@ -69,7 +69,11 @@ pub trait LemmaQf: Clone + Sync + Send {
     fn base_to_term(&self, base: &Self::Base) -> Term;
 
     /// Create a new instance given the following configuration.
-    fn new(cfg: &InferenceConfig, atoms: Arc<RestrictedAtoms>, is_universal: bool) -> Self;
+    fn new(
+        cfg: &InferenceConfig,
+        atoms: Arc<RestrictedAtoms>,
+        non_universal_vars: HashSet<String>,
+    ) -> Self;
 
     /// Return the strongest instances of the associated [`Self::Base`]
     fn strongest(&self) -> Vec<Self::Base>;
@@ -79,7 +83,7 @@ pub trait LemmaQf: Clone + Sync + Send {
     where
         I: Fn(&Self::Base) -> bool;
 
-    fn approx_space_size(&self, atoms: usize) -> usize;
+    fn approx_space_size(&self) -> usize;
 
     fn sub_spaces(&self) -> Vec<Self>;
 
@@ -117,9 +121,9 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    pub prefix: Arc<QuantifierPrefix>,
-    pub lemma_qf: Arc<L>,
-    pub atoms: Arc<RestrictedAtoms>,
+    prefix: Arc<QuantifierPrefix>,
+    lemma_qf: Arc<L>,
+    atoms: Arc<RestrictedAtoms>,
     bodies: Box<O::Map<usize>>,
     by_id: HashMap<usize, O>,
     next: usize,
@@ -487,11 +491,8 @@ where
         self.by_id.values().map(|o| o.to_base()).collect_vec()
     }
 
-    pub fn iter(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
-        self.by_id
-            .values()
-            .map(|body| (self.prefix.clone(), body))
-            .collect_vec()
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
+        self.by_id.values().map(|body| (self.prefix.clone(), body))
     }
 }
 
@@ -505,7 +506,7 @@ where
     config: Arc<QuantifierConfig>,
     infer_cfg: Arc<InferenceConfig>,
     atoms: Arc<RestrictedAtoms>,
-    pub sets: Vec<PrefixLemmaSet<O, L, B>>,
+    sets: Vec<PrefixLemmaSet<O, L, B>>,
 }
 
 impl<O, L, B> WeakenLemmaSet<O, L, B>
@@ -563,22 +564,37 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn iter(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
         self.sets
             .iter()
             .sorted_by_key(|set| set.prefix.existentials())
-            .flat_map(|set| set.iter())
-            .collect_vec()
+            .flat_map(|set| set.as_iter())
+    }
+
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+        self.as_iter().collect_vec()
+    }
+
+    pub fn unsat(&self, model: &Model) -> bool {
+        self.sets
+            .par_iter()
+            .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
     }
 
     pub fn minimized(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> =
             LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
-        for (prefix, body) in self.iter() {
+        for (prefix, body) in self.as_vec() {
             lemmas.insert_minimized(prefix.clone(), body.clone());
         }
 
         lemmas
+    }
+
+    pub fn contains(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
+        self.sets
+            .iter()
+            .any(|set| set.prefix.as_ref() == prefix && set.bodies.get(body).is_some())
     }
 }
 
@@ -594,7 +610,7 @@ where
     pub lemma_qf: Arc<L>,
     pub to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
     pub to_bodies: HashMap<usize, O>,
-    pub bodies: O::Map<HashSet<usize>>,
+    bodies: O::Map<HashSet<usize>>,
     next: usize,
 }
 
@@ -609,11 +625,11 @@ where
         infer_cfg: &InferenceConfig,
         atoms: Arc<RestrictedAtoms>,
     ) -> Self {
-        let is_universal = config.is_universal();
+        let non_universal_vars = config.non_universal_vars();
 
         Self {
             config,
-            lemma_qf: Arc::new(L::new(infer_cfg, atoms, is_universal)),
+            lemma_qf: Arc::new(L::new(infer_cfg, atoms, non_universal_vars)),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
             bodies: O::Map::new(),
@@ -651,6 +667,13 @@ where
 
     pub fn to_terms(&self) -> Vec<Term> {
         self.to_terms_ids().into_iter().map(|(_, t)| t).collect()
+    }
+
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, O)> {
+        self.to_prefixes
+            .iter()
+            .map(|(id, prefix)| (prefix.clone(), self.to_bodies[id].clone()))
+            .collect_vec()
     }
 
     pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {

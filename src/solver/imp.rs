@@ -364,7 +364,7 @@ impl<B: Backend> Solver<B> {
     /// step it enforces that all the previous sorts have their minimized
     /// cardinalities. Finally, it returns the model with these cardinality
     /// constraints in place.
-    pub fn get_minimal_model(&mut self) -> Vec<Model> {
+    pub fn get_minimal_model(&mut self) -> Result<Vec<Model>, SolverError> {
         let start = std::time::Instant::now();
         let assumptions = self.last_assumptions.take();
         // initially, assume anything used by the last check_sat call
@@ -381,13 +381,11 @@ impl<B: Backend> Solver<B> {
         {
             let sorts = self.signature.sorts.clone();
             for sort in sorts {
-                // TODO: a solver error should be reported to the caller
-                self.minimize_card(max_card, &mut indicators, &sort)
-                    .expect("solver error while minimizing");
+                self.minimize_card(max_card, &mut indicators, &sort)?;
             }
         }
         let model = self.get_fo_model(TimeType::GetMinimalModel, start);
-        model.into_trace(&self.signature, self.n_states)
+        Ok(model.into_trace(&self.signature, self.n_states))
     }
 
     /// Returns an unsat core as a set of indicator variables (a subset of the

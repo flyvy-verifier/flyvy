@@ -157,6 +157,15 @@ impl<Q: Clone> QuantifierSequence<Q> {
             })
             .collect_vec()
     }
+
+    pub fn as_universal(&self) -> QuantifierPrefix {
+        QuantifierPrefix {
+            signature: self.signature.clone(),
+            quantifiers: vec![Quantifier::Forall; self.len()],
+            sorts: self.sorts.clone(),
+            names: self.names.clone(),
+        }
+    }
 }
 
 impl QuantifierConfig {
@@ -226,10 +235,14 @@ impl QuantifierConfig {
             .collect_vec()
     }
 
-    pub fn is_universal(&self) -> bool {
-        self.quantifiers
-            .iter()
-            .all(|q| q == &Some(Quantifier::Forall))
+    pub fn non_universal_vars(&self) -> HashSet<String> {
+        match (0..self.len()).find(|i| !matches!(self.quantifiers[*i], Some(Quantifier::Forall))) {
+            Some(first_exists) => self.names[first_exists..]
+                .iter()
+                .flat_map(|ns| ns.iter().cloned())
+                .collect(),
+            None => HashSet::default(),
+        }
     }
 }
 
@@ -307,13 +320,18 @@ impl QuantifierPrefix {
         })
     }
 
-    pub fn is_universal(&self) -> bool {
-        (0..self.len())
-            .all(|i| self.names[i].is_empty() || self.quantifiers[i] == Quantifier::Forall)
-    }
-
     pub fn existentials(&self) -> usize {
         count_exists(&self.quantifiers)
+    }
+
+    pub fn non_universal_vars(&self) -> HashSet<String> {
+        match (0..self.len()).find(|i| matches!(self.quantifiers[*i], Quantifier::Exists)) {
+            Some(first_exists) => self.names[first_exists..]
+                .iter()
+                .flat_map(|ns| ns.iter().cloned())
+                .collect(),
+            None => HashSet::default(),
+        }
     }
 }
 

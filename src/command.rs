@@ -149,8 +149,16 @@ struct InferenceConfigArgs {
     disj: bool,
 
     #[arg(long)]
-    /// Perform SAT queries gradually
-    gradual: bool,
+    /// Perform SMT queries gradually
+    gradual_smt: bool,
+
+    #[arg(long)]
+    /// Perform SMT queries gradually and minimally
+    minimal_smt: bool,
+
+    #[arg(long)]
+    /// Advance the prestate frontier gradually
+    gradual_advance: bool,
 
     #[arg(long)]
     /// Try to find individually inductive lemmas
@@ -190,7 +198,9 @@ impl InferenceConfigArgs {
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
             disj: self.disj,
-            gradual: self.gradual,
+            gradual_smt: self.gradual_smt || self.minimal_smt,
+            minimal_smt: self.minimal_smt,
+            gradual_advance: self.gradual_advance,
             indiv: self.indiv,
             extend_width: self.extend_width,
             extend_depth: self.extend_depth,
@@ -226,6 +236,10 @@ struct InferArgs {
     #[arg(long, global = true)]
     /// Print timing statistics
     time: bool,
+
+    #[arg(long)]
+    /// Don't print the found invariant (for testing)
+    no_print_invariant: bool,
 
     #[command(subcommand)]
     infer_cmd: InferCommand,
@@ -459,7 +473,7 @@ impl App {
                         >(infer_cfg, &conf, &m),
                     }
                 } else {
-                    match infer_cfg.qf_body {
+                    let fixpoint = match infer_cfg.qf_body {
                         QfBody::CNF => fixpoint_single::<
                             subsume::Cnf<atoms::Literal>,
                             lemma::LemmaCnf,
@@ -475,6 +489,11 @@ impl App {
                             lemma::LemmaPDnfNaive,
                             Vec<Vec<atoms::Literal>>,
                         >(infer_cfg, &conf, &m),
+                    };
+                    if args.no_print_invariant {
+                        fixpoint.test_report();
+                    } else {
+                        fixpoint.report();
                     }
                 }
                 if args.time {

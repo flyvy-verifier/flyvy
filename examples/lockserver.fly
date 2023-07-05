@@ -3,8 +3,8 @@
 
 # Lock server example, translated from mypyvy
 # TEST --all-solvers -- verify
-# TEST --name infer-z3 -- infer qalpha --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3
-# TEST --name infer-cvc5 -- infer qalpha --solver cvc5 --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3
+# TEST --name infer-z3 -- infer --no-print-invariant qalpha --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3 --gradual-advance
+# TEST --name infer-cvc5 -- infer --no-print-invariant qalpha --solver cvc5 --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3 --gradual-advance
 
 sort node
 

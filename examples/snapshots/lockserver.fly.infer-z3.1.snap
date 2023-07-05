@@ -1,27 +1,11 @@
 ---
 source: tests/test_examples.rs
-description: "--name=infer-z3.1 -- infer qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 examples/lockserver.fly"
+description: "--name=infer-z3.1 -- infer --no-print-invariant qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 --gradual-advance examples/lockserver.fly"
 expression: combined_stdout_stderr
 ---
-proof {
-  invariant forall node_1:node. !grant_msg(node_1) | !server_holds_lock
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !grant_msg(node_2) | !grant_msg(node_1)
-  invariant forall node_1:node, node_2:node. !holds_lock(node_1) | !grant_msg(node_2)
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !holds_lock(node_2) | !holds_lock(node_1)
-  invariant forall node_1:node. !holds_lock(node_1) | !server_holds_lock
-  invariant forall node_1:node. !holds_lock(node_1) | !grant_msg(node_1)
-  invariant forall node_1:node. !unlock_msg(node_1) | !server_holds_lock
-  invariant forall node_1:node, node_2:node. node_1 = node_2 | !unlock_msg(node_2) | !unlock_msg(node_1)
-  invariant forall node_1:node, node_2:node. !holds_lock(node_2) | !unlock_msg(node_1)
-  invariant forall node_1:node. !unlock_msg(node_1) | !grant_msg(node_1)
-  invariant forall node_1:node, node_2:node. !unlock_msg(node_1) | !grant_msg(node_2)
-  invariant forall node_1:node. !holds_lock(node_1) | !unlock_msg(node_1)
-}
 Fixpoint SAFE!
 Fixpoint size = 12
-Fixpoint runtime = ###s
 Covers 9 / 9 of handwritten invariant.
-0 out of 12 lemmas are trivial.
 
 ======== STDERR: ===========
 
