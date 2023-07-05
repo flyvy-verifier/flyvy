@@ -99,6 +99,26 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         vars: &mut UnificationTable::new(),
     };
 
+    // The sort inference algorithm proceeds in two phases.
+    //
+    // First, we walk the entire AST and do normal "type checking" checks.
+    // During this pass, if we encounter a bound variable without a sort
+    // annotation, we allocate a unification variable for it. The unification
+    // variable is recorded in the unification table (self.vars) and the bound
+    // variable in the AST is labeled with a string that uniquely identifies its
+    // corresponding variable. Other checks elsewhere in the AST (possibly above
+    // the node!) should resolve the unification variable to a concrete sort.
+    // This concrete sort gets stored in the unification table, but the AST
+    // still has the unification variable recorded as the sort of the variable.
+    //
+    // Second, we walk the AST again, looking for bound variables with
+    // unification variables. We assert that the variable was successfully
+    // resolved to a concrete sort (if not, report an error to the user that a
+    // type annotation is required), and then replace the unification variable
+    // with the concrete sort.
+
+    // Here begins the first pass.
+
     // using immediately invoked closure to tag errors with None spans
     (|| {
         for rel in &module.signature.relations {
@@ -159,9 +179,12 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         }
     }
 
-    // first pass done
-    // at this point, unknown sorts are written as "var {id}"
-    // the second pass here fixes this
+    // Done with first pass.
+
+    // At this point, bound variables without sort annotations have "var {id}"
+    // as their sort annotation. Second pass fixes this.
+
+    // Here begins the second pass.
 
     // helper that wraps any errors
     let fix_sorts = |context: &mut Context, term: &mut Term, span: Option<Span>| {
@@ -184,6 +207,9 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         }
     }
 
+    // Done with second pass.
+
+    // Double check that we didn't miss any bound variables in the first pass.
     assert!(module_has_all_sort_annotations(module));
 
     Ok(())
@@ -370,6 +396,13 @@ impl Context<'_> {
 
     // doesn't allow `binders` to shadow each other, but does allow them to
     // shadow names already in `context`
+    //
+    // for any variables that do not have a sort annotation, this function allocates
+    // a fresh unification variable to represent its sort, and annotates the AST with
+    // a string that uniquely identifies the unification variable. unification variables
+    // are represented by integers, and the string "var 55" is used to represent, eg, the
+    // unification variable numbered 55. since this string has a space in it, it is impossible
+    // for it to be confused with a user sort annotation.
     fn add_binders(&mut self, binders: &mut [Binder]) -> Result<(), SortError> {
         let mut names = HashSet::new();
         for binder in binders {
@@ -470,9 +503,12 @@ impl Context<'_> {
                     if let Sort::Id(s) = binder.sort.clone() {
                         let s: Vec<&str> = s.split_whitespace().collect();
                         match s[..] {
-                            [_] => {}
+                            [_] => {} // user sort annotation
                             ["var", id] => {
-                                let id = id.parse::<u32>().expect("how the user get a space here?");
+                                // encodes a sort unification variable
+                                let id = id.parse::<u32>().expect(
+                                    "unexpected non-integer in a sort unification variable id",
+                                );
                                 let sort = self.vars.probe_value(SortVar(id));
                                 match sort.0 {
                                     None => {
