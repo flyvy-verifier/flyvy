@@ -8,7 +8,7 @@ use std::{
     sync::RwLock,
 };
 
-use crate::fly::syntax::Term::{NAryOp, Quantified, UnaryOp};
+use crate::fly::syntax::Term::*;
 use crate::term::clear_next;
 use crate::{
     fly::{
@@ -537,9 +537,6 @@ impl FOModule {
                 SatResp::Unsat => {
                     // println!("adding group");
                     for (ind, b) in solver.get_unsat_core() {
-                        if let UnaryOp(UOp::Not, _) = clear_next(ind_to_term[&ind].clone()) {
-                            continue;
-                        }
                         assert!(b, "got false in core");
                         // println!("adding to core: {}", clear_next(ind_to_term[&ind].clone()));
                         core.insert(clear_next(ind_to_term[&ind].clone()), b);
