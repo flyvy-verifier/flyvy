@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use itertools::Itertools;
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     sync::RwLock,
 };
 
+use crate::fly::syntax::Term::*;
+use crate::term::clear_next;
 use crate::{
     fly::{
         semantics::Model,
@@ -18,7 +21,6 @@ use crate::{
     term::{FirstOrder, Next},
 };
 
-use rayon::prelude::*;
 pub enum TransCexResult {
     CTI(Model, Model),
     UnsatCore(HashSet<usize>),
@@ -116,6 +118,17 @@ impl<'a> Core<'a> {
     fn len(&self) -> usize {
         self.participants.len()
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum TermOrModel {
+    Model(Model),
+    Term(Term),
+}
+
+pub enum CexOrCore {
+    Cex((Term, Model)),
+    Core(HashMap<Term, bool>),
 }
 
 /// A first-order module is represented using first-order formulas,
@@ -340,16 +353,6 @@ impl FOModule {
         TransCexResult::UnsatCore(unsat_core)
     }
 
-    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
-        for s in self.safeties.iter() {
-            if let TransCexResult::CTI(model, _) = self.trans_cex(conf, hyp, s, false, true, None) {
-                return Some(model);
-            }
-        }
-
-        None
-    }
-
     pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
         let mut core: Core = if self.gradual {
             Core::new(hyp, HashSet::new(), self.minimal)
@@ -451,6 +454,137 @@ impl FOModule {
         }
 
         samples
+    }
+
+    pub fn get_pred(&self, conf: &SolverConf, hyp: &[Term], t: &TermOrModel) -> CexOrCore {
+        let as_term: Term = match t {
+            TermOrModel::Term(t) => t.clone(),
+            TermOrModel::Model(m) => m.to_diagram(),
+        };
+        assert_eq!(self.transitions.len(), 1);
+        if let NAryOp(NOp::Or, _) = self.transitions[0].clone() {
+        } else {
+            panic!("malformed transitions!")
+        }
+        let separate_trans = self
+            .transitions
+            .iter()
+            .flat_map(|t| match t {
+                NAryOp(NOp::Or, args) => args.iter().collect_vec(),
+                _ => vec![t],
+            })
+            .collect_vec();
+
+        let mut core = HashMap::new();
+        for trans in separate_trans {
+            let mut solver = conf.solver(&self.signature, 2);
+            for a in self
+                .axioms
+                .iter()
+                .chain(hyp.iter())
+                .chain(vec![trans].into_iter())
+            {
+                solver.assert(a);
+            }
+            for a in self.axioms.iter() {
+                solver.assert(&Next::new(&self.signature).prime(a));
+            }
+            let mut indicators = HashMap::new();
+            let mut ind_to_term = HashMap::new();
+            let mut new_terms = vec![];
+            if let TermOrModel::Term(term) = t {
+                // println!("got term, asserting with no core");
+                solver.assert(&Next::new(&self.signature).prime(term));
+            } else if let Quantified {
+                quantifier: Quantifier::Exists,
+                body,
+                binders,
+            } = Next::new(&self.signature).prime(&as_term)
+            {
+                if let NAryOp(NOp::And, terms) = *body {
+                    for (i, clause) in terms.into_iter().enumerate() {
+                        let ind = solver.get_indicator(&i.to_string());
+                        new_terms.push(Term::BinOp(
+                            BinOp::Equals,
+                            Box::new(ind.clone()),
+                            Box::new(clause.clone()),
+                        ));
+                        // println!("adding clause {}", &clause);
+                        indicators.insert(ind.clone(), true);
+                        ind_to_term.insert(ind, clause);
+                    }
+                    let new_term = Quantified {
+                        quantifier: Quantifier::Exists,
+                        body: Box::new(NAryOp(NOp::And, new_terms)),
+                        binders,
+                    };
+                    solver.assert(&new_term);
+                } else {
+                    panic!("bad term for pred!");
+                }
+            } else {
+                panic!("bad term for pred!");
+            }
+
+            let resp = solver.check_sat(indicators).expect("error in solver");
+            match resp {
+                SatResp::Sat => {
+                    let states = solver.get_minimal_model().expect("error in solver");
+                    assert_eq!(states.len(), 2);
+                    // println!("trans: {}", &trans);
+                    return CexOrCore::Cex((trans.clone(), states[0].clone()));
+                }
+                SatResp::Unsat => {
+                    // println!("adding group");
+                    for (ind, b) in solver.get_unsat_core() {
+                        assert!(b, "got false in core");
+                        // println!("adding to core: {}", clear_next(ind_to_term[&ind].clone()));
+                        core.insert(clear_next(ind_to_term[&ind].clone()), b);
+                    }
+                }
+                SatResp::Unknown(error) => panic!("{}", error),
+            }
+        }
+        return CexOrCore::Core(core);
+    }
+
+    pub fn implies_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
+        let mut solver = conf.solver(&self.signature, 1);
+        for a in hyp {
+            solver.assert(a);
+        }
+        solver.assert(&Term::negate(t.clone()));
+
+        let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+        match resp {
+            SatResp::Sat => {
+                let states = solver.get_minimal_model().expect("error in solver");
+                assert_eq!(states.len(), 1);
+                return Some(states[0].clone());
+            }
+            SatResp::Unsat => None,
+            SatResp::Unknown(_) => panic!(),
+        }
+    }
+
+    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
+        for s in self.safeties.iter() {
+            if let TransCexResult::CTI(model, _) = self.trans_cex(conf, hyp, s, false, true, None) {
+                return Some(model);
+            }
+        }
+
+        None
+    }
+
+    pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
+        for s in self.safeties.iter() {
+            if let Some(model) = self.implies_cex(conf, hyp, s) {
+                return Some(model);
+            }
+        }
+
+        None
     }
 }
 

@@ -64,9 +64,12 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
         }
         Term::NAryOp(op, args) => {
             let args = args.iter().map(term).collect::<Vec<_>>();
-            match op {
-                NOp::And => app("and", args),
-                NOp::Or => app("or", args),
+            match (op, args.is_empty()) {
+                (NOp::And, false) => app("and", args),
+                (NOp::Or, false) => app("or", args),
+                // the solver can error if no arguments are provided like `(and)`, `(or)`
+                (NOp::And, true) => atom_s("true"),
+                (NOp::Or, true) => atom_s("false"),
             }
         }
         Term::Ite { cond, then, else_ } => app("ite", vec![term(cond), term(then), term(else_)]),

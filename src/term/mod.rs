@@ -7,6 +7,7 @@ mod cnf;
 mod fo;
 mod prime;
 pub mod subst;
-pub use cnf::Cnf;
+pub use cnf::{term_to_cnf_clauses, Cnf};
 pub use fo::FirstOrder;
+pub use prime::clear_next;
 pub use prime::Next;
