@@ -38,7 +38,48 @@ pub fn check(
                 Some(CheckerAnswer::Unknown)
             }
             InterpreterResult::Counterexample(trace) => {
-                println!("found counterexample: {:#?}", trace);
+                println!("found counterexample!");
+                let indices = Indices::new(&module.signature, universe);
+                match compress_traces {
+                    TraceCompression::Yes => {
+                        let (state, depth) = match trace {
+                            Trace::Trace(..) => unreachable!(),
+                            Trace::CompressedTrace(state, depth) => (state, depth),
+                        };
+                        println!("final state (depth {}):", depth);
+                        for r in &module.signature.relations {
+                            let relation = &r.name;
+                            print!("{}: {{", relation);
+                            for ((r, elements), i) in &indices.0 {
+                                if r == relation && state.0[*i] {
+                                    print!("{:?}, ", elements);
+                                }
+                            }
+                            println!("}}");
+                        }
+                        println!();
+                    }
+                    TraceCompression::No => {
+                        let states = match trace {
+                            Trace::Trace(states) => states,
+                            Trace::CompressedTrace(..) => unreachable!(),
+                        };
+                        for (i, state) in states.iter().enumerate() {
+                            println!("state {}:", i);
+                            for r in &module.signature.relations {
+                                let relation = &r.name;
+                                print!("{}: {{", relation);
+                                for ((r, elements), i) in &indices.0 {
+                                    if r == relation && state.0[*i] {
+                                        print!("{:?}, ", elements);
+                                    }
+                                }
+                                println!("}}");
+                            }
+                            println!();
+                        }
+                    }
+                }
                 Some(CheckerAnswer::Counterexample)
             }
         },
