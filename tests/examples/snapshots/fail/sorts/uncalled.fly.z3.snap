@@ -6,7 +6,7 @@ expression: combined_stdout_stderr
 
 ======== STDERR: ===========
 sort checking error:
-error: r expected args but didn't get them
+error: r is a function/definition that takes arguments, but no arguments were passed
   ┌─ tests/examples/fail/sorts/uncalled.fly:7:1
   │
 7 │ assert forall x:s. r = x

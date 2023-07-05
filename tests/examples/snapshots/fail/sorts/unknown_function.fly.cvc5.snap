@@ -1,0 +1,15 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail --all-solvers -- verify tests/examples/fail/sorts/unknown_function.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+sort checking error:
+error: unknown function/definition f
+  ┌─ tests/examples/fail/sorts/unknown_function.fly:5:1
+  │
+5 │ assert forall y:s. f(y) = f(y)
+  │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+

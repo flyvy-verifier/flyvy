@@ -18,7 +18,7 @@
 
 pub mod bounded;
 mod command;
-mod fly;
+pub mod fly;
 mod inference;
 pub mod smtlib;
 pub mod solver;

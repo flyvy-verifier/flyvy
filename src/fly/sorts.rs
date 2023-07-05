@@ -1,6 +1,16 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Infer and check sorts.
+//!
+//! The main entry point is [sort_check_and_infer].
+//!
+//! The parser represents missing sort annotations as `Sort::Id("")`. One of the
+//! main purposes of sort inference is to replace these placeholders with proper
+//! sort annotations. Sort inference is combined with sort checking, so another
+//! main purpose of this module is to make sure the given fly program is well
+//! sorted.
+
 use crate::fly::syntax::*;
 use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
 use std::collections::HashSet;
@@ -8,40 +18,78 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SortError {
+    /// The program referred to an uninterpreted sort that was not declared.
     #[error("sort {0} was not declared")]
     UnknownSort(String),
-    #[error("sort {0} was defined multiple times")]
-    RedefinedSort(String),
+    /// An uninterpreted sort was declared multiple times.
+    #[error("sort {0} was declared multiple times")]
+    RedeclaredSort(String),
 
-    #[error("{0} was unknown")]
-    UnknownName(String),
+    /// The program referred to a variable that was not declared.
+    #[error("unknown variable/constant {0}")]
+    UnknownVariable(String),
+    /// The program referred to a function that was not declared.
+    #[error("unknown function/definition {0}")]
+    UnknownFunction(String),
+    /// A name was declared multiple times in a context that did not allow shadowing.
     #[error("{0} was declared multiple times")]
-    RedefinedName(String),
+    RedeclaredName(String),
 
+    /// Sort inference detected a conflict between two sorts.
     #[error("could not unify {0} and {1}")]
     UnificationFail(Sort, Sort),
+    /// Sort checking detected a mismatch between the expected and actual sorts of a term.
     #[error("expected {expected} but found {found}")]
     ExpectedButFoundSorts { expected: Sort, found: Sort },
-    #[error("expected {expected} args but found {found} args")]
-    ExpectedButFoundArity { expected: usize, found: usize },
+    /// A function or definition was applied to the wrong number of arguments.
+    #[error("function {function_name} expected {expected} args but found {found} args")]
+    ExpectedButFoundArity {
+        function_name: String,
+        expected: usize,
+        found: usize,
+    },
 
-    #[error("{0} expected args but didn't get them")]
+    /// A function/definition was referred to without passing any arguments.
+    #[error("{0} is a function/definition that takes arguments, but no arguments were passed")]
     Uncalled(String),
-    #[error("{0} was called but didn't take any args")]
+    /// A constant or variable was called like a function.
+    #[error("{0} was called but it is not a function/definition")]
     Uncallable(String),
 
+    /// Sort inference finished without gaining enough information to figure out
+    /// the sort of the given variable.
     #[error("could not solve for the sort of {0}")]
     UnsolvedSort(String),
 }
 
-// checks that the program is well-sorted
-// as well as modifying the module by filling in any missing sort annotations on binders
-// entry point for this module
+/// Checks that the given fly module is well sorted, inferring sort annotations
+/// on bound variables as needed.
+///
+/// This is the main entry point to the sort checker/inferencer.
+///
+/// Note that this is a *mutable* operation on the AST! Sort inference will
+/// write its results back into the AST so that future passes can easily find
+/// the type of a bound variable.
+///
+/// Sort inference allows the user to leave off the sort annotation of most
+/// quantified variables. Internally, it uses unification to discover the
+/// missing sorts. The sorts on arguments to definitions are required to be
+/// given explicitly. (This last requirement is enforced by the parser.)
+///
+/// The parser represents missing sort annotations in the input AST as
+/// `Sort::Id("")`. `sort_check_and_infer` guarantees that, after it returns, no
+/// sort annotation is `Sort::Id("")` anywhere in the given fly module. In other
+/// words, it guarantees that [module_has_all_sort_annotations] returns true.
+///
+/// If sort checking detects an error (see [SortError]), it will attempt to
+/// provide a [Span] to locate this error in the source code. The AST has
+/// limited span information, so some errors will be returned without location
+/// information (the span will be `None` in that case).
 pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
     let mut sorts = HashSet::new();
     for sort in &module.signature.sorts {
         if !sorts.insert(sort.clone()) {
-            return Err((SortError::RedefinedSort(sort.clone()), None));
+            return Err((SortError::RedeclaredSort(sort.clone()), None));
         }
     }
 
@@ -51,17 +99,37 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         vars: &mut UnificationTable::new(),
     };
 
+    // The sort inference algorithm proceeds in two phases.
+    //
+    // First, we walk the entire AST and do normal "type checking" checks.
+    // During this pass, if we encounter a bound variable without a sort
+    // annotation, we allocate a unification variable for it. The unification
+    // variable is recorded in the unification table (self.vars) and the bound
+    // variable in the AST is labeled with a string that uniquely identifies its
+    // corresponding variable. Other checks elsewhere in the AST (possibly above
+    // the node!) should resolve the unification variable to a concrete sort.
+    // This concrete sort gets stored in the unification table, but the AST
+    // still has the unification variable recorded as the sort of the variable.
+    //
+    // Second, we walk the AST again, looking for bound variables with
+    // unification variables. We assert that the variable was successfully
+    // resolved to a concrete sort (if not, report an error to the user that a
+    // type annotation is required), and then replace the unification variable
+    // with the concrete sort.
+
+    // Here begins the first pass.
+
     // using immediately invoked closure to tag errors with None spans
     (|| {
         for rel in &module.signature.relations {
             for arg in &rel.args {
-                context.check_sort_exists(arg, false)?;
+                context.check_sort_exists(arg)?;
             }
-            context.check_sort_exists(&rel.sort, false)?;
+            context.check_sort_exists(&rel.sort)?;
             context.add_name(
                 rel.name.clone(),
                 NamedSort::Known(rel.args.clone(), rel.sort.clone()),
-                false,
+                ShadowingConstraint::Disallow,
             )?;
         }
 
@@ -69,7 +137,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             {
                 let mut context = context.new_inner_scope();
                 context.add_binders(&mut def.binders)?;
-                context.check_sort_exists(&def.ret_sort, false)?;
+                context.check_sort_exists(&def.ret_sort)?;
                 let ret = context.sort_of_term(&mut def.body)?;
                 context.unify_var_value(&def.ret_sort, &ret)?;
             }
@@ -83,7 +151,7 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             context.add_name(
                 def.name.clone(),
                 NamedSort::Known(args, def.ret_sort.clone()),
-                false,
+                ShadowingConstraint::Disallow,
             )?;
         }
 
@@ -111,9 +179,12 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         }
     }
 
-    // first pass done
-    // at this point, unknown sorts are written as "var {id}"
-    // the second pass here fixes this
+    // Done with first pass.
+
+    // At this point, bound variables without sort annotations have "var {id}"
+    // as their sort annotation. Second pass fixes this.
+
+    // Here begins the second pass.
 
     // helper that wraps any errors
     let fix_sorts = |context: &mut Context, term: &mut Term, span: Option<Span>| {
@@ -136,7 +207,76 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
         }
     }
 
+    // Done with second pass.
+
+    // Double check that we didn't miss any bound variables in the first pass.
+    assert!(module_has_all_sort_annotations(module));
+
     Ok(())
+}
+
+/// Return whether every quantified variable in every term in the given fly
+/// module has a (non-empty) sort annotation.
+pub fn module_has_all_sort_annotations(module: &Module) -> bool {
+    // This function should be kept in sync with the parser. Currently the
+    // parser only generates Sort::Id("") on quantified variables, so that is
+    // the only place we need to check. If future changes to the parser
+    // introduce more opportunities for sort inference, then this function
+    // should be adjusted as well.
+
+    module
+        .defs
+        .iter()
+        .all(|def| term_has_all_sort_annotations(&def.body))
+        && module.statements.iter().all(|statement| match statement {
+            ThmStmt::Assume(term) => term_has_all_sort_annotations(term),
+            ThmStmt::Assert(proof) => {
+                proof
+                    .invariants
+                    .iter()
+                    .all(|inv| term_has_all_sort_annotations(&inv.x))
+                    && term_has_all_sort_annotations(&proof.assert.x)
+            }
+        })
+}
+
+/// Return whether every quantified variable in this term has a (non-empty) sort
+/// annotation.
+pub fn term_has_all_sort_annotations(term: &Term) -> bool {
+    match term {
+        Term::Literal(_) | Term::Id(_) => true,
+        Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
+        Term::UnaryOp(
+            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+            x,
+        ) => term_has_all_sort_annotations(x),
+        Term::BinOp(
+            BinOp::Equals
+            | BinOp::NotEquals
+            | BinOp::Implies
+            | BinOp::Iff
+            | BinOp::Until
+            | BinOp::Since,
+            x,
+            y,
+        ) => term_has_all_sort_annotations(x) && term_has_all_sort_annotations(y),
+        Term::NAryOp(NOp::And | NOp::Or, xs) => xs.iter().all(term_has_all_sort_annotations),
+        Term::Ite { cond, then, else_ } => {
+            term_has_all_sort_annotations(cond)
+                && term_has_all_sort_annotations(then)
+                && term_has_all_sort_annotations(else_)
+        }
+        Term::Quantified {
+            quantifier: Quantifier::Forall | Quantifier::Exists,
+            binders,
+            body,
+        } => {
+            binders
+                .iter()
+                .all(|binder| binder.sort != Sort::Id("".to_owned()))
+                && term_has_all_sort_annotations(body)
+        }
+    }
 }
 
 // can either hold a function sort or the index of a sort variable
@@ -184,6 +324,12 @@ impl UnifyValue for OptionSort {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum ShadowingConstraint {
+    Allow,
+    Disallow,
+}
+
 #[derive(Debug)]
 struct Context<'a> {
     sorts: &'a HashSet<String>,
@@ -201,17 +347,36 @@ impl Context<'_> {
         }
     }
 
-    // all sorts must be declared in the module signature
-    // this function checks that, assuming that it gets called on all sorts
-    fn check_sort_exists(&self, sort: &Sort, empty_valid: bool) -> Result<(), SortError> {
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
+    // if empty_allowed is true, then Sort("") does not cause an error.
+    // callers should not call this function directly, but rather [check_sort_exists] or [check_sort_exists_or_empty]
+    fn check_sort_exists_internal(
+        &self,
+        sort: &Sort,
+        empty_allowed: bool,
+    ) -> Result<(), SortError> {
         match sort {
             Sort::Bool => Ok(()),
-            Sort::Id(a) if a.is_empty() && empty_valid => Ok(()),
-            Sort::Id(a) => match self.sorts.contains(a) {
-                true => Ok(()),
-                false => Err(SortError::UnknownSort(a.clone())),
-            },
+            Sort::Id(a) if a.is_empty() && empty_allowed => Ok(()),
+            Sort::Id(a) => {
+                if !self.sorts.contains(a) {
+                    Err(SortError::UnknownSort(a.clone()))
+                } else {
+                    Ok(())
+                }
+            }
         }
+    }
+
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
+    fn check_sort_exists(&self, sort: &Sort) -> Result<(), SortError> {
+        self.check_sort_exists_internal(sort, false)
+    }
+
+    // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
+    // Sort("") does not cause an error.
+    fn check_sort_exists_or_empty(&self, sort: &Sort) -> Result<(), SortError> {
+        self.check_sort_exists_internal(sort, true)
     }
 
     // adds `(name, sort)` to `context`, potentially giving an error if name already exists
@@ -219,23 +384,33 @@ impl Context<'_> {
         &mut self,
         name: String,
         sort: NamedSort,
-        allow_shadowing: bool,
+        shadowing_constraint: ShadowingConstraint,
     ) -> Result<(), SortError> {
         match self.names.insert(name.clone(), sort) {
-            Some(_) if !allow_shadowing => Err(SortError::RedefinedName(name)),
+            Some(_) if shadowing_constraint == ShadowingConstraint::Disallow => {
+                Err(SortError::RedeclaredName(name))
+            }
             _ => Ok(()),
         }
     }
 
     // doesn't allow `binders` to shadow each other, but does allow them to
     // shadow names already in `context`
+    //
+    // for any variables that do not have a sort annotation, this function allocates
+    // a fresh unification variable to represent its sort, and annotates the AST with
+    // a string that uniquely identifies the unification variable. unification variables
+    // are represented by integers, and the string "var 55" is used to represent, eg, the
+    // unification variable numbered 55. since this string has a space in it, it is impossible
+    // for it to be confused with a user sort annotation.
     fn add_binders(&mut self, binders: &mut [Binder]) -> Result<(), SortError> {
         let mut names = HashSet::new();
         for binder in binders {
+            // First check that the name is not repeated *within* this slice.
             if !names.insert(binder.name.clone()) {
-                return Err(SortError::RedefinedName(binder.name.clone()));
+                return Err(SortError::RedeclaredName(binder.name.clone()));
             }
-            self.check_sort_exists(&binder.sort, true)?;
+            self.check_sort_exists_or_empty(&binder.sort)?;
             let sort = if binder.sort == Sort::Id("".to_owned()) {
                 let var = self.vars.new_key(OptionSort(None));
                 binder.sort = Sort::Id(format!("var {}", var.0));
@@ -243,7 +418,9 @@ impl Context<'_> {
             } else {
                 NamedSort::Known(vec![], binder.sort.clone())
             };
-            self.add_name(binder.name.clone(), sort, true)?;
+            // Now add it to the context, allowing it to shadow bindings from
+            // any outer scopes.
+            self.add_name(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
         }
         Ok(())
     }
@@ -326,9 +503,12 @@ impl Context<'_> {
                     if let Sort::Id(s) = binder.sort.clone() {
                         let s: Vec<&str> = s.split_whitespace().collect();
                         match s[..] {
-                            [_] => {}
+                            [_] => {} // user sort annotation
                             ["var", id] => {
-                                let id = id.parse::<u32>().expect("how the user get a space here?");
+                                // encodes a sort unification variable
+                                let id = id.parse::<u32>().expect(
+                                    "unexpected non-integer in a sort unification variable id",
+                                );
                                 let sort = self.vars.probe_value(SortVar(id));
                                 match sort.0 {
                                     None => {
@@ -356,7 +536,7 @@ impl Context<'_> {
                 }
                 Some(NamedSort::Known(_, ret)) => Ok(AbstractSort::Known(ret.clone())),
                 Some(NamedSort::Unknown(var)) => Ok(AbstractSort::Unknown(*var)),
-                None => Err(SortError::UnknownName(name.clone())),
+                None => Err(SortError::UnknownVariable(name.clone())),
             },
             Term::App(f, _p, xs) => match self.names.get(f).cloned() {
                 Some(NamedSort::Known(args, _)) if args.is_empty() => {
@@ -365,6 +545,7 @@ impl Context<'_> {
                 Some(NamedSort::Known(args, ret)) => {
                     if args.len() != xs.len() {
                         return Err(SortError::ExpectedButFoundArity {
+                            function_name: f.clone(),
                             expected: args.len(),
                             found: xs.len(),
                         });
@@ -376,7 +557,7 @@ impl Context<'_> {
                     Ok(AbstractSort::Known(ret))
                 }
                 Some(NamedSort::Unknown(_)) => unreachable!("function sorts are always known"),
-                None => Err(SortError::UnknownName(f.clone())),
+                None => Err(SortError::UnknownFunction(f.clone())),
             },
             Term::UnaryOp(
                 UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,

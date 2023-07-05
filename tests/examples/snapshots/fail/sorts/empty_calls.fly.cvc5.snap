@@ -6,7 +6,7 @@ expression: combined_stdout_stderr
 
 ======== STDERR: ===========
 sort checking error:
-error: x was called but didn't take any args
+error: x was called but it is not a function/definition
   ┌─ tests/examples/fail/sorts/empty_calls.fly:6:1
   │
 6 │ assert x()
