@@ -1,0 +1,14 @@
+---
+source: tests/test_examples.rs
+description: "--all-solvers --name=houdini.1 -- infer houdini tests/examples/success/immutability.fly"
+expression: combined_stdout_stderr
+---
+# inferred invariant:
+assert always r
+proof {
+  invariant r
+}
+verifies!
+
+======== STDERR: ===========
+
