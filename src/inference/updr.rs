@@ -259,14 +259,8 @@ impl Updr {
                 {
                     if *quantifier == Quantifier::Exists {
                         if let Term::NAryOp(NOp::And, conj) = &**body {
-                            let func = |array: [bool; 100]| {
-                                // unused array elements must be false
-                                assert!(array.len() >= conj.len());
-                                for b in array.iter().skip(conj.len()) {
-                                    if *b {
-                                        return false;
-                                    }
-                                }
+                            let func = |array: &[bool]| {
+                                assert!(array.len() == conj.len());
                                 // only enable terms in conj that match array
                                 let chosen: Vec<Term> = (0..conj.len())
                                     .filter(|i| array[*i])
@@ -285,7 +279,7 @@ impl Updr {
 
                             use crate::inference::marco::*;
                             // we use !func because func is monotone in the wrong direction
-                            let results: Vec<_> = marco(|array| !func(array))
+                            let results: Vec<_> = marco(|array| !func(array), conj.len())
                                 // therefore we also want MUS instead of MSS
                                 .filter_map(|mss_or_mus| match mss_or_mus {
                                     MssOrMus::Mus(array) => Some(array),

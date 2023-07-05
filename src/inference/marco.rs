@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 #[allow(dead_code)]
-pub fn marco<'a, const N: usize>(func: impl Fn([bool; N]) -> bool + 'a) -> MarcoIterator<'a, N> {
+pub fn marco<'a>(func: impl Fn(&[bool]) -> bool + 'a, n: usize) -> MarcoIterator<'a> {
     MarcoIterator {
         func: Box::new(func),
         map: vec![],
+        n,
     }
 }
 
-pub struct MarcoIterator<'a, const N: usize> {
-    func: Box<dyn Fn([bool; N]) -> bool + 'a>,
+pub struct MarcoIterator<'a> {
+    func: Box<dyn Fn(&[bool]) -> bool + 'a>,
     map: Cnf,
+    n: usize,
 }
 
 type Cnf = Vec<Vec<MarcoLiteral>>;
@@ -26,26 +28,26 @@ impl MarcoLiteral {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum MssOrMus<const N: usize> {
-    Mss([bool; N]),
-    Mus([bool; N]),
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MssOrMus {
+    Mss(Vec<bool>),
+    Mus(Vec<bool>),
 }
 
-impl<const N: usize> Iterator for MarcoIterator<'_, N> {
-    type Item = MssOrMus<N>;
-    fn next(&mut self) -> Option<MssOrMus<N>> {
-        match is_sat(&self.map) {
+impl Iterator for MarcoIterator<'_> {
+    type Item = MssOrMus;
+    fn next(&mut self) -> Option<MssOrMus> {
+        match is_sat(&self.map, self.n) {
             None => None,
-            Some(seed) => match (self.func)(seed) {
+            Some(mut seed) => match (self.func)(&seed) {
                 true => {
-                    let mss = grow(seed, &self.func);
-                    self.map.push(block_down(mss));
+                    let mss = grow(&mut seed, &self.func);
+                    self.map.push(block_down(&mss));
                     Some(MssOrMus::Mss(mss))
                 }
                 false => {
-                    let mus = shrink(seed, &self.func);
-                    self.map.push(block_up(mus));
+                    let mus = shrink(&mut seed, &self.func);
+                    self.map.push(block_up(&mus));
                     Some(MssOrMus::Mus(mus))
                 }
             },
@@ -53,7 +55,7 @@ impl<const N: usize> Iterator for MarcoIterator<'_, N> {
     }
 }
 
-fn is_sat<const N: usize>(cnf: &Cnf) -> Option<[bool; N]> {
+fn is_sat(cnf: &Cnf, n: usize) -> Option<Vec<bool>> {
     let mut solver: cadical::Solver = Default::default();
     for clause in cnf {
         let clause: Vec<_> = clause.iter().map(MarcoLiteral::to_solver_lit).collect();
@@ -64,7 +66,8 @@ fn is_sat<const N: usize>(cnf: &Cnf) -> Option<[bool; N]> {
         None => panic!("solver failure in MARCO"),
         Some(false) => None,
         Some(true) => {
-            let mut out = [false; N];
+            let mut out = Vec::with_capacity(n);
+            out.resize(n, false);
             for (var, x) in out.iter_mut().enumerate() {
                 if solver.value(MarcoLiteral { var, pos: true }.to_solver_lit()) == Some(true) {
                     *x = true;
@@ -75,8 +78,8 @@ fn is_sat<const N: usize>(cnf: &Cnf) -> Option<[bool; N]> {
     }
 }
 
-fn grow<const N: usize>(mut seed: [bool; N], func: &dyn Fn([bool; N]) -> bool) -> [bool; N] {
-    for i in 0..N {
+fn grow(seed: &mut [bool], func: &dyn Fn(&[bool]) -> bool) -> Vec<bool> {
+    for i in 0..seed.len() {
         if !seed[i] {
             seed[i] = true;
             if !func(seed) {
@@ -84,10 +87,10 @@ fn grow<const N: usize>(mut seed: [bool; N], func: &dyn Fn([bool; N]) -> bool) -
             }
         }
     }
-    seed
+    seed.to_vec()
 }
-fn shrink<const N: usize>(mut seed: [bool; N], func: &dyn Fn([bool; N]) -> bool) -> [bool; N] {
-    for i in 0..N {
+fn shrink(seed: &mut [bool], func: &dyn Fn(&[bool]) -> bool) -> Vec<bool> {
+    for i in 0..seed.len() {
         if seed[i] {
             seed[i] = false;
             if func(seed) {
@@ -95,17 +98,17 @@ fn shrink<const N: usize>(mut seed: [bool; N], func: &dyn Fn([bool; N]) -> bool)
             }
         }
     }
-    seed
+    seed.to_vec()
 }
 
-fn block_down<const N: usize>(mss: [bool; N]) -> Vec<MarcoLiteral> {
-    (0..N)
+fn block_down(mss: &[bool]) -> Vec<MarcoLiteral> {
+    (0..mss.len())
         .filter(|i| !mss[*i])
         .map(|var| MarcoLiteral { var, pos: true })
         .collect()
 }
-fn block_up<const N: usize>(mus: [bool; N]) -> Vec<MarcoLiteral> {
-    (0..N)
+fn block_up(mus: &[bool]) -> Vec<MarcoLiteral> {
+    (0..mus.len())
         .filter(|i| mus[*i])
         .map(|var| MarcoLiteral { var, pos: false })
         .collect()
@@ -122,7 +125,8 @@ mod tests {
 
     #[test]
     fn marco_basic() {
-        fn f(vars: [bool; 5]) -> bool {
+        fn f(vars: &[bool]) -> bool {
+            assert!(vars.len() == 5);
             let mut constraints = vec![];
             if vars[0] {
                 constraints.push(vec![lit(0, true)]);
@@ -139,19 +143,19 @@ mod tests {
             if vars[4] {
                 constraints.push(vec![lit(0, true), lit(1, true)]);
             }
-            is_sat::<5>(&constraints).is_some()
+            is_sat(&constraints, 5).is_some()
         }
 
         let expected = HashSet::from([
-            MssOrMus::Mss([false, true, true, false, true]),
-            MssOrMus::Mss([true, false, true, false, true]),
-            MssOrMus::Mss([true, false, false, true, true]),
-            MssOrMus::Mss([false, true, false, true, false]),
-            MssOrMus::Mus([false, false, true, true, false]),
-            MssOrMus::Mus([false, true, false, true, true]),
-            MssOrMus::Mus([true, true, false, false, false]),
+            MssOrMus::Mss([false, true, true, false, true].to_vec()),
+            MssOrMus::Mss([true, false, true, false, true].to_vec()),
+            MssOrMus::Mss([true, false, false, true, true].to_vec()),
+            MssOrMus::Mss([false, true, false, true, false].to_vec()),
+            MssOrMus::Mus([false, false, true, true, false].to_vec()),
+            MssOrMus::Mus([false, true, false, true, true].to_vec()),
+            MssOrMus::Mus([true, true, false, false, false].to_vec()),
         ]);
-        let found: HashSet<_> = marco(f).collect();
+        let found: HashSet<_> = marco(f, 5).collect();
         assert_eq!(expected, found);
     }
 }
