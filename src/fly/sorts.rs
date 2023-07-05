@@ -6,7 +6,7 @@ use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
 use std::collections::HashSet;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum SortError {
     #[error("sort {0} was not declared")]
     UnknownSort(String),
