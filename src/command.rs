@@ -562,6 +562,7 @@ impl App {
                 }
 
                 crate::bounded::set::check(&mut m, &universe, depth, compress_traces.into());
+            }
             Command::UpdrVerify(ref args @ VerifyArgs { .. }) => {
                 let conf = Arc::new(args.get_solver_conf());
                 let mut updr = Updr::new(conf);
