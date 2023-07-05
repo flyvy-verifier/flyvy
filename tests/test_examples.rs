@@ -21,7 +21,7 @@ use serde_derive::Deserialize;
 use temporal_verifier::solver::solver_path;
 use walkdir::WalkDir;
 
-const SOLVERS_TO_TEST: [&str; 1] = ["z3"];
+const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
 
 lazy_static! {
     static ref SOLVER_VERSION_VARS: HashMap<String, String> = {
