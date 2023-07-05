@@ -1,0 +1,15 @@
+---
+source: tests/test_examples.rs
+description: "--expect-fail -- verify tests/examples/fail/sorts/empty_call_def.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+sort checking error:
+error: f was called but it is not a function/definition
+  ┌─ tests/examples/fail/sorts/empty_call_def.fly:8:1
+  │
+8 │ assert f()
+  │ ^^^^^^^^^^
+
+
