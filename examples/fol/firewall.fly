@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/firewall.pyv
-##
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort node
@@ -23,9 +21,6 @@ mutable allowed_in(node): bool
 
 # init:
 assume (forall S:node, D:node. !sent(S, D)) & (forall N:node. !allowed_in(N))
-
-# immutability (added by hand)
-assume always (forall N:node. internal(N) = (internal(N))')
 
 # transitions:
 assume always (exists src:node, dst:node. internal(src) & !internal(dst) & (forall S:node, D:node. (sent(S, D))' <-> sent(S, D) | S = src & D = dst) & (forall N:node. (allowed_in(N))' <-> allowed_in(N) | N = dst)) | (exists src:node, dst:node. !internal(src) & internal(dst) & allowed_in(src) & (forall S:node, D:node. (sent(S, D))' <-> sent(S, D) | S = src & D = dst) & (forall x0:node. (allowed_in(x0))' = allowed_in(x0)))

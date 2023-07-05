@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/vertical_paxos_forall_choosable.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 ## Manually converted derived relations to definitions.
 
 # sorts:
@@ -41,13 +40,6 @@ mutable complete_msg(round): bool
 def choosable(R:round, V:value, Q:quorum) -> bool {
     (forall N:node. member(N, Q) -> !left_round(N, R) | vote(N, R, V))
 }
-
-# immutability (added by hand)
-assume always (none = none')
-assume always (forall R1:round, R2:round. le(R1, R2) = (le(R1, R2))')
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
-assume always (forall Q:quorum, C:config. quorumin(Q, C) = (quorumin(Q, C))')
-assume always (forall C:config, R:round. complete_of(C, R) = (complete_of(C, R))')
 
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall C:config, Q1:quorum, Q2:quorum. quorumin(Q1, C) & quorumin(Q2, C) -> (exists N:node. member(N, Q1) & member(N, Q2))) & (forall C:config, R1:round, R2:round. complete_of(C, R1) & complete_of(C, R2) -> R1 = R2)

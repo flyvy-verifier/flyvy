@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/client_server_ae.pyv
-##
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort node
@@ -23,9 +21,6 @@ mutable match_(request, response): bool
 mutable request_sent(node, request): bool
 mutable response_sent(node, response): bool
 mutable response_received(node, response): bool
-
-# immutability (added by hand)
-assume always (forall R:request, P:response. (match_(R, P) = (match_(R, P))'))
 
 # init:
 assume (forall N:node, R:request. !request_sent(N, R)) & (forall N:node, P:response. !response_sent(N, P)) & (forall N:node, P:response. !response_received(N, P))

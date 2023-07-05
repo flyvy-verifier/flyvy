@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/raft.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort term
@@ -58,23 +57,6 @@ immutable index_used(log, index): bool
 immutable term_at(log, index, term): bool
 mutable committed(index, value): bool
 mutable valid(log): bool
-
-# immutability (added by hand)
-assume always (term_zero = term_zero')
-assume always (index_zero = index_zero')
-assume always (none_index = none_index')
-assume always (none_term = none_term')
-assume always (log0 = log0')
-assume always (forall OI:option_index. oi_index(OI) = (oi_index(OI))')
-assume always (forall OT:option_term. ot_term(OT) = (ot_term(OT))')
-assume always (forall L:log, I:index. value_at(L, I) = (value_at(L, I))')
-assume always (forall T1:term, T2:term. term_le(T1, T2) = (term_le(T1, T2))')
-assume always (forall I1:index, I2:index. index_le(I1, I2) = (index_le(I1, I2))')
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
-assume always (forall OI:option_index. is_none_index(OI) = (is_none_index(OI))')
-assume always (forall OT:option_term. is_none_term(OT) = (is_none_term(OT))')
-assume always (forall L:log, I:index. index_used(L, I) = (index_used(L, I))')
-assume always (forall L:log, I:index, T:term. term_at(L, I, T) = (term_at(L, I, T))')
 
 # axioms:
 assume always (forall T:term. term_le(T, T)) & (forall T1:term, T2:term, T3:term. term_le(T1, T2) & term_le(T2, T3) -> term_le(T1, T3)) & (forall T1:term, T2:term. term_le(T1, T2) & term_le(T2, T1) -> T1 = T2) & (forall T1:term, T2:term. term_le(T1, T2) | term_le(T2, T1)) & (forall T:term. term_le(term_zero, T)) & (forall T:index. index_le(T, T)) & (forall T1:index, T2:index, T3:index. index_le(T1, T2) & index_le(T2, T3) -> index_le(T1, T3)) & (forall T1:index, T2:index. index_le(T1, T2) & index_le(T2, T1) -> T1 = T2) & (forall T1:index, T2:index. index_le(T1, T2) | index_le(T2, T1)) & (forall T:index. index_le(index_zero, T)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2)) & (forall OI:option_index. is_none_index(OI) <-> OI = none_index) & (forall OT:option_term. is_none_term(OT) <-> OT = none_term) & (forall L:log, I:index, T1:term, T2:term. term_at(L, I, T1) & term_at(L, I, T2) -> T1 = T2) & (forall I:index. !index_used(log0, I)) & (forall I:index, T:term. !term_at(log0, I, T))

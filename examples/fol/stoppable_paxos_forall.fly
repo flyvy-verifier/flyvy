@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/stoppable_paxos_forall.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort inst
@@ -38,15 +37,6 @@ mutable proposal(inst, round, value): bool
 mutable active(round): bool
 mutable vote(node, inst, round, value): bool
 mutable decision(node, inst, round, value): bool
-
-# immutability (added by hand)
-assume always (none = none')
-assume always (stop = stop')
-assume always (forall M:votemap, I:inst. maxr(M, I) = (maxr(M, I))')
-assume always (forall M:votemap, I:inst. maxv(M, I) = (maxv(M, I))')
-assume always (forall R1:round, R2:round. le(R1, R2) = (le(R1, R2))')
-assume always (forall I1:inst, I2:inst. inst_le(I1, I2) = (inst_le(I1, I2))')
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
 
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall X:inst. inst_le(X, X)) & (forall X:inst, Y:inst, Z:inst. inst_le(X, Y) & inst_le(Y, Z) -> inst_le(X, Z)) & (forall X:inst, Y:inst. inst_le(X, Y) & inst_le(Y, X) -> X = Y) & (forall X:inst, Y:inst. inst_le(X, Y) | inst_le(Y, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
