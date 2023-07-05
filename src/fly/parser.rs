@@ -351,7 +351,7 @@ pub fn parse(s: &str) -> Result<Module, ParseError<LineCol>> {
     parser::module(s)
 }
 
-pub fn parse_error_diagonistic<FileId>(
+pub fn parse_error_diagnostic<FileId>(
     file_id: FileId,
     e: &ParseError<LineCol>,
 ) -> Diagnostic<FileId> {
