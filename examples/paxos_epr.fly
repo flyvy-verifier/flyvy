@@ -8,14 +8,14 @@ sort quorum
 sort round
 
 # constants:
-mutable none: round
+immutable none: round
 
 # functions:
 
 
 # relations:
-mutable le(round, round): bool
-mutable member(node, quorum): bool
+immutable le(round, round): bool
+immutable member(node, quorum): bool
 mutable one_a(round): bool
 mutable one_b(node, round): bool
 mutable left_round(node, round): bool

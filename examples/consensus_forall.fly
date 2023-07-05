@@ -13,7 +13,7 @@ mutable voting_quorum: quorum
 
 
 # relations:
-mutable member(node, quorum): bool
+immutable member(node, quorum): bool
 mutable vote_request_msg(node, node): bool
 mutable voted(node): bool
 mutable vote_msg(node, node): bool
