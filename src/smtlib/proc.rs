@@ -10,6 +10,7 @@
 use crate::smtlib::sexp;
 use nix::{errno::Errno, sys::signal, unistd::Pid};
 use std::hash::{Hash, Hasher};
+use std::process::ExitStatus;
 use std::{
     collections::hash_map::DefaultHasher,
     ffi::{OsStr, OsString},
@@ -461,6 +462,11 @@ impl SmtProc {
             return Ok(SatResp::Unknown(reason.to_string()));
         }
         self.check_killed()?;
+        if resp.is_empty() {
+            // TODO(tchajed): this is just from observing behavior, I'm not sure
+            // why check_killed doesn't work here
+            self.check_killed()?;
+        }
         let msg = Self::parse_error(resp);
         return Err(SolverError::UnexpectedClose(msg));
     }
@@ -506,20 +512,42 @@ impl SmtProc {
         }
     }
 
+    fn check_status(status: ExitStatus) -> Result<()> {
+        if status.signal() == Some(nix::libc::SIGKILL) {
+            return Err(SolverError::Killed);
+        }
+        Ok(())
+    }
+
+    fn assert_killed(&mut self) -> Result<()> {
+        let status = self.child.wait().map_err(SolverError::from)?;
+        *self.terminated.lock().unwrap() = true;
+        Self::check_status(status)?;
+        Ok(())
+    }
+
     fn check_killed(&mut self) -> Result<()> {
+        if *self.terminated.lock().unwrap() {
+            _ = self.child.try_wait();
+            return Err(SolverError::Killed);
+        }
         // check if the solver was killed and return a special error
         if let Some(status) = self.child.try_wait().unwrap() {
             // mark the process as terminated
             *self.terminated.lock().unwrap() = true;
-            if status.signal() == Some(nix::libc::SIGKILL) {
-                return Err(SolverError::Killed);
-            }
+            Self::check_status(status)?;
         }
         return Ok(());
     }
 
     /// A marker for determining end of solver response.
     const DONE: &str = "<<DONE>>";
+
+    fn write_stdin(&mut self, line: &str) -> std::result::Result<(), io::Error> {
+        writeln!(self.stdin, "{line}")?;
+        self.stdin.flush()?;
+        Ok(())
+    }
 
     /// Low-level mechanism to get a response. Note that this needs to be issued
     /// after each query that returns a response, since it sends a marker and
@@ -528,7 +556,7 @@ impl SmtProc {
     where
         F: FnOnce(&str) -> T,
     {
-        match writeln!(self.stdin, r#"(echo "{}")"#, Self::DONE) {
+        match self.write_stdin(&format!(r#"(echo "{}")"#, Self::DONE)) {
             Ok(_) => {}
             Err(err) => {
                 if err.kind() == ErrorKind::BrokenPipe {
@@ -537,9 +565,6 @@ impl SmtProc {
                 return Err(SolverError::from(err));
             }
         }
-        self.stdin
-            .flush()
-            .expect("I/O error: failed to send to solver");
         // buf accumulates the entire response, which is read line-by-line
         // looking for the DONE marker.
         let mut buf = String::new();
@@ -550,6 +575,11 @@ impl SmtProc {
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
                 self.check_killed()?;
+                // TODO(tchajed): this is just from observing behavior, I'm not sure
+                // why check_killed doesn't work here
+                if buf.is_empty() {
+                    self.assert_killed()?;
+                }
                 let msg = Self::parse_error(&buf);
                 return Err(SolverError::UnexpectedClose(msg));
             }
@@ -708,14 +738,7 @@ mod tests {
         insta::assert_display_snapshot!(r.unwrap_err());
     }
 
-    // TODO: this test is not robust: killing the solver at the wrong time
-    // results in a broken pipe error somewhere in the code which isn't caught
-    //
-    // A more systematic solution is needed, either checking if the solver was
-    // killed on any broken pipe error, or arranging to only kill the solver if
-    // it's in a check_sat call.
     #[test]
-    #[ignore]
     fn test_z3_kill() {
         let z3 = Z3Conf::new(&solver_path("z3")).done();
         let mut proc = SmtProc::new(z3, None).unwrap();
