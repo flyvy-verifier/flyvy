@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/fast_paxos_epr.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort round
@@ -33,13 +32,6 @@ mutable proposal(round, value): bool
 mutable vote(node, round, value): bool
 mutable decision(round, value): bool
 mutable any_msg(round): bool
-
-# immutability (added by hand)
-assume always (none = none')
-assume always (forall R1:round, R2:round. le(R1, R2) = (le(R1, R2))')
-assume always (forall R:round. fast(R) = (fast(R))')
-assume always (forall N:node, Q:quorum_c. member_c(N, Q) = (member_c(N, Q))')
-assume always (forall N:node, Q:quorum_f. member_f(N, Q) = (member_f(N, Q))')
 
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall Q1:quorum_c, Q2:quorum_c. exists N:node. member_c(N, Q1) & member_c(N, Q2)) & (forall Q1:quorum_c, Q2:quorum_f, Q3:quorum_f. exists N:node. member_c(N, Q1) & member_f(N, Q2) & member_f(N, Q3))

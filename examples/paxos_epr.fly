@@ -8,14 +8,14 @@ sort quorum
 sort round
 
 # constants:
-mutable none: round
+immutable none: round
 
 # functions:
 
 
 # relations:
-mutable le(round, round): bool
-mutable member(node, quorum): bool
+immutable le(round, round): bool
+immutable member(node, quorum): bool
 mutable one_a(round): bool
 mutable one_b(node, round): bool
 mutable left_round(node, round): bool
@@ -24,10 +24,6 @@ mutable vote(node, round, value): bool
 mutable decision(round, value): bool
 
 # added by hand
-# immutability
-assume always (none = none')
-assume always (forall R1:round, R2:round. le(R1,R2) = (le(R1,R2))')
-assume always (forall N:node, Q:quorum. member(N,Q) = (member(N,Q))')
 # axioms
 assume always (forall X:round. le(X,X))
 assume always (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z))

@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/ticket.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort thread
@@ -26,10 +25,6 @@ mutable pc1(thread): bool
 mutable pc2(thread): bool
 mutable pc3(thread): bool
 mutable m(thread, ticket): bool
-
-# immutability (added by hand)
-assume always (zero = zero')
-assume always (forall X:ticket, Y:ticket. le(X, Y) = (le(X, Y))')
 
 # axioms:
 assume always (forall X:ticket. le(X, X)) & (forall X:ticket, Y:ticket, Z:ticket. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:ticket, Y:ticket. le(X, Y) & le(Y, X) -> X = Y) & (forall X:ticket, Y:ticket. le(X, Y) | le(Y, X)) & (forall X:ticket. le(zero, X))

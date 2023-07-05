@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/toy_consensus_epr.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort value
@@ -24,9 +23,6 @@ immutable member(node, quorum): bool
 mutable voted(node): bool
 mutable vote(node, value): bool
 mutable decided(value): bool
-
-# immutability (added by hand)
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
 
 # axioms:
 assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))

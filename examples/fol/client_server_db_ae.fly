@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/client_server_db_ae.pyv
-##
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort db_request_id
@@ -27,9 +25,6 @@ mutable response_received(node, response): bool
 mutable db_request_sent(db_request_id, request): bool
 mutable db_response_sent(db_request_id, response): bool
 mutable t(db_request_id, node): bool
-
-# immutability (added by hand)
-assume always (forall R:request, P:response. (match_(R, P) = (match_(R, P))'))
 
 # init:
 assume (forall N:node, R:request. !request_sent(N, R)) & (forall N:node, P:response. !response_sent(N, P)) & (forall N:node, P:response. !response_received(N, P)) & (forall I:db_request_id, R:request. !db_request_sent(I, R)) & (forall I:db_request_id, P:response. !db_response_sent(I, P)) & (forall I:db_request_id, N:node. !t(I, N))

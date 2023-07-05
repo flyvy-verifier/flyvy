@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/flexible_paxos_forall_choosable.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 ## Manually converted derived relations to definitions.
 
 # sorts:
@@ -35,12 +34,6 @@ mutable decision(round, value): bool
 def choosable(R:round, V:value, Q:quorum_2) -> bool {
     (forall N:node. member_2(N, Q) -> !left_round(N, R) | vote(N, R, V))
 }
-
-# immutability (added by hand)
-assume always (none = none')
-assume always (forall R1:round, R2:round. le(R1, R2) = (le(R1, R2))')
-assume always (forall N:node, Q:quorum_1. member_1(N, Q) = (member_1(N, Q))')
-assume always (forall N:node, Q:quorum_2. member_2(N, Q) = (member_2(N, Q))')
 
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall Q1:quorum_1, Q2:quorum_2. exists N:node. member_1(N, Q1) & member_2(N, Q2))

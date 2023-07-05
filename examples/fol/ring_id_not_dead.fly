@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/ring_id_not_dead.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort node
@@ -24,11 +23,6 @@ immutable btw(node, node, node): bool
 mutable leader(node): bool
 mutable pending(id, node): bool
 mutable sent(node): bool
-
-# immutability (added by hand)
-assume always (forall X:node. idn(X) = (idn(X))')
-assume always (forall X:id, Y:id. le(X, Y) = (le(X, Y))')
-assume always (forall N1:node, N2:node, N3:node. btw(N1, N2, N3) = (btw(N1, N2, N3))')
 
 # axioms:
 assume always (forall X:id. le(X, X)) & (forall X:id, Y:id, Z:id. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:id, Y:id. le(X, Y) & le(Y, X) -> X = Y) & (forall X:id, Y:id. le(X, Y) | le(Y, X)) & (forall W:node, X:node, Y:node, Z:node. btw(W, X, Y) & btw(W, Y, Z) -> btw(W, X, Z)) & (forall W:node, X:node, Y:node. btw(W, X, Y) -> !btw(W, Y, X)) & (forall W:node, X:node, Y:node. btw(W, X, Y) | btw(W, Y, X) | W = X | W = Y | X = Y) & (forall X:node, Y:node, Z:node. btw(X, Y, Z) -> btw(Y, Z, X)) & (forall X:node, Y:node. idn(X) = idn(Y) -> X = Y) & (exists N:node. forall M:node. le(idn(M), idn(N)))

@@ -13,7 +13,7 @@ sort value
 
 
 # relations:
-mutable member(node, quorum): bool
+immutable member(node, quorum): bool
 mutable vote_request_msg(node, node): bool
 mutable voted(node): bool
 mutable vote_msg(node, node): bool
@@ -30,8 +30,6 @@ assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_reques
 # added by hand
 # axiom
 assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
-# immutable relation (transition)
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
 
 # safety:
 assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)

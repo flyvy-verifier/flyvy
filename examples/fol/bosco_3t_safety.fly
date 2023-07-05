@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/bosco_3t_safety.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort quorum_a
@@ -35,13 +34,6 @@ mutable sent_msg(node, node, value): bool
 mutable rcv_msg(node, node, value): bool
 mutable sent_msg_proj(node, node): bool
 mutable rcv_msg_proj(node, node): bool
-
-# immutability (added by hand)
-assume always (forall N:node. member_f(N) = (member_f(N))')
-assume always (forall N:node, Q:quorum_a. member_a(N, Q) = (member_a(N, Q))')
-assume always (forall N:node, Q:quorum_b. member_b(N, Q) = (member_b(N, Q))')
-assume always (forall N:node, Q:quorum_c. member_c(N, Q) = (member_c(N, Q))')
-assume always (forall N:node, V:value. input(N, V) = (input(N, V))')
 
 # axioms:
 assume always (forall A:quorum_a, B:quorum_b. exists C:quorum_c. forall N:node. member_c(N, C) -> member_a(N, A) & member_b(N, B) & !member_f(N)) & (forall B:quorum_b, C:quorum_c. exists N:node. member_b(N, B) & member_c(N, C) & !member_f(N)) & (forall N:node, V1:value, V2:value. !member_f(N) & input(N, V1) & input(N, V2) -> V1 = V2)

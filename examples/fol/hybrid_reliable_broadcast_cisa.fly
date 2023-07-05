@@ -6,7 +6,6 @@
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/hybrid_reliable_broadcast_cisa.pyv
 ##
 ## Manually added "always" to axiom.
-## Manually enforced immutability using additional axioms.
 
 # sorts:
 sort node
@@ -31,15 +30,6 @@ mutable accept(node): bool
 mutable sent_msg(node, node): bool
 mutable rcv_msg(node, node): bool
 mutable sent_msg_proj(node): bool
-
-# immutablility (added by hand)
-assume always (forall N:node, Q:quorum_a. member_a(N, Q) = (member_a(N, Q))')
-assume always (forall N:node, Q:quorum_b. member_b(N, Q) = (member_b(N, Q))')
-assume always (forall N:node. member_fc(N) = (member_fc(N))')
-assume always (forall N:node. member_fi(N) = (member_fi(N))')
-assume always (forall N:node. member_fs(N) = (member_fs(N))')
-assume always (forall N:node. member_fa(N) = (member_fa(N))')
-assume always (forall N:node. rcv_init(N) = (rcv_init(N))')
 
 # axioms:
 assume always (exists B:quorum_b. forall N:node. member_b(N, B) -> !member_fa(N) & !member_fc(N) & !member_fs(N) & !member_fi(N)) & (forall A_BP:quorum_a. exists N:node. member_a(N, A_BP) & !member_fa(N) & !member_fs(N)) & (forall B_CF:quorum_b. exists A:quorum_a. forall N:node. member_a(N, A) -> member_b(N, B_CF) & !member_fa(N) & !member_fi(N)) & (forall N:node. !(member_fc(N) & member_fi(N))) & (forall N:node. !(member_fc(N) & member_fs(N))) & (forall N:node. !(member_fc(N) & member_fa(N))) & (forall N:node. !(member_fi(N) & member_fs(N))) & (forall N:node. !(member_fi(N) & member_fa(N))) & (forall N:node. !(member_fs(N) & member_fa(N)))
