@@ -23,8 +23,6 @@ mutable decided(node, value): bool
 
 
 # added by hand
-# immutability
-assume always (forall N:node, Q:quorum. member(N, Q) = (member(N, Q))')
 # axiom
 assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
 

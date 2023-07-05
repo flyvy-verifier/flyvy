@@ -24,10 +24,6 @@ mutable vote(node, round, value): bool
 mutable decision(round, value): bool
 
 # added by hand
-# immutability
-assume always (none = none')
-assume always (forall R1:round, R2:round. le(R1,R2) = (le(R1,R2))')
-assume always (forall N:node, Q:quorum. member(N,Q) = (member(N,Q))')
 # axioms
 assume always (forall X:round. le(X,X))
 assume always (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z))
