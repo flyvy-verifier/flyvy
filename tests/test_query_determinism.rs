@@ -12,8 +12,8 @@ fn temporal_verifier() -> Command {
 #[test]
 fn updr_determinism() {
     let mut expected_output: Option<String> = None;
-    let NUM_ITERS = 2; // ideally this would be higher, but it's too slow at ~6 seconds per iteration
-    for i in 0..NUM_ITERS {
+    let num_iters = 2; // ideally this would be higher, but it's too slow at ~6 seconds per iteration
+    for i in 0..num_iters {
         println!("updr determinism iteration {}", i);
         let out = temporal_verifier()
             .arg("updr-verify")

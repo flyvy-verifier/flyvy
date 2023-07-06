@@ -239,6 +239,7 @@ impl Updr {
         }
     }
 
+    #[allow(clippy::let_and_return)]
     fn get_predecessor(
         &mut self,
         term_or_model: &TermOrModel,
