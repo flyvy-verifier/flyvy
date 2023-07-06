@@ -5,7 +5,6 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::collections::HashMap;
 use std::fs::create_dir_all;
-use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, process};
@@ -248,6 +247,53 @@ struct InferArgs {
     infer_cmd: InferCommand,
 }
 
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct BoundedArgs {
+    /// File name for a .fly file
+    file: String,
+    /// Maximum number of transitions to consider during model checking
+    #[arg(long)]
+    depth: Option<usize>,
+    /// What size bound to use for the given sort, given as SORT=N as in --bound node=2
+    #[arg(long)]
+    bound: Vec<String>,
+}
+
+impl BoundedArgs {
+    /// Parses the arguments in self.bound into a universe size map.
+    ///
+    /// Ensures that every sort in the given signature is given a bound.
+    fn get_universe(&self, sig: &Signature) -> HashMap<String, usize> {
+        let mut universe: HashMap<String, usize> = HashMap::new();
+        for b in &self.bound {
+            if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
+                let sort_name = sort_name.to_string();
+                if !sig.sorts.contains(&sort_name) {
+                    eprintln!("unknown sort name {} in bound {}", sort_name, b);
+                    process::exit(1);
+                }
+                if let Ok(bound_size) = bound_size.parse::<usize>() {
+                    universe.insert(sort_name, bound_size);
+                } else {
+                    eprintln!("could not parse bound as integer in {}", b);
+                    process::exit(1);
+                }
+            } else {
+                eprintln!("expected exactly one '=' in bound {}", b);
+                process::exit(1);
+            }
+        }
+        if let Some(unbounded_sort) = sig.sorts.iter().find(|&s| !universe.contains_key(s)) {
+            eprintln!(
+                "need a bound for sort {} on the command line, as in --bound {}=N",
+                unbounded_sort, unbounded_sort
+            );
+            process::exit(1);
+        }
+        universe
+    }
+}
+
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
     Verify(VerifyArgs),
@@ -262,30 +308,14 @@ enum Command {
         file: String,
     },
     SetCheck {
-        /// File name for a .fly file
-        file: String,
-        /// Maximum number of transitions to consider during model checking
-        #[arg(long)]
-        depth: Option<usize>,
+        #[command(flatten)]
+        bounded: BoundedArgs,
         /// Whether to only keep track of the last state of the trace
         #[arg(long)]
         compress_traces: bool,
-        /// What size bound to use for the given sort, given as SORT=N as in --bound node=2
-        #[arg(long)]
-        bound: Vec<String>,
     },
-    SatCheck {
-        /// File name for a .fly file
-        file: String,
-        /// Depth to run the checker to
-        depth: usize,
-    },
-    BddCheck {
-        /// File name for a .fly file
-        file: String,
-        /// Depth to run the checker to
-        depth: usize,
-    },
+    SatCheck(BoundedArgs),
+    BddCheck(BoundedArgs),
 }
 
 impl InferCommand {
@@ -305,9 +335,12 @@ impl Command {
             Command::UpdrVerify(VerifyArgs { file, .. }) => file,
             Command::Print { file, .. } => file,
             Command::Inline { file, .. } => file,
-            Command::SatCheck { file, .. } => file,
-            Command::SetCheck { file, .. } => file,
-            Command::BddCheck { file, .. } => file,
+            Command::SetCheck {
+                bounded: BoundedArgs { file, .. },
+                ..
+            } => file,
+            Command::SatCheck(BoundedArgs { file, .. }) => file,
+            Command::BddCheck(BoundedArgs { file, .. }) => file,
         }
     }
 }
@@ -538,74 +571,29 @@ impl App {
                 m.inline_defs();
                 println!("{}", printer::fmt(&m));
             }
-            Command::SetCheck {
-                depth,
-                compress_traces,
-                bound,
-                ..
-            } => {
-                let mut universe: HashMap<String, usize> = HashMap::new();
-                for b in &bound {
-                    if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
-                        let sort_name = sort_name.to_string();
-                        if !m.signature.sorts.contains(&sort_name) {
-                            eprintln!("unknown sort name {} in bound {}", sort_name, b);
-                            process::exit(1);
-                        }
-                        if let Ok(bound_size) = bound_size.parse::<usize>() {
-                            universe.insert(sort_name, bound_size);
-                        } else {
-                            eprintln!("could not parse bound as integer in {}", b);
-                            process::exit(1);
-                        }
-                    } else {
-                        eprintln!("expected exactly one '=' in bound {}", b);
-                        process::exit(1);
-                    }
-                }
-                if let Some(unbounded_sort) = m
-                    .signature
-                    .sorts
-                    .iter()
-                    .find(|&s| !universe.contains_key(s))
-                {
-                    eprintln!(
-                        "need a bound for sort {} on the command line, as in --bound {}=N",
-                        unbounded_sort, unbounded_sort
-                    );
-                    process::exit(1);
-                }
-
-                crate::bounded::set::check(&mut m, &universe, depth, compress_traces.into());
-            }
             Command::UpdrVerify(ref args @ VerifyArgs { .. }) => {
                 let conf = Arc::new(args.get_solver_conf());
                 let mut updr = Updr::new(conf);
                 let _result = updr.search(&m);
             }
-            Command::SatCheck { depth, .. } => {
-                let mut universe = HashMap::new();
-                let stdin = std::io::stdin();
-                for sort in &m.signature.sorts {
-                    println!("how large should {} be?", sort);
-                    let input = stdin
-                        .lock()
-                        .lines()
-                        .next()
-                        .expect("no next line")
-                        .expect("could not read next line")
-                        .parse::<usize>();
-                    match input {
-                        Ok(input) => {
-                            universe.insert(sort.clone(), input);
-                        }
-                        Err(_) => {
-                            eprintln!("could not parse input as a number");
-                            process::exit(1);
-                        }
+
+            Command::SetCheck {
+                bounded,
+                compress_traces,
+            } => {
+                let univ = bounded.get_universe(&m.signature);
+                crate::bounded::set::check(&mut m, &univ, bounded.depth, compress_traces.into());
+            }
+            Command::SatCheck(bounded) => {
+                let depth = match bounded.depth {
+                    Some(depth) => depth,
+                    None => {
+                        eprintln!("sat checker does not support unbounded depth. please specify --depth N on the command line");
+                        process::exit(1)
                     }
-                }
-                match crate::bounded::sat::check(&mut m, &universe, depth) {
+                };
+                let univ = bounded.get_universe(&m.signature);
+                match crate::bounded::sat::check(&mut m, &univ, depth) {
                     Ok(crate::bounded::sat::CheckerAnswer::Counterexample) => {}
                     Ok(crate::bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
@@ -613,32 +601,18 @@ impl App {
                     Err(error) => eprintln!("{}", error),
                 }
             }
-            Command::BddCheck { depth, .. } => {
-                let mut universe = HashMap::new();
-                let stdin = std::io::stdin();
-                for sort in &m.signature.sorts {
-                    println!("how large should {} be?", sort);
-                    let input = stdin
-                        .lock()
-                        .lines()
-                        .next()
-                        .expect("no next line")
-                        .expect("could not read next line")
-                        .parse::<usize>();
-                    match input {
-                        Ok(input) => {
-                            universe.insert(sort.clone(), input);
-                        }
-                        Err(_) => {
-                            eprintln!("could not parse input as a number");
-                            process::exit(1);
-                        }
-                    }
-                }
-                match crate::bounded::bdd::check(&mut m, &universe, depth) {
+            Command::BddCheck(bounded) => {
+                let univ = bounded.get_universe(&m.signature);
+                match crate::bounded::bdd::check(&mut m, &univ, bounded.depth) {
                     Ok(crate::bounded::bdd::CheckerAnswer::Counterexample) => {}
                     Ok(crate::bounded::bdd::CheckerAnswer::Unknown) => {
-                        println!("answer: safe up to depth {} for given sort bounds", depth)
+                        println!(
+                            "answer: safe up to {} for given sort bounds",
+                            bounded
+                                .depth
+                                .map(|d| format!("depth {}", d))
+                                .unwrap_or("any depth".to_string())
+                        );
                     }
                     Err(error) => eprintln!("{}", error),
                 }
