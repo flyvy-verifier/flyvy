@@ -623,16 +623,17 @@ impl SmtProc {
 impl SmtPid {
     /// Kill the SMT process by pid.
     pub fn kill(&self) {
-        if *self.terminated.lock().unwrap() {
+        let mut terminated = self.terminated.lock().unwrap();
+        if *terminated {
             return;
         }
         let r = signal::kill(self.pid, signal::Signal::SIGKILL);
-        *self.terminated.lock().unwrap() = true;
+        *terminated = true;
         match r {
             Ok(_) => (),
             Err(errno) => {
                 if errno != Errno::ESRCH {
-                    panic!("killing smt process failed with {errno}");
+                    panic!("killing SMT process {} failed with {errno}", self.pid);
                 }
             }
         }
