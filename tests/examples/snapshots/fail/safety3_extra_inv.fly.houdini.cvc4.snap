@@ -1,6 +1,6 @@
 ---
 source: tests/test_examples.rs
-description: "--all-solvers --name=houdini -- infer --houdini tests/examples/fail/safety3_extra_inv.fly"
+description: "--all-solvers --name=houdini -- infer houdini tests/examples/fail/safety3_extra_inv.fly"
 expression: combined_stdout_stderr
 ---
 # inferred invariant:
