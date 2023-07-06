@@ -19,6 +19,7 @@ fxhash = "0.2.1"
 im = "15.1.0"
 indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 itertools = "0.10.5"
+kissat = "0.1.0"
 lazy_static = "1.4.0"
 log = "0.4.19"
 nix = { version = "0.26.2", default-features = false, features = ["resource", "process", "signal"] }

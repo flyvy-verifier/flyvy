@@ -594,6 +594,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kissat"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e66be1260c6c996cd859c22d72cf8e2bf21371ed0ce119ba30dc2705af688345"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1050,6 +1059,7 @@ dependencies = [
  "indexmap 1.9.3",
  "insta",
  "itertools",
+ "kissat",
  "lazy_static",
  "log",
  "nix",
