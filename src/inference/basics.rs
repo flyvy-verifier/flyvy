@@ -328,6 +328,7 @@ impl FOModule {
                         break 'inner;
                     }
                 }
+                solver.save_tee();
             }
         }
 
@@ -379,10 +380,14 @@ impl FOModule {
                     assert_eq!(states.len(), 1);
 
                     if !core.add_counter_model(states[0].clone()) {
+                        solver.save_tee();
                         return Some(states.pop().unwrap());
                     }
                 }
-                SatResp::Unsat => return None,
+                SatResp::Unsat => {
+                    solver.save_tee();
+                    return None;
+                }
                 SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
             }
         }
@@ -409,7 +414,7 @@ impl FOModule {
 
         let mut unblocked_trans: HashSet<usize> = HashSet::from_iter(0..disj_trans.len());
         while !unblocked_trans.is_empty() && samples.len() < width {
-            for i in unblocked_trans.iter().copied().collect_vec() {
+            for i in unblocked_trans.iter().copied().sorted().collect_vec() {
                 if samples.len() >= width {
                     break;
                 }
@@ -421,7 +426,6 @@ impl FOModule {
                 }
 
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-
                 match resp {
                     SatResp::Sat => {
                         let mut states = solver.get_model();
@@ -444,6 +448,8 @@ impl FOModule {
                 }
             }
         }
+
+        solver.save_tee();
 
         if depth > 1 {
             let mut deep_samples: Vec<Model> = samples
@@ -544,6 +550,7 @@ impl FOModule {
                 }
                 SatResp::Unknown(error) => panic!("{}", error),
             }
+            solver.save_tee();
         }
         return CexOrCore::Core(core);
     }
@@ -556,6 +563,7 @@ impl FOModule {
         solver.assert(&Term::negate(t.clone()));
 
         let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+        solver.save_tee();
         match resp {
             SatResp::Sat => {
                 let states = solver.get_minimal_model().expect("error in solver");

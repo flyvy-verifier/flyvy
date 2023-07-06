@@ -7,6 +7,8 @@ use std::{
     time::Instant,
 };
 
+use itertools::Itertools;
+
 use crate::{
     fly::{
         semantics::{Interpretation, Model, Universe},
@@ -190,6 +192,7 @@ impl<B: Backend> Solver<B> {
         let start = timing::start();
         let r = if assumptions.is_empty() {
             let sat = self.proc.check_sat()?;
+            self.comment_with(|| format!("check sat result: {:?}", sat));
             Ok(sat)
         } else {
             self.last_assumptions = Some(assumptions.clone());
@@ -202,8 +205,10 @@ impl<B: Backend> Solver<B> {
                         sexp::negated_term(&ind)
                     }
                 })
+                .sorted()
                 .collect::<Vec<_>>();
             let sat = self.proc.check_sat_assuming(&assumptions)?;
+            self.comment_with(|| format!("check sat result: {:?}", sat));
             Ok(sat)
         };
         timing::elapsed(
@@ -372,6 +377,7 @@ impl<B: Backend> Solver<B> {
             .unwrap_or(HashMap::new())
             .into_iter()
             .map(|(ind, val)| if val { ind } else { Term::negate(ind) })
+            .sorted()
             .collect::<Vec<_>>();
         let max_card = self.get_min_max_card(&mut indicators);
         // Minimize each sort in turn, greedily in the order of the signature.

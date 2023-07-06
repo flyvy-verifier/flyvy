@@ -12,7 +12,7 @@ use peg::str::LineCol;
 use serde::Serialize;
 
 #[allow(missing_docs)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, PartialOrd, Ord)]
 pub enum Atom {
     I(usize),
     S(String),
@@ -31,7 +31,7 @@ impl Atom {
 
 /// An s-expression which also tracks comments.
 #[allow(missing_docs)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, PartialOrd, Ord)]
 pub enum Sexp {
     Atom(Atom),
     Comment(String),
