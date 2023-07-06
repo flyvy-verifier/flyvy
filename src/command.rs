@@ -599,7 +599,10 @@ impl App {
                     }
                 }
                 match crate::bounded::sat::check(&mut m, &universe, depth) {
-                    Ok(result) => println!("answer: {:?}", result),
+                    Ok(crate::bounded::sat::CheckerAnswer::Counterexample) => {}
+                    Ok(crate::bounded::sat::CheckerAnswer::Unknown) => {
+                        println!("answer: safe up to depth {} for given sort bounds", depth)
+                    }
                     Err(error) => eprintln!("{}", error),
                 }
             }

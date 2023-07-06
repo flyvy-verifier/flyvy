@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! A bounded model checker for flyvy programs using an SAT solver.
+//! A bounded model checker for flyvy programs using a SAT solver.
 
 use crate::fly::{sorts::*, syntax::*};
 use crate::term::FirstOrder;
@@ -146,7 +146,6 @@ pub enum CheckerAnswer {
 }
 
 /// Check a given Module out to some depth
-#[allow(dead_code)]
 pub fn check(
     module: &mut Module,
     universe: &Universe,
@@ -239,7 +238,10 @@ pub fn check(
 
     let cnf = tseytin(&Ast::And(program), &mut context);
 
-    println!("translation finished in {:?}", translation.elapsed());
+    println!(
+        "translation finished in {:0.1}s",
+        translation.elapsed().as_secs_f64()
+    );
 
     println!("starting cadical search...");
     let cadical_search = std::time::Instant::now();
@@ -262,7 +264,10 @@ pub fn check(
         }
     };
 
-    println!("cadical search finished in {:?}", cadical_search.elapsed());
+    println!(
+        "cadical search finished in {:0.1}s",
+        cadical_search.elapsed().as_secs_f64()
+    );
 
     println!("starting kissat search...");
     let kissat_search = std::time::Instant::now();
@@ -282,7 +287,10 @@ pub fn check(
         None => CheckerAnswer::Unknown,
     };
 
-    println!("kissat search finished in {:?}", kissat_search.elapsed());
+    println!(
+        "kissat search finished in {:0.1}s",
+        kissat_search.elapsed().as_secs_f64()
+    );
 
     if kissat_answer != cadical_answer {
         panic!("solvers disagreed!")
