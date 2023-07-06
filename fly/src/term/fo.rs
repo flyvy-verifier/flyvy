@@ -77,6 +77,7 @@ fn unrolling(t: &Term) -> Unrolling {
 }
 
 impl FirstOrder {
+    /// Asserts that a term is first order
     pub fn new(t: Term) -> Self {
         assert!(unrolling(&t).is_finite(), "term is not first order");
         Self(t)

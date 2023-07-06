@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Utilities for finding SMT-related things in the filesystem.
+
 use std::{
     env,
     path::{Path, PathBuf},

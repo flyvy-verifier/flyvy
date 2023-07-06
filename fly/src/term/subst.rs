@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::syntax::Term;
 
+/// A map from identifiers to Terms.
 pub type Substitution = HashMap<String, Term>;
 
 /// Perform a substitution over a quantifier-free term.

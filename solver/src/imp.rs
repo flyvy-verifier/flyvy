@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Implements communications between Rust code and a running SMT solver.
+
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},

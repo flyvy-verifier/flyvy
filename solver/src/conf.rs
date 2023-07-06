@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Holds the configuration need to launch a solver.
+
 use std::path::PathBuf;
 
 use crate::{backends::GenericBackend, imp::Solver};

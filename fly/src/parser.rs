@@ -9,7 +9,7 @@ use peg::{error::ParseError, str::LineCol};
 
 peg::parser! {
 
-pub grammar parser() for str {
+grammar parser() for str {
     use BinOp::*;
     use NOp::*;
     use UOp::*;

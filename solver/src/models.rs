@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Parse the output of the SMT solver.
+
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::{collections::HashMap, iter};
@@ -35,6 +37,7 @@ pub struct Model {
     pub symbols: HashMap<String, ModelSymbol>,
 }
 
+/// An evaluation error.
 #[derive(Debug, Error)]
 #[error("eval error: {0}")]
 pub struct EvalError(String);

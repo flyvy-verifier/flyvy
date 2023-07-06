@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Utility for change a module into an equivalent module with no definitions.
+
 use std::{collections::HashMap, iter::zip};
 
 use super::syntax::{Binder, Definition, Module, Proof, Term, ThmStmt};

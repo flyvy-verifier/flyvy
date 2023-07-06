@@ -1,10 +1,13 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Converts `Term`s to S-expressions.
+
 use fly::syntax::{BinOp, Binder, NOp, Quantifier, Sort, Term, UOp};
 pub use smtlib::sexp::parse;
 use smtlib::sexp::{app, atom_s, sexp_l, Sexp};
 
+/// Convert a `Sort` to an S-expression.
 pub fn sort(s: &Sort) -> Sexp {
     match s {
         Sort::Bool => atom_s("Bool"),
@@ -90,10 +93,12 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
     }
 }
 
+/// Convert a `Term` to an S-expression.
 pub fn term(t: &Term) -> Sexp {
     term_primes(t, 0)
 }
 
+/// Convert a `Term` to an S-expression, then negate it.
 pub fn negated_term(t: &Term) -> Sexp {
     app("not", [term(t)])
 }

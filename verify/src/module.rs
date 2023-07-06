@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Verify that a module is correct.
+
 use std::collections::HashMap;
 
 use rayon::prelude::*;
@@ -51,6 +53,7 @@ fn verify_firstorder(
     verify_term(&mut solver, assert.clone())
 }
 
+/// Verify that a module is correct.
 pub fn verify_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
     let check_invariant = |pf: &Proof,
                            assert: &InvariantAssertion|

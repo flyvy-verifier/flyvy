@@ -12,17 +12,25 @@ use fly::term::{fo::FirstOrder, prime::Next};
 #[derive(Debug, Clone)]
 pub struct InvariantAssertion {
     sig: Signature,
+    /// The initial states
     pub init: Term,
+    /// The states reachable in one step
     pub next: Term,
+    /// The assumptions that were recognized as invariants
     pub assumed_inv: Term,
+    /// The invariant given in the module
     pub inv: Spanned<Term>,
+    /// The other invariants in the same proof as `inv`
     pub proof_invs: Vec<Spanned<Term>>,
 }
 
+/// An error that occured while constructing an invariant assertion
 #[derive(Error, Debug)]
 pub enum InvariantError {
+    /// Assertion was in some incorrect form
     #[error("assertion is not of the form (always p)")]
     NotSafety,
+    /// Proof invariant mentioned more than one timestep
     #[error("proof invariant is not a well-formed single-state fomula")]
     BadProofInvariant,
 }
