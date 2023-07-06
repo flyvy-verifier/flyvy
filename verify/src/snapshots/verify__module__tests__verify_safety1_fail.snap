@@ -1,46 +1,33 @@
 ---
-source: src/verify/module.rs
+source: verify/src/module.rs
 expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
   - loc:
-      start: 197
-      end: 209
-    reason: FirstOrder
+      start: 181
+      end: 197
+    reason: NotInductive
     error:
       Sat:
         signature:
-          sorts:
-            - thread
+          sorts: []
           relations:
             - mutable: true
               name: p
-              args:
-                - Id: thread
+              args: []
               sort: Bool
-            - mutable: false
+            - mutable: true
               name: q
               args: []
               sort: Bool
-            - mutable: false
-              name: t0
-              args: []
-              sort:
-                Id: thread
-        universe:
-          - 1
+        universe: []
         interp:
           - shape:
-              - 1
               - 2
             data:
               - 0
           - shape:
               - 2
             data:
-              - 0
-          - shape:
               - 1
-            data:
-              - 0
 

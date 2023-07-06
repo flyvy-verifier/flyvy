@@ -1,5 +1,5 @@
 ---
-source: src/smtlib/proc.rs
+source: smtlib/src/proc.rs
 expression: r.unwrap_err()
 ---
 solver returned an error:

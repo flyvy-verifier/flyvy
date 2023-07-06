@@ -1,5 +1,5 @@
 ---
-source: src/fly/printer.rs
+source: fly/src/printer.rs
 expression: module(&m)
 ---
 mutable p: bool
