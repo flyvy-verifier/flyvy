@@ -260,7 +260,10 @@ pub fn check(
     let tr = translate(trs)?;
     let not_safe = translate(safes)?.not();
 
-    println!("translation finished in {:?}", time.elapsed());
+    println!(
+        "translation finished in {:0.1}s",
+        time.elapsed().as_secs_f64()
+    );
     println!("starting search...");
     let time = std::time::Instant::now();
 
@@ -291,7 +294,7 @@ pub fn check(
         }
     }
 
-    println!("search finished in {:?}", time.elapsed());
+    println!("search finished in {:0.1}s", time.elapsed().as_secs_f64());
 
     Ok(CheckerAnswer::Unknown)
 }

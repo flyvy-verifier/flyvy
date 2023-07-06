@@ -636,7 +636,10 @@ impl App {
                     }
                 }
                 match crate::bounded::bdd::check(&mut m, &universe, depth) {
-                    Ok(result) => println!("result: {:?}", result),
+                    Ok(crate::bounded::bdd::CheckerAnswer::Counterexample) => {}
+                    Ok(crate::bounded::bdd::CheckerAnswer::Unknown) => {
+                        println!("answer: safe up to depth {} for given sort bounds", depth)
+                    }
                     Err(error) => eprintln!("{}", error),
                 }
             }
