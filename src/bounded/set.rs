@@ -1268,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_basic() {
+    fn checker_set_basic() {
         let program = BoundedProgram {
             inits: vec![state([0])],
             trs: vec![
@@ -1295,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_cycle() {
+    fn checker_set_cycle() {
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
             trs: vec![
@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_translate_lockserver() -> Result<(), TranslationError> {
+    fn checker_set_translate_lockserver() -> Result<(), TranslationError> {
         let source = "
 sort node
 
@@ -1568,7 +1568,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn checker_translate_lockserver_buggy() -> Result<(), TranslationError> {
+    fn checker_set_translate_lockserver_buggy() -> Result<(), TranslationError> {
         // A buggy version of lockserv. See "here is the bug" below.
         let source = "
 sort node
@@ -1659,7 +1659,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn checker_translate_consensus() -> Result<(), TranslationError> {
+    fn checker_set_translate_consensus() -> Result<(), TranslationError> {
         let source = "
 sort node
 sort quorum
@@ -1727,7 +1727,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
     }
 
     #[test]
-    fn checker_immutability() {
+    fn checker_set_immutability() {
         let source = "
 immutable r: bool
 assume r

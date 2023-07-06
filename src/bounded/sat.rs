@@ -577,7 +577,7 @@ mod tests {
     use crate::fly::sorts::sort_check_and_infer;
 
     #[test]
-    fn checker_basic() -> Result<(), CheckerError> {
+    fn checker_sat_basic() -> Result<(), CheckerError> {
         let source = "
 mutable x: bool
 
@@ -599,7 +599,7 @@ assert always x
     }
 
     #[test]
-    fn checker_lockserver() -> Result<(), CheckerError> {
+    fn checker_sat_lockserver() -> Result<(), CheckerError> {
         let source = "
 sort node
 
@@ -666,7 +666,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn checker_lockserver_buggy() -> Result<(), CheckerError> {
+    fn checker_sat_lockserver_buggy() -> Result<(), CheckerError> {
         let source = "
 sort node
 
@@ -737,7 +737,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn checker_consensus() -> Result<(), CheckerError> {
+    fn checker_sat_consensus() -> Result<(), CheckerError> {
         let source = "
 sort node
 sort quorum
@@ -804,7 +804,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
     }
 
     #[test]
-    fn checker_immutability() -> Result<(), CheckerError> {
+    fn checker_sat_immutability() -> Result<(), CheckerError> {
         let source = "
 immutable r: bool
 assume r
