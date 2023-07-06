@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use fly::syntax::{BinOp, Binder, NOp, Quantifier, Sort, Term, UOp};
+pub use smtlib::sexp::parse;
 use smtlib::sexp::{app, atom_s, sexp_l, Sexp};
 
 pub fn sort(s: &Sort) -> Sexp {

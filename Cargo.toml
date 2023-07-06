@@ -19,8 +19,6 @@ edition = "2021"
 # walkdir = "2.3.3"
 
 # [dev-dependencies]
-# criterion = "0.5.1"
-# regex = "1.8.4"
 # shell-words = "1.1.0"
 # toml = "0.7.4"
 

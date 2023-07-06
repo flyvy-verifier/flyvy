@@ -4,7 +4,7 @@
 use std::fs;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use temporal_verifier::smtlib::sexp;
+use solver::sexp;
 
 pub fn sexp_parse_benchmark(c: &mut Criterion) {
     let s = fs::read_to_string("tests/issue_5_model.sexp").expect("could not open sexp file");
