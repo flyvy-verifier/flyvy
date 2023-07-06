@@ -562,6 +562,10 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
         self.sets
             .iter()
@@ -648,6 +652,10 @@ where
 
     pub fn len(&self) -> usize {
         self.to_prefixes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn to_terms_ids(&self) -> Vec<(usize, Term)> {

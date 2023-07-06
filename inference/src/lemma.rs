@@ -811,6 +811,11 @@ where
         self.lemmas.len()
     }
 
+    /// Check if the frontier is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Get an initial state which violates one of the given lemmas.
     /// This doesn't use the frontier, only previously blocked lemmas.
     pub fn init_cex(
@@ -1047,7 +1052,7 @@ where
         let mut advanced = false;
 
         // If there are no lemmas in the frontier, it cannot be advanced.
-        if self.lemmas.len() == 0 {
+        if self.lemmas.is_empty() {
             return advanced;
         }
 

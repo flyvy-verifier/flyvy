@@ -92,6 +92,10 @@ impl RestrictedAtoms {
         self.allowed.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn is_eq(&self, atom: usize) -> bool {
         matches!(self.atoms.to_term[atom], Term::BinOp(BinOp::Equals, _, _))
     }
