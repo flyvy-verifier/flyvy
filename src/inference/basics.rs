@@ -283,6 +283,7 @@ impl FOModule {
                     return TransCexResult::Cancelled;
                 }
                 let resp = solver.check_sat(assumptions).expect("error in solver");
+                solver.save_tee();
                 if cancelled() {
                     return TransCexResult::Cancelled;
                 }
@@ -371,6 +372,7 @@ impl FOModule {
             solver.assert(&Term::negate(t.clone()));
 
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+            solver.save_tee();
             match resp {
                 SatResp::Sat => {
                     let mut states = solver
@@ -421,7 +423,7 @@ impl FOModule {
                 }
 
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-
+                solver.save_tee();
                 match resp {
                     SatResp::Sat => {
                         let mut states = solver.get_model();
@@ -527,6 +529,7 @@ impl FOModule {
             }
 
             let resp = solver.check_sat(indicators).expect("error in solver");
+            solver.save_tee();
             match resp {
                 SatResp::Sat => {
                     let states = solver.get_minimal_model().expect("error in solver");
@@ -556,6 +559,7 @@ impl FOModule {
         solver.assert(&Term::negate(t.clone()));
 
         let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+        solver.save_tee();
         match resp {
             SatResp::Sat => {
                 let states = solver.get_minimal_model().expect("error in solver");
