@@ -1,16 +1,23 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! The flyvy AST for terms and modules.
+
 use itertools::Itertools;
 use std::fmt;
 
 use serde::Serialize;
 
+/// Unary operators
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum UOp {
+    /// Boolean negation
     Not,
+    /// Gives the value of the argument one step in the future
     Prime,
+    /// Always temporal modality
     Always,
+    /// Eventually temporal modality
     Eventually,
     /// Used for the l2s construction (may end up replaced with just Prime)
     Next,
@@ -18,6 +25,8 @@ pub enum UOp {
     Previously,
 }
 
+/// Binary operators
+#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum BinOp {
     Equals,
@@ -30,37 +39,62 @@ pub enum BinOp {
     Since,
 }
 
+/// N-ary logical operators
+#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum NOp {
     And,
     Or,
 }
 
+/// A kind of quantifier (forall or exists)
+#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum Quantifier {
     Forall,
     Exists,
 }
 
+/// A binder for a quantifier
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Binder {
+    /// Bound name
     pub name: String,
+    /// Sort for this binder
     pub sort: Sort,
 }
 
+/// A Term is a temporal-logical formula (in LTL), which can be interpreted as
+/// being a sequence of values of some sort (often bool for example) under a
+/// given signature and an infinite sequence of states (consisting of values for
+/// all the functions in the signature at each point in time).
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum Term {
+    /// A constant true or false
     Literal(bool),
+    /// A reference to a bound variable or function in the signature
     Id(String),
+    /// Application. `App(f, n_primes, args)` represents applying the function
+    /// `f` with `n_primes` primes to `args`.
     App(String, usize, Vec<Term>),
+    /// An applied unary operation
     UnaryOp(UOp, Box<Term>),
+    /// An applied binary operation
     BinOp(BinOp, Box<Term>, Box<Term>),
+    /// An applied n-ary operation
     NAryOp(NOp, Vec<Term>),
+    /// If-then-else
     Ite {
+        /// A boolean conditional
         cond: Box<Term>,
+        /// Value of the Ite when `cond` is true
         then: Box<Term>,
+        /// Value of the Ite when `cond` is false
         else_: Box<Term>,
     },
+    /// A quantifier with a sequence of binders and a body where the binders
+    /// might be used freely.
+    #[allow(missing_docs)]
     Quantified {
         quantifier: Quantifier,
         binders: Vec<Binder>,
@@ -86,10 +120,12 @@ impl Term {
         }
     }
 
+    /// Smart constructor for an n-ary op from two arguments
     pub fn nary(op: NOp, lhs: Term, rhs: Term) -> Self {
         Self::NAryOp(op, vec![lhs, rhs]).flatten_nary()
     }
 
+    /// Smart constructor equivalent to the And of an iterator of terms
     pub fn and<I>(ts: I) -> Self
     where
         I: IntoIterator,
@@ -104,6 +140,7 @@ impl Term {
         Self::NAryOp(NOp::And, ts)
     }
 
+    /// Smart constructor equivalent to the Or of an iterator of terms
     pub fn or<I>(ts: I) -> Self
     where
         I: IntoIterator,
@@ -118,18 +155,22 @@ impl Term {
         Self::NAryOp(NOp::Or, ts)
     }
 
+    /// Convenience function to create `lhs ==> rhs`
     pub fn implies(lhs: Term, rhs: Term) -> Self {
         Self::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs))
     }
 
+    /// Convenience function to create `lhs == rhs`
     pub fn equals(lhs: Term, rhs: Term) -> Self {
         Self::BinOp(BinOp::Equals, Box::new(lhs), Box::new(rhs))
     }
 
+    /// Convenience function to create `!t`
     pub fn negate(t: Term) -> Self {
         Self::UnaryOp(UOp::Not, Box::new(t))
     }
 
+    /// Construct a simplified term logically equivalent to `!t`
     pub fn negate_and_simplify(t: Term) -> Self {
         match t {
             Term::Literal(b) => Term::Literal(!b),
@@ -159,6 +200,7 @@ impl Term {
         }
     }
 
+    /// Convenience to construct `exists (binders), body`
     pub fn exists<I>(binders: I, body: Term) -> Self
     where
         I: IntoIterator,
@@ -171,6 +213,7 @@ impl Term {
         }
     }
 
+    /// Convenience to construct `forall (binders), body`
     pub fn forall<I>(binders: I, body: Term) -> Self
     where
         I: IntoIterator,
@@ -184,6 +227,9 @@ impl Term {
     }
 }
 
+/// A Sort represents a collection of values, which can be the built-in boolean
+/// sort or a named sort (coming from a Signature).
+#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize)]
 pub enum Sort {
     Bool,
@@ -191,6 +237,7 @@ pub enum Sort {
 }
 
 impl Sort {
+    /// Smart constructor for a named sort
     pub fn new<S: AsRef<str>>(s: S) -> Self {
         Self::Id(s.as_ref().to_string())
     }
@@ -208,21 +255,32 @@ impl fmt::Display for Sort {
 
 // TODO(oded): rename Relation to Function
 
+/// The declaration of a single function as part of a Signature
 #[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct RelationDecl {
+    /// If false, the relation is immutable with respect to time
     pub mutable: bool,
+    /// The name of the function
     pub name: String,
+    /// Sorts for the arguments (which are unnamed)
     pub args: Vec<Sort>,
+    /// Sort for the return value
     pub sort: Sort,
 }
 
+/// A Signature defines a state space for an LTL Term, consisting of some number
+/// of uninterpreted sorts and declarations for functions using those sorts (or
+/// the built-in boolean sort).
 #[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct Signature {
-    pub sorts: Vec<String>, // only contains uninterpreted sorts
+    /// Names of uninterpreted sorts
+    pub sorts: Vec<String>,
+    /// Declarations for functions
     pub relations: Vec<RelationDecl>,
 }
 
 impl Signature {
+    /// Get the index of an unintereted sort.
     pub fn sort_idx(&self, sort: &Sort) -> usize {
         match sort {
             Sort::Bool => panic!("invalid sort {sort}"),
@@ -254,6 +312,7 @@ impl Signature {
         }
     }
 
+    /// Get the index of a named function in the signature. Panics if invalid.
     pub fn relation_idx(&self, name: &str) -> usize {
         self.relations
             .iter()
@@ -385,6 +444,9 @@ impl Signature {
     }
 }
 
+/// A definition and its body. These are essentially treated as macros over the
+/// functions in the signature.
+#[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Definition {
     pub name: String,
@@ -396,32 +458,50 @@ pub struct Definition {
 /// A Span records a span of text in the source code, for error reporting.
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize)]
 pub struct Span {
+    /// Start of the span as a character offset
     pub start: usize,
+    /// End of the span as a character offset
     pub end: usize,
 }
 
+/// Wrap a value of type `T` with its `Span`
+#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct Spanned<T> {
     pub x: T,
     pub span: Span,
 }
 
+/// A Proof is an asserted boolean Term and a list of invariants to prove that
+/// assertion inductively.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Proof {
+    /// A boolean term to be proven equivalent to true
     pub assert: Spanned<Term>,
+    /// Invariants whose conjunction should be inductive to prove `assert`
     pub invariants: Vec<Spanned<Term>>,
 }
 
+/// A theorem statement that can appear in a module. Statements are interpreted
+/// imperatively in order, so earlier assumes and asserts may be used in later
+/// checks.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum ThmStmt {
+    /// Assume that a term is true without proof for the remaining statements
     Assume(Term),
+    /// Assert a term with an inductive proof
     Assert(Proof),
 }
 
+/// A Module consists of a Signature and some theorem statements to be proven in that signature.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Module {
+    /// Signature for all terms in the module
     pub signature: Signature,
+    /// Helper definitions (essentially macros) that may be used in the module's
+    /// statements
     pub defs: Vec<Definition>,
+    /// A sequence of theorem statements that the module makes
     pub statements: Vec<ThmStmt>,
 }
 

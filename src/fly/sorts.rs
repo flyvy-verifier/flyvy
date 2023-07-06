@@ -16,6 +16,7 @@ use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
 use std::collections::HashSet;
 use thiserror::Error;
 
+/// An error encountered during sort checking
 #[derive(Error, Debug, PartialEq)]
 pub enum SortError {
     /// The program referred to an uninterpreted sort that was not declared.
@@ -40,8 +41,14 @@ pub enum SortError {
     UnificationFail(Sort, Sort),
     /// Sort checking detected a mismatch between the expected and actual sorts of a term.
     #[error("expected {expected} but found {found}")]
-    ExpectedButFoundSorts { expected: Sort, found: Sort },
+    ExpectedButFoundSorts {
+        /// Expected sort coming from sort annotations
+        expected: Sort,
+        #[allow(missing_docs)]
+        found: Sort,
+    },
     /// A function or definition was applied to the wrong number of arguments.
+    #[allow(missing_docs)]
     #[error("function {function_name} expected {expected} args but found {found} args")]
     ExpectedButFoundArity {
         function_name: String,

@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! The flyvy language
+
 mod concurrent;
 mod defs;
 pub mod parser;

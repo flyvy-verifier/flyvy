@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Model the semantics of flyvy functions under finite universes.
+
 use std::fmt::Write;
 use std::iter::zip;
 
@@ -37,6 +39,7 @@ pub struct Interpretation {
 }
 
 impl Interpretation {
+    /// Get the function's value for a slice of argument values.
     // TODO(oded): make this more space efficient by using the right amount of bits (probably with padding)
     pub fn get(&self, args: &[Element]) -> Element {
         assert_eq!(self.shape.len() - 1, args.len());
@@ -80,9 +83,13 @@ impl Interpretation {
     }
 }
 
+/// A Model is a finite structure that includes a Signature, a Universe for the
+/// sorts in the signature, and an interpretation of all the functions in the
+/// signature.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Model {
     // TODO(oded): to optimize, make things Rc<_> (_ = Signature, Universe, and Interpretation)
+    /// The signature this model is for
     pub signature: Signature,
     /// universe matches signature.sorts
     pub universe: Universe,
@@ -116,6 +123,7 @@ impl Model {
         }
     }
 
+    /// Constructor for a Model
     pub fn new(sig: &Signature, universe: &Universe, interp: Vec<Interpretation>) -> Self {
         let model = Self {
             signature: sig.clone(),
@@ -325,7 +333,7 @@ impl Model {
         self.to_term_internal(false)
     }
 
-    /// This function is called by `to_term` and `to_diagram`.    
+    /// This function is called by `to_term` and `to_diagram`.
     fn to_term_internal(&self, include_cardinalities: bool) -> Term {
         let sort_cnt = self.signature.sorts.len();
 

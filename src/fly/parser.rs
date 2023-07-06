@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Parser for the flyvy language.
+
 use crate::fly::syntax::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use peg::{error::ParseError, str::LineCol};
@@ -351,6 +353,7 @@ pub fn parse(s: &str) -> Result<Module, ParseError<LineCol>> {
     parser::module(s)
 }
 
+/// Convert an opaque FileId and error to a readable `Diagnostic`
 pub fn parse_error_diagnostic<FileId>(
     file_id: FileId,
     e: &ParseError<LineCol>,

@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Pretty-printer for the flyvy language.
+
 use std::fmt;
 
 use crate::fly::syntax::*;
@@ -47,6 +49,7 @@ fn binder(b: &Binder) -> String {
     format!("{}:{}", b.name, sort(&b.sort))
 }
 
+/// Pretty-print a term
 pub fn term(t: &Term) -> String {
     // handling of precedence is based on
     // https://stackoverflow.com/questions/6277747/pretty-print-expression-with-as-few-parentheses-as-possible
@@ -291,6 +294,7 @@ fn module(m: &Module) -> String {
     format!("{sig}\n{defs}{stmts}")
 }
 
+/// Pretty-print a module.
 pub fn fmt(m: &Module) -> String {
     module(m)
 }

@@ -106,6 +106,7 @@ impl Module {
         }
     }
 
+    /// Inline and delete all definitions in-place.
     pub fn inline_defs(&mut self) {
         while !self.defs.is_empty() {
             let def = self.defs.remove(0);
