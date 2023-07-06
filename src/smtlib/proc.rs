@@ -463,9 +463,10 @@ impl SmtProc {
         }
         self.check_killed()?;
         if resp.is_empty() {
-            // TODO(tchajed): this is just from observing behavior, I'm not sure
-            // why check_killed doesn't work here
-            self.check_killed()?;
+            // TODO(tchajed): I believe try_wait within check_killed sometimes
+            // fails here because the solver hasn't quite exited, so we use
+            // assert_killed which blocks
+            self.assert_killed()?;
         }
         let msg = Self::parse_error(resp);
         return Err(SolverError::UnexpectedClose(msg));
@@ -575,8 +576,9 @@ impl SmtProc {
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
                 self.check_killed()?;
-                // TODO(tchajed): this is just from observing behavior, I'm not sure
-                // why check_killed doesn't work here
+                // TODO(tchajed): I believe try_wait within check_killed sometimes
+                // fails here because the solver hasn't quite exited, so we use
+                // assert_killed which blocks
                 if buf.is_empty() {
                     self.assert_killed()?;
                 }
