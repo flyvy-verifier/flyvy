@@ -1,0 +1,14 @@
+---
+source: fly/src/printer.rs
+assertion_line: 313
+expression: module(&m)
+---
+mutable p: bool
+mutable q: bool
+
+assume !p & !q & (always p' = (p | q) & q' = q)
+assert always !p
+proof {
+  invariant !p
+  invariant !q
+}

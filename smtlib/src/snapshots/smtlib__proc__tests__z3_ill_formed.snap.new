@@ -1,0 +1,7 @@
+---
+source: smtlib/src/proc.rs
+assertion_line: 736
+expression: r.unwrap_err()
+---
+solver returned an error:
+line 6 column 8: unknown constant p
