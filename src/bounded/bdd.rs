@@ -173,9 +173,11 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     }
 }
 
-/// Check a given Module out to some depth
+/// Check a given Module out to some depth.
+/// This assumes that the module has been typechecked.
+/// Passing `None` for depth means to run until a counterexample is found.
 pub fn check(
-    module: &mut Module,
+    module: &Module,
     universe: &Universe,
     depth: Option<usize>,
 ) -> Result<CheckerAnswer, CheckerError> {
@@ -441,6 +443,7 @@ fn term_to_element(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fly::sorts::sort_check_and_infer;
 
     #[test]
     fn checker_basic() -> Result<(), CheckerError> {
@@ -455,15 +458,13 @@ assert always x
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(
-            CheckerAnswer::Unknown,
-            check(&mut module, &universe, Some(0))?
-        );
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
         assert_eq!(
             CheckerAnswer::Counterexample,
-            check(&mut module, &universe, Some(1))?
+            check(&module, &universe, Some(1))?
         );
 
         Ok(())
@@ -528,12 +529,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(
-            CheckerAnswer::Unknown,
-            check(&mut module, &universe, Some(10))?
-        );
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
 
         Ok(())
     }
@@ -597,12 +596,13 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        let bug = check(&mut module, &universe, Some(12))?;
+        let bug = check(&module, &universe, Some(12))?;
         assert_eq!(CheckerAnswer::Counterexample, bug);
 
-        let too_short = check(&mut module, &universe, Some(11))?;
+        let too_short = check(&module, &universe, Some(11))?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
@@ -664,16 +664,14 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 1),
             ("quorum".to_string(), 1),
             ("value".to_string(), 1),
         ]);
 
-        assert_eq!(
-            CheckerAnswer::Unknown,
-            check(&mut module, &universe, Some(0))?
-        );
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
 
         Ok(())
     }
@@ -686,11 +684,9 @@ assume r
 assert always r
         ";
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(
-            CheckerAnswer::Unknown,
-            check(&mut module, &universe, Some(10))?
-        );
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
         Ok(())
     }
 }

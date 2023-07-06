@@ -582,7 +582,7 @@ impl App {
                 compress_traces,
             } => {
                 let univ = bounded.get_universe(&m.signature);
-                crate::bounded::set::check(&mut m, &univ, bounded.depth, compress_traces.into());
+                crate::bounded::set::check(&m, &univ, bounded.depth, compress_traces.into());
             }
             Command::SatCheck(bounded) => {
                 let depth = match bounded.depth {
@@ -593,7 +593,7 @@ impl App {
                     }
                 };
                 let univ = bounded.get_universe(&m.signature);
-                match crate::bounded::sat::check(&mut m, &univ, depth) {
+                match crate::bounded::sat::check(&m, &univ, depth) {
                     Ok(crate::bounded::sat::CheckerAnswer::Counterexample) => {}
                     Ok(crate::bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
@@ -603,7 +603,7 @@ impl App {
             }
             Command::BddCheck(bounded) => {
                 let univ = bounded.get_universe(&m.signature);
-                match crate::bounded::bdd::check(&mut m, &univ, bounded.depth) {
+                match crate::bounded::bdd::check(&m, &univ, bounded.depth) {
                     Ok(crate::bounded::bdd::CheckerAnswer::Counterexample) => {}
                     Ok(crate::bounded::bdd::CheckerAnswer::Unknown) => {
                         println!(
