@@ -59,7 +59,7 @@ impl Updr {
                 // println!("break for no bstates");
                 break;
             }
-            let mut found_state = bstate_min.unwrap();
+            let found_state = bstate_min.unwrap();
             match &found_state.term_or_model {
                 TermOrModel::Term(t) => {
                     // println!("m: {}", t);
