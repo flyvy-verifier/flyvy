@@ -9,7 +9,7 @@ use std::fmt;
 use serde::Serialize;
 
 /// Unary operators
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum UOp {
     /// Boolean negation
     Not,
@@ -27,7 +27,7 @@ pub enum UOp {
 
 /// Binary operators
 #[allow(missing_docs)]
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum BinOp {
     Equals,
     NotEquals,
@@ -41,7 +41,7 @@ pub enum BinOp {
 
 /// N-ary logical operators
 #[allow(missing_docs)]
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum NOp {
     And,
     Or,
@@ -49,14 +49,14 @@ pub enum NOp {
 
 /// A kind of quantifier (forall or exists)
 #[allow(missing_docs)]
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum Quantifier {
     Forall,
     Exists,
 }
 
 /// A binder for a quantifier
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
 pub struct Binder {
     /// Bound name
     pub name: String,
@@ -68,7 +68,7 @@ pub struct Binder {
 /// being a sequence of values of some sort (often bool for example) under a
 /// given signature and an infinite sequence of states (consisting of values for
 /// all the functions in the signature at each point in time).
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
 pub enum Term {
     /// A constant true or false
     Literal(bool),
@@ -230,7 +230,7 @@ impl Term {
 /// A Sort represents a collection of values, which can be the built-in boolean
 /// sort or a named sort (coming from a Signature).
 #[allow(missing_docs)]
-#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
 pub enum Sort {
     Bool,
     Id(String),

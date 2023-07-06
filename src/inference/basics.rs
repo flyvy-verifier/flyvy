@@ -411,7 +411,7 @@ impl FOModule {
 
         let mut unblocked_trans: HashSet<usize> = HashSet::from_iter(0..disj_trans.len());
         while !unblocked_trans.is_empty() && samples.len() < width {
-            for i in unblocked_trans.iter().copied().collect_vec() {
+            for i in unblocked_trans.iter().copied().sorted().collect_vec() {
                 if samples.len() >= width {
                     break;
                 }

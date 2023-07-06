@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use im::{hashset, HashSet};
+use itertools::Itertools;
 use std::sync::Arc;
 
 use crate::fly::syntax::Term::{NAryOp, Quantified, UnaryOp};
@@ -188,7 +189,7 @@ impl Updr {
         };
         // println!("CORE");
         let mut terms: Vec<Term> = vec![];
-        for key in core.keys() {
+        for key in core.keys().sorted() {
             // println!("{}", key);
             if let UnaryOp(UOp::Next, t) = key.clone() {
                 terms.push(*t);
@@ -288,7 +289,7 @@ impl Updr {
                                 .collect();
 
                             println!("\nunsat core:");
-                            for (term, b) in out {
+                            for (term, b) in out.iter().sorted() {
                                 if *b {
                                     println!("{}", term);
                                 }
