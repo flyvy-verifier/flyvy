@@ -249,73 +249,73 @@ impl Updr {
         let prev_frame = &self.frames[frame_index];
         let out = module.get_pred(&self.solver_conf, &prev_frame.terms, term_or_model);
 
-        if let TermOrModel::Model(model) = term_or_model {
-            if let CexOrCore::Core(out) = &out {
-                // run MARCO on cores without affecting UPDR
-                if let Term::Quantified {
-                    quantifier,
-                    binders,
-                    body,
-                } = &model.to_diagram()
-                {
-                    if *quantifier == Quantifier::Exists {
-                        if let Term::NAryOp(NOp::And, conj) = &**body {
-                            let func = |array: &[bool]| {
-                                assert!(array.len() == conj.len());
-                                // only enable terms in conj that match array
-                                let chosen: Vec<Term> = (0..conj.len())
-                                    .filter(|i| array[*i])
-                                    .map(|i| conj[i].clone())
-                                    .collect();
-                                let term = Term::Quantified {
-                                    quantifier: Quantifier::Exists,
-                                    binders: binders.clone(),
-                                    body: Box::new(Term::NAryOp(NOp::And, chosen)),
-                                };
-                                let term = TermOrModel::Term(term);
-                                let out =
-                                    module.get_pred(&self.solver_conf, &prev_frame.terms, &term);
-                                matches!(out, CexOrCore::Core(_))
-                            };
+        // if let TermOrModel::Model(model) = term_or_model {
+        //     if let CexOrCore::Core(out) = &out {
+        //         // run MARCO on cores without affecting UPDR
+        //         if let Term::Quantified {
+        //             quantifier,
+        //             binders,
+        //             body,
+        //         } = &model.to_diagram()
+        //         {
+        //             if *quantifier == Quantifier::Exists {
+        //                 if let Term::NAryOp(NOp::And, conj) = &**body {
+        //                     let func = |array: &[bool]| {
+        //                         assert!(array.len() == conj.len());
+        //                         // only enable terms in conj that match array
+        //                         let chosen: Vec<Term> = (0..conj.len())
+        //                             .filter(|i| array[*i])
+        //                             .map(|i| conj[i].clone())
+        //                             .collect();
+        //                         let term = Term::Quantified {
+        //                             quantifier: Quantifier::Exists,
+        //                             binders: binders.clone(),
+        //                             body: Box::new(Term::NAryOp(NOp::And, chosen)),
+        //                         };
+        //                         let term = TermOrModel::Term(term);
+        //                         let out =
+        //                             module.get_pred(&self.solver_conf, &prev_frame.terms, &term);
+        //                         matches!(out, CexOrCore::Core(_))
+        //                     };
 
-                            use crate::inference::marco::*;
-                            // we use !func because func is monotone in the wrong direction
-                            let results: Vec<_> = marco(|array| !func(array), conj.len())
-                                // therefore we also want MUS instead of MSS
-                                .filter_map(|mss_or_mus| match mss_or_mus {
-                                    MssOrMus::Mus(array) => Some(array),
-                                    MssOrMus::Mss(_) => None,
-                                })
-                                .collect();
+        //                     use crate::inference::marco::*;
+        //                     // we use !func because func is monotone in the wrong direction
+        //                     let results: Vec<_> = marco(|array| !func(array), conj.len())
+        //                         // therefore we also want MUS instead of MSS
+        //                         .filter_map(|mss_or_mus| match mss_or_mus {
+        //                             MssOrMus::Mus(array) => Some(array),
+        //                             MssOrMus::Mss(_) => None,
+        //                         })
+        //                         .collect();
 
-                            println!("\nunsat core:");
-                            for (term, b) in out.iter().sorted() {
-                                if *b {
-                                    println!("{}", term);
-                                }
-                            }
+        //                     println!("\nunsat core:");
+        //                     for (term, b) in out.iter().sorted() {
+        //                         if *b {
+        //                             println!("{}", term);
+        //                         }
+        //                     }
 
-                            println!("\nMARCO: {} cores", results.len());
-                            for (i, array) in results.iter().enumerate() {
-                                println!("core {}:", i);
-                                for (i, b) in array.iter().enumerate() {
-                                    if *b {
-                                        println!("{}", conj[i]);
-                                    }
-                                }
-                            }
-                            println!("\n");
-                        } else {
-                            panic!("MARCO: bad diagram");
-                        }
-                    } else {
-                        panic!("MARCO: bad diagram");
-                    }
-                } else {
-                    panic!("MARCO: bad diagram");
-                }
-            }
-        }
+        //                     println!("\nMARCO: {} cores", results.len());
+        //                     for (i, array) in results.iter().enumerate() {
+        //                         println!("core {}:", i);
+        //                         for (i, b) in array.iter().enumerate() {
+        //                             if *b {
+        //                                 println!("{}", conj[i]);
+        //                             }
+        //                         }
+        //                     }
+        //                     println!("\n");
+        //                 } else {
+        //                     panic!("MARCO: bad diagram");
+        //                 }
+        //             } else {
+        //                 panic!("MARCO: bad diagram");
+        //             }
+        //         } else {
+        //             panic!("MARCO: bad diagram");
+        //         }
+        //     }
+        // }
 
         // return the actual UPDR output
         out
