@@ -22,7 +22,7 @@ pub enum CheckerAnswer {
 
 /// Combined entry point to both translate and search the module.
 pub fn check(
-    module: &mut Module,
+    module: &Module,
     universe: &UniverseBounds,
     depth: Option<usize>,
     compress_traces: TraceCompression,
@@ -566,21 +566,15 @@ type UniverseBounds = std::collections::HashMap<String, usize>;
 
 /// Translate a flyvy module into a BoundedProgram, given the bounds on the sort sizes.
 /// Universe should contain the sizes of all the sorts in module.signature.sorts.
-/// The module is mutable for sort inference, but the caller should not rely on
-/// this being the only change that translation makes to the module.
-#[allow(dead_code)]
+/// The module is assumed to have already been typechecked.
 pub fn translate(
-    module: &mut Module,
+    module: &Module,
     universe: &UniverseBounds,
 ) -> Result<BoundedProgram, TranslationError> {
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             todo!("non-bool relations")
         }
-    }
-
-    if let Err((e, _)) = sort_check_and_infer(module) {
-        return Err(TranslationError::SortError(e));
     }
 
     let indices = Indices::new(&module.signature, universe);
@@ -1274,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn interpreter_basic() {
+    fn checker_set_basic() {
         let program = BoundedProgram {
             inits: vec![state([0])],
             trs: vec![
@@ -1301,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn interpreter_cycle() {
+    fn checker_set_cycle() {
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
             trs: vec![
@@ -1396,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn interpreter_translate_lockserver() -> Result<(), TranslationError> {
+    fn checker_set_translate_lockserver() -> Result<(), TranslationError> {
         let source = "
 sort node
 
@@ -1454,6 +1448,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let indices = Indices::new(&m.signature, &universe);
 
@@ -1558,7 +1553,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             ],
         };
 
-        let target = translate(&mut m, &universe)?;
+        let target = translate(&m, &universe)?;
         assert_eq!(target.inits, expected.inits);
         assert_eq!(target.safes, expected.safes);
         assert_eq!(
@@ -1573,7 +1568,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn interpreter_translate_lockserver_buggy() -> Result<(), TranslationError> {
+    fn checker_set_translate_lockserver_buggy() -> Result<(), TranslationError> {
         // A buggy version of lockserv. See "here is the bug" below.
         let source = "
 sort node
@@ -1645,8 +1640,9 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         // The test below asserts that interpret finds the bug at depth 12 but not at depth 11.
 
         let mut m = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let target = translate(&mut m, &universe)?;
+        let target = translate(&m, &universe)?;
 
         let bug = interpret(&target, Some(12), TraceCompression::No);
         if let InterpreterResult::Counterexample(trace) = &bug {
@@ -1663,7 +1659,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
     }
 
     #[test]
-    fn interpreter_translate_consensus() -> Result<(), TranslationError> {
+    fn checker_set_translate_consensus() -> Result<(), TranslationError> {
         let source = "
 sort node
 sort quorum
@@ -1717,12 +1713,13 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         ";
 
         let mut m = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut m).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("quorum".to_string(), 2),
             ("value".to_string(), 2),
         ]);
-        let target = translate(&mut m, &universe)?;
+        let target = translate(&m, &universe)?;
         let output = interpret(&target, Some(10), TraceCompression::No);
         assert_eq!(output, InterpreterResult::Unknown);
 
@@ -1730,17 +1727,18 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
     }
 
     #[test]
-    fn interpreter_immutability() {
+    fn checker_set_immutability() {
         let source = "
 immutable r: bool
 assume r
 assert always r
         ";
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
             Some(CheckerAnswer::Unknown),
-            check(&mut module, &universe, Some(10), true.into())
+            check(&module, &universe, Some(10), true.into())
         );
     }
 }

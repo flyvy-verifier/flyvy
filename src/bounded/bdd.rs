@@ -3,7 +3,7 @@
 
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
-use crate::fly::{sorts::*, syntax::*};
+use crate::fly::syntax::*;
 use crate::term::FirstOrder;
 use biodivine_lib_bdd::*;
 use itertools::Itertools;
@@ -145,8 +145,6 @@ pub enum CheckerAnswer {
 #[allow(missing_docs)]
 #[derive(Error, Debug)]
 pub enum CheckerError {
-    #[error("sort checking error: {0}")]
-    SortError(SortError),
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, Universe),
 
@@ -175,16 +173,14 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     }
 }
 
-/// Check a given Module out to some depth
+/// Check a given Module out to some depth.
+/// This assumes that the module has been typechecked.
+/// Passing `None` for depth means to run until a counterexample is found.
 pub fn check(
-    module: &mut Module,
+    module: &Module,
     universe: &Universe,
-    depth: usize,
+    depth: Option<usize>,
 ) -> Result<CheckerAnswer, CheckerError> {
-    if let Err((error, _)) = sort_check_and_infer(module) {
-        return Err(CheckerError::SortError(error));
-    }
-
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -274,7 +270,8 @@ pub fn check(
         context.print_counterexample(valuation, &trace, &tr);
         return Ok(CheckerAnswer::Counterexample);
     }
-    for _ in 0..depth {
+    let mut i = 0;
+    while depth.map(|d| i < d).unwrap_or(true) {
         current = Bdd::binary_op_with_exists(
             &current,
             &tr,
@@ -292,6 +289,8 @@ pub fn check(
             context.print_counterexample(valuation, &trace, &tr);
             return Ok(CheckerAnswer::Counterexample);
         }
+
+        i += 1;
     }
 
     println!("search finished in {:0.1}s", time.elapsed().as_secs_f64());
@@ -444,9 +443,10 @@ fn term_to_element(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fly::sorts::sort_check_and_infer;
 
     #[test]
-    fn checker_basic() -> Result<(), CheckerError> {
+    fn checker_bdd_basic() -> Result<(), CheckerError> {
         let source = "
 mutable x: bool
 
@@ -458,19 +458,20 @@ assert always x
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
         assert_eq!(
             CheckerAnswer::Counterexample,
-            check(&mut module, &universe, 1)?
+            check(&module, &universe, Some(1))?
         );
 
         Ok(())
     }
 
     #[test]
-    fn checker_lockserver() -> Result<(), CheckerError> {
+    fn checker_bdd_lockserver() -> Result<(), CheckerError> {
         let source = "
 sort node
 
@@ -528,15 +529,16 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
 
         Ok(())
     }
 
     #[test]
-    fn checker_lockserver_buggy() -> Result<(), CheckerError> {
+    fn checker_bdd_lockserver_buggy() -> Result<(), CheckerError> {
         let source = "
 sort node
 
@@ -594,19 +596,22 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        let bug = check(&mut module, &universe, 12)?;
+        let bug = check(&module, &universe, Some(12))?;
+        assert_eq!(CheckerAnswer::Counterexample, bug);
+        let bug = check(&module, &universe, None)?;
         assert_eq!(CheckerAnswer::Counterexample, bug);
 
-        let too_short = check(&mut module, &universe, 11)?;
+        let too_short = check(&module, &universe, Some(11))?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
     }
 
     #[test]
-    fn checker_consensus() -> Result<(), CheckerError> {
+    fn checker_bdd_consensus() -> Result<(), CheckerError> {
         let source = "
 sort node
 sort quorum
@@ -661,27 +666,29 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         ";
 
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 1),
             ("quorum".to_string(), 1),
             ("value".to_string(), 1),
         ]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 0)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
 
         Ok(())
     }
 
     #[test]
-    fn checker_immutability() -> Result<(), CheckerError> {
+    fn checker_bdd_immutability() -> Result<(), CheckerError> {
         let source = "
 immutable r: bool
 assume r
 assert always r
         ";
         let mut module = crate::fly::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(CheckerAnswer::Unknown, check(&mut module, &universe, 10)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
         Ok(())
     }
 }
