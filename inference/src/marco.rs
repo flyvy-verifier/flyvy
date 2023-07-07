@@ -1,7 +1,20 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-#[allow(dead_code)]
+//! Implementation of the MARCO algorithm for generic boolean functions.
+//! This algorithm returns the Minimal Unsatisfiable Subsets (MUSes)
+//! and Maximal Satisfiable Subsets (MSSes) of the inputs that cause
+//! the function to return false/true respectively. Here, subset refers
+//! to the set of inputs that are true.
+
+/// Run MARCO lazily on some input function. The function argument will always have length n.
+/// The function must be monotone; that is, it must satisfy the following constraints:
+/// - if the inputs are all false, the function should return true
+/// - if the inputs all all true, the function should return false
+/// - if for some inputs the function returns true, any subset of those inputs should
+/// also return true
+/// - if for some inputs the function returns false, any superset of those inputs should
+/// also return false
 pub fn marco<'a>(func: impl Fn(&[bool]) -> bool + 'a, n: usize) -> MarcoIterator<'a> {
     MarcoIterator {
         func: Box::new(func),
@@ -10,6 +23,7 @@ pub fn marco<'a>(func: impl Fn(&[bool]) -> bool + 'a, n: usize) -> MarcoIterator
     }
 }
 
+/// Iterator that returns MUSes and MSSes of the given function's inputs.
 pub struct MarcoIterator<'a> {
     func: Box<dyn Fn(&[bool]) -> bool + 'a>,
     map: Cnf,
@@ -28,9 +42,12 @@ impl MarcoLiteral {
     }
 }
 
+/// Either an MUS or an MSS of the function inputs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MssOrMus {
+    /// Maximal Satisfiable Subset
     Mss(Vec<bool>),
+    /// Minimal Unsatisfiable Subset
     Mus(Vec<bool>),
 }
 
