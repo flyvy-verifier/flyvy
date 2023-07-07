@@ -95,6 +95,11 @@ impl<Q: Clone> QuantifierSequence<Q> {
         self.quantifiers.len()
     }
 
+    /// Whether the sequence is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn num_vars(&self) -> usize {
         self.names.iter().map(|n| n.len()).sum()
     }
@@ -185,7 +190,7 @@ impl QuantifierConfig {
         max_existentials: usize,
         size: usize,
     ) -> Vec<QuantifierPrefix> {
-        if self.len() == 0 {
+        if self.is_empty() {
             return vec![QuantifierPrefix {
                 signature: self.signature.clone(),
                 quantifiers: vec![],
