@@ -1377,7 +1377,7 @@ mod tests {
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
         let mut expected4 = Trace::new(state([1, 0, 0, 0]), TraceCompression::No);
-        for state in vec![
+        for state in [
             state([0, 1, 0, 0]),
             state([0, 0, 1, 0]),
             state([0, 0, 0, 1]),

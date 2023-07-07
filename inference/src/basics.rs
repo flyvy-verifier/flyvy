@@ -480,12 +480,7 @@ impl FOModule {
         let mut core = HashMap::new();
         for trans in separate_trans {
             let mut solver = conf.solver(&self.signature, 2);
-            for a in self
-                .axioms
-                .iter()
-                .chain(hyp.iter())
-                .chain(vec![trans].into_iter())
-            {
+            for a in self.axioms.iter().chain(hyp.iter()).chain(vec![trans]) {
                 solver.assert(a);
             }
             for a in self.axioms.iter() {

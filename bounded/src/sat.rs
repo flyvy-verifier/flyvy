@@ -358,17 +358,15 @@ impl Ast {
             Ast::Var { .. } => None,
             Ast::And(vec) => vec
                 .iter()
-                .fold(Some(true), |acc, ast| match (acc, ast.truth()) {
-                    (Some(false), _) | (_, Some(false)) => Some(false),
-                    (Some(true), x) => x,
-                    (None, _) => None,
+                .try_fold(true, |acc, ast| match (acc, ast.truth()) {
+                    (false, _) | (_, Some(false)) => Some(false),
+                    (true, x) => x,
                 }),
             Ast::Or(vec) => vec
                 .iter()
-                .fold(Some(false), |acc, ast| match (acc, ast.truth()) {
-                    (Some(true), _) | (_, Some(true)) => Some(true),
-                    (Some(false), x) => x,
-                    (None, _) => None,
+                .try_fold(false, |acc, ast| match (acc, ast.truth()) {
+                    (true, _) | (_, Some(true)) => Some(true),
+                    (false, x) => x,
                 }),
             Ast::Not(ast) => ast.truth().map(|b| !b),
         }
@@ -614,41 +612,41 @@ assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall 
 
 # transitions:
 assume always
-    (exists n:node. 
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
-        ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. server_holds_lock & lock_msg(n) & 
-            !((server_holds_lock)') & 
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
-    (exists n:node. 
-        (forall N:node. grant_msg(n) & 
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. 
-            ((unlock_msg(x0))') = unlock_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. holds_lock(n) & 
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+    (exists n:node.
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) &
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) &
+        ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. server_holds_lock & lock_msg(n) &
+            !((server_holds_lock)') &
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) &
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) &
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) |
+    (exists n:node.
+        (forall N:node. grant_msg(n) &
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) &
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
         (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. 
-            ((grant_msg(x0))') = grant_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. unlock_msg(n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) & 
-            ((server_holds_lock)')) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node.
+            ((unlock_msg(x0))') = unlock_msg(x0)) &
+            ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. holds_lock(n) &
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) &
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node.
+            ((grant_msg(x0))') = grant_msg(x0)) &
+            ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. unlock_msg(n) &
+            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) &
+            ((server_holds_lock)')) &
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
         (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
 
 # safety:
@@ -681,41 +679,41 @@ assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall 
 
 # transitions:
 assume always
-    (exists n:node. 
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) & 
-        ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. server_holds_lock & lock_msg(n) & 
-            !((server_holds_lock)') & 
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) & 
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) & 
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) & 
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) | 
-    (exists n:node. 
-        (forall N:node. grant_msg(n) & 
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) & 
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. 
-            ((unlock_msg(x0))') = unlock_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. holds_lock(n) & 
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) & 
+    (exists n:node.
+        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) &
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) &
+        ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. server_holds_lock & lock_msg(n) &
+            !((server_holds_lock)') &
+            (((lock_msg(N))') <-> lock_msg(N) & N != n) &
+            (((grant_msg(N))') <-> grant_msg(N) | N = n)) &
+        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
+        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) |
+    (exists n:node.
+        (forall N:node. grant_msg(n) &
+            (((grant_msg(N))') <-> grant_msg(N) & N != n) &
+            (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
         (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. 
-            ((grant_msg(x0))') = grant_msg(x0)) & 
-            ((server_holds_lock)') = server_holds_lock) | 
-    (exists n:node. 
-        (forall N:node. unlock_msg(n) & 
-            (((unlock_msg(N))') <-> unlock_msg(N)) & 
-            ((server_holds_lock)')) & 
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) & 
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) & 
+        (forall x0:node.
+            ((unlock_msg(x0))') = unlock_msg(x0)) &
+            ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. holds_lock(n) &
+            (((holds_lock(N))') <-> holds_lock(N) & N != n) &
+            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node.
+            ((grant_msg(x0))') = grant_msg(x0)) &
+            ((server_holds_lock)') = server_holds_lock) |
+    (exists n:node.
+        (forall N:node. unlock_msg(n) &
+            (((unlock_msg(N))') <-> unlock_msg(N)) &
+            ((server_holds_lock)')) &
+        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
+        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
         (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
 
 # safety:
