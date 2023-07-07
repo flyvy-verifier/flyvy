@@ -11,6 +11,8 @@ use std::{
 #[allow(non_snake_case)]
 fn REPO_ROOT_PATH() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("could not get parent directory of smtlib package")
 }
 
 /// Get the right invocation of the solver with binary name bin.
