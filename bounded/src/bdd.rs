@@ -283,6 +283,10 @@ pub fn check(
             }
         }
 
+        if &current == trace.last().unwrap() {
+            return Ok(CheckerAnswer::Unknown);
+        }
+
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
             context.print_counterexample(valuation, &trace, &tr);
@@ -293,7 +297,6 @@ pub fn check(
     }
 
     println!("search finished in {:0.1}s", time.elapsed().as_secs_f64());
-
     Ok(CheckerAnswer::Unknown)
 }
 
