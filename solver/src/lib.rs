@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! High-level interface to an SMT solver using [`Term`](crate::fly::syntax::Term).
+//! High-level interface to an SMT solver using [`Term`](fly::syntax::Term).
 
 // configure clippy
 #![allow(clippy::needless_return)]
