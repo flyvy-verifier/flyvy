@@ -41,7 +41,8 @@ pub fn solver_path(bin: &str) -> String {
 /// Get the log directory for a flyvy file
 pub fn log_dir(fly_path: &Path) -> PathBuf {
     let log_base = REPO_ROOT_PATH().join(".flyvy-log");
-    let Some(fname) = fly_path.file_name()
-    else { return log_base; };
+    let Some(fname) = fly_path.file_name() else {
+        return log_base;
+    };
     log_base.join(Path::new(fname).with_extension(""))
 }

@@ -65,6 +65,7 @@ where
     I::IntoIter: Iterator<Item = Sexp>,
 {
     let mut ss = vec![atom_s(head)];
+    #[allow(clippy::useless_conversion)]
     ss.extend(args.into_iter());
     Sexp::List(ss)
 }
@@ -278,7 +279,7 @@ mod tests {
             );
         }
         insta::assert_display_snapshot!(&es[0], @"|hello there|");
-        insta::assert_display_snapshot!(&es[1], @r###"|"hello"|"###);
+        insta::assert_display_snapshot!(&es[1], @r#"|"hello"|"#);
         insta::assert_display_snapshot!(&es[2], @"|also has a space|");
     }
 }
