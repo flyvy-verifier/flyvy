@@ -16,24 +16,33 @@ use fly::{
 };
 use smtlib::sexp::{atom_s, sexp_l, Atom, Sexp};
 
+/// Holds a `semantics::Interpretation` for some of the relations in a Model.
 #[derive(Debug, Clone)]
 pub struct PartialInterp {
     universes: HashMap<String, Vec<String>>,
     // reverse of universes
     term_to_element: HashMap<String, Element>,
+    /// A map from relation names to a tuple of an interpretation and the return type
     pub interps: HashMap<String, (Interpretation, Sort)>,
 }
 
+/// Represents one relation in the parsed output of an SMT solver.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ModelSymbol {
+    /// The arguments to the relation, and their sorts
     pub binders: Vec<(String, Sort)>,
+    /// The body of the relation that the solver solved
     pub body: Sexp,
+    /// The return sort of the relation
     pub ret_sort: Sort,
 }
 
+/// Represents the parsed Sat output of an SMT solver.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Model {
+    /// A map from sorts to relation names
     pub universes: HashMap<String, Vec<String>>,
+    /// A map from relation names to relation definitions
     pub symbols: HashMap<String, ModelSymbol>,
 }
 
@@ -221,6 +230,7 @@ pub(crate) fn parse_cvc(model: &Sexp, version5: bool) -> Model {
 }
 
 impl PartialInterp {
+    /// Create an empty `PartialInterp` that corresponds to a specific model.
     pub fn for_model(model: &Model) -> Self {
         let mut term_to_element = HashMap::new();
         // the sort doesn't matter here (universe element names are already

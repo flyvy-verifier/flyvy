@@ -91,6 +91,7 @@ impl InvariantAssertion {
         Term::and(self.invariants().map(|t| t.x.clone()))
     }
 
+    /// Convert this invariant to a first order term.
     pub fn initiation(&self) -> FirstOrder {
         let lhs = Term::and(vec![self.init.clone(), self.assumed_inv.clone()]);
         let rhs = self.inductive_invariant();
