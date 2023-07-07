@@ -6,13 +6,13 @@
 //! The API is currently primarily available for testing purposes and not really
 //! intended as a general-purpose library.
 
+#![deny(missing_docs)]
 // configure clippy
 #![allow(clippy::needless_return)]
 #![allow(clippy::large_enum_variant)]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(clippy::type_complexity)]
 // documentation-related lints (only checked when running rustdoc)
-// #![warn(missing_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
