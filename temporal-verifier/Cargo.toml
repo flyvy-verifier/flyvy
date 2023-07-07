@@ -1,0 +1,24 @@
+[package]
+name = "temporal-verifier"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bounded = { path = "../bounded" }
+fly = { path = "../fly" }
+inference = { path = "../inference" }
+solver = { path = "../solver" }
+verify = { path = "../verify" }
+
+clap = { version = "4.3.4", features = ["derive"] }
+codespan-reporting = "0.11.1"
+path-slash = "0.2.1"
+rayon = "1.7.0"
+pretty_env_logger = "0.5.0"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "sexp_benchmark"
+harness = false

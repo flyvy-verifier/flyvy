@@ -1,0 +1,17 @@
+[package]
+name = "inference"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fly = { path = "../fly" }
+solver = { path = "../solver" }
+verify = { path = "../verify" }
+
+fxhash = "0.2.1"
+itertools = "0.10.5"
+log = "0.4.19"
+im = "15.1.0"
+rayon = "1.7.0"
+indexmap = { version = "1.9.3", features = ["rayon", "std"] }
+cadical = "0.1.14"

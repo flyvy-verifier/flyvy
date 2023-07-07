@@ -1,0 +1,20 @@
+[package]
+name = "solver"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fly = { path = "../fly" }
+smtlib = { path = "../smtlib" }
+
+lazy_static = "1.4.0"
+itertools = "0.10.5"
+serde = { version = "1.0.164", features = ["derive"] }
+serde_derive = "1.0.164"
+thiserror = "1.0.40"
+regex = "1.8.4"
+pretty_env_logger = "0.5.0"
+
+[dev-dependencies]
+test-log = "0.2.11"
+env_logger = "0.10.0"
