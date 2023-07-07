@@ -27,7 +27,7 @@ pub struct InvariantAssertion {
 /// An error that occured while constructing an invariant assertion
 #[derive(Error, Debug)]
 pub enum InvariantError {
-    /// Assertion was in some incorrect form
+    /// Assertion is not a safety property
     #[error("assertion is not of the form (always p)")]
     NotSafety,
     /// Proof invariant mentioned more than one timestep

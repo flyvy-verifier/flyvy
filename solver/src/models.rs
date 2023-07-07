@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Parse the output of the SMT solver.
+//! Parse and evaluate the models returned by the SMT solver.
 
 use lazy_static::lazy_static;
 use serde::Serialize;
@@ -26,18 +26,18 @@ pub struct PartialInterp {
     pub interps: HashMap<String, (Interpretation, Sort)>,
 }
 
-/// Represents one relation in the parsed output of an SMT solver.
+/// The value of a function in an SMT solver model.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ModelSymbol {
-    /// The arguments to the relation, and their sorts
+    /// The bound arguments of the function, and their sorts.
     pub binders: Vec<(String, Sort)>,
-    /// The body of the relation that the solver solved
+    /// The body of the function
     pub body: Sexp,
-    /// The return sort of the relation
+    /// The return sort of the function
     pub ret_sort: Sort,
 }
 
-/// Represents the parsed Sat output of an SMT solver.
+/// A parsed model from the SMT solver, without evaluation.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Model {
     /// A map from sorts to relation names
@@ -46,7 +46,7 @@ pub struct Model {
     pub symbols: HashMap<String, ModelSymbol>,
 }
 
-/// An evaluation error.
+/// An error evaluating a function in an SMT solver model.
 #[derive(Debug, Error)]
 #[error("eval error: {0}")]
 pub struct EvalError(String);

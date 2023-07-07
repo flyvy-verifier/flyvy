@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Implements communications between Rust code and a running SMT solver.
+//! High-level interface to an SMT solver using `fly::syntax::Term`s.
 
 use std::{
     collections::{HashMap, HashSet},

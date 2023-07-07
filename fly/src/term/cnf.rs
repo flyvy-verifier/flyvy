@@ -180,7 +180,7 @@ pub fn term_to_cnf_clauses(t: &Term) -> Vec<Term> {
 }
 
 impl Cnf {
-    /// Build a Term in CNF out of any Term
+    /// Convert a term to CNF
     pub fn new(t: Term) -> Self {
         let t = if let Some(body) = get_always(&t) {
             UnaryOp(Always, Box::new(body))

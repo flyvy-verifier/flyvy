@@ -13,9 +13,6 @@ members = [
 version = "0.1.0"
 edition = "2021"
 
-# [features]
-# trace = ["peg/trace"]
-
 # walkdir = "2.3.3"
 
 # [dev-dependencies]
