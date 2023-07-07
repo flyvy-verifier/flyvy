@@ -613,6 +613,9 @@ impl App {
                                 .unwrap_or("any depth".to_string())
                         );
                     }
+                    Ok(bounded::bdd::CheckerAnswer::Convergence) => {
+                        println!("answer: safe forever with given sort bounds")
+                    }
                     Err(error) => eprintln!("{}", error),
                 }
             }

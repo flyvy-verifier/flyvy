@@ -139,6 +139,8 @@ pub enum CheckerAnswer {
     Counterexample,
     /// The checker did not find a counterexample
     Unknown,
+    /// The checker found that the set of states stopped changing
+    Convergence,
 }
 
 #[allow(missing_docs)]
@@ -283,8 +285,10 @@ pub fn check(
             }
         }
 
+        println!("depth {} in {:0.1}s", i + 1, time.elapsed().as_secs_f64());
+
         if &current == trace.last().unwrap() {
-            return Ok(CheckerAnswer::Unknown);
+            return Ok(CheckerAnswer::Convergence);
         }
 
         trace.push(current.clone());
@@ -296,7 +300,6 @@ pub fn check(
         i += 1;
     }
 
-    println!("search finished in {:0.1}s", time.elapsed().as_secs_f64());
     Ok(CheckerAnswer::Unknown)
 }
 
@@ -534,7 +537,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
+        assert_eq!(CheckerAnswer::Convergence, check(&module, &universe, None)?);
 
         Ok(())
     }
@@ -690,7 +693,7 @@ assert always r
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(10))?);
+        assert_eq!(CheckerAnswer::Convergence, check(&module, &universe, None)?);
         Ok(())
     }
 }
