@@ -1,7 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! A bounded model checker for flyvy programs using a SAT solver.
+//! A bounded model checker for flyvy programs using the [CaDiCaL][cadical] SAT solver.
+//! [cadical]: https://fmv.jku.at/cadical/
 
 use cadical::Solver;
 use fly::{sorts::*, syntax::*, term::fo::FirstOrder};
