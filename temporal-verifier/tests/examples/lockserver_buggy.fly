@@ -1,9 +1,9 @@
 # Copyright 2022-2023 VMware, Inc.
 # SPDX-License-Identifier: BSD-2-Clause
 
-# TEST -- bdd-check --bound node=3
-# TEST -- sat-check --bound node=3 --depth=20
-# TEST -- set-check --bound node=3
+# TEST -- bdd-check --bound node=3 --print-timing false
+# TEST -- sat-check --bound node=3 --print-timing false --depth=20
+# TEST -- set-check --bound node=3 --print-timing false
 
 sort node
 

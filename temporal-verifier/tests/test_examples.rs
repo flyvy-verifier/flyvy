@@ -264,7 +264,7 @@ fn get_tests(root_dir: &str) -> HashMap<PathBuf, Vec<Test>> {
 }
 
 fn verifier() -> Command {
-    let mut cmd = Command::new(".././target/debug/temporal-verifier");
+    let mut cmd = Command::new("../target/debug/temporal-verifier");
     cmd.arg("--color=never");
     cmd
 }

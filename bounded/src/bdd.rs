@@ -101,9 +101,9 @@ impl Context<'_> {
         for (i, valuation) in valuations.iter().enumerate() {
             println!("state {}:", i);
             let valuation = valuation.clone().unwrap();
-            for (relation, map) in &self.indices {
+            for relation in self.indices.keys().sorted() {
                 print!("{}: {{", relation);
-                for (elements, (i, _mutable)) in map {
+                for (elements, (i, _mutable)) in self.indices[relation].iter().sorted() {
                     if valuation.value(self.vars[*i]) {
                         print!("{:?}, ", elements);
                     }
@@ -181,6 +181,7 @@ pub fn check(
     module: &Module,
     universe: &Universe,
     depth: Option<usize>,
+    print_timing: bool,
 ) -> Result<CheckerAnswer, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
@@ -257,10 +258,12 @@ pub fn check(
     let tr = translate(trs)?;
     let not_safe = translate(safes)?.not();
 
-    println!(
-        "translation finished in {:0.1}s",
-        time.elapsed().as_secs_f64()
-    );
+    if print_timing {
+        println!(
+            "translation finished in {:0.1}s",
+            time.elapsed().as_secs_f64()
+        );
+    }
     println!("starting search...");
     let time = std::time::Instant::now();
 
@@ -285,7 +288,9 @@ pub fn check(
             }
         }
 
-        println!("depth {} in {:0.1}s", i + 1, time.elapsed().as_secs_f64());
+        if print_timing {
+            println!("depth {} in {:0.1}s", i + 1, time.elapsed().as_secs_f64());
+        }
 
         if &current == trace.last().unwrap() {
             return Ok(CheckerAnswer::Convergence);
@@ -466,10 +471,13 @@ assert always x
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
+        assert_eq!(
+            CheckerAnswer::Unknown,
+            check(&module, &universe, Some(0), false)?
+        );
         assert_eq!(
             CheckerAnswer::Counterexample,
-            check(&module, &universe, Some(1))?
+            check(&module, &universe, Some(1), false)?
         );
 
         Ok(())
@@ -537,7 +545,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(CheckerAnswer::Convergence, check(&module, &universe, None)?);
+        assert_eq!(
+            CheckerAnswer::Convergence,
+            check(&module, &universe, None, false)?
+        );
 
         Ok(())
     }
@@ -604,12 +615,12 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        let bug = check(&module, &universe, Some(12))?;
+        let bug = check(&module, &universe, Some(12), false)?;
         assert_eq!(CheckerAnswer::Counterexample, bug);
-        let bug = check(&module, &universe, None)?;
+        let bug = check(&module, &universe, None, false)?;
         assert_eq!(CheckerAnswer::Counterexample, bug);
 
-        let too_short = check(&module, &universe, Some(11))?;
+        let too_short = check(&module, &universe, Some(11), false)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
@@ -678,7 +689,10 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 1),
         ]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, Some(0))?);
+        assert_eq!(
+            CheckerAnswer::Unknown,
+            check(&module, &universe, Some(0), false)?
+        );
 
         Ok(())
     }
@@ -693,7 +707,10 @@ assert always r
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(CheckerAnswer::Convergence, check(&module, &universe, None)?);
+        assert_eq!(
+            CheckerAnswer::Convergence,
+            check(&module, &universe, None, false)?
+        );
         Ok(())
     }
 }
