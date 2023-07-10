@@ -21,13 +21,10 @@ use codespan_reporting::{
 };
 use fly::syntax::Signature;
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
-use inference::atoms;
 use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
-use inference::fixpoint::{fixpoint_multi, fixpoint_single};
+use inference::fixpoint::{fixpoint_multi_qf_body, fixpoint_single_qf_body};
 use inference::houdini;
-use inference::lemma;
 use inference::quant::QuantifierConfig;
-use inference::subsume;
 use inference::updr::Updr;
 use solver::backends::{self, GenericBackend};
 use solver::conf::SolverConf;
@@ -525,41 +522,9 @@ impl App {
                 m.inline_defs();
                 let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
                 if qargs.infer_cfg.search {
-                    match infer_cfg.qf_body {
-                        QfBody::CNF => fixpoint_multi::<
-                            subsume::Cnf<atoms::Literal>,
-                            lemma::LemmaCnf,
-                            Vec<Vec<atoms::Literal>>,
-                        >(infer_cfg, &conf, &m),
-                        QfBody::PDnf => fixpoint_multi::<
-                            subsume::PDnf<atoms::Literal>,
-                            lemma::LemmaPDnf,
-                            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
-                        >(infer_cfg, &conf, &m),
-                        QfBody::PDnfNaive => fixpoint_multi::<
-                            subsume::Dnf<atoms::Literal>,
-                            lemma::LemmaPDnfNaive,
-                            Vec<Vec<atoms::Literal>>,
-                        >(infer_cfg, &conf, &m),
-                    }
+                    fixpoint_multi_qf_body(infer_cfg, &conf, &m)
                 } else {
-                    let fixpoint = match infer_cfg.qf_body {
-                        QfBody::CNF => fixpoint_single::<
-                            subsume::Cnf<atoms::Literal>,
-                            lemma::LemmaCnf,
-                            Vec<Vec<atoms::Literal>>,
-                        >(infer_cfg, &conf, &m),
-                        QfBody::PDnf => fixpoint_single::<
-                            subsume::PDnf<atoms::Literal>,
-                            lemma::LemmaPDnf,
-                            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
-                        >(infer_cfg, &conf, &m),
-                        QfBody::PDnfNaive => fixpoint_single::<
-                            subsume::Dnf<atoms::Literal>,
-                            lemma::LemmaPDnfNaive,
-                            Vec<Vec<atoms::Literal>>,
-                        >(infer_cfg, &conf, &m),
-                    };
+                    let fixpoint = fixpoint_single_qf_body(infer_cfg, &conf, &m);
                     if args.no_print_invariant {
                         fixpoint.test_report();
                     } else {

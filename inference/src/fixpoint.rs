@@ -10,6 +10,8 @@ use std::{collections::VecDeque, fmt::Debug};
 
 use itertools::Itertools;
 
+use crate::basics::QfBody;
+use crate::{atoms, lemma, subsume};
 use crate::{
     atoms::{restrict, restrict_by_prefix, Atoms, RestrictedAtoms},
     basics::{FOModule, InferenceConfig},
@@ -141,6 +143,30 @@ where
     }
 }
 
+pub fn fixpoint_single_qf_body(
+    infer_cfg: InferenceConfig,
+    conf: &SolverConf,
+    m: &Module,
+) -> FoundFixpoint {
+    match infer_cfg.qf_body {
+        QfBody::CNF => {
+            fixpoint_single::<subsume::Cnf<atoms::Literal>, lemma::LemmaCnf, Vec<Vec<atoms::Literal>>>(
+                infer_cfg, conf, m,
+            )
+        }
+        QfBody::PDnf => fixpoint_single::<
+            subsume::PDnf<atoms::Literal>,
+            lemma::LemmaPDnf,
+            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
+        >(infer_cfg, conf, m),
+        QfBody::PDnfNaive => fixpoint_single::<
+            subsume::Dnf<atoms::Literal>,
+            lemma::LemmaPDnfNaive,
+            Vec<Vec<atoms::Literal>>,
+        >(infer_cfg, conf, m),
+    }
+}
+
 impl FoundFixpoint {
     pub fn report(&self) {
         println!("proof {{");
@@ -259,6 +285,26 @@ where
     }
 
     println!();
+}
+
+pub fn fixpoint_multi_qf_body(infer_cfg: InferenceConfig, conf: &SolverConf, m: &Module) {
+    match infer_cfg.qf_body {
+        QfBody::CNF => {
+            fixpoint_multi::<subsume::Cnf<atoms::Literal>, lemma::LemmaCnf, Vec<Vec<atoms::Literal>>>(
+                infer_cfg, conf, m,
+            )
+        }
+        QfBody::PDnf => fixpoint_multi::<
+            subsume::PDnf<atoms::Literal>,
+            lemma::LemmaPDnf,
+            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
+        >(infer_cfg, conf, m),
+        QfBody::PDnfNaive => fixpoint_multi::<
+            subsume::Dnf<atoms::Literal>,
+            lemma::LemmaPDnfNaive,
+            Vec<Vec<atoms::Literal>>,
+        >(infer_cfg, conf, m),
+    }
 }
 
 /// Run a simple fixpoint algorithm on the configured lemma domains.
