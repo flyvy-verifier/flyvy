@@ -7,6 +7,7 @@ edition.workspace = true
 fly = { path = "../fly" }
 solver = { path = "../solver" }
 verify = { path = "../verify" }
+bounded = { path = "../bounded" }
 
 fxhash = "0.2.1"
 itertools = "0.10.5"
