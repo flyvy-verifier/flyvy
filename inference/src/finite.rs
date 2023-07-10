@@ -14,8 +14,8 @@ pub fn invariant(module: &Module) -> Result<Option<Term>, CheckerError> {
         universe.insert(sort.clone(), 2);
     }
 
-    let _bdd = match check(module, &universe, None, false) {
-        Ok(CheckerAnswer::Convergence(bdd)) => bdd,
+    let (_bdd, _context) = match check(module, &universe, None, false) {
+        Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
         Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(e),

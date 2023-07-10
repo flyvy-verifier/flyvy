@@ -584,7 +584,7 @@ impl App {
                     bounded.depth,
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(bounded::bdd::CheckerAnswer::Counterexample(_)) => {}
+                    Ok(bounded::bdd::CheckerAnswer::Counterexample(..)) => {}
                     Ok(bounded::bdd::CheckerAnswer::Unknown) => {
                         println!(
                             "answer: safe up to {} for given sort bounds",
@@ -594,7 +594,7 @@ impl App {
                                 .unwrap_or("any depth".to_string())
                         );
                     }
-                    Ok(bounded::bdd::CheckerAnswer::Convergence(_)) => {
+                    Ok(bounded::bdd::CheckerAnswer::Convergence(..)) => {
                         println!("answer: safe forever with given sort bounds")
                     }
                     Err(error) => eprintln!("{}", error),
