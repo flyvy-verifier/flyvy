@@ -51,12 +51,17 @@ fn invariant_cover(
     (covered, proof.invariants.len())
 }
 
+/// An inductive fixpoint
 pub struct FoundFixpoint {
+    /// The fixpoint term (the conjunction of these lemmas)
     pub proof: Vec<Term>,
+    /// Whether the discovered fixpoint implies the safety predicates
     pub safe: bool,
+    /// Total time for fixpoint calculation
     pub time_taken: Duration,
-    // How much of fixpoint covers handwritten invariant
+    /// Number of terms of handwritten invariant covered
     pub covered_handwritten: usize,
+    /// Total number of terms in the handwritten invariant
     pub size_handwritten: usize,
 }
 

@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! Implementation of UPDR. See https://www.tau.ac.il/~sharonshoham/papers/jacm17.pdf.
+
 use im::{hashset, HashSet};
 use itertools::Itertools;
 use std::sync::Arc;
@@ -12,31 +14,33 @@ use fly::term::cnf::term_to_cnf_clauses;
 use solver::conf::SolverConf;
 
 #[derive(Debug, Clone)]
-pub struct Frame {
+struct Frame {
     terms: Vec<Term>,
 }
 
 impl Frame {
-    pub fn strengthen(&mut self, term: Term) {
+    fn strengthen(&mut self, term: Term) {
         self.terms.push(term);
     }
 }
 
-pub struct BackwardsReachableState {
-    pub id: usize,
-    pub term_or_model: TermOrModel,
-    pub num_steps_to_bad: usize,
-    pub known_absent_until_frame: usize,
+struct BackwardsReachableState {
+    id: usize,
+    term_or_model: TermOrModel,
+    num_steps_to_bad: usize,
+    known_absent_until_frame: usize,
 }
 
+/// State for a UPDR invariant search
 pub struct Updr {
-    pub solver_conf: Arc<SolverConf>,
+    solver_conf: Arc<SolverConf>,
     frames: Vec<Frame>,
     backwards_reachable_states: Vec<BackwardsReachableState>,
     currently_blocking_id: Option<usize>,
 }
 
 impl Updr {
+    /// Initialize a UPDR search
     pub fn new(solver_conf: Arc<SolverConf>) -> Updr {
         Updr {
             solver_conf,
@@ -46,7 +50,7 @@ impl Updr {
         }
     }
 
-    pub fn find_state_to_block(&mut self, module: &FOModule) -> Option<usize> {
+    fn find_state_to_block(&mut self, module: &FOModule) -> Option<usize> {
         // println!("start");
         loop {
             // println!("loop");
@@ -323,7 +327,7 @@ impl Updr {
         out
     }
 
-    pub fn search(&mut self, m: &Module) -> Option<Frame> {
+    fn find_frame(&mut self, m: &Module) -> Option<Frame> {
         let module = FOModule::new(m, false, false, false);
         self.backwards_reachable_states = Vec::new();
         for safety in &module.safeties {
@@ -372,6 +376,12 @@ impl Updr {
             self.add_frame_and_push(&module);
             self.print_frames();
         }
+    }
+
+    /// Search for an inductive invariant.
+    pub fn search(&mut self, m: &Module) -> Option<Term> {
+        // TODO: is the and of the terms correct?
+        self.find_frame(m).map(|t| Term::and(t.terms))
     }
 
     fn simplify(&mut self, module: &FOModule) {

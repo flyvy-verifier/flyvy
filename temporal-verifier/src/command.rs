@@ -1,6 +1,8 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+//! The temporal-verifier binary's command-line interface.
+
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use path_slash::PathExt;
 use std::collections::HashMap;
