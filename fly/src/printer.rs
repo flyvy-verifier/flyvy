@@ -307,8 +307,8 @@ mod module_tests {
 
     #[test]
     fn test_module_print() {
-        let s =
-            fs::read_to_string("../tests/examples/basic1.fly").expect("could not read basic1.fly");
+        let s = fs::read_to_string("../temporal-verifier/tests/examples/basic1.fly")
+            .expect("could not read basic1.fly");
         let m = parse(&s).expect("basic1.fly should parse");
         insta::assert_display_snapshot!(module(&m));
     }
