@@ -222,10 +222,7 @@ impl<B: Backend> Solver<B> {
     }
 
     fn get_fo_model(&mut self, typ: TimeType, start: Instant) -> FOModel {
-        let model = self
-            .proc
-            .send_with_reply(&app("get-model", []))
-            .expect("could not get model");
+        let model = self.proc.get_model().expect("could not get model");
         fly::timing::elapsed(typ, start);
         self.backend
             .parse(&self.signature, self.n_states, &self.indicators, &model)

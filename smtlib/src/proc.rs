@@ -68,9 +68,9 @@ pub enum SatResp {
 /// panic.
 pub enum SolverError {
     /// I/O went wrong
-    #[error("some io went wrong: {0}")]
+    #[error("some I/O went wrong: {0}")]
     Io(#[from] io::Error),
-    /// Solver died for some reason
+    /// Solver returned an `(error ...)` response
     #[error("solver returned an error:\n{0}")]
     UnexpectedClose(String),
     /// Solver killed specifically by SIGKILL signal
@@ -80,9 +80,33 @@ pub enum SolverError {
 
 type Result<T> = std::result::Result<T, SolverError>;
 
+// =============================
+// State-machine related code
+// =============================
+
 impl Drop for SmtProc {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+impl SmtPid {
+    /// Kill the SMT process by pid.
+    pub fn kill(&self) {
+        let mut terminated = self.terminated.lock().unwrap();
+        if *terminated {
+            return;
+        }
+        let r = signal::kill(self.pid, signal::Signal::SIGKILL);
+        *terminated = true;
+        match r {
+            Ok(_) => (),
+            Err(errno) => {
+                if errno != Errno::ESRCH {
+                    panic!("killing SMT process {} failed with {errno}", self.pid);
+                }
+            }
+        }
     }
 }
 
@@ -143,21 +167,6 @@ impl SmtProc {
         }
     }
 
-    /// Save the current tee file, if there is one. Returns the name of the
-    /// created file (or None if there is no tee'd output setup).
-    ///
-    /// Errors are purely the result of I/O trying to save the file.
-    pub fn save_tee(&self) -> Option<PathBuf> {
-        self.tee.as_ref().and_then(|tee| match tee.save() {
-            Ok(name) => Some(name),
-            Err(err) => {
-                // report this error but this isn't fatal so don't panic
-                eprintln!("failed to save tee: {err}");
-                None
-            }
-        })
-    }
-
     /// Low-level API to send the solver a command as an s-expression. This
     /// should only be used for commands that do not require a response.
     pub fn send(&mut self, data: &sexp::Sexp) {
@@ -169,83 +178,17 @@ impl SmtProc {
 
     /// Low-level API to send the solver a command that expects a response,
     /// which is parsed as a single s-expression.
-    pub fn send_with_reply(&mut self, data: &sexp::Sexp) -> Result<sexp::Sexp> {
+    fn send_with_reply(&mut self, data: &sexp::Sexp) -> Result<sexp::Sexp> {
         self.send(data);
-        self.get_sexp()
+        self.get_response(|s| sexp::parse(s).expect("could not parse solver response"))
     }
 
-    /// Add a comment to the tee'd file.
+    /// Get an error presumed to be in resp, checking for termination first.
     ///
-    /// The comment is passed as a closure, which is not evaluated if there is
-    /// no tee'd smt2 file.
-    pub fn comment_with<F>(&mut self, comment: F)
-    where
-        F: FnOnce() -> String,
-    {
-        if let Some(f) = &mut self.tee {
-            let comment = comment();
-            f.append(Sexp::Comment("".to_string()));
-            f.append(Sexp::Comment(comment));
-        }
-    }
-
-    /// Get some attribute using the SMT get-info command.
-    pub fn get_info(&mut self, attribute: &str) -> Result<Sexp> {
-        let resp = self.send_with_reply(&app("get-info", [atom_s(attribute)]))?;
-        match resp {
-            Sexp::List(s) => {
-                assert_eq!(s.len(), 2);
-                assert_eq!(
-                    &s[0],
-                    &atom_s(attribute),
-                    "unexpected response to get-info {}",
-                    &s[0],
-                );
-                Ok(s[1].clone())
-            }
-            _ => panic!("unexpected get-info format {resp}"),
-        }
-    }
-
-    /// Parse an error message returned as an s-expression.
-    fn parse_error(resp: &str) -> String {
-        // Z3 returns check-sat errors as:
-        // (error "error msg")
-        // sat
-        //
-        // Thus we parse the result as a sequence of sexps and look for the
-        // error sexp.
-        let sexps = sexp::parse_many(resp)
-            .unwrap_or_else(|err| panic!("could not parse error response {resp}: {err}"));
-        let error_msg = sexps
-            .iter()
-            .filter_map(|s| {
-                s.app().and_then(|(head, args)| {
-                    if head == "error" && args.len() == 1 {
-                        args[0].atom_s()
-                    } else {
-                        None
-                    }
-                })
-            })
-            .next();
-        let msg = error_msg.unwrap_or_else(|| panic!("no error sexp found in {resp}"));
-        msg.to_string()
-    }
-
-    fn parse_sat(&mut self, resp: &str) -> Result<SatResp> {
-        if resp == "unsat" {
-            return Ok(SatResp::Unsat);
-        }
-        if resp == "sat" {
-            return Ok(SatResp::Sat);
-        }
-        if resp == "unknown" {
-            let reason = self
-                .get_info(":reason-unknown")
-                .expect("could not get :reason-unknown");
-            return Ok(SatResp::Unknown(reason.to_string()));
-        }
+    /// This function always returns a Result::Err, but is written this way for
+    /// convenient use with `?`. As a result it can return a Result<T> for any
+    /// type T.
+    fn get_error<T>(&mut self, resp: &str) -> Result<T> {
         self.check_killed()?;
         if resp.is_empty() {
             // TODO(tchajed): I believe try_wait within check_killed sometimes
@@ -255,12 +198,6 @@ impl SmtProc {
         }
         let msg = Self::parse_error(resp);
         return Err(SolverError::UnexpectedClose(msg));
-    }
-
-    /// Send the solver `(check-sat)`. For unknown gets a reason, but does not
-    /// call `(get-model)` for sat.
-    pub fn check_sat(&mut self) -> Result<SatResp> {
-        self.check_sat_assuming(&[])
     }
 
     /// Send the solver `(check-sat-assuming)` with some assumed variables
@@ -282,20 +219,6 @@ impl SmtProc {
             }
         }
         Ok(resp)
-    }
-
-    /// Run `(get-unsat-assumptions)` following an unsat response to get the
-    /// list of terms used in the proof.
-    ///
-    /// Fails if the previous command wasn't a check_sat or check_sat_assuming
-    /// that returned unsat.
-    pub fn get_unsat_assumptions(&mut self) -> Result<Vec<Sexp>> {
-        let sexp = self.send_with_reply(&app("get-unsat-assumptions", vec![]))?;
-        if let Sexp::List(ss) = sexp {
-            Ok(ss)
-        } else {
-            panic!("malformed get-unsat-assumptions response: {sexp}")
-        }
     }
 
     fn check_status(status: ExitStatus) -> Result<()> {
@@ -380,49 +303,134 @@ impl SmtProc {
         }
     }
 
-    fn get_sexp(&mut self) -> Result<Sexp> {
-        self.get_response(|s| sexp::parse(s).expect("could not parse solver response"))
-    }
-
     fn kill(&mut self) {
         _ = writeln!(self.stdin, "(exit)");
         _ = self.stdin.flush();
         _ = self.child.kill();
         _ = self.child.wait();
         *self.terminated.lock().unwrap() = true;
-
-        // NOTE: the below waits by polling every 10ms; `child.wait()` actually
-        // runs the `wait()` syscall, which cleans up the child process. Without
-        // it, the child becomes a "zombie process" that consumes a pid.
-
-        // let wait_time = std::time::Duration::from_millis(10);
-        // for _ in 0..100 {
-        //     let join = self.child.try_wait().expect("could not wait for child");
-        //     if join.is_some() {
-        //         return;
-        //     }
-        //     std::thread::sleep(wait_time);
-        // }
-        // panic!("could not wait for solver to properly terminate");
     }
-}
 
-impl SmtPid {
-    /// Kill the SMT process by pid.
-    pub fn kill(&self) {
-        let mut terminated = self.terminated.lock().unwrap();
-        if *terminated {
-            return;
-        }
-        let r = signal::kill(self.pid, signal::Signal::SIGKILL);
-        *terminated = true;
-        match r {
-            Ok(_) => (),
-            Err(errno) => {
-                if errno != Errno::ESRCH {
-                    panic!("killing SMT process {} failed with {errno}", self.pid);
-                }
+    // ========================
+    // Non state machine APIs
+    // ========================
+
+    /// Get some attribute using the SMT get-info command.
+    pub fn get_info(&mut self, attribute: &str) -> Result<Sexp> {
+        let resp = self.send_with_reply(&app("get-info", [atom_s(attribute)]))?;
+        match resp {
+            Sexp::List(s) => {
+                assert_eq!(s.len(), 2);
+                assert_eq!(
+                    &s[0],
+                    &atom_s(attribute),
+                    "unexpected response to get-info {}",
+                    &s[0],
+                );
+                Ok(s[1].clone())
             }
+            _ => panic!("unexpected get-info format {resp}"),
+        }
+    }
+
+    /// Parse an error message returned as an s-expression.
+    fn parse_error(resp: &str) -> String {
+        // Z3 returns check-sat errors as:
+        // (error "error msg")
+        // sat
+        //
+        // Thus we parse the result as a sequence of sexps and look for the
+        // error sexp.
+        let sexps = sexp::parse_many(resp)
+            .unwrap_or_else(|err| panic!("could not parse error response {resp}: {err}"));
+        let error_msg = sexps
+            .iter()
+            .filter_map(|s| {
+                s.app().and_then(|(head, args)| {
+                    if head == "error" && args.len() == 1 {
+                        args[0].atom_s()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .next();
+        let msg = error_msg.unwrap_or_else(|| panic!("no error sexp found in {resp}"));
+        msg.to_string()
+    }
+
+    fn parse_sat(&mut self, resp: &str) -> Result<SatResp> {
+        if resp == "unsat" {
+            return Ok(SatResp::Unsat);
+        }
+        if resp == "sat" {
+            return Ok(SatResp::Sat);
+        }
+        if resp == "unknown" {
+            let reason = self
+                .get_info(":reason-unknown")
+                .expect("could not get :reason-unknown");
+            return Ok(SatResp::Unknown(reason.to_string()));
+        }
+        self.get_error(resp)
+    }
+
+    /// Send the solver `(check-sat)`. For unknown gets a reason, but does not
+    /// call `(get-model)` for sat.
+    pub fn check_sat(&mut self) -> Result<SatResp> {
+        self.check_sat_assuming(&[])
+    }
+
+    /// Get a model (following a sat reply) as an s-expression.
+    pub fn get_model(&mut self) -> Result<Sexp> {
+        self.send_with_reply(&app("get-model", []))
+    }
+
+    /// Run `(get-unsat-assumptions)` following an unsat response to get the
+    /// list of terms used in the proof.
+    ///
+    /// Fails if the previous command wasn't a check_sat or check_sat_assuming
+    /// that returned unsat.
+    pub fn get_unsat_assumptions(&mut self) -> Result<Vec<Sexp>> {
+        let sexp = self.send_with_reply(&app("get-unsat-assumptions", vec![]))?;
+        if let Sexp::List(ss) = sexp {
+            Ok(ss)
+        } else {
+            panic!("malformed get-unsat-assumptions response: {sexp}")
+        }
+    }
+
+    // =============
+    // Tee support
+    // =============
+
+    /// Save the current tee file, if there is one. Returns the name of the
+    /// created file (or None if there is no tee'd output setup).
+    ///
+    /// Errors are purely the result of I/O trying to save the file.
+    pub fn save_tee(&self) -> Option<PathBuf> {
+        self.tee.as_ref().and_then(|tee| match tee.save() {
+            Ok(name) => Some(name),
+            Err(err) => {
+                // report this error but this isn't fatal so don't panic
+                eprintln!("failed to save tee: {err}");
+                None
+            }
+        })
+    }
+
+    /// Add a comment to the tee'd file.
+    ///
+    /// The comment is passed as a closure, which is not evaluated if there is
+    /// no tee'd smt2 file.
+    pub fn comment_with<F>(&mut self, comment: F)
+    where
+        F: FnOnce() -> String,
+    {
+        if let Some(f) = &mut self.tee {
+            let comment = comment();
+            f.append(Sexp::Comment("".to_string()));
+            f.append(Sexp::Comment(comment));
         }
     }
 }
