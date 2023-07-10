@@ -269,8 +269,8 @@ mod tests {
             opts: Default::default(),
         };
 
-        let model_text =
-            read_to_string("../tests/issue_5_model.sexp").expect("could not find model file");
+        let model_text = read_to_string("../temporal-verifier/tests/issue_5_model.sexp")
+            .expect("could not find model file");
         let model_sexp = sexp::parse(&model_text).expect("test model does not parse");
 
         let fo_model = (&backend).parse(&sig, 1, &HashSet::new(), &model_sexp);
@@ -296,8 +296,8 @@ mod tests {
             opts: Default::default(),
         };
 
-        let model_text =
-            read_to_string("../tests/test_model.sexp").expect("could not find model file");
+        let model_text = read_to_string("../temporal-verifier/tests/test_model.sexp")
+            .expect("could not find model file");
         let model_sexp = sexp::parse(&model_text).expect("test model does not parse");
 
         let fo_model = (&backend).parse(&sig, 0, &HashSet::new(), &model_sexp);

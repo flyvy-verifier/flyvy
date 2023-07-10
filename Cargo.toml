@@ -14,12 +14,6 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 
-# walkdir = "2.3.3"
-
-# [dev-dependencies]
-# shell-words = "1.1.0"
-# toml = "0.7.4"
-
 [profile.dev.package.insta]
 opt-level = 3
 

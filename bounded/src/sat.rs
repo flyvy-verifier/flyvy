@@ -83,9 +83,9 @@ impl Context<'_> {
         println!("found counterexample!");
         for state in 0..=depth {
             println!("state {}:", state);
-            for (relation, map) in &self.indices {
+            for relation in self.indices.keys().sorted() {
                 print!("{}: {{", relation);
-                for (elements, (i, mutable)) in map {
+                for (elements, (i, mutable)) in self.indices[relation].iter().sorted() {
                     let mut var = *i;
                     if *mutable {
                         var += state * self.mutables;
@@ -152,6 +152,7 @@ pub fn check(
     module: &Module,
     universe: &Universe,
     depth: usize,
+    print_timing: bool,
 ) -> Result<CheckerAnswer, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
@@ -236,10 +237,12 @@ pub fn check(
 
     let cnf = tseytin(&Ast::And(program), &mut context);
 
-    println!(
-        "translation finished in {:0.1}s",
-        translation.elapsed().as_secs_f64()
-    );
+    if print_timing {
+        println!(
+            "translation finished in {:0.1}s",
+            translation.elapsed().as_secs_f64()
+        );
+    }
 
     println!("starting search...");
     let search = std::time::Instant::now();
@@ -262,7 +265,9 @@ pub fn check(
         }
     };
 
-    println!("search finished in {:0.1}s", search.elapsed().as_secs_f64());
+    if print_timing {
+        println!("search finished in {:0.1}s", search.elapsed().as_secs_f64());
+    }
 
     answer
 }
@@ -561,8 +566,11 @@ assert always x
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 0)?);
-        assert_eq!(CheckerAnswer::Counterexample, check(&module, &universe, 1)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 0, false)?);
+        assert_eq!(
+            CheckerAnswer::Counterexample,
+            check(&module, &universe, 1, false)?
+        );
 
         Ok(())
     }
@@ -629,7 +637,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 10)?);
+        assert_eq!(
+            CheckerAnswer::Unknown,
+            check(&module, &universe, 10, false)?
+        );
 
         Ok(())
     }
@@ -696,10 +707,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        let bug = check(&module, &universe, 12)?;
+        let bug = check(&module, &universe, 12, false)?;
         assert_eq!(CheckerAnswer::Counterexample, bug);
 
-        let too_short = check(&module, &universe, 11)?;
+        let too_short = check(&module, &universe, 11, false)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
@@ -767,7 +778,10 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 2),
         ]);
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 10)?);
+        assert_eq!(
+            CheckerAnswer::Unknown,
+            check(&module, &universe, 10, false)?
+        );
 
         Ok(())
     }
@@ -782,7 +796,10 @@ assert always r
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 10)?);
+        assert_eq!(
+            CheckerAnswer::Unknown,
+            check(&module, &universe, 10, false)?
+        );
         Ok(())
     }
 }

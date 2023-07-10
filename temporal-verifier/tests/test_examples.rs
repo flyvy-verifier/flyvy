@@ -18,7 +18,7 @@ use clap::Parser;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::Deserialize;
-use temporal_verifier::solver::solver_path;
+use solver::solver_path;
 use walkdir::WalkDir;
 
 const SOLVERS_TO_TEST: [&str; 3] = ["z3", "cvc4", "cvc5"];
@@ -27,7 +27,7 @@ lazy_static! {
     static ref SOLVER_VERSION_VARS: HashMap<String, String> = {
         let mut versions = HashMap::new();
         let re = Regex::new(r#"(.*)_VERSION="(.*)""#).unwrap();
-        for line in fs::read_to_string("tools/solver-versions.sh")
+        for line in fs::read_to_string("../tools/solver-versions.sh")
             .expect("could not find tools/solver-versions.sh")
             .lines()
         {
@@ -264,7 +264,7 @@ fn get_tests(root_dir: &str) -> HashMap<PathBuf, Vec<Test>> {
 }
 
 fn verifier() -> Command {
-    let mut cmd = Command::new("./target/debug/temporal-verifier");
+    let mut cmd = Command::new("../target/debug/temporal-verifier");
     cmd.arg("--color=never");
     cmd
 }

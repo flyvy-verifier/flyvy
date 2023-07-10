@@ -258,6 +258,9 @@ struct BoundedArgs {
     /// What size bound to use for the given sort, given as SORT=N as in --bound node=2
     #[arg(long)]
     bound: Vec<String>,
+    /// Whether or not to print timing information (true by default)
+    #[arg(long)]
+    print_timing: Option<bool>,
 }
 
 impl BoundedArgs {
@@ -583,7 +586,13 @@ impl App {
                 compress_traces,
             } => {
                 let univ = bounded.get_universe(&m.signature);
-                bounded::set::check(&m, &univ, bounded.depth, compress_traces.into());
+                bounded::set::check(
+                    &m,
+                    &univ,
+                    bounded.depth,
+                    compress_traces.into(),
+                    bounded.print_timing.unwrap_or(true),
+                );
             }
             Command::SatCheck(bounded) => {
                 let depth = match bounded.depth {
@@ -594,7 +603,7 @@ impl App {
                     }
                 };
                 let univ = bounded.get_universe(&m.signature);
-                match bounded::sat::check(&m, &univ, depth) {
+                match bounded::sat::check(&m, &univ, depth, bounded.print_timing.unwrap_or(true)) {
                     Ok(bounded::sat::CheckerAnswer::Counterexample) => {}
                     Ok(bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
@@ -604,7 +613,12 @@ impl App {
             }
             Command::BddCheck(bounded) => {
                 let univ = bounded.get_universe(&m.signature);
-                match bounded::bdd::check(&m, &univ, bounded.depth) {
+                match bounded::bdd::check(
+                    &m,
+                    &univ,
+                    bounded.depth,
+                    bounded.print_timing.unwrap_or(true),
+                ) {
                     Ok(bounded::bdd::CheckerAnswer::Counterexample) => {}
                     Ok(bounded::bdd::CheckerAnswer::Unknown) => {
                         println!(

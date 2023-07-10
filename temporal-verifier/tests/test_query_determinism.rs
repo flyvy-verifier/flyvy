@@ -4,7 +4,7 @@
 use std::process::Command;
 
 fn temporal_verifier() -> Command {
-    let mut cmd = Command::new("./target/debug/temporal-verifier");
+    let mut cmd = Command::new("../target/debug/temporal-verifier");
     cmd.arg("--color=never");
     cmd
 }
@@ -17,7 +17,7 @@ fn updr_determinism() {
         println!("updr determinism iteration {}", i);
         let out = temporal_verifier()
             .arg("updr-verify")
-            .arg("examples/lockserver.fly")
+            .arg("../examples/lockserver.fly")
             .arg("--solver-seed=1")
             .output()
             .expect("could not run temporal-verifier");

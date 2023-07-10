@@ -25,13 +25,14 @@ pub fn check(
     universe: &UniverseBounds,
     depth: Option<usize>,
     compress_traces: TraceCompression,
+    print_timing: bool,
 ) -> Option<CheckerAnswer> {
     match translate(module, universe) {
         Err(e) => {
             eprintln!("{}", e);
             None
         }
-        Ok(program) => match interpret(&program, depth, compress_traces) {
+        Ok(program) => match interpret(&program, depth, compress_traces, print_timing) {
             InterpreterResult::Unknown => {
                 println!("no counterexample found");
                 Some(CheckerAnswer::Unknown)
@@ -49,7 +50,7 @@ pub fn check(
                         for r in &module.signature.relations {
                             let relation = &r.name;
                             print!("{}: {{", relation);
-                            for ((r, elements), i) in &indices.0 {
+                            for ((r, elements), i) in indices.0.iter().sorted() {
                                 if r == relation && state.0[*i] {
                                     print!("{:?}, ", elements);
                                 }
@@ -68,7 +69,7 @@ pub fn check(
                             for r in &module.signature.relations {
                                 let relation = &r.name;
                                 print!("{}: {{", relation);
-                                for ((r, elements), i) in &indices.0 {
+                                for ((r, elements), i) in indices.0.iter().sorted() {
                                     if r == relation && state.0[*i] {
                                         print!("{:?}, ", elements);
                                     }
@@ -449,6 +450,7 @@ pub fn interpret(
     program: &BoundedProgram,
     max_depth: Option<usize>,
     compress_traces: TraceCompression,
+    print_timing: bool,
 ) -> InterpreterResult {
     // States we have seen so far.
     let mut seen: HashSet<BoundedState> = program.inits.iter().cloned().collect();
@@ -475,10 +477,12 @@ pub fn interpret(
         let depth = trace.depth();
         if depth > current_depth {
             current_depth += 1;
+            if print_timing {
+                print!("({:0.1}s since start) ", start_time.elapsed().as_secs_f64());
+            }
             println!(
-                "({:?} since start) considering new depth: {}. \
+                "considering new depth: {}. \
                  queue length is {}. seen {} unique states.",
-                start_time.elapsed(),
                 current_depth,
                 queue.len(),
                 seen.len()
@@ -1285,8 +1289,8 @@ mod tests {
                 value: false,
             }]],
         };
-        let result0 = interpret(&program, Some(0), TraceCompression::No);
-        let result1 = interpret(&program, Some(1), TraceCompression::No);
+        let result0 = interpret(&program, Some(0), TraceCompression::No, false);
+        let result1 = interpret(&program, Some(1), TraceCompression::No, false);
         assert_eq!(result0, InterpreterResult::Unknown);
         let mut expected1 = Trace::new(state([0]), TraceCompression::No);
         expected1.push(state([1]));
@@ -1368,11 +1372,11 @@ mod tests {
                 value: false,
             }]],
         };
-        let result1 = interpret(&program, Some(0), TraceCompression::No);
-        let result2 = interpret(&program, Some(1), TraceCompression::No);
-        let result3 = interpret(&program, Some(2), TraceCompression::No);
-        let result4 = interpret(&program, Some(3), TraceCompression::No);
-        let result5 = interpret(&program, Some(4), TraceCompression::No);
+        let result1 = interpret(&program, Some(0), TraceCompression::No, false);
+        let result2 = interpret(&program, Some(1), TraceCompression::No, false);
+        let result3 = interpret(&program, Some(2), TraceCompression::No, false);
+        let result4 = interpret(&program, Some(3), TraceCompression::No, false);
+        let result5 = interpret(&program, Some(4), TraceCompression::No, false);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1560,7 +1564,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             expected.trs.iter().collect::<BTreeSet<_>>()
         );
 
-        let output = interpret(&target, None, TraceCompression::No);
+        let output = interpret(&target, None, TraceCompression::No, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1643,7 +1647,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let target = translate(&m, &universe)?;
 
-        let bug = interpret(&target, Some(12), TraceCompression::No);
+        let bug = interpret(&target, Some(12), TraceCompression::No, false);
         if let InterpreterResult::Counterexample(trace) = &bug {
             println!("{:#?}", trace);
             assert_eq!(trace.depth(), 12);
@@ -1651,7 +1655,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, Some(11), TraceCompression::No);
+        let too_short = interpret(&target, Some(11), TraceCompression::No, false);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1719,7 +1723,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 2),
         ]);
         let target = translate(&m, &universe)?;
-        let output = interpret(&target, Some(10), TraceCompression::No);
+        let output = interpret(&target, Some(10), TraceCompression::No, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
         Ok(())
@@ -1737,7 +1741,7 @@ assert always r
         let universe = std::collections::HashMap::new();
         assert_eq!(
             Some(CheckerAnswer::Unknown),
-            check(&module, &universe, Some(10), true.into())
+            check(&module, &universe, Some(10), true.into(), false)
         );
     }
 }

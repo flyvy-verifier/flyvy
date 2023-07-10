@@ -1,0 +1,158 @@
+---
+source: temporal-verifier/tests/test_examples.rs
+description: "--name=1 -- sat-check --bound 'node=3' --print-timing false '--depth=20' tests/examples/lockserver_buggy.fly"
+expression: combined_stdout_stderr
+---
+starting translation...
+starting search...
+found counterexample!
+state 0:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {}
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 1:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 2:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 3:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 4:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 5:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 6:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], }
+server_holds_lock: {[], }
+unlock_msg: {}
+
+state 7:
+grant_msg: {[1], }
+holds_lock: {}
+lock_msg: {[0], }
+server_holds_lock: {}
+unlock_msg: {}
+
+state 8:
+grant_msg: {}
+holds_lock: {[1], }
+lock_msg: {[0], }
+server_holds_lock: {}
+unlock_msg: {}
+
+state 9:
+grant_msg: {}
+holds_lock: {[1], }
+lock_msg: {[0], }
+server_holds_lock: {}
+unlock_msg: {}
+
+state 10:
+grant_msg: {}
+holds_lock: {[1], }
+lock_msg: {[0], [1], }
+server_holds_lock: {}
+unlock_msg: {}
+
+state 11:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], }
+server_holds_lock: {}
+unlock_msg: {[1], }
+
+state 12:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], [2], }
+server_holds_lock: {}
+unlock_msg: {[1], }
+
+state 13:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], [2], }
+server_holds_lock: {[], }
+unlock_msg: {[1], }
+
+state 14:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], [2], }
+server_holds_lock: {[], }
+unlock_msg: {[1], }
+
+state 15:
+grant_msg: {}
+holds_lock: {}
+lock_msg: {[0], [1], [2], }
+server_holds_lock: {[], }
+unlock_msg: {[1], }
+
+state 16:
+grant_msg: {[2], }
+holds_lock: {}
+lock_msg: {[0], [1], }
+server_holds_lock: {}
+unlock_msg: {[1], }
+
+state 17:
+grant_msg: {[2], }
+holds_lock: {}
+lock_msg: {[0], [1], }
+server_holds_lock: {[], }
+unlock_msg: {[1], }
+
+state 18:
+grant_msg: {}
+holds_lock: {[2], }
+lock_msg: {[0], [1], }
+server_holds_lock: {[], }
+unlock_msg: {[1], }
+
+state 19:
+grant_msg: {[0], }
+holds_lock: {[2], }
+lock_msg: {[1], }
+server_holds_lock: {}
+unlock_msg: {[1], }
+
+state 20:
+grant_msg: {}
+holds_lock: {[0], [2], }
+lock_msg: {[1], }
+server_holds_lock: {}
+unlock_msg: {[1], }
+
+
+======== STDERR: ===========
+
