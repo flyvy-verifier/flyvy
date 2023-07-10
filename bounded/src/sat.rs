@@ -3,6 +3,7 @@
 
 //! A bounded model checker for flyvy programs using a SAT solver.
 
+use cadical::Solver;
 use fly::{sorts::*, syntax::*, term::fo::FirstOrder};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -77,7 +78,7 @@ impl Context<'_> {
         Variable(self.vars - 1)
     }
 
-    fn print_counterexample(&self, solver: cadical::Solver, depth: usize) {
+    fn print_counterexample(&self, solver: Solver, depth: usize) {
         println!("found counterexample!");
         for state in 0..=depth {
             println!("state {}:", state);
@@ -239,10 +240,10 @@ pub fn check(
         translation.elapsed().as_secs_f64()
     );
 
-    println!("starting cadical search...");
-    let cadical_search = std::time::Instant::now();
+    println!("starting search...");
+    let search = std::time::Instant::now();
 
-    let mut solver: cadical::Solver = Default::default();
+    let mut solver: Solver = Default::default();
     for clause in &cnf {
         let cadical_clause = clause
             .iter()
@@ -251,48 +252,18 @@ pub fn check(
     }
     assert_eq!(solver.max_variable(), context.vars as i32);
 
-    let cadical_answer = match solver.solve() {
-        None => return Err(CheckerError::SolverFailed),
-        Some(false) => CheckerAnswer::Unknown,
+    let answer = match solver.solve() {
+        None => Err(CheckerError::SolverFailed),
+        Some(false) => Ok(CheckerAnswer::Unknown),
         Some(true) => {
             context.print_counterexample(solver, depth);
-            CheckerAnswer::Counterexample
+            Ok(CheckerAnswer::Counterexample)
         }
     };
 
-    println!(
-        "cadical search finished in {:0.1}s",
-        cadical_search.elapsed().as_secs_f64()
-    );
+    println!("search finished in {:0.1}s", search.elapsed().as_secs_f64());
 
-    println!("starting kissat search...");
-    let kissat_search = std::time::Instant::now();
-
-    let mut solver: kissat::Solver = Default::default();
-    let vars: Vec<kissat::Var> = (0..context.vars).map(|_| solver.var()).collect();
-    for clause in &cnf {
-        let kissat_clause = clause
-            .iter()
-            .map(|l| if l.pos { vars[l.var] } else { !vars[l.var] })
-            .collect::<Vec<_>>();
-        solver.add(&kissat_clause);
-    }
-
-    let kissat_answer = match solver.sat() {
-        Some(_) => CheckerAnswer::Counterexample,
-        None => CheckerAnswer::Unknown,
-    };
-
-    println!(
-        "kissat search finished in {:0.1}s",
-        kissat_search.elapsed().as_secs_f64()
-    );
-
-    if kissat_answer != cadical_answer {
-        panic!("solvers disagreed!")
-    }
-
-    Ok(cadical_answer)
+    answer
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
