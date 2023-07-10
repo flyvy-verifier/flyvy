@@ -1,7 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
-//! Implementation of UPDR. See https://www.tau.ac.il/~sharonshoham/papers/jacm17.pdf.
+//! Implementation of UPDR. See <https://www.tau.ac.il/~sharonshoham/papers/jacm17.pdf>.
 
 use im::{hashset, HashSet};
 use itertools::Itertools;
