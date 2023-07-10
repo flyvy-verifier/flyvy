@@ -18,7 +18,8 @@ use fly::{
     syntax::{Binder, Signature, Sort, Term},
 };
 use smtlib::{
-    proc::{SatResp, SmtPid, SmtProc, SolverCmd, SolverError},
+    conf::SolverCmd,
+    proc::{SatResp, SmtPid, SmtProc, SolverError},
     sexp::{app, atom_i, atom_s, sexp_l, Atom, Sexp},
 };
 

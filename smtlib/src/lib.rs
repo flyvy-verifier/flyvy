@@ -18,6 +18,8 @@
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod conf;
 pub mod path;
 pub mod proc;
 pub mod sexp;
+mod tee;
