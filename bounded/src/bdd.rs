@@ -10,14 +10,17 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 /// Holds an ordering of all (relation, elements) pairs
-struct Context<'a> {
+pub struct Context<'a> {
     universe: &'a Universe,
 
-    mutables: usize,
-    indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
+    /// Number of two-state variables
+    pub mutables: usize,
+    /// Map from (relation, elements) to (index into vars, is mutable)
+    pub indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
 
     bdds: BddVariableSet,
-    vars: Vec<BddVariable>,
+    /// Map from indices to BddVariable objects
+    pub vars: Vec<BddVariable>,
 }
 
 impl Context<'_> {
@@ -129,14 +132,13 @@ impl Context<'_> {
 }
 
 /// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
+pub enum CheckerAnswer<'a> {
     /// The checker found a counterexample
     Counterexample(BddValuation),
     /// The checker did not find a counterexample
     Unknown,
     /// The checker found that the set of states stopped changing
-    Convergence(Bdd),
+    Convergence(Bdd, Context<'a>),
 }
 
 #[allow(missing_docs)]
@@ -166,12 +168,12 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 /// This assumes that the module has been typechecked.
 /// Passing `None` for depth means to run until a counterexample is found.
 /// The checker ignores proof blocks.
-pub fn check(
-    module: &Module,
-    universe: &Universe,
+pub fn check<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer, CheckerError> {
+) -> Result<CheckerAnswer<'a>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -254,7 +256,7 @@ pub fn check(
         }
 
         if reachable == new_reachable {
-            return Ok(CheckerAnswer::Convergence(reachable));
+            return Ok(CheckerAnswer::Convergence(reachable, context));
         } else {
             reachable = new_reachable;
         }
@@ -434,10 +436,10 @@ assert always x
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(
+        assert!(matches!(
+            check(&module, &universe, Some(0), false)?,
             CheckerAnswer::Unknown,
-            check(&module, &universe, Some(0), false)?
-        );
+        ));
         assert!(matches!(
             check(&module, &universe, Some(1), false)?,
             CheckerAnswer::Counterexample(_),
@@ -510,7 +512,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
 
         assert!(matches!(
             check(&module, &universe, None, false)?,
-            CheckerAnswer::Convergence(_),
+            CheckerAnswer::Convergence(..),
         ));
 
         Ok(())
@@ -584,7 +586,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
 
         let too_short = check(&module, &universe, Some(11), false)?;
-        assert_eq!(CheckerAnswer::Unknown, too_short);
+        assert!(matches!(too_short, CheckerAnswer::Unknown));
 
         Ok(())
     }
@@ -652,10 +654,10 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 1),
         ]);
 
-        assert_eq!(
+        assert!(matches!(
+            check(&module, &universe, Some(0), false)?,
             CheckerAnswer::Unknown,
-            check(&module, &universe, Some(0), false)?
-        );
+        ));
 
         Ok(())
     }
@@ -672,7 +674,7 @@ assert always r
         let universe = std::collections::HashMap::new();
         assert!(matches!(
             check(&module, &universe, None, false)?,
-            CheckerAnswer::Convergence(_),
+            CheckerAnswer::Convergence(..),
         ));
         Ok(())
     }
