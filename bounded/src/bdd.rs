@@ -73,10 +73,10 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(&self, valuation: BddValuation, trace: &[Bdd], tr: &Bdd) {
+    fn print_counterexample(&self, valuation: &BddValuation, trace: &[Bdd], tr: &Bdd) {
         let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
         valuations.resize(trace.len(), None);
-        *valuations.last_mut().unwrap() = Some(valuation);
+        *valuations.last_mut().unwrap() = Some(valuation.clone());
 
         for i in (1..trace.len()).rev() {
             let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
@@ -132,11 +132,11 @@ impl Context<'_> {
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample,
+    Counterexample(BddValuation),
     /// The checker did not find a counterexample
     Unknown,
     /// The checker found that the set of states stopped changing
-    Convergence,
+    Convergence(Bdd),
 }
 
 #[allow(missing_docs)]
@@ -230,8 +230,8 @@ pub fn check(
     let mut reachable = current.clone();
 
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(valuation, &trace, &tr);
-        return Ok(CheckerAnswer::Counterexample);
+        context.print_counterexample(&valuation, &trace, &tr);
+        return Ok(CheckerAnswer::Counterexample(valuation));
     }
     let mut i = 0;
     while depth.map(|d| i < d).unwrap_or(true) {
@@ -254,15 +254,15 @@ pub fn check(
         }
 
         if reachable == new_reachable {
-            return Ok(CheckerAnswer::Convergence);
+            return Ok(CheckerAnswer::Convergence(reachable));
         } else {
             reachable = new_reachable;
         }
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(valuation, &trace, &tr);
-            return Ok(CheckerAnswer::Counterexample);
+            context.print_counterexample(&valuation, &trace, &tr);
+            return Ok(CheckerAnswer::Counterexample(valuation));
         }
 
         i += 1;
@@ -438,10 +438,10 @@ assert always x
             CheckerAnswer::Unknown,
             check(&module, &universe, Some(0), false)?
         );
-        assert_eq!(
-            CheckerAnswer::Counterexample,
-            check(&module, &universe, Some(1), false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, Some(1), false)?,
+            CheckerAnswer::Counterexample(_),
+        ));
 
         Ok(())
     }
@@ -508,10 +508,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(
-            CheckerAnswer::Convergence,
-            check(&module, &universe, None, false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(_),
+        ));
 
         Ok(())
     }
@@ -579,9 +579,9 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&module, &universe, Some(12), false)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
         let bug = check(&module, &universe, None, false)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
 
         let too_short = check(&module, &universe, Some(11), false)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
@@ -670,10 +670,10 @@ assert always r
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(
-            CheckerAnswer::Convergence,
-            check(&module, &universe, None, false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(_),
+        ));
         Ok(())
     }
 }
