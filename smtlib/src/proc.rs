@@ -11,7 +11,6 @@ use crate::conf::SolverCmd;
 use crate::sexp;
 use crate::tee::Tee;
 use nix::{errno::Errno, sys::signal, unistd::Pid};
-use std::process::ExitStatus;
 use std::{
     ffi::{OsStr, OsString},
     io::{self, BufRead, BufReader, ErrorKind, Write},
@@ -21,9 +20,25 @@ use std::{
 };
 use thiserror::Error;
 
-use std::os::unix::process::ExitStatusExt;
-
 use super::sexp::{app, atom_s, sexp_l, Sexp};
+
+/// The states that the process can be in.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Status {
+    /// Solver is running normally. If `in_call` is true, it is currently
+    /// processing a `check-sat` or `get-model` call.
+    Running { in_call: bool },
+    /// A cancellation has been requested but has not been acted upon because
+    /// the solver isn't at a stopping point (an expensive call). Any solver
+    /// operations after this point will cause the solver to be killed; calls
+    /// that return nothing like `assert` will silently succeed, while calls
+    /// that require a response will return `SolverError::Killed`.
+    Stopping,
+    /// The solver has been killed but needs a `.wait()` call to reap the process.
+    NeedsWait,
+    /// The solver has exited and the process has been reaped with `.wait()`.
+    Terminated,
+}
 
 /// SmtProc wraps an instance of a solver process.
 #[derive(Debug)]
@@ -34,14 +49,14 @@ pub struct SmtProc {
     tee: Option<Tee>,
     // signal to SmtPids that this process has terminated (so we don't try to
     // kill the process long afterward when the pid might have been reused)
-    terminated: Arc<Mutex<bool>>,
+    terminated: Arc<Mutex<Status>>,
 }
 
 /// A handle to the SMT process for cancelling an in-progress check.
 #[derive(Clone)]
 pub struct SmtPid {
     pid: Pid,
-    terminated: Arc<Mutex<bool>>,
+    terminated: Arc<Mutex<Status>>,
 }
 
 /// SatResp is a solver's response to a `(check-sat)` or similar command.
@@ -94,16 +109,26 @@ impl SmtPid {
     /// Kill the SMT process by pid.
     pub fn kill(&self) {
         let mut terminated = self.terminated.lock().unwrap();
-        if *terminated {
-            return;
-        }
-        let r = signal::kill(self.pid, signal::Signal::SIGKILL);
-        *terminated = true;
-        match r {
-            Ok(_) => (),
-            Err(errno) => {
-                if errno != Errno::ESRCH {
-                    panic!("killing SMT process {} failed with {errno}", self.pid);
+        match *terminated {
+            Status::NeedsWait | Status::Terminated | Status::Stopping => {
+                return;
+            }
+            Status::Running { in_call } => {
+                // Only try to kill the solver if it's in the middle of an
+                // expensive call (currently check-sat and get-model).
+                if in_call {
+                    let r = signal::kill(self.pid, signal::Signal::SIGKILL);
+                    if let Err(errno) = r {
+                        if errno != Errno::ESRCH {
+                            panic!("killing SMT process {} failed with {errno}", self.pid);
+                        }
+                    }
+                    *terminated = Status::NeedsWait;
+                } else {
+                    // Otherwise, we mark the solver as stopping, which causes
+                    // most commands to exit early and the next check-sat or
+                    // get-model to kill the solver without running.
+                    *terminated = Status::Stopping;
                 }
             }
         }
@@ -140,7 +165,7 @@ impl SmtProc {
             stdin,
             stdout,
             tee,
-            terminated: Arc::new(Mutex::new(false)),
+            terminated: Arc::new(Mutex::new(Status::Running { in_call: false })),
         };
         for (option, val) in &cmd.options {
             proc.send(&app(
@@ -167,9 +192,7 @@ impl SmtProc {
         }
     }
 
-    /// Low-level API to send the solver a command as an s-expression. This
-    /// should only be used for commands that do not require a response.
-    pub fn send(&mut self, data: &sexp::Sexp) {
+    fn send_raw(&mut self, data: &sexp::Sexp) {
         writeln!(self.stdin, "{data}").expect("I/O error: failed to send to solver");
         if let Some(f) = &mut self.tee {
             f.append(data.clone());
@@ -190,14 +213,60 @@ impl SmtProc {
     /// type T.
     fn get_error<T>(&mut self, resp: &str) -> Result<T> {
         self.check_killed()?;
-        if resp.is_empty() {
-            // TODO(tchajed): I believe try_wait within check_killed sometimes
-            // fails here because the solver hasn't quite exited, so we use
-            // assert_killed which blocks
-            self.assert_killed()?;
-        }
         let msg = Self::parse_error(resp);
         return Err(SolverError::UnexpectedClose(msg));
+    }
+
+    /// Check the status because the solver is currently idle, to see if we
+    /// should kill or wait and return early.
+    fn handle_termination_status(&mut self, status: &mut Status) -> Result<()> {
+        match *status {
+            Status::Running { .. } => return Ok(()),
+            Status::Stopping => {
+                self.child
+                    .kill()
+                    .expect("could not kill after cancellation request");
+                self.child
+                    .wait()
+                    .expect("could not wait after cancellation request");
+            }
+            Status::NeedsWait => {
+                self.child
+                    .wait()
+                    .expect("could not wait for terminated child");
+            }
+            Status::Terminated => {}
+        }
+        // if not currently running, we'll leave the solver terminated and `wait`'d for
+        *status = Status::Terminated;
+        return Err(SolverError::Killed);
+    }
+
+    /// Mark the solver as being inside an expensive call (so killing it will
+    /// actually send a signal).
+    fn start_call(&mut self) -> Result<()> {
+        let status_m = self.terminated.clone();
+        let mut status = status_m.lock().unwrap();
+        self.handle_termination_status(&mut status)?;
+        assert!(
+            *status == Status::Running { in_call: false },
+            "unexpected start when solver is already in a call"
+        );
+        *status = Status::Running { in_call: true };
+        Ok(())
+    }
+
+    /// Mark the solver as being done with an expensive call.
+    fn end_call(&mut self) -> Result<()> {
+        let status_m = self.terminated.clone();
+        let mut status = status_m.lock().unwrap();
+        self.handle_termination_status(&mut status)?;
+        assert!(
+            *status == Status::Running { in_call: true },
+            "unexpected end when solver is not in a call"
+        );
+        *status = Status::Running { in_call: false };
+        Ok(())
     }
 
     /// Send the solver `(check-sat-assuming)` with some assumed variables
@@ -211,6 +280,7 @@ impl SmtProc {
             app("check-sat-assuming", vec![sexp_l(assumptions.to_vec())])
         };
         self.send(&cmd);
+        self.start_call()?;
         let sexp_resp = self.get_response(|s| s.to_string())?;
         let resp = self.parse_sat(&sexp_resp)?;
         if matches!(resp, SatResp::Unknown(_)) {
@@ -218,35 +288,15 @@ impl SmtProc {
                 eprintln!("unknown response to {}", name.display());
             }
         }
+        self.end_call()?;
         Ok(resp)
     }
 
-    fn check_status(status: ExitStatus) -> Result<()> {
-        if status.signal() == Some(nix::libc::SIGKILL) {
-            return Err(SolverError::Killed);
-        }
-        Ok(())
-    }
-
-    fn assert_killed(&mut self) -> Result<()> {
-        let status = self.child.wait().map_err(SolverError::from)?;
-        *self.terminated.lock().unwrap() = true;
-        Self::check_status(status)?;
-        Ok(())
-    }
-
     fn check_killed(&mut self) -> Result<()> {
-        if *self.terminated.lock().unwrap() {
-            _ = self.child.try_wait();
-            return Err(SolverError::Killed);
-        }
-        // check if the solver was killed and return a special error
-        if let Some(status) = self.child.try_wait().unwrap() {
-            // mark the process as terminated
-            *self.terminated.lock().unwrap() = true;
-            Self::check_status(status)?;
-        }
-        return Ok(());
+        let status_m = self.terminated.clone();
+        let mut status = status_m.lock().unwrap();
+        self.handle_termination_status(&mut status)?;
+        Ok(())
     }
 
     /// A marker for determining end of solver response.
@@ -284,12 +334,6 @@ impl SmtProc {
             let n = self.stdout.read_line(&mut buf)?;
             if n == 0 {
                 self.check_killed()?;
-                // TODO(tchajed): I believe try_wait within check_killed sometimes
-                // fails here because the solver hasn't quite exited, so we use
-                // assert_killed which blocks
-                if buf.is_empty() {
-                    self.assert_killed()?;
-                }
                 let msg = Self::parse_error(&buf);
                 return Err(SolverError::UnexpectedClose(msg));
             }
@@ -308,12 +352,25 @@ impl SmtProc {
         _ = self.stdin.flush();
         _ = self.child.kill();
         _ = self.child.wait();
-        *self.terminated.lock().unwrap() = true;
+        *self.terminated.lock().unwrap() = Status::Terminated;
     }
 
     // ========================
     // Non state machine APIs
     // ========================
+
+    /// Low-level API to send the solver a command as an s-expression. This
+    /// should only be used for commands that do not require a response.
+    pub fn send(&mut self, data: &sexp::Sexp) {
+        let status_m = self.terminated.clone();
+        let mut status = status_m.lock().unwrap();
+        if self.handle_termination_status(&mut status).is_err() {
+            // solver has been cancelled, pretend like the command succeeded
+            return;
+        }
+        drop(status);
+        self.send_raw(data)
+    }
 
     /// Get some attribute using the SMT get-info command.
     pub fn get_info(&mut self, attribute: &str) -> Result<Sexp> {
@@ -383,7 +440,10 @@ impl SmtProc {
 
     /// Get a model (following a sat reply) as an s-expression.
     pub fn get_model(&mut self) -> Result<Sexp> {
-        self.send_with_reply(&app("get-model", []))
+        self.start_call()?;
+        let model = self.send_with_reply(&app("get-model", []))?;
+        self.end_call()?;
+        Ok(model)
     }
 
     /// Run `(get-unsat-assumptions)` following an unsat response to get the
@@ -444,7 +504,7 @@ mod tests {
         sexp::{app, atom_s, parse},
     };
     use eyre::Context;
-    use std::{sync::mpsc, thread};
+    use std::{sync::mpsc, thread, time::Duration};
 
     #[test]
     fn test_check_sat_z3() {
@@ -547,7 +607,6 @@ mod tests {
 (assert (= r0 (fp.abs a)))
 (assert (= r1 (fp.abs b)))
 (assert (not (= (fp.mul RNE r0 r1) (fp.mul RNE (fp.abs a) (fp.abs b)))))
-(check-sat)
 "
         .trim();
         for line in smt2_file.lines().filter(|line| !line.is_empty()) {
@@ -555,12 +614,54 @@ mod tests {
         }
         let (send, recv) = mpsc::channel();
         thread::spawn(move || {
-            let r = proc.get_response(|s| s.to_string());
+            let r = proc.check_sat();
             send.send(r).unwrap();
         });
+        // wait for check-sat to start
+        thread::sleep(Duration::from_millis(50));
         pid.kill();
         let r = recv.recv().unwrap();
         match r {
+            Ok(_) => {
+                panic!("check-sat should not succeed");
+            }
+            Err(err) => {
+                if !matches!(err, SolverError::Killed) {
+                    panic!("wrong solver error {err}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_kill_before_send() {
+        let z3 = Z3Conf::new(&solver_path("z3")).done();
+        let mut proc = SmtProc::new(z3, None).unwrap();
+        let pid = proc.pid();
+
+        proc.send(&parse("(reset)").unwrap());
+        proc.send(&parse("(set-logic QF_FP)").unwrap());
+
+        // this kill will just tell the solver to ignore commands until check_sat().
+        pid.kill();
+
+        let smt2_file = "
+(declare-const a Float32)
+(declare-const b Float32)
+(declare-const r0 Float32)
+(declare-const r1 Float32)
+
+(assert (= r0 (fp.abs a)))
+(assert (= r1 (fp.abs b)))
+(assert (not (= (fp.mul RNE r0 r1) (fp.mul RNE (fp.abs a) (fp.abs b)))))
+"
+        .trim();
+
+        for line in smt2_file.lines().filter(|line| !line.is_empty()) {
+            proc.send(&parse(line).unwrap());
+        }
+        // this should immediately return an error and kill the solver
+        match proc.check_sat() {
             Ok(_) => {
                 panic!("check-sat should not succeed");
             }

@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 //! Record SMT output and save to a file for debugging purposes.
 
 use std::{

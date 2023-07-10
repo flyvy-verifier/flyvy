@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 //! Construct launch and option configurations for Z3 and CVC5.
 
 /// The full invocation of a solver binary.
