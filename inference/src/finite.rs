@@ -8,12 +8,10 @@ use bounded::bdd::*;
 use fly::syntax::*;
 use std::collections::HashMap;
 
-pub fn invariant(module: &Module) -> Result<Option<Term>, CheckerError> {
-    let mut universe = HashMap::new();
-    for sort in &module.signature.sorts {
-        universe.insert(sort.clone(), 2);
-    }
-
+pub fn invariant(
+    module: &Module,
+    universe: HashMap<String, usize>,
+) -> Result<Option<Term>, CheckerError> {
     let (_bdd, _context) = match check(module, &universe, None, false) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
         Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
@@ -90,7 +88,9 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
 
-        println!("{:?}", invariant(&module)?);
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        println!("{:?}", invariant(&module, universe)?);
 
         Ok(())
     }
