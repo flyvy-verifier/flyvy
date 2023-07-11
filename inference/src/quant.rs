@@ -4,6 +4,7 @@
 //! Manage quantifiers used in inference.
 
 use crate::hashmap::HashSet;
+use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -149,7 +150,7 @@ impl<Q: Clone> QuantifierSequence<Q> {
         vars.iter()
             .enumerate()
             .map(|(i, vs)| vs.iter().permutations(only_vars[i].len()))
-            .multi_cartesian_product()
+            .multi_cartesian_product_fixed()
             .map(|perm| {
                 only_vars
                     .iter()
@@ -218,7 +219,7 @@ impl QuantifierConfig {
                         }
                         Some(q) => vec![*q],
                     })
-                    .multi_cartesian_product()
+                    .multi_cartesian_product_fixed()
                     .filter(|qs| {
                         let e = count_exists(qs);
                         e >= min_existentials && e <= max_existentials

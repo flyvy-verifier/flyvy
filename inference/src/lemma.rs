@@ -3,6 +3,7 @@
 
 //! Implement simple components, lemma domains and data structures for use in inference.
 
+use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -156,7 +157,7 @@ impl LemmaQf for LemmaCnf {
         // Return all combinations of weakened clauses.
         weakened_clauses
             .into_iter()
-            .multi_cartesian_product()
+            .multi_cartesian_product_fixed()
             .filter(|b| !ignore(b))
             .collect_vec()
     }

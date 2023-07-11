@@ -9,6 +9,7 @@ use std::iter::zip;
 use itertools::Itertools;
 use serde::Serialize;
 
+use crate::ouritertools::OurItertools;
 use crate::syntax::*;
 
 use BinOp::*;
@@ -63,19 +64,12 @@ impl Interpretation {
             assert!(y < ret_card, "interpretation is out-of-bounds at {args:?}");
             y
         };
-        // NOTE: multi_cartesian_product has a bug and doesn't produce the empty
-        // tuple for an empty iterator
-        // (https://github.com/rust-itertools/itertools/issues/337). Therefore
-        // we need to handle this as a special case
-        let data = if args.is_empty() {
-            vec![f(&[])]
-        } else {
-            args.iter()
-                .map(|&card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product()
-                .map(|args| f(&args))
-                .collect()
-        };
+        let data = args
+            .iter()
+            .map(|&card| (0..card).collect::<Vec<Element>>())
+            .multi_cartesian_product_fixed()
+            .map(|args| f(&args))
+            .collect();
         Self {
             shape: shape.clone(),
             data,
@@ -150,15 +144,11 @@ impl Model {
     fn fmt_rel(&self, decl: &RelationDecl, interp: &Interpretation) -> String {
         let mut lines = vec![];
         let arg_shape = &interp.shape[..interp.shape.len() - 1];
-        let args_list = if arg_shape.is_empty() {
-            vec![vec![]]
-        } else {
-            arg_shape
-                .iter()
-                .map(|&card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product()
-                .collect()
-        };
+        let args_list = arg_shape
+            .iter()
+            .map(|&card| (0..card).collect::<Vec<Element>>())
+            .multi_cartesian_product_fixed()
+            .collect::<Vec<_>>();
         for args in args_list {
             let name = &decl.name;
             let args_s = zip(&decl.args, args.iter())
@@ -285,7 +275,7 @@ impl Model {
                 let mut iter = shape
                     .iter()
                     .map(|&card| (0..card).collect::<Vec<Element>>())
-                    .multi_cartesian_product()
+                    .multi_cartesian_product_fixed()
                     .map(|elements| {
                         // extend assignment with all variables bound to these `elements`
                         let mut assignment = assignment.clone();

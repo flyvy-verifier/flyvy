@@ -4,7 +4,7 @@
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
 use biodivine_lib_bdd::*;
-use fly::{syntax::*, term::fo::FirstOrder};
+use fly::{ouritertools::OurItertools, syntax::*, term::fo::FirstOrder};
 use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -27,18 +27,14 @@ impl Context<'_> {
             .iter()
             .partition(|relation| relation.mutable);
         let elements = |relation: &&'a RelationDecl| {
-            if relation.args.is_empty() {
-                vec![(relation.name.as_str(), (vec![]))]
-            } else {
-                relation
-                    .args
-                    .iter()
-                    .map(|sort| cardinality(universe, sort))
-                    .map(|card| (0..card).collect::<Vec<usize>>())
-                    .multi_cartesian_product()
-                    .map(|element| (relation.name.as_str(), element))
-                    .collect()
-            }
+            relation
+                .args
+                .iter()
+                .map(|sort| cardinality(universe, sort))
+                .map(|card| (0..card).collect::<Vec<usize>>())
+                .multi_cartesian_product_fixed()
+                .map(|element| (relation.name.as_str(), element))
+                .collect::<Vec<_>>()
         };
 
         let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
@@ -396,7 +392,7 @@ fn term_to_bdd(
             let bodies = shape
                 .iter()
                 .map(|&card| (0..card).collect::<Vec<usize>>())
-                .multi_cartesian_product()
+                .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
                     for (name, element) in names.iter().zip(elements) {

@@ -9,11 +9,11 @@ use std::{
 };
 
 use crate::quant::QuantifierConfig;
-use fly::semantics::Model;
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
 use fly::term::{fo::FirstOrder, prime::clear_next, prime::Next};
+use fly::{ouritertools::OurItertools, semantics::Model};
 use solver::conf::SolverConf;
 use solver::SatResp;
 
@@ -191,7 +191,7 @@ impl FOModule {
                     Term::NAryOp(NOp::Or, args) => args.iter().collect_vec(),
                     _ => vec![t],
                 })
-                .multi_cartesian_product()
+                .multi_cartesian_product_fixed()
                 .collect_vec()
         } else {
             vec![self.transitions.iter().collect_vec()]

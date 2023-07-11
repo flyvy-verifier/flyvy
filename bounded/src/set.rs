@@ -5,7 +5,7 @@
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
 use bitvec::prelude::*;
-use fly::{sorts::*, syntax::*, term::fo::FirstOrder};
+use fly::{ouritertools::OurItertools, sorts::*, syntax::*, term::fo::FirstOrder};
 use itertools::Itertools;
 use std::collections::{BTreeSet, VecDeque};
 use thiserror::Error;
@@ -195,18 +195,14 @@ impl Indices<'_> {
             .relations
             .iter()
             .flat_map(|relation| {
-                if relation.args.is_empty() {
-                    vec![(relation.name.as_str(), (element![]))]
-                } else {
-                    relation
-                        .args
-                        .iter()
-                        .map(|sort| cardinality(universe, sort))
-                        .map(|card| (0..card).collect::<Vec<usize>>())
-                        .multi_cartesian_product()
-                        .map(|element| (relation.name.as_str(), Elements::new(element)))
-                        .collect()
-                }
+                relation
+                    .args
+                    .iter()
+                    .map(|sort| cardinality(universe, sort))
+                    .map(|card| (0..card).collect::<Vec<usize>>())
+                    .multi_cartesian_product_fixed()
+                    .map(|element| (relation.name.as_str(), Elements::new(element)))
+                    .collect::<Vec<_>>()
             })
             .enumerate()
             .map(|(i, x)| (x, i))
@@ -1142,7 +1138,7 @@ fn term_to_ast(
             let set = shape
                 .iter()
                 .map(|&card| (0..card).collect::<Vec<usize>>())
-                .multi_cartesian_product()
+                .multi_cartesian_product_fixed()
                 .map(|elements| {
                     // extend context with all variables bound to these `elements`
                     let mut new_assignments = assignments.clone();
@@ -1216,13 +1212,13 @@ fn distribute_conjunction(term: Ast) -> Ast {
             // A and (B or C or D) and (E or F) =
             // (A and B and E) or (A and C and E) or (A and D and E) or
             // (A and B and F) or (A and C and F) or (A and D and F)
-            // so we actually just want multi_cartesian_product, great
-            // we have to convert to and from Vec for multi_cartesian_product
+            // so we actually just want multi_cartesian_product_fixed, great
+            // we have to convert to and from Vec for multi_cartesian_product_fixed
             or(terms
                 .into_iter()
                 .map(distribute_conjunction)
                 .map(|term| term.get_or().into_iter().collect::<Vec<_>>())
-                .multi_cartesian_product()
+                .multi_cartesian_product_fixed()
                 .map(|vec| and(vec.into_iter().collect::<BTreeSet<_>>()))
                 .collect())
         }

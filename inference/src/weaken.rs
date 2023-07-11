@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
 
+use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
@@ -37,7 +38,7 @@ fn extend_assignment(
 
     vars.iter()
         .map(|_| 0..elem_count)
-        .multi_cartesian_product()
+        .multi_cartesian_product_fixed()
         .map(|asgn| {
             let mut new_assignment = assignment.clone();
             for i in 0..vars.len() {

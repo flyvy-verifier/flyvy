@@ -8,6 +8,8 @@ use std::fmt;
 
 use serde::Serialize;
 
+use crate::ouritertools::OurItertools;
+
 /// Unary operators
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum UOp {
@@ -376,7 +378,7 @@ impl Signature {
 
                 for new_ind in (0..rel_decl.args.len())
                     .map(|_| [false, true])
-                    .multi_cartesian_product()
+                    .multi_cartesian_product_fixed()
                 {
                     // Only generate terms where at least one argument is a newly generated term,
                     // to make sure each term is generated exactly once.
@@ -397,7 +399,7 @@ impl Signature {
                         for args in arg_terms
                             .iter()
                             .map(|&t| t.iter())
-                            .multi_cartesian_product()
+                            .multi_cartesian_product_fixed()
                         {
                             let term_vec = args.iter().map(|&x| x.clone()).collect();
                             new_new_terms[sort_idx(&rel_decl.sort)].push(Term::App(
