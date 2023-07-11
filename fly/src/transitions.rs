@@ -7,7 +7,7 @@ use crate::syntax::*;
 use crate::term::fo::FirstOrder;
 use thiserror::Error;
 
-/// Contains the different parts of the extracted transition system
+/// Contains the different parts of the extracted transition system.
 pub struct Destructured {
     /// The initial conditions (assumes with no primes)
     pub inits: Vec<Term>,
@@ -15,11 +15,17 @@ pub struct Destructured {
     pub transitions: Vec<Term>,
     /// The axioms (assume-alwayses with no primes)
     pub axioms: Vec<Term>,
-    /// The safety properties (assert-alwayses with no primes)
-    pub safeties: Vec<Term>,
-    /// The proof blocks from the original module,
-    /// which correspond to the safety property with matching index
-    pub proofs: Vec<Vec<Term>>,
+    /// The assertions about the transition system
+    pub proofs: Vec<Proof>,
+}
+
+/// Contains the parts of assertions in the module.
+/// Checking an Assert means checking safety & invariants.
+pub struct Proof {
+    /// The safety property to check
+    pub safety: Term,
+    /// The invariants that we want to verify prove the safety property
+    pub invariants: Vec<Term>,
 }
 
 /// An error during transition system extraction
@@ -43,13 +49,9 @@ pub enum ExtractionError {
 pub fn extract(module: &Module) -> Result<Destructured, ExtractionError> {
     let mut assumes = Vec::new();
     let mut asserts = Vec::new();
-    let mut proofs: Vec<&[Spanned<Term>]> = Vec::new();
     for statement in &module.statements {
         match statement {
-            ThmStmt::Assert(Proof { assert, invariants }) => {
-                asserts.push(assert.x.clone());
-                proofs.push(invariants);
-            }
+            ThmStmt::Assert(proof) => asserts.push(proof),
             ThmStmt::Assume(term) if asserts.is_empty() => assumes.push(term.clone()),
             _ => return Err(ExtractionError::OutOfOrderStatement(statement.clone())),
         }
@@ -72,34 +74,30 @@ pub fn extract(module: &Module) -> Result<Destructured, ExtractionError> {
         }
     }
 
-    let mut safeties = Vec::new();
+    let mut proofs = Vec::new();
     for assert in asserts {
-        match assert {
-            Term::UnaryOp(UOp::Always, term) if FirstOrder::unrolling(&term) == Some(0) => {
-                safeties.push(*term);
+        let safety = match &assert.assert.x {
+            Term::UnaryOp(UOp::Always, term) if FirstOrder::unrolling(term) == Some(0) => {
+                *term.clone()
             }
-            Term::UnaryOp(UOp::Always, term) => return Err(ExtractionError::AnyFuture(*term)),
-            assert => return Err(ExtractionError::AssertWithoutAlways(assert)),
-        }
-    }
-
-    let proofs: Vec<Vec<Term>> = proofs
-        .iter()
-        .map(|proof| proof.iter().map(|s| s.x.clone()).collect())
-        .collect();
-    for proof in &proofs {
-        for invariant in proof {
+            Term::UnaryOp(UOp::Always, term) => {
+                return Err(ExtractionError::AnyFuture(*term.clone()))
+            }
+            assert => return Err(ExtractionError::AssertWithoutAlways(assert.clone())),
+        };
+        let invariants = assert.invariants.iter().map(|s| s.x.clone()).collect();
+        for invariant in &invariants {
             if FirstOrder::unrolling(invariant) != Some(0) {
                 return Err(ExtractionError::AnyFuture(invariant.clone()));
             }
         }
+        proofs.push(Proof { safety, invariants })
     }
 
     Ok(Destructured {
         inits,
         transitions,
         axioms,
-        safeties,
         proofs,
     })
 }
