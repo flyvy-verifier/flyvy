@@ -17,7 +17,7 @@ fn updr_determinism() {
         println!("updr determinism iteration {}", i);
         let out = temporal_verifier()
             .arg("updr-verify")
-            .arg("../examples/lockserver.fly")
+            .arg("examples/lockserver.fly")
             .arg("--solver-seed=1")
             .output()
             .expect("could not run temporal-verifier");

@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn test_concurrent_verify() {
         let file =
-            fs::read_to_string("../examples/consensus_epr.fly").expect("could not find test file");
+            fs::read_to_string("examples/consensus_epr.fly").expect("could not find test file");
         let m = fly::parser::parse(&file).expect("could not parse test file");
 
         let assumes: Vec<&Term> = m
