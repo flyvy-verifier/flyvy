@@ -29,7 +29,7 @@ pub struct Proof {
 }
 
 /// An error during transition system extraction
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum ExtractionError {
     /// `extract` is only correct on modules where all assumes come before all asserts
     #[error("all assumes should precede all asserts, but found {0:?}")]
