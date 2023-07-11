@@ -147,6 +147,7 @@ impl std::fmt::Debug for Elements {
         write!(f, "]")
     }
 }
+#[allow(unused_macros)]
 macro_rules! element {
     ($($v:expr),* $(,)?) => {{
         Elements::new(vec![$($v,)*])
