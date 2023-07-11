@@ -3,17 +3,14 @@ source: verify/src/module.rs
 expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
-  - loc:
-      start: 197
-      end: 209
-    reason: FirstOrder
+  - reason: InitInv
     error:
       Sat:
         signature:
           sorts:
             - thread
           relations:
-            - mutable: true
+            - mutable: false
               name: p
               args:
                 - Id: thread

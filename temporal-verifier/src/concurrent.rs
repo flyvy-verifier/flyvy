@@ -19,8 +19,10 @@ mod tests {
 
     use rayon::prelude::*;
 
-    use fly::syntax::{Proof, Term, ThmStmt};
+    use fly::syntax::*;
     use fly::term::prime::Next;
+    use fly::transitions::Proof;
+    use fly::transitions::*;
     use solver::{
         backends::{GenericBackend, SolverType},
         conf::SolverConf,
@@ -56,26 +58,13 @@ mod tests {
         let file =
             fs::read_to_string("examples/consensus_epr.fly").expect("could not find test file");
         let m = fly::parser::parse(&file).expect("could not parse test file");
+        let signature = &m.signature;
+        let m = extract(&m).unwrap();
 
-        let assumes: Vec<&Term> = m
-            .statements
-            .iter()
-            .filter_map(|s| match s {
-                ThmStmt::Assume(t) => Some(t),
-                _ => None,
-            })
-            .collect();
-        let pf: &Proof = m
-            .statements
-            .iter()
-            .filter_map(|s| match s {
-                ThmStmt::Assert(pf) => Some(pf),
-                _ => None,
-            })
-            .next()
-            .expect("should have one assertion");
-        let inv_assert = InvariantAssertion::for_assert(&m.signature, &assumes, pf)
-            .expect("should be an invariant assertion");
+        let pf: &Proof = m.proofs.first().expect("should have one assertion");
+        let inv_assert =
+            InvariantAssertion::for_assert(signature, &m.inits, &m.transitions, &m.axioms, pf)
+                .expect("should be an invariant assertion");
 
         let backend = GenericBackend::new(SolverType::Z3, &solver_path("z3"));
         let conf = SolverConf { backend, tee: None };
@@ -83,7 +72,7 @@ mod tests {
         // we'll assume proof_inv (all the invariants) in the pre state and try
         // to prove Next::prime(inv) in the post state for each proof invariant
         // separately
-        let proof_inv = Term::and(pf.invariants.iter().map(|pf| pf.x.clone()));
+        let proof_inv = Term::and(pf.invariants.iter().cloned());
         let task = Task::new();
         // rayon provides .par_iter(), which performs the invariant checks in
         // parallel; then we gather up a Vec of all the results due to the
@@ -103,17 +92,16 @@ mod tests {
             .invariants
             .par_iter()
             .map(|inv| {
-                let inv = &inv.x;
                 if task.is_cancelled() {
                     return None;
                 }
                 // not bothering to check initiation
-                let mut solver = conf.solver(&m.signature, 2);
+                let mut solver = conf.solver(signature, 2);
                 solver.assert(&inv_assert.next);
                 solver.assert(&inv_assert.assumed_inv);
-                solver.assert(&Next::new(&m.signature).prime(&inv_assert.assumed_inv));
+                solver.assert(&Next::new(signature).prime(&inv_assert.assumed_inv));
                 solver.assert(&proof_inv);
-                solver.assert(&Term::negate(Next::new(&m.signature).prime(inv)));
+                solver.assert(&Term::negate(Next::new(signature).prime(inv)));
                 let resp = solver.check_sat(HashMap::new());
                 // if this check fails, don't start new checks
                 if matches!(resp, Ok(SatResp::Unsat) | Err(_)) {

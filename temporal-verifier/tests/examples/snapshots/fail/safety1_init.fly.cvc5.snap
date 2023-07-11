@@ -7,13 +7,8 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: init does not imply invariant
-   ┌─ tests/examples/fail/safety1_init.fly:10:1
-   │
-10 │ assert always !p & !q
-   │ ^^^^^^^^^^^^^^^^^^^^^
-   │
-   = counter example:
-     p = true
-     q = false
+ = counter example:
+   p = true
+   q = false
 
 

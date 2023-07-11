@@ -7,14 +7,9 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ tests/examples/fail/safety3_extra_inv.fly:16:5
-   │
-16 │     invariant z
-   │     ^^^^^^^^^^^
-   │
-   = counter example:
-     x = true
-     y = true
-     z = true
+ = counter example:
+   x = true
+   y = true
+   z = true
 
 

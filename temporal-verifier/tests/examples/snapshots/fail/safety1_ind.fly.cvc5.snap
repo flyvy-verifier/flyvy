@@ -7,13 +7,8 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
-   ┌─ tests/examples/fail/safety1_ind.fly:10:1
-   │
-10 │ assert always !p
-   │ ^^^^^^^^^^^^^^^^
-   │
-   = counter example:
-     p = false
-     q = true
+ = counter example:
+   p = false
+   q = true
 
 

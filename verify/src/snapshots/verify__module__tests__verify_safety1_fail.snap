@@ -3,10 +3,7 @@ source: verify/src/module.rs
 expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
-  - loc:
-      start: 181
-      end: 197
-    reason: NotInductive
+  - reason: NotInductive
     error:
       Sat:
         signature:

@@ -3,16 +3,14 @@
 
 //! Contains error types for verification.
 
-use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::diagnostic::Diagnostic;
 use serde::Serialize;
 
-use fly::{semantics::Model, syntax::Span};
+use fly::semantics::Model;
 
 /// Ways that an file can fail to be verified.
 #[derive(Debug, Copy, Clone, Serialize, PartialEq, Eq)]
 pub enum FailureType {
-    /// An invariant was not first order
-    FirstOrder,
     /// An invariant was not implied by the initial condition
     InitInv,
     /// An invariant was not inductive
@@ -35,8 +33,6 @@ pub enum QueryError {
 /// Contains information needed to report a good error message.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AssertionFailure {
-    /// The location of the error
-    pub loc: Span,
     /// The reason for the error
     pub reason: FailureType,
     /// The symptom of the error
@@ -45,16 +41,14 @@ pub struct AssertionFailure {
 
 impl AssertionFailure {
     /// Convert the AssertionFailure struct to a Diagnostic that can be printed.
-    pub fn diagnostic<FileId>(&self, file_id: FileId) -> Diagnostic<FileId> {
+    pub fn diagnostic<FileId>(&self) -> Diagnostic<FileId> {
         let msg = match self.reason {
-            FailureType::FirstOrder => "assertion failure",
             FailureType::InitInv => "init does not imply invariant",
             FailureType::NotInductive => "invariant is not inductive",
             FailureType::Unsupported => "unsupported assertion",
         };
         Diagnostic::error()
             .with_message(msg)
-            .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
                 QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),

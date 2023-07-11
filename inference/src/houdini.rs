@@ -11,10 +11,8 @@ use std::{
 
 use rayon::prelude::*;
 
-use fly::syntax::{Module, Signature, Term, ThmStmt};
+use fly::{syntax::*, term::prime::Next, transitions::*};
 use solver::{conf::SolverConf, SatResp};
-
-use fly::term::prime::Next;
 use verify::{
     error::{AssertionFailure, FailureType, QueryError, SolveError},
     safety::InvariantAssertion,
@@ -44,9 +42,9 @@ pub enum HoudiniError {
 
 impl Houdini {
     fn new(conf: SolverConf, sig: &Signature, assert: InvariantAssertion) -> Self {
-        let mut invs = vec![assert.inv.x.clone()];
+        let mut invs = vec![assert.inv.clone()];
         // TODO: support customization of initial candidate invariants
-        invs.extend(assert.proof_invs.iter().map(|pf| pf.x.clone()));
+        invs.extend(assert.proof_invs.iter().cloned());
         log::info!("Running Houdini, candidate invariants are:");
         for p in &invs {
             log::info!("    {p}")
@@ -194,7 +192,7 @@ pub fn infer(
         }
         log::info!("");
     }
-    if state.invs.is_empty() || state.invs[0] != assert.inv.x {
+    if state.invs.is_empty() || state.invs[0] != assert.inv {
         return Err(HoudiniError::NotInductive);
     }
     Ok(state.invs)
@@ -205,59 +203,59 @@ pub fn infer_module(conf: &SolverConf, m: &Module) -> Result<(), SolveError> {
     // TODO: this is highly redundant with verify_module, some refactoring is
     // needed to separate the generic module processing with what kind of
     // inference/proof process we want for each assertion.
+    infer_destructured_module(conf, &extract(m).unwrap(), &m.signature)
+}
 
-    // assumptions/assertions so far
-    let mut assumes: Vec<&Term> = vec![];
+fn infer_destructured_module(
+    conf: &SolverConf,
+    module: &DestructuredModule,
+    signature: &Signature,
+) -> Result<(), SolveError> {
+    let inits = &module.inits;
+    let transitions = &module.transitions;
+    // we push verified safety properties as axioms
+    let mut axioms = module.axioms.clone();
     let mut errors = SolveError::default();
-    for step in &m.statements {
-        match step {
-            ThmStmt::Assume(e) => assumes.push(e),
-            ThmStmt::Assert(pf) => {
-                if let Ok(assert) = InvariantAssertion::for_assert(&m.signature, &assumes, pf) {
-                    let res = infer(conf, &m.signature, &assert);
-                    match res {
-                        Ok(invs) => {
-                            println!("# inferred invariant:");
-                            println!("assert {}", &pf.assert.x);
-                            println!("proof {{");
-                            for inv in invs {
-                                println!("  invariant {inv}");
-                            }
-                            println!("}}");
-                        }
 
-                        Err(err) => errors.push(match err {
-                            HoudiniError::InitInvUnknown(m) => AssertionFailure {
-                                loc: pf.assert.span,
-                                reason: FailureType::InitInv,
-                                error: QueryError::Unknown(m),
-                            },
-                            HoudiniError::InductiveInvUnknown(m) => AssertionFailure {
-                                loc: pf.assert.span,
-                                reason: FailureType::NotInductive,
-                                error: QueryError::Unknown(m),
-                            },
-                            HoudiniError::NotInductive => AssertionFailure {
-                                loc: pf.assert.span,
-                                reason: FailureType::NotInductive,
-                                // TODO(oded): better error reporting here
-                                error: QueryError::Unknown(
-                                    "assertion not in fixed point".to_string(),
-                                ),
-                            },
-                        }),
+    for proof in &module.proofs {
+        if let Ok(assert) =
+            InvariantAssertion::for_assert(signature, inits, transitions, &axioms, proof)
+        {
+            let res = infer(conf, signature, &assert);
+            match res {
+                Ok(invs) => {
+                    println!("# inferred invariant:");
+                    println!("assert always {}", &proof.safety);
+                    println!("proof {{");
+                    for inv in invs {
+                        println!("  invariant {inv}");
                     }
-                } else {
-                    errors.push(AssertionFailure {
-                        loc: pf.assert.span,
-                        error: QueryError::Unknown("unsupported".to_string()),
-                        reason: FailureType::Unsupported,
-                    })
+                    println!("}}");
                 }
-                // for future assertions, treat this assertion as an assumption
-                assumes.push(&pf.assert.x);
+                Err(err) => errors.push(match err {
+                    HoudiniError::InitInvUnknown(m) => AssertionFailure {
+                        reason: FailureType::InitInv,
+                        error: QueryError::Unknown(m),
+                    },
+                    HoudiniError::InductiveInvUnknown(m) => AssertionFailure {
+                        reason: FailureType::NotInductive,
+                        error: QueryError::Unknown(m),
+                    },
+                    HoudiniError::NotInductive => AssertionFailure {
+                        reason: FailureType::NotInductive,
+                        // TODO(oded): better error reporting here
+                        error: QueryError::Unknown("assertion not in fixed point".to_string()),
+                    },
+                }),
             }
+        } else {
+            errors.push(AssertionFailure {
+                error: QueryError::Unknown("unsupported".to_string()),
+                reason: FailureType::Unsupported,
+            })
         }
+        // for future assertions, treat this assertion as an assumption
+        axioms.push(proof.safety.clone());
     }
     if errors.fails.is_empty() {
         Ok(())
