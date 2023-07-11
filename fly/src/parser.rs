@@ -310,6 +310,8 @@ proof {
         term("forall (x : t). x");
         term("forall (x : t),(y:t). x = y");
 
+        term("forall. true"); // empty quantifiers are allowed!
+
         assert_eq!(
             term("forall x:t. x = y & exists z:t. x = z"),
             term("forall x:t. (x = y & exists z:t. x = z)"),
