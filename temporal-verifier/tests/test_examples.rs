@@ -198,9 +198,7 @@ fn get_file_tests(path: &Path) -> Vec<Test> {
                         panic!("{err}");
                     }
                 };
-                let args = ["TEST".to_string()]
-                    .into_iter()
-                    .chain(split_line.into_iter());
+                let args = ["TEST".to_string()].into_iter().chain(split_line);
                 Test {
                     path: path.to_path_buf(),
                     cfg: TestCfg::try_parse_from(args).unwrap_or_else(|err| {
