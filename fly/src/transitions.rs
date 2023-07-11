@@ -8,7 +8,7 @@ use crate::term::fo::FirstOrder;
 use thiserror::Error;
 
 /// Contains the different parts of the extracted transition system.
-pub struct Destructured {
+pub struct DestructuredModule {
     /// The initial conditions (assumes with no primes)
     pub inits: Vec<Term>,
     /// The transitions (assume-alwayses with one prime)
@@ -46,7 +46,7 @@ pub enum ExtractionError {
 }
 
 /// Extract the different types of terms from a Module
-pub fn extract(module: &Module) -> Result<Destructured, ExtractionError> {
+pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
     let mut assumes = Vec::new();
     let mut asserts = Vec::new();
     for statement in &module.statements {
@@ -94,7 +94,7 @@ pub fn extract(module: &Module) -> Result<Destructured, ExtractionError> {
         proofs.push(Proof { safety, invariants })
     }
 
-    Ok(Destructured {
+    Ok(DestructuredModule {
         inits,
         transitions,
         axioms,
