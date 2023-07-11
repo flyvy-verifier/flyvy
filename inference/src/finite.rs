@@ -8,7 +8,6 @@ use biodivine_lib_bdd::boolean_expression::BooleanExpression;
 use bounded::bdd::*;
 use fly::syntax::*;
 use std::collections::HashMap;
-use verify::verify_module;
 
 pub fn invariant(
     module: &Module,
