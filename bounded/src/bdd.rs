@@ -266,6 +266,8 @@ pub fn check(
     let mut trace = vec![init.clone()];
 
     let mut current = init;
+    let mut reachable = current.clone();
+
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
         context.print_counterexample(valuation, &trace, &tr);
         return Ok(CheckerAnswer::Counterexample);
@@ -284,12 +286,16 @@ pub fn check(
             }
         }
 
+        let new_reachable = reachable.or(&current);
+
         if print_timing {
             println!("depth {} in {:0.1}s", i + 1, time.elapsed().as_secs_f64());
         }
 
-        if &current == trace.last().unwrap() {
+        if reachable == new_reachable {
             return Ok(CheckerAnswer::Convergence);
+        } else {
+            reachable = new_reachable;
         }
 
         trace.push(current.clone());
