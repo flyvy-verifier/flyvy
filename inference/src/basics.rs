@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 
 use crate::quant::QuantifierConfig;
@@ -15,12 +15,11 @@ use fly::syntax::Term::*;
 use fly::syntax::*;
 use fly::term::{fo::FirstOrder, prime::clear_next, prime::Next};
 use solver::conf::SolverConf;
-use solver::SatResp;
+use solver::{SatResp, SmtPid, SolverError};
 
 pub enum TransCexResult {
     CTI(Model, Model),
     UnsatCore(HashSet<usize>),
-    Cancelled,
     Unknown,
 }
 
@@ -137,6 +136,7 @@ pub struct FOModule {
     pub inits: Vec<Term>,
     pub transitions: Vec<Term>,
     pub safeties: Vec<Term>,
+    solver_pids: Mutex<Vec<SmtPid>>,
     disj: bool,
     gradual: bool,
     minimal: bool,
@@ -150,6 +150,7 @@ impl FOModule {
             inits: vec![],
             transitions: vec![],
             safeties: vec![],
+            solver_pids: Mutex::new(vec![]),
             disj,
             gradual,
             minimal,
@@ -198,6 +199,11 @@ impl FOModule {
         }
     }
 
+    fn add_pid(&self, pid: &SmtPid) {
+        let mut solver_pids = self.solver_pids.lock().unwrap();
+        solver_pids.push(pid.clone());
+    }
+
     pub fn init_cex(&self, conf: &SolverConf, t: &Term) -> Option<Model> {
         self.implication_cex(conf, &self.inits, t)
     }
@@ -210,7 +216,7 @@ impl FOModule {
         with_init: bool,
         with_safety: bool,
         cancel: Option<&RwLock<bool>>,
-    ) -> TransCexResult {
+    ) -> Result<TransCexResult, SolverError> {
         let cancelled = || match &cancel {
             None => false,
             Some(lock) => *lock.read().unwrap(),
@@ -231,11 +237,17 @@ impl FOModule {
             check_transition[t_idx] = false;
             'inner: loop {
                 let mut solver = conf.solver(&self.signature, 2);
+                let pid = solver.pid();
+                self.add_pid(&pid);
+                if cancelled() {
+                    self.kill_all_solvers();
+                    return Err(SolverError::Killed);
+                }
                 let mut assumptions = HashMap::new();
 
                 let mut prestate = vec![];
                 for &i in &core.participants {
-                    let ind = solver.get_indicator(i.to_string().as_str());
+                    let ind = solver.get_indicator(i.to_string().as_str())?;
                     assumptions.insert(ind.clone(), true);
                     prestate.push(Term::BinOp(
                         BinOp::Iff,
@@ -246,70 +258,58 @@ impl FOModule {
 
                 if with_init {
                     let init = Term::and(self.inits.iter().cloned());
-                    solver.assert(&Term::or([init, Term::and(prestate)]));
+                    solver.assert(&Term::or([init, Term::and(prestate)]))?;
                 } else {
                     for p in &prestate {
-                        solver.assert(p)
+                        solver.assert(p)?;
                     }
                 }
 
                 for a in &self.axioms {
-                    solver.assert(a);
-                    solver.assert(&Next::new(&self.signature).prime(a));
+                    solver.assert(a)?;
+                    solver.assert(&Next::new(&self.signature).prime(a))?;
                 }
 
                 for a in &transitions[t_idx] {
-                    solver.assert(a);
+                    solver.assert(a)?;
                 }
 
                 if with_safety {
                     for a in self.safeties.iter() {
-                        solver.assert(a);
+                        solver.assert(a)?;
                     }
                 }
 
                 if with_init {
                     let init = Term::and(self.inits.iter().cloned());
-                    solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
+                    solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)))?;
                 }
 
-                solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
+                solver.assert(&Term::negate(Next::new(&self.signature).prime(t)))?;
 
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
-                let resp = solver.check_sat(assumptions).expect("error in solver");
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
+                let resp = solver.check_sat(assumptions)?;
                 match resp {
-                    SatResp::Sat => match solver.get_minimal_model() {
-                        Ok(states_vec) => {
-                            let mut states = states_vec.into_iter();
-                            let pre = states.next().unwrap();
-                            let post = states.next().unwrap();
-                            assert_eq!(states.next(), None);
+                    SatResp::Sat => {
+                        let mut states = solver.get_minimal_model()?.into_iter();
+                        let pre = states.next().unwrap();
+                        let post = states.next().unwrap();
+                        assert_eq!(states.next(), None);
 
-                            if !core.add_counter_model(pre.clone()) {
-                                log::debug!("Found SAT with {} formulas in prestate.", core.len());
-                                return TransCexResult::CTI(pre, post);
-                            }
+                        if !core.add_counter_model(pre.clone()) {
+                            log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                            return Ok(TransCexResult::CTI(pre, post));
+                        }
 
-                            for i in 0..transitions.len() {
-                                if i != t_idx
-                                    && !check_transition[i]
-                                    && !unsat_cores[i].is_subset(&core.participants)
-                                {
-                                    check_transition[i] = true;
-                                    unsat_cores[i] = HashSet::new();
-                                }
+                        for i in 0..transitions.len() {
+                            if i != t_idx
+                                && !check_transition[i]
+                                && !unsat_cores[i].is_subset(&core.participants)
+                            {
+                                check_transition[i] = true;
+                                unsat_cores[i] = HashSet::new();
                             }
                         }
-                        _ => {
-                            unknown = true;
-                            break 'inner;
-                        }
-                    },
+                    }
                     SatResp::Unsat => {
                         assert!(unsat_cores[t_idx].is_empty());
                         for ind in solver.get_unsat_core() {
@@ -330,7 +330,7 @@ impl FOModule {
 
         if unknown {
             log::debug!("Found unknown.");
-            return TransCexResult::Unknown;
+            return Ok(TransCexResult::Unknown);
         }
 
         let unsat_core = unsat_cores
@@ -347,7 +347,7 @@ impl FOModule {
             assert_eq!(unsat_core, core.participants);
         }
 
-        TransCexResult::UnsatCore(unsat_core)
+        Ok(TransCexResult::UnsatCore(unsat_core))
     }
 
     pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
@@ -360,12 +360,14 @@ impl FOModule {
         loop {
             let mut solver = conf.solver(&self.signature, 1);
             for a in &self.axioms {
-                solver.assert(a);
+                solver.assert(a).expect("error in solver");
             }
             for &i in &core.participants {
-                solver.assert(&hyp[i])
+                solver.assert(&hyp[i]).expect("error in solver");
             }
-            solver.assert(&Term::negate(t.clone()));
+            solver
+                .assert(&Term::negate(t.clone()))
+                .expect("error in solver");
 
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
@@ -403,9 +405,11 @@ impl FOModule {
         let state_term = state.to_term();
 
         let mut solver = conf.solver(&self.signature, 2);
-        solver.assert(&state_term);
+        solver.assert(&state_term).expect("error in solver");
         for a in &self.axioms {
-            solver.assert(&Next::new(&self.signature).prime(a));
+            solver
+                .assert(&Next::new(&self.signature).prime(a))
+                .expect("error in solver");
         }
 
         let mut unblocked_trans: HashSet<usize> = HashSet::from_iter(0..disj_trans.len());
@@ -416,15 +420,15 @@ impl FOModule {
                 }
 
                 let mut new_sample = None;
-                solver.push();
+                solver.push().expect("error in solver");
                 for t in &disj_trans[i] {
-                    solver.assert(t);
+                    solver.assert(t).expect("error in solver");
                 }
 
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 match resp {
                     SatResp::Sat => {
-                        let mut states = solver.get_model();
+                        let mut states = solver.get_model().expect("error in solver");
                         assert_eq!(states.len(), 2);
 
                         new_sample = states.pop();
@@ -434,12 +438,14 @@ impl FOModule {
                     }
                 }
 
-                solver.pop();
+                solver.pop().expect("error in solver");
 
                 if let Some(sample) = new_sample {
-                    solver.assert(&Term::negate(
-                        Next::new(&self.signature).prime(&sample.to_term()),
-                    ));
+                    solver
+                        .assert(&Term::negate(
+                            Next::new(&self.signature).prime(&sample.to_term()),
+                        ))
+                        .expect("error in solver");
                     samples.push(sample);
                 }
             }
@@ -481,17 +487,21 @@ impl FOModule {
         for trans in separate_trans {
             let mut solver = conf.solver(&self.signature, 2);
             for a in self.axioms.iter().chain(hyp.iter()).chain(vec![trans]) {
-                solver.assert(a);
+                solver.assert(a).expect("error in solver");
             }
             for a in self.axioms.iter() {
-                solver.assert(&Next::new(&self.signature).prime(a));
+                solver
+                    .assert(&Next::new(&self.signature).prime(a))
+                    .expect("error in solver");
             }
             let mut indicators = HashMap::new();
             let mut ind_to_term = HashMap::new();
             let mut new_terms = vec![];
             if let TermOrModel::Term(term) = t {
                 // println!("got term, asserting with no core");
-                solver.assert(&Next::new(&self.signature).prime(term));
+                solver
+                    .assert(&Next::new(&self.signature).prime(term))
+                    .expect("error in solver");
             } else if let Quantified {
                 quantifier: Quantifier::Exists,
                 body,
@@ -500,7 +510,9 @@ impl FOModule {
             {
                 if let NAryOp(NOp::And, terms) = *body {
                     for (i, clause) in terms.into_iter().enumerate() {
-                        let ind = solver.get_indicator(&i.to_string());
+                        let ind = solver
+                            .get_indicator(&i.to_string())
+                            .expect("error in solver");
                         new_terms.push(Term::BinOp(
                             BinOp::Equals,
                             Box::new(ind.clone()),
@@ -515,7 +527,7 @@ impl FOModule {
                         body: Box::new(NAryOp(NOp::And, new_terms)),
                         binders,
                     };
-                    solver.assert(&new_term);
+                    solver.assert(&new_term).expect("error in solver");
                 } else {
                     panic!("bad term for pred!");
                 }
@@ -549,9 +561,11 @@ impl FOModule {
     pub fn implies_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
         let mut solver = conf.solver(&self.signature, 1);
         for a in hyp {
-            solver.assert(a);
+            solver.assert(a).expect("error in solver");
         }
-        solver.assert(&Term::negate(t.clone()));
+        solver
+            .assert(&Term::negate(t.clone()))
+            .expect("error in solver");
 
         let resp = solver.check_sat(HashMap::new()).expect("error in solver");
         solver.save_tee();
@@ -568,7 +582,10 @@ impl FOModule {
 
     pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
         for s in self.safeties.iter() {
-            if let TransCexResult::CTI(model, _) = self.trans_cex(conf, hyp, s, false, true, None) {
+            let res = self
+                .trans_cex(conf, hyp, s, false, true, None)
+                .expect("error in solver");
+            if let TransCexResult::CTI(model, _) = res {
                 return Some(model);
             }
         }
@@ -584,6 +601,13 @@ impl FOModule {
         }
 
         None
+    }
+
+    pub fn kill_all_solvers(&self) {
+        let mut pids = self.solver_pids.lock().unwrap();
+        for pid in pids.drain(..) {
+            pid.kill();
+        }
     }
 }
 

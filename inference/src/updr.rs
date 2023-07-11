@@ -225,7 +225,7 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(&negated) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
+                if let Ok(TransCexResult::UnsatCore(_)) =
                     module.trans_cex(&self.solver_conf, &prev_terms, &negated, false, true, None)
                 {
                     self.frames[i + 1].strengthen(negated.clone());
@@ -413,7 +413,7 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(term) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
+                if let Ok(TransCexResult::UnsatCore(_)) =
                     module.trans_cex(&self.solver_conf, &prev_terms, term, false, true, None)
                 {
                     self.frames[i + 1].strengthen(term.clone());

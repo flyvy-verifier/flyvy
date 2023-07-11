@@ -21,7 +21,7 @@ use solver::{
 };
 
 fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryError> {
-    solver.assert(&Term::negate(t));
+    solver.assert(&Term::negate(t)).expect("error in solver");
     let resp = solver.check_sat(HashMap::new()).expect("error in solver");
     match resp {
         SatResp::Sat { .. } => {
@@ -47,7 +47,7 @@ fn verify_firstorder(
 ) -> Result<(), QueryError> {
     let mut solver = conf.solver(sig, n);
     for assume in assumes {
-        solver.assert(assume);
+        solver.assert(assume).expect("error in solver");
     }
     solver.comment_with(|| format!("assert {}", printer::term(assert)));
     verify_term(&mut solver, assert.clone())

@@ -929,6 +929,7 @@ where
 
         let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
         let cancel = RwLock::new(false);
+        let canceled = || *cancel.read().unwrap();
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
@@ -942,11 +943,12 @@ where
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
                 match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&cancel)) {
-                    TransCexResult::CTI(_, model) => {
+                    Ok(TransCexResult::CTI(_, model)) => {
                         {
                             let mut cancel_lock = cancel.write().unwrap();
                             *cancel_lock = true;
                         }
+                        fo.kill_all_solvers();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
                             if first_sat_lock.is_none() {
@@ -959,7 +961,7 @@ where
                         }
                         return Some(model);
                     }
-                    TransCexResult::UnsatCore(core) => {
+                    Ok(TransCexResult::UnsatCore(core)) => {
                         {
                             let mut total_unsat_lock = total_unsat.lock().unwrap();
                             *total_unsat_lock += 1;
@@ -972,8 +974,12 @@ where
                             crate::hashmap::set_from_std(core),
                         ));
                     }
-                    TransCexResult::Cancelled => (),
-                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
+                    Ok(TransCexResult::Unknown) => *unknown.lock().unwrap() = true,
+                    Err(e) => {
+                        if !canceled() {
+                            panic!("error in solver: {e}")
+                        }
+                    }
                 }
 
                 None
@@ -1296,6 +1302,7 @@ where
     pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
         let cancel = RwLock::new(false);
+        let canceled = || *cancel.read().unwrap();
         let unknown = Mutex::new(false);
         log::info!("Getting weakest lemmas...");
         let weakest = self.weaken_set.as_vec();
@@ -1306,17 +1313,24 @@ where
             .find_map_any(|(prefix, body)| {
                 let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
                 match fo.trans_cex(conf, &term, &term[0], false, false, Some(&cancel)) {
-                    TransCexResult::CTI(pre, post) => {
-                        let mut lock = cancel.write().unwrap();
-                        *lock = true;
+                    Ok(TransCexResult::CTI(pre, post)) => {
+                        {
+                            let mut cancel_lock = cancel.write().unwrap();
+                            *cancel_lock = true;
+                        }
+                        fo.kill_all_solvers();
                         return Some((pre, post));
                     }
-                    TransCexResult::UnsatCore(_) => {
+                    Ok(TransCexResult::UnsatCore(_)) => {
                         let mut new_inductive_vec = new_inductive.lock().unwrap();
                         new_inductive_vec.push((prefix, body));
                     }
-                    TransCexResult::Cancelled => (),
-                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
+                    Ok(TransCexResult::Unknown) => *unknown.lock().unwrap() = true,
+                    Err(e) => {
+                        if !canceled() {
+                            panic!("error in solver: {e}")
+                        }
+                    }
                 }
 
                 None

@@ -320,10 +320,14 @@ mod tests {
         };
         let mut solver =
             Solver::new(&sig, 1, &backend, None).expect("could not create solver for test");
-        let ind = solver.get_indicator("i");
+        let ind = solver.get_indicator("i").expect("error in solver");
         // make sure that the first universe tried is not minimal
-        solver.assert(&term("exists a1:A, a2:A. a1 != a2"));
-        solver.assert(&Term::implies(ind.clone(), term("p(x)")));
+        solver
+            .assert(&term("exists a1:A, a2:A. a1 != a2"))
+            .expect("error in solver");
+        solver
+            .assert(&Term::implies(ind.clone(), term("p(x)")))
+            .expect("error in solver");
         let mut assumptions = HashMap::new();
         assumptions.insert(ind, true);
         let resp = solver.check_sat(assumptions).unwrap();

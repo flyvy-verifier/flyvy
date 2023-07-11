@@ -136,7 +136,8 @@ pub enum SolverError {
     Killed,
 }
 
-type Result<T> = std::result::Result<T, SolverError>;
+/// Alias for a result with [`SolverError`] error type.
+pub type Result<T> = std::result::Result<T, SolverError>;
 
 /// The full invocation of a solver binary.
 #[derive(Debug, Clone)]
@@ -337,12 +338,12 @@ impl SmtProc {
             proc.send(&app(
                 "set-option",
                 [atom_s(format!(":{option}")), atom_s(val)],
-            ));
+            ))?;
         }
         // silence a warning from CVC4/CVC5 when run manually without -q
         // TODO: figure out what a good default logic is (possibly will be
         // customized to the solver)
-        proc.send(&app("set-logic", vec![atom_s("UFNIA")]));
+        proc.send(&app("set-logic", vec![atom_s("UFNIA")]))?;
         Ok(proc)
     }
 
@@ -375,17 +376,19 @@ impl SmtProc {
 
     /// Low-level API to send the solver a command as an s-expression. This
     /// should only be used for commands that do not require a response.
-    pub fn send(&mut self, data: &sexp::Sexp) {
-        writeln!(self.stdin, "{data}").expect("I/O error: failed to send to solver");
+    pub fn send(&mut self, data: &sexp::Sexp) -> Result<()> {
+        writeln!(self.stdin, "{data}")?;
         if let Some(f) = &mut self.tee {
             f.append(data.clone());
         }
+
+        Ok(())
     }
 
     /// Low-level API to send the solver a command that expects a response,
     /// which is parsed as a single s-expression.
     pub fn send_with_reply(&mut self, data: &sexp::Sexp) -> Result<sexp::Sexp> {
-        self.send(data);
+        self.send(data)?;
         self.get_sexp()
     }
 
@@ -488,7 +491,7 @@ impl SmtProc {
         } else {
             app("check-sat-assuming", vec![sexp_l(assumptions.to_vec())])
         };
-        self.send(&cmd);
+        self.send(&cmd)?;
         let sexp_resp = self.get_response(|s| s.to_string())?;
         let resp = self.parse_sat(&sexp_resp)?;
         if matches!(resp, SatResp::Unknown(_)) {
@@ -667,10 +670,12 @@ mod tests {
     fn test_get_model_z3() {
         let z3 = Z3Conf::new(&solver_path("z3")).done();
         let mut solver = SmtProc::new(z3, None).unwrap();
-        solver.send(&app("declare-const", [atom_s("a"), atom_s("Bool")]));
+        solver
+            .send(&app("declare-const", [atom_s("a"), atom_s("Bool")]))
+            .expect("error in solver");
 
         let e = parse("(assert (and a (not a)))").unwrap();
-        solver.send(&e);
+        solver.send(&e).expect("error in solver");
 
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
@@ -691,7 +696,7 @@ mod tests {
         };
 
         let e = parse("(assert (and (or true) (and false)))").unwrap();
-        solver.send(&e);
+        solver.send(&e).expect("error in solver");
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
     }
@@ -710,7 +715,7 @@ mod tests {
         let cvc = CvcConf::new_cvc5(&solver_path("cvc5")).done();
         let mut proc = SmtProc::new(cvc, None).unwrap();
         let e = parse("(assert (= and or))").unwrap();
-        proc.send(&e);
+        proc.send(&e).expect("error in solver");
         let r = proc.check_sat();
         insta::assert_display_snapshot!(r.unwrap_err());
     }
@@ -720,7 +725,7 @@ mod tests {
         let cvc = CvcConf::new_cvc4(&solver_path("cvc4")).done();
         let mut proc = SmtProc::new(cvc, None).unwrap();
         let e = parse("(assert (= and or))").unwrap();
-        proc.send(&e);
+        proc.send(&e).expect("error in solver");
         let r = proc.check_sat();
         insta::assert_display_snapshot!(r.unwrap_err());
     }
@@ -731,7 +736,7 @@ mod tests {
         let mut proc = SmtProc::new(z3, None).unwrap();
         // unbound symbol
         let e = parse("(assert p)").unwrap();
-        proc.send(&e);
+        proc.send(&e).expect("error in solver");
         let r = proc.check_sat();
         insta::assert_display_snapshot!(r.unwrap_err());
     }
@@ -757,7 +762,7 @@ mod tests {
 "
         .trim();
         for line in smt2_file.lines().filter(|line| !line.is_empty()) {
-            proc.send(&parse(line).unwrap());
+            proc.send(&parse(line).unwrap()).expect("error in solver");
         }
         let (send, recv) = mpsc::channel();
         thread::spawn(move || {

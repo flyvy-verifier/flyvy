@@ -18,7 +18,7 @@ use fly::{
     syntax::{Binder, Signature, Sort, Term},
 };
 use smtlib::{
-    proc::{SatResp, SmtPid, SmtProc, SolverCmd, SolverError},
+    proc::{Result, SatResp, SmtPid, SmtProc, SolverCmd, SolverError},
     sexp::{app, atom_i, atom_s, sexp_l, Atom, Sexp},
 };
 
@@ -80,10 +80,10 @@ impl<B: Backend> Solver<B> {
         n_states: usize,
         backend: B,
         tee: Option<&Path>,
-    ) -> Result<Self, SolverError> {
+    ) -> Result<Self> {
         let signature = signature.clone();
         let mut proc = SmtProc::new(backend.get_cmd(), tee)?;
-        Self::send_signature(&mut proc, &signature, n_states);
+        Self::send_signature(&mut proc, &signature, n_states)?;
         Ok(Self {
             proc,
             signature,
@@ -107,9 +107,9 @@ impl<B: Backend> Solver<B> {
 
     /// Emit encoding of signature, using `n_states` to determine how many times
     /// to emit each mutable symbol.
-    fn send_signature(proc: &mut SmtProc, sig: &Signature, n_states: usize) {
+    fn send_signature(proc: &mut SmtProc, sig: &Signature, n_states: usize) -> Result<()> {
         for sort in &sig.sorts {
-            proc.send(&app("declare-sort", [atom_s(sort.clone()), atom_i(0)]));
+            proc.send(&app("declare-sort", [atom_s(sort.clone()), atom_i(0)]))?;
         }
         for r in &sig.relations {
             // immutable symbols are always declared once
@@ -121,7 +121,7 @@ impl<B: Backend> Solver<B> {
                         sexp_l(r.args.iter().map(sexp::sort)),
                         sexp::sort(&r.sort),
                     ],
-                ));
+                ))?;
             }
             // mutable symbols are declared according to n_states (or not at all
             // if n_states=0)
@@ -135,17 +135,21 @@ impl<B: Backend> Solver<B> {
                             sexp_l(r.args.iter().map(sexp::sort)),
                             sexp::sort(&r.sort),
                         ],
-                    ));
+                    ))?;
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Send `(assert ...)` to the solver.
-    pub fn assert(&mut self, t: &Term) {
-        self.proc.send(&app("assert", [sexp::term(t)]));
+    pub fn assert(&mut self, t: &Term) -> Result<()> {
+        self.proc.send(&app("assert", [sexp::term(t)]))?;
         self.last_assumptions = None;
-        self.asserts.push(t.clone())
+        self.asserts.push(t.clone());
+
+        Ok(())
     }
 
     /// Create a comment in the tee'd SMT file, if there is one.
@@ -161,22 +165,22 @@ impl<B: Backend> Solver<B> {
     }
 
     /// Get an indicator variable uniquely determined by `name`.
-    pub fn get_indicator(&mut self, name: &str) -> Term {
+    pub fn get_indicator(&mut self, name: &str) -> Result<Term> {
         let ind = format!("__ind@{name}");
         // if this is a new indicator variable, declare it in the solver
         if self.indicators.insert(ind.clone()) {
             self.proc.send(&app(
                 "declare-const",
                 vec![atom_s(ind.clone()), atom_s("Bool")],
-            ));
+            ))?;
         }
         self.last_assumptions = None;
-        Term::Id(ind)
+        Ok(Term::Id(ind))
     }
 
     /// The `assumptions` map should map indicator variables to whether they
     /// should be assumed true or false.
-    pub fn check_sat(&mut self, assumptions: HashMap<Term, bool>) -> Result<SatResp, SolverError> {
+    pub fn check_sat(&mut self, assumptions: HashMap<Term, bool>) -> Result<SatResp> {
         if cfg!(debug_assertions) {
             for assumption in assumptions.keys() {
                 assert!(
@@ -220,34 +224,32 @@ impl<B: Backend> Solver<B> {
         r
     }
 
-    fn get_fo_model(&mut self, typ: TimeType, start: Instant) -> FOModel {
-        let model = self
-            .proc
-            .send_with_reply(&app("get-model", []))
-            .expect("could not get model");
+    fn get_fo_model(&mut self, typ: TimeType, start: Instant) -> Result<FOModel> {
+        let model = self.proc.send_with_reply(&app("get-model", []))?;
         fly::timing::elapsed(typ, start);
-        self.backend
-            .parse(&self.signature, self.n_states, &self.indicators, &model)
+        Ok(self
+            .backend
+            .parse(&self.signature, self.n_states, &self.indicators, &model))
     }
 
     /// After a sat response to check_sat or check_sat_assuming, produce a trace
     /// of models, one per state. Each model interprets all of the symbols in
     /// the signature.
-    pub fn get_model(&mut self) -> Vec<Model> {
+    pub fn get_model(&mut self) -> Result<Vec<Model>> {
         self.last_assumptions = None;
         let start = fly::timing::start();
-        let fo_model = self.get_fo_model(TimeType::GetModel, start);
-        fo_model.into_trace(&self.signature, self.n_states)
+        let fo_model = self.get_fo_model(TimeType::GetModel, start)?;
+        Ok(fo_model.into_trace(&self.signature, self.n_states))
     }
 
     /// Construct an assertion that enforces `univ` has max cardinality `card`.
     /// The assertion is guarded by an indicator and this indicator is the
     /// returned `Term`.
-    fn set_universe_card(&mut self, univ: &str, card: usize) -> Term {
+    fn set_universe_card(&mut self, univ: &str, card: usize) -> Result<Term> {
         assert!(card > 0);
         self.proc
             .comment_with(|| format!("setting {univ} to cardinality {card}"));
-        let ind = self.get_indicator(&format!("{univ}_card_{card}"));
+        let ind = self.get_indicator(&format!("{univ}_card_{card}"))?;
 
         let univ: Sort = Sort::new(univ);
 
@@ -268,8 +270,8 @@ impl<B: Backend> Solver<B> {
                     })),
                 ),
             );
-        self.assert(&Term::implies(ind.clone(), univ_card));
-        ind
+        self.assert(&Term::implies(ind.clone(), univ_card))?;
+        Ok(ind)
     }
 
     /// Find the minimum cardinality for a specific universe. As a side effect,
@@ -279,14 +281,14 @@ impl<B: Backend> Solver<B> {
         max_card: usize,
         assumptions: &mut Vec<Term>,
         univ: &str,
-    ) -> Result<usize, SolverError> {
+    ) -> Result<usize> {
         // The loop attempts to go from max_card-1 down. Thus it will go from
         // sat to unsat at some point, and we want the cardinality and indicator
         // for the last sat. If it starts out unsat, then no further
         // minimization is possible and we don't need to change `assumptions`.
         let mut prev_ind = None;
         for new_card in (1..max_card).rev() {
-            let ind = self.set_universe_card(univ, new_card);
+            let ind = self.set_universe_card(univ, new_card)?;
             let r = self
                 .proc
                 .check_sat_assuming(&assumptions.iter().map(sexp::term).collect::<Vec<_>>())?;
@@ -316,11 +318,11 @@ impl<B: Backend> Solver<B> {
     ///
     /// Returns true on success and adds indicators to `indicators` to enforce
     /// the cardinality `card`.
-    fn is_valid_max_card(&mut self, card: usize, indicators: &mut Vec<Term>) -> bool {
+    fn is_valid_max_card(&mut self, card: usize, indicators: &mut Vec<Term>) -> Result<bool> {
         let mut new_indicators = vec![];
         let sorts = self.signature.sorts.clone();
         for sort in &sorts {
-            let ind = self.set_universe_card(sort, card);
+            let ind = self.set_universe_card(sort, card)?;
             new_indicators.push(ind);
         }
         let assumptions = indicators
@@ -328,15 +330,14 @@ impl<B: Backend> Solver<B> {
             .chain(new_indicators.iter())
             .map(sexp::term)
             .collect::<Vec<_>>();
-        let r = self.proc.check_sat_assuming(&assumptions);
+        let r = self.proc.check_sat_assuming(&assumptions)?;
         match r {
-            Ok(SatResp::Sat) => {
+            SatResp::Sat => {
                 indicators.extend(new_indicators);
-                true
+                Ok(true)
             }
-            Ok(SatResp::Unsat) => false,
-            Ok(SatResp::Unknown(msg)) => panic!("could not check card {card}: {msg}"),
-            Err(err) => panic!("error checking card: {err}"),
+            SatResp::Unsat => Ok(false),
+            SatResp::Unknown(msg) => panic!("could not check card {card}: {msg}"),
         }
     }
 
@@ -344,13 +345,13 @@ impl<B: Backend> Solver<B> {
     /// where all universes are at `card` in size.
     ///
     /// Returns the cardinality `card` and adds indicators to enforce this cardinality to `indicators`.
-    fn get_min_max_card(&mut self, indicators: &mut Vec<Term>) -> usize {
+    fn get_min_max_card(&mut self, indicators: &mut Vec<Term>) -> Result<usize> {
         if self.signature.sorts.is_empty() {
-            return 0;
+            return Ok(0);
         }
         for card in 1..100 {
-            if self.is_valid_max_card(card, indicators) {
-                return card;
+            if self.is_valid_max_card(card, indicators)? {
+                return Ok(card);
             }
         }
         panic!("max cardinality got too high");
@@ -369,7 +370,7 @@ impl<B: Backend> Solver<B> {
     /// step it enforces that all the previous sorts have their minimized
     /// cardinalities. Finally, it returns the model with these cardinality
     /// constraints in place.
-    pub fn get_minimal_model(&mut self) -> Result<Vec<Model>, SolverError> {
+    pub fn get_minimal_model(&mut self) -> Result<Vec<Model>> {
         let start = std::time::Instant::now();
         let assumptions = self.last_assumptions.take();
         // initially, assume anything used by the last check_sat call
@@ -379,7 +380,7 @@ impl<B: Backend> Solver<B> {
             .map(|(ind, val)| if val { ind } else { Term::negate(ind) })
             .sorted()
             .collect::<Vec<_>>();
-        let max_card = self.get_min_max_card(&mut indicators);
+        let max_card = self.get_min_max_card(&mut indicators)?;
         // Minimize each sort in turn, greedily in the order of the signature.
         //
         // (This does not produce a global optimum but the search process is
@@ -390,7 +391,7 @@ impl<B: Backend> Solver<B> {
                 self.minimize_card(max_card, &mut indicators, &sort)?;
             }
         }
-        let model = self.get_fo_model(TimeType::GetMinimalModel, start);
+        let model = self.get_fo_model(TimeType::GetMinimalModel, start)?;
         Ok(model.into_trace(&self.signature, self.n_states))
     }
 
@@ -440,15 +441,19 @@ impl<B: Backend> Solver<B> {
     }
 
     /// Call the SMT push command to create a new assertion stack frame.
-    pub fn push(&mut self) {
+    pub fn push(&mut self) -> Result<()> {
         self.last_assumptions = None;
-        self.proc.send(&app("push", []));
+        self.proc.send(&app("push", []))?;
+
+        Ok(())
     }
 
     /// Call the SMT pop command to rewind the solver to the last pop.
-    pub fn pop(&mut self) {
+    pub fn pop(&mut self) -> Result<()> {
         self.last_assumptions = None;
-        self.proc.send(&app("pop", []));
+        self.proc.send(&app("pop", []))?;
+
+        Ok(())
     }
 }
 

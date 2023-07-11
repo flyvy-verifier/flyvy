@@ -20,4 +20,4 @@ pub mod models;
 pub mod sexp;
 
 pub use smtlib::path::{log_dir, solver_path};
-pub use smtlib::proc::{SatResp, SmtPid};
+pub use smtlib::proc::{SatResp, SmtPid, SolverError};
