@@ -104,7 +104,7 @@ impl Updr {
         let last_frame = self.frames.last().unwrap();
         // println!("last_frame.terms {}", &last_frame.terms[0]);
         let counter_example = module.safe_cex(&self.solver_conf, &last_frame.terms);
-        if module.safeties.is_empty() || counter_example.is_none() {
+        if module.module.proofs.is_empty() || counter_example.is_none() {
             // println!("None");
             // Nothing to block.
             return None;
@@ -330,8 +330,8 @@ impl Updr {
     fn find_frame(&mut self, m: &Module) -> Option<Frame> {
         let module = FOModule::new(m, false, false, false);
         self.backwards_reachable_states = Vec::new();
-        for safety in &module.safeties {
-            for clause in term_to_cnf_clauses(safety) {
+        for proof in &module.module.proofs {
+            for clause in term_to_cnf_clauses(&proof.safety) {
                 self.backwards_reachable_states
                     .push(BackwardsReachableState {
                         id: self.backwards_reachable_states.len(),
@@ -343,6 +343,7 @@ impl Updr {
         }
         self.frames = vec![Frame {
             terms: module
+                .module
                 .inits
                 .clone()
                 .into_iter()
@@ -398,7 +399,11 @@ impl Updr {
                 if module
                     .implies_cex(&self.solver_conf, &f_minus_t, term)
                     .is_some()
-                    && !module.safeties.contains(term)
+                    && !module
+                        .module
+                        .proofs
+                        .iter()
+                        .any(|proof| &proof.safety == term)
                 {
                     terms.push(term.clone())
                 } else {

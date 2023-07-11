@@ -12,8 +12,8 @@ use crate::quant::QuantifierConfig;
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
-use fly::term::{fo::FirstOrder, prime::clear_next, prime::Next};
-use fly::{ouritertools::OurItertools, semantics::Model};
+use fly::term::{prime::clear_next, prime::Next};
+use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
 use solver::conf::SolverConf;
 use solver::SatResp;
 
@@ -133,10 +133,7 @@ pub enum CexOrCore {
 /// `disj` denotes whether to split the transitions disjunctively, if possible.
 pub struct FOModule {
     signature: Signature,
-    pub axioms: Vec<Term>,
-    pub inits: Vec<Term>,
-    pub transitions: Vec<Term>,
-    pub safeties: Vec<Term>,
+    pub module: DestructuredModule,
     disj: bool,
     gradual: bool,
     minimal: bool,
@@ -144,48 +141,19 @@ pub struct FOModule {
 
 impl FOModule {
     pub fn new(m: &Module, disj: bool, gradual: bool, minimal: bool) -> Self {
-        let mut fo = FOModule {
+        FOModule {
             signature: m.signature.clone(),
-            axioms: vec![],
-            inits: vec![],
-            transitions: vec![],
-            safeties: vec![],
+            module: extract(m).unwrap(),
             disj,
             gradual,
             minimal,
-        };
-
-        for statement in &m.statements {
-            match statement {
-                ThmStmt::Assume(t) => {
-                    if FirstOrder::unrolling(t) == Some(0) {
-                        fo.inits.push(t.clone());
-                    } else if let Term::UnaryOp(UOp::Always, t) = t {
-                        match FirstOrder::unrolling(t) {
-                            Some(0) => fo.axioms.push(t.as_ref().clone()),
-                            Some(1) => fo
-                                .transitions
-                                .push(Next::new(&m.signature).normalize(t.as_ref())),
-                            _ => (),
-                        }
-                    }
-                }
-                ThmStmt::Assert(pf) => {
-                    if let Term::UnaryOp(UOp::Always, t) = &pf.assert.x {
-                        if FirstOrder::unrolling(t) == Some(0) {
-                            fo.safeties.push(t.as_ref().clone());
-                        }
-                    }
-                }
-            }
         }
-
-        fo
     }
 
     fn disj_trans(&self) -> Vec<Vec<&Term>> {
         if self.disj {
-            self.transitions
+            self.module
+                .transitions
                 .iter()
                 .map(|t| match t {
                     Term::NAryOp(NOp::Or, args) => args.iter().collect_vec(),
@@ -194,12 +162,12 @@ impl FOModule {
                 .multi_cartesian_product_fixed()
                 .collect_vec()
         } else {
-            vec![self.transitions.iter().collect_vec()]
+            vec![self.module.transitions.iter().collect_vec()]
         }
     }
 
     pub fn init_cex(&self, conf: &SolverConf, t: &Term) -> Option<Model> {
-        self.implication_cex(conf, &self.inits, t)
+        self.implication_cex(conf, &self.module.inits, t)
     }
 
     pub fn trans_cex(
@@ -245,7 +213,7 @@ impl FOModule {
                 }
 
                 if with_init {
-                    let init = Term::and(self.inits.iter().cloned());
+                    let init = Term::and(self.module.inits.iter().cloned());
                     solver.assert(&Term::or([init, Term::and(prestate)]));
                 } else {
                     for p in &prestate {
@@ -253,7 +221,7 @@ impl FOModule {
                     }
                 }
 
-                for a in &self.axioms {
+                for a in &self.module.axioms {
                     solver.assert(a);
                     solver.assert(&Next::new(&self.signature).prime(a));
                 }
@@ -263,13 +231,13 @@ impl FOModule {
                 }
 
                 if with_safety {
-                    for a in self.safeties.iter() {
-                        solver.assert(a);
+                    for a in &self.module.proofs {
+                        solver.assert(&a.safety);
                     }
                 }
 
                 if with_init {
-                    let init = Term::and(self.inits.iter().cloned());
+                    let init = Term::and(self.module.inits.iter().cloned());
                     solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
                 }
 
@@ -359,7 +327,7 @@ impl FOModule {
 
         loop {
             let mut solver = conf.solver(&self.signature, 1);
-            for a in &self.axioms {
+            for a in &self.module.axioms {
                 solver.assert(a);
             }
             for &i in &core.participants {
@@ -404,7 +372,7 @@ impl FOModule {
 
         let mut solver = conf.solver(&self.signature, 2);
         solver.assert(&state_term);
-        for a in &self.axioms {
+        for a in &self.module.axioms {
             solver.assert(&Next::new(&self.signature).prime(a));
         }
 
@@ -463,12 +431,13 @@ impl FOModule {
             TermOrModel::Term(t) => t.clone(),
             TermOrModel::Model(m) => m.to_diagram(),
         };
-        assert_eq!(self.transitions.len(), 1);
-        if let NAryOp(NOp::Or, _) = self.transitions[0].clone() {
+        assert_eq!(self.module.transitions.len(), 1);
+        if let NAryOp(NOp::Or, _) = self.module.transitions[0].clone() {
         } else {
             panic!("malformed transitions!")
         }
         let separate_trans = self
+            .module
             .transitions
             .iter()
             .flat_map(|t| match t {
@@ -480,10 +449,16 @@ impl FOModule {
         let mut core = HashMap::new();
         for trans in separate_trans {
             let mut solver = conf.solver(&self.signature, 2);
-            for a in self.axioms.iter().chain(hyp.iter()).chain(vec![trans]) {
+            for a in self
+                .module
+                .axioms
+                .iter()
+                .chain(hyp.iter())
+                .chain(vec![trans])
+            {
                 solver.assert(a);
             }
-            for a in self.axioms.iter() {
+            for a in self.module.axioms.iter() {
                 solver.assert(&Next::new(&self.signature).prime(a));
             }
             let mut indicators = HashMap::new();
@@ -567,8 +542,10 @@ impl FOModule {
     }
 
     pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
-        for s in self.safeties.iter() {
-            if let TransCexResult::CTI(model, _) = self.trans_cex(conf, hyp, s, false, true, None) {
+        for s in self.module.proofs.iter() {
+            if let TransCexResult::CTI(model, _) =
+                self.trans_cex(conf, hyp, &s.safety, false, true, None)
+            {
                 return Some(model);
             }
         }
@@ -577,8 +554,8 @@ impl FOModule {
     }
 
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
-        for s in self.safeties.iter() {
-            if let Some(model) = self.implies_cex(conf, hyp, s) {
+        for s in self.module.proofs.iter() {
+            if let Some(model) = self.implies_cex(conf, hyp, &s.safety) {
                 return Some(model);
             }
         }

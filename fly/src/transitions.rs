@@ -5,6 +5,7 @@
 
 use crate::syntax::*;
 use crate::term::fo::FirstOrder;
+use crate::term::prime::Next;
 use thiserror::Error;
 
 /// Contains the different parts of the extracted transition system.
@@ -92,6 +93,17 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
             }
         }
         proofs.push(Proof { safety, invariants })
+    }
+
+    let next = Next::new(&module.signature);
+    for term in inits.iter_mut().chain(&mut transitions).chain(&mut axioms) {
+        *term = next.normalize(term);
+    }
+    for proof in &mut proofs {
+        proof.safety = next.normalize(&proof.safety);
+        for invariant in &mut proof.invariants {
+            *invariant = next.normalize(invariant);
+        }
     }
 
     Ok(DestructuredModule {
