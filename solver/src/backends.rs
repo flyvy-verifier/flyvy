@@ -15,7 +15,7 @@ use fly::{
     syntax::{Signature, Sort},
 };
 use smtlib::{
-    proc::{CvcConf, SolverCmd, Z3Conf},
+    conf::{CvcConf, SolverCmd, Z3Conf},
     sexp::{self, Atom},
 };
 
