@@ -11,14 +11,16 @@ use thiserror::Error;
 
 /// Holds an ordering of all (relation, elements) pairs
 pub struct Context<'a> {
-    universe: &'a Universe,
+    /// The universe bounds that were used to construct `indices`
+    pub universe: &'a Universe,
 
     /// Number of two-state variables
     pub mutables: usize,
     /// Map from (relation, elements) to (index into vars, is mutable)
     pub indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
 
-    bdds: BddVariableSet,
+    /// Data used by the BDD library to build new BDDs
+    pub bdds: BddVariableSet,
     /// Map from indices to BddVariable objects
     pub vars: Vec<BddVariable>,
 }
