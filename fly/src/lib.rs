@@ -14,6 +14,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod defs;
+pub mod ouritertools;
 pub mod parser;
 pub mod printer;
 pub mod semantics;

@@ -113,3 +113,10 @@ else
   cargo doc --quiet --document-private-items --no-deps
 fi
 end_group
+
+start_group "project-specific lints"
+if grep -wr --include '*.rs' --exclude ouritertools.rs multi_cartesian_product; then
+  error "found some occurrences of multi_cartesian_product; use multi_cartesian_product_fixed to handle empty iterators correctly"
+  exit 1
+fi
+end_group
