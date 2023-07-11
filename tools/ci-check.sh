@@ -113,3 +113,10 @@ else
   cargo doc --quiet --document-private-items --no-deps
 fi
 end_group
+
+start_group "project-specific lints"
+if grep -wr --include '*.rs' --exclude './target/*' --exclude './.git/*' --exclude ./fly/src/ouritertools.rs multi_cartesian_product; then
+  error "found some occurrences of multi_cartesian_product"
+  exit 1
+fi
+end_group
