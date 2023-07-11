@@ -8,6 +8,7 @@ use biodivine_lib_bdd::boolean_expression::BooleanExpression;
 use bounded::bdd::*;
 use fly::syntax::*;
 use std::collections::HashMap;
+use verify::verify_module;
 
 pub fn invariant(
     module: &Module,
@@ -20,16 +21,18 @@ pub fn invariant(
         Err(e) => return Err(e),
     };
 
+    // Build a map from sort elements to Term variable names
     let mut next_binding = 0;
-    let mut bindings: HashMap<(&str, usize), Term> = HashMap::new();
+    let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
     for (sort, bound) in &universe {
         for i in 0..*bound {
-            bindings.insert((sort, i), Term::Id(format!("${}", next_binding)));
+            bindings.insert((sort, i), format!("${}", next_binding));
             next_binding += 1;
         }
     }
 
-    let mut reverse: HashMap<String, Term> = HashMap::new();
+    // Build a map from BDD variable names to Terms
+    let mut vars_to_terms: HashMap<String, Term> = HashMap::new();
     for (relation, map) in context.indices {
         for (elements, (i, _mutable)) in map {
             let name = context.bdds.name_of(context.vars[i]);
@@ -43,7 +46,7 @@ pub fn invariant(
                 .iter()
                 .zip(elements)
                 .map(|(sort, element)| match sort {
-                    Sort::Id(sort) => bindings[&(sort.as_str(), element)].clone(),
+                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), element)].clone()),
                     Sort::Bool => match element {
                         0 => Term::Literal(false),
                         1 => Term::Literal(true),
@@ -51,15 +54,47 @@ pub fn invariant(
                     },
                 });
             let term = Term::App(relation.to_string(), 0, args.collect());
-            reverse.insert(name, term);
+            vars_to_terms.insert(name, term);
         }
     }
 
+    // Convert the BDD to a Term
     let ast = bdd.to_boolean_expression(&context.bdds);
-    let ast = to_term(ast, &reverse);
+    let ast = to_term(ast, &vars_to_terms);
 
-    println!("{:?}", ast);
+    // Add not-equal clauses between same-sort elements
+    let mut not_equals = vec![];
+    for ((sort_1, element_1), name_1) in &bindings {
+        for ((sort_2, element_2), name_2) in &bindings {
+            if element_1 < element_2 && sort_1 == sort_2 {
+                not_equals.push(Term::BinOp(
+                    BinOp::NotEquals,
+                    Box::new(Term::Id(name_1.to_string())),
+                    Box::new(Term::Id(name_2.to_string())),
+                ));
+            }
+        }
+    }
 
+    // Wrap the Term in foralls
+    let binders = bindings
+        .into_iter()
+        .map(|((sort, _), name)| Binder {
+            name,
+            sort: Sort::Id(sort.to_string()),
+        })
+        .collect();
+    let ast = Term::Quantified {
+        quantifier: Quantifier::Forall,
+        body: Box::new(Term::BinOp(
+            BinOp::Implies,
+            Box::new(Term::NAryOp(NOp::And, not_equals)),
+            Box::new(ast),
+        )),
+        binders,
+    };
+
+    println!("{}", ast);
     todo!()
 }
 
