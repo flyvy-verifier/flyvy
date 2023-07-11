@@ -97,7 +97,7 @@ pub enum Term {
     #[allow(missing_docs)]
     Quantified {
         quantifier: Quantifier,
-        /// The sequence of bindings bound by this quantifier. Might be empty!
+        /// The sequence of bindings bound by this quantifier. Might be empty.
         binders: Vec<Binder>,
         body: Box<Term>,
     },
