@@ -1,5 +1,5 @@
 ---
-source: tests/test_examples.rs
+source: temporal-verifier/tests/test_examples.rs
 description: "--name=infer-z3.1 -- infer --no-print-invariant qalpha --quantifier 'F node 2' --qf-body cnf --clauses 1 --clause-size 3 --gradual-advance examples/lockserver.fly"
 expression: combined_stdout_stderr
 ---

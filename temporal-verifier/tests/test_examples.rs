@@ -237,6 +237,11 @@ fn get_toml_tests(toml_file: &Path) -> Vec<Test> {
 /// Get tests recursively under a root directory, keyed by their file path.
 fn get_tests(root_dir: &str) -> HashMap<PathBuf, Vec<Test>> {
     let root_dir = Path::new(root_dir);
+    assert!(
+        root_dir.exists(),
+        "test misconfigured. directory {} does not exist",
+        root_dir.display()
+    );
     let tests = WalkDir::new(root_dir)
         .sort_by_file_name()
         .into_iter()

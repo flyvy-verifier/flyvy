@@ -1,5 +1,5 @@
 ---
-source: tests/test_examples.rs
+source: temporal-verifier/tests/test_examples.rs
 description: "--expect-fail --all-solvers --name=1 -- verify tests/examples/fail/safety3_extra_inv.fly"
 expression: combined_stdout_stderr
 ---
