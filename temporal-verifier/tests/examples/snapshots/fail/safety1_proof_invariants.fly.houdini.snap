@@ -1,5 +1,5 @@
 ---
-source: tests/test_examples.rs
+source: temporal-verifier/tests/test_examples.rs
 description: "--name=houdini -- infer houdini tests/examples/fail/safety1_proof_invariants.fly"
 expression: combined_stdout_stderr
 ---

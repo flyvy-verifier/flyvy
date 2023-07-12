@@ -1,5 +1,5 @@
 ---
-source: tests/test_examples.rs
+source: temporal-verifier/tests/test_examples.rs
 description: "--all-solvers --name=houdini.1 -- infer houdini tests/examples/success/sorts/inference_ignore_sort.fly"
 expression: combined_stdout_stderr
 ---
