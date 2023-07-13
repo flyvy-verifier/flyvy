@@ -44,6 +44,33 @@ For debug logging, we use the
 the `RUST_LOG` environment variable to configure logging. For example, to get
 info-level messages run with `env RUST_LOG=info cargo run -- ...`.
 
+### API documentation
+
+You can read the automatically generated rustdoc documentation by running:
+
+```sh
+cargo doc --document-private-items --no-deps --open
+```
+
+The code is split into several top-level crates, which are listed in the sidebar
+of the documentation. `cargo doc` opens the alphabetically first crate, which
+happens to be `bounded`, but you may want to start reading from the `fly` crate.
+The overall organization of crates is the following:
+
+There are three "core" crates:
+
+* [smtlib](smtlib) low-level interface to the Z3 and CVC5 solvers
+* [fly](fly) the core "fly" language and general tools
+* [solver](solver) a solver interface that is based on fly's terms rather than
+  s-expressions
+
+On top of these tools we implement several features in independent crates:
+
+* [verify](verify) prove safety using user-provided invariants
+* [inference](inference) infer inductive invariants
+* [bounded](bounded) a few implementations of bounded model checkers for safety problems
+* [temporal-verifier](temporal-verifier) the command-line interface to all flyvy tools
+
 ### Performance benchmarking
 
 The first step is to run `temporal-verifier infer` or `temporal-verifier verify`
