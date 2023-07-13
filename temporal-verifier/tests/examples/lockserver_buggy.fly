@@ -4,6 +4,17 @@
 # TEST -- bdd-check --bound node=3 --print-timing false
 # TEST -- sat-check --bound node=3 --print-timing false --depth=20
 # TEST -- set-check --bound node=3 --print-timing false
+# TEST -- smt-check --print-timing false --depth=10
+
+# To exploit this bug into a safety violation, you first need to have one node acquire and
+# release the lock via the following 5 transitions:
+# - send lock_msg, send grant, receive grant, send unlock, receive unlock
+# then you need two nodes to both acquire the lock:
+# - send lock_msg, send grant, receive grant (3 transitions)
+# - receive unlock (1 transition, exploiting the fact that it was not removed)
+# - send lock_msg, send grant, receive grant (3 transitions)
+#
+# In total, that's 5 + 3 + 1 + 3 = 12 transitions to exploit it.
 
 sort node
 
