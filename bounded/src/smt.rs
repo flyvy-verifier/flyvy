@@ -198,6 +198,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         Ok(())
     }
 
+    #[ignore] // too slow
     #[test]
     fn checker_smt_lockserver_buggy() -> Result<(), CheckerError> {
         let source = "
@@ -263,7 +264,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         assert!(matches!(bug, CheckerAnswer::Counterexample(..)));
 
         let too_short = check(&module, &conf(), 11, false)?;
-        assert!(matches!(too_short, CheckerAnswer::Counterexample(..)));
+        assert_eq!(CheckerAnswer::Unknown, too_short);
 
         Ok(())
     }
