@@ -317,6 +317,12 @@ enum Command {
     },
     SatCheck(BoundedArgs),
     BddCheck(BoundedArgs),
+    SmtCheck {
+        #[command(flatten)]
+        bounded: BoundedArgs, // universe bounds are unused
+        #[command(flatten)]
+        solver: SolverArgs,
+    },
 }
 
 impl InferCommand {
@@ -342,6 +348,10 @@ impl Command {
             } => file,
             Command::SatCheck(BoundedArgs { file, .. }) => file,
             Command::BddCheck(BoundedArgs { file, .. }) => file,
+            Command::SmtCheck {
+                bounded: BoundedArgs { file, .. },
+                ..
+            } => file,
         }
     }
 }
@@ -596,6 +606,27 @@ impl App {
                     }
                     Ok(bounded::bdd::CheckerAnswer::Convergence(..)) => {
                         println!("answer: safe forever with given sort bounds")
+                    }
+                    Err(error) => eprintln!("{}", error),
+                }
+            }
+            Command::SmtCheck { bounded, solver } => {
+                let depth = match bounded.depth {
+                    Some(depth) => depth,
+                    None => {
+                        eprintln!("smt checker does not support unbounded depth. please specify --depth N on the command line");
+                        process::exit(1)
+                    }
+                };
+                match bounded::smt::check(
+                    &m,
+                    &solver.get_solver_conf(&file),
+                    depth,
+                    bounded.print_timing.unwrap_or(true),
+                ) {
+                    Ok(bounded::smt::CheckerAnswer::Counterexample(_)) => {}
+                    Ok(bounded::smt::CheckerAnswer::Unknown) => {
+                        println!("answer: safe up to depth {} for given sort bounds", depth)
                     }
                     Err(error) => eprintln!("{}", error),
                 }
