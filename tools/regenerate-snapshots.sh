@@ -17,5 +17,4 @@ if [ "$(git status --porcelain | wc -l)" -ne 0 ]; then
   exit 1
 fi
 
-find . -type d -name snapshots -prune -exec rm -r {} \;
-cargo insta test --accept
+cargo insta test --force-update-snapshots --unreferenced=reject --accept
