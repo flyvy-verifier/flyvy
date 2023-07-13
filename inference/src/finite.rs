@@ -67,7 +67,10 @@ pub fn invariant(
                         _ => unreachable!(),
                     },
                 });
-            let term = Term::App(relation.to_string(), 0, args.collect());
+            let term = match args.len() {
+                0 => Term::Id(relation.to_string()),
+                _ => Term::App(relation.to_string(), 0, args.collect()),
+            };
             vars_to_terms.insert(name, term);
         }
     }
