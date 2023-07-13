@@ -1,0 +1,9 @@
+---
+source: temporal-verifier/tests/test_examples.rs
+description: "--all-solvers -- verify tests/examples/success/sorts/allow_overlapping_sort_and_function_names.fly"
+expression: combined_stdout_stderr
+---
+verifies!
+
+======== STDERR: ===========
+

@@ -1,0 +1,11 @@
+---
+source: temporal-verifier/tests/test_examples.rs
+description: "--expect-fail -- verify tests/examples/fail/sorts/quantifier_repeated_args.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+sort checking error:
+error: x was declared multiple times
+
+

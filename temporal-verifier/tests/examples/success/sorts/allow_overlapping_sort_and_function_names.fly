@@ -1,0 +1,7 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort x
+
+# sorts and functions are in separate namespaces, so this is allowed.
+mutable x: bool
