@@ -151,7 +151,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             tee: None,
         };
 
-        println!("{:?}", invariant(&module, universe, &conf)?);
+        println!("{:?}", invariant(&module, universe, &conf));
 
         Ok(())
     }
