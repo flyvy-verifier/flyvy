@@ -65,7 +65,7 @@ in every execution, it is always the case that at most one of `ping_pending` and
 We can ask flyvy to verify this safety property using the command
 
 ```
-cargo run verify examples/pingpong.fly
+cargo run verify temporal-verifier/examples/pingpong.fly
 ```
 
 which prints messages about building flyvy from source and then prints
@@ -93,10 +93,10 @@ The bug is that the new value of `ping_pending` is unconstrained, which means it
 is allowed to remain true, which means that after running this transition, both
 booleans could be true, violating the safety property.
 
-Make this change to `examples/pingpong.fly` and then rerun
+Make this change to `temporal-verifier/examples/pingpong.fly` and then rerun
 
 ```
-cargo run verify examples/pingpong.fly
+cargo run verify temporal-verifier/examples/pingpong.fly
 ```
 
 You will see that flyvy is able to find a "counterexample to induction"
@@ -104,7 +104,7 @@ You will see that flyvy is able to find a "counterexample to induction"
 ```
 verification errors:
 error: invariant is not inductive
-   ┌─ examples/pingpong.fly:17:1
+   ┌─ temporal-verifier/examples/pingpong.fly:17:1
    │
 17 │ assert always !(ping_pending & pong_pending)
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -117,7 +117,7 @@ error: invariant is not inductive
 The counterexample is the "before" state. Flyvy is saying that after taking one
 step from this state, the system reaches a state that violates the safety property.
 
-You can now fix the bug by reverting your edit to `examples/pingpong.fly`.
+You can now fix the bug by reverting your edit to `temporal-verifier/examples/pingpong.fly`.
 
 Taking a step back, this example illustrated a few key features of flyvy. A
 program describes the execution of a system by describe the evolution of its
