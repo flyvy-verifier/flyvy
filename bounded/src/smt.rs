@@ -24,7 +24,7 @@ pub enum CheckerError {
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample(Model),
+    Counterexample(Vec<Model>),
     /// The checker did not find a counterexample
     Unknown,
 }
@@ -76,8 +76,7 @@ pub fn check(
             let states = solver
                 .get_minimal_model()
                 .expect("solver error while minimizing");
-            let s0 = states.into_iter().next().unwrap();
-            CheckerAnswer::Counterexample(s0)
+            CheckerAnswer::Counterexample(states)
         }
         SatResp::Unsat => CheckerAnswer::Unknown,
         SatResp::Unknown(m) => return Err(CheckerError::SolverError(m)),
@@ -87,8 +86,11 @@ pub fn check(
         println!("search finished in {:0.1}s", search.elapsed().as_secs_f64());
     }
 
-    if let CheckerAnswer::Counterexample(ref model) = answer {
-        println!("{}", model.fmt());
+    if let CheckerAnswer::Counterexample(ref models) = answer {
+        for (i, model) in models.iter().enumerate() {
+            println!("state {}:", i);
+            println!("{}", model.fmt());
+        }
     }
 
     Ok(answer)
