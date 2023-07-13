@@ -5,7 +5,7 @@
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
 use bitvec::prelude::*;
-use fly::{ouritertools::OurItertools, sorts::*, syntax::*, term::fo::FirstOrder};
+use fly::{ouritertools::OurItertools, sorts::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::{BTreeSet, VecDeque};
 use thiserror::Error;
@@ -533,14 +533,8 @@ pub enum TranslationError {
     SortError(SortError),
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, UniverseBounds),
-    #[error("all assumes should precede all asserts, but found {0:?}")]
-    OutOfOrderStatement(ThmStmt),
-    #[error("expected no primes in {0}")]
-    AnyFuture(Term),
-    #[error("expected no primes or only one prime in {0}")]
-    TooFuture(Term),
-    #[error("found an assert that isn't a safety property")]
-    AssertWithoutAlways(Term),
+    #[error("{0}")]
+    ExtractionError(ExtractionError),
     #[error("unknown identifier {0}")]
     UnknownId(String),
     #[error("could not translate to propositional logic {0}")]
@@ -567,6 +561,7 @@ type UniverseBounds = std::collections::HashMap<String, usize>;
 /// Translate a flyvy module into a BoundedProgram, given the bounds on the sort sizes.
 /// Universe should contain the sizes of all the sorts in module.signature.sorts.
 /// The module is assumed to have already been typechecked.
+/// The translator ignores proof blocks.
 pub fn translate(
     module: &Module,
     universe: &UniverseBounds,
@@ -592,48 +587,16 @@ pub fn translate(
         todo!("definitions are not supported yet");
     }
 
-    let mut assumes = Vec::new();
-    let mut asserts = Vec::new();
-    for statement in &module.statements {
-        match statement {
-            ThmStmt::Assume(term) if asserts.is_empty() => assumes.push(term.clone()),
-            ThmStmt::Assert(Proof { assert, invariants }) => {
-                asserts.push(assert.x.clone());
-                if !invariants.is_empty() {
-                    eprintln!("note: invariants are not yet supported, and do nothing")
-                }
-            }
-            _ => return Err(TranslationError::OutOfOrderStatement(statement.clone())),
-        }
-    }
+    let DestructuredModule {
+        inits,
+        transitions,
+        axioms,
+        proofs,
+    } = extract(module).map_err(TranslationError::ExtractionError)?;
 
-    let mut inits = Vec::new();
-    let mut trs = Vec::new();
-    for assume in assumes {
-        match assume {
-            Term::UnaryOp(UOp::Always, axiom) if FirstOrder::unrolling(&axiom) == Some(0) => {
-                inits.push(*axiom.clone());
-                trs.push(*axiom);
-            }
-            Term::UnaryOp(UOp::Always, tr) if FirstOrder::unrolling(&tr) == Some(1) => {
-                trs.push(*tr)
-            }
-            Term::UnaryOp(UOp::Always, term) => return Err(TranslationError::TooFuture(*term)),
-            init if FirstOrder::unrolling(&init) == Some(0) => inits.push(init),
-            init => return Err(TranslationError::AnyFuture(init)),
-        }
-    }
-
-    let mut safes = Vec::new();
-    for assert in asserts {
-        match assert {
-            Term::UnaryOp(UOp::Always, safe) if FirstOrder::unrolling(&safe) == Some(0) => {
-                safes.push(*safe)
-            }
-            Term::UnaryOp(UOp::Always, safe) => return Err(TranslationError::AnyFuture(*safe)),
-            assert => return Err(TranslationError::AssertWithoutAlways(assert)),
-        }
-    }
+    let inits = inits.into_iter().chain(axioms.clone()).collect();
+    let transitions = transitions.into_iter().chain(axioms).collect();
+    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
 
     let normalize = |term: Term| -> Result<Ast, TranslationError> {
         // change uses of nullary relations from Term::Id(name) to Term::App(name, 0, vec![])
@@ -649,8 +612,8 @@ pub fn translate(
     };
 
     let inits = normalize(Term::NAryOp(NOp::And, inits))?;
-    let trs = normalize(Term::NAryOp(NOp::And, trs))?;
-    let safes = normalize(Term::NAryOp(NOp::And, safes))?;
+    let trs = normalize(Term::NAryOp(NOp::And, transitions))?;
+    let safes = normalize(Term::NAryOp(NOp::And, safeties))?;
 
     let get_guards_from_dnf = |valued: Ast| -> Result<Vec<Vec<Guard>>, TranslationError> {
         valued

@@ -22,3 +22,4 @@ pub mod sorts;
 pub mod syntax;
 pub mod term;
 pub mod timing;
+pub mod transitions;

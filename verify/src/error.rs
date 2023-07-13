@@ -4,15 +4,13 @@
 //! Contains error types for verification.
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use fly::semantics::Model;
+use fly::syntax::Span;
 use serde::Serialize;
-
-use fly::{semantics::Model, syntax::Span};
 
 /// Ways that an file can fail to be verified.
 #[derive(Debug, Copy, Clone, Serialize, PartialEq, Eq)]
 pub enum FailureType {
-    /// An invariant was not first order
-    FirstOrder,
     /// An invariant was not implied by the initial condition
     InitInv,
     /// An invariant was not inductive
@@ -47,7 +45,6 @@ impl AssertionFailure {
     /// Convert the AssertionFailure struct to a Diagnostic that can be printed.
     pub fn diagnostic<FileId>(&self, file_id: FileId) -> Diagnostic<FileId> {
         let msg = match self.reason {
-            FailureType::FirstOrder => "assertion failure",
             FailureType::InitInv => "init does not imply invariant",
             FailureType::NotInductive => "invariant is not inductive",
             FailureType::Unsupported => "unsupported assertion",

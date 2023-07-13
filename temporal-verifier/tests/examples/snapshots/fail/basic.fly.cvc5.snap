@@ -6,11 +6,11 @@ expression: combined_stdout_stderr
 
 ======== STDERR: ===========
 verification errors:
-error: assertion failure
+error: init does not imply invariant
    ┌─ tests/examples/fail/basic.fly:12:1
    │
-12 │ assert p(t0)
-   │ ^^^^^^^^^^^^
+12 │ assert always p(t0)
+   │ ^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
      p(@thread_0) = false

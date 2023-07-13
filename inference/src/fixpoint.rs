@@ -324,15 +324,15 @@ where
     let start = std::time::Instant::now();
 
     log::debug!("Axioms:");
-    for a in fo.axioms.iter() {
+    for a in fo.module.axioms.iter() {
         log::debug!("    {a}");
     }
     log::debug!("Initial states:");
-    for a in fo.inits.iter() {
+    for a in fo.module.inits.iter() {
         log::debug!("    {a}");
     }
     log::debug!("Transitions:");
-    for a in fo.transitions.iter() {
+    for a in fo.module.transitions.iter() {
         log::debug!("    {a}");
     }
 
@@ -426,15 +426,15 @@ where
     let start = std::time::Instant::now();
 
     log::debug!("Axioms:");
-    for a in fo.axioms.iter() {
+    for a in fo.module.axioms.iter() {
         log::debug!("    {a}");
     }
     log::debug!("Initial states:");
-    for a in fo.inits.iter() {
+    for a in fo.module.inits.iter() {
         log::debug!("    {a}");
     }
     log::debug!("Transitions:");
-    for a in fo.transitions.iter() {
+    for a in fo.module.transitions.iter() {
         log::debug!("    {a}");
     }
 

@@ -4,7 +4,7 @@
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
 use biodivine_lib_bdd::*;
-use fly::{ouritertools::OurItertools, syntax::*, term::fo::FirstOrder};
+use fly::{ouritertools::OurItertools, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -144,16 +144,8 @@ pub enum CheckerAnswer {
 pub enum CheckerError {
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, Universe),
-
-    #[error("all assumes should precede all asserts, but found {0:?}")]
-    OutOfOrderStatement(ThmStmt),
-    #[error("expected no primes in {0}")]
-    AnyFuture(Term),
-    #[error("expected no primes or only one prime in {0}")]
-    TooFuture(Term),
-    #[error("expected all asserts be safety properties but found {0}")]
-    AssertWithoutAlways(Term),
-
+    #[error("{0}")]
+    ExtractionError(ExtractionError),
     #[error("could not translate to bdd {0}")]
     CouldNotTranslateToBdd(Term),
     #[error("could not translate to element {0}")]
@@ -173,6 +165,7 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 /// Check a given Module out to some depth.
 /// This assumes that the module has been typechecked.
 /// Passing `None` for depth means to run until a counterexample is found.
+/// The checker ignores proof blocks.
 pub fn check(
     module: &Module,
     universe: &Universe,
@@ -195,48 +188,16 @@ pub fn check(
         todo!("definitions are not supported yet");
     }
 
-    let mut assumes = Vec::new();
-    let mut asserts = Vec::new();
-    for statement in &module.statements {
-        match statement {
-            ThmStmt::Assert(Proof { assert, invariants }) => {
-                asserts.push(assert.x.clone());
-                if !invariants.is_empty() {
-                    eprintln!("note: invariants are not yet supported, and do nothing")
-                }
-            }
-            ThmStmt::Assume(term) if asserts.is_empty() => assumes.push(term.clone()),
-            _ => return Err(CheckerError::OutOfOrderStatement(statement.clone())),
-        }
-    }
+    let DestructuredModule {
+        inits,
+        transitions,
+        axioms,
+        proofs,
+    } = extract(module).map_err(CheckerError::ExtractionError)?;
 
-    let mut inits = Vec::new();
-    let mut trs = Vec::new();
-    for assume in assumes {
-        match assume {
-            Term::UnaryOp(UOp::Always, axiom) if FirstOrder::unrolling(&axiom) == Some(0) => {
-                inits.push(*axiom.clone());
-                trs.push(*axiom);
-            }
-            Term::UnaryOp(UOp::Always, tr) if FirstOrder::unrolling(&tr) == Some(1) => {
-                trs.push(*tr)
-            }
-            Term::UnaryOp(UOp::Always, term) => return Err(CheckerError::TooFuture(*term)),
-            init if FirstOrder::unrolling(&init) == Some(0) => inits.push(init),
-            init => return Err(CheckerError::AnyFuture(init)),
-        }
-    }
-
-    let mut safes = Vec::new();
-    for assert in asserts {
-        match assert {
-            Term::UnaryOp(UOp::Always, safe) if FirstOrder::unrolling(&safe) == Some(0) => {
-                safes.push(*safe)
-            }
-            Term::UnaryOp(UOp::Always, safe) => return Err(CheckerError::AnyFuture(*safe)),
-            assert => return Err(CheckerError::AssertWithoutAlways(assert)),
-        }
-    }
+    let inits = inits.into_iter().chain(axioms.clone()).collect();
+    let transitions = transitions.into_iter().chain(axioms).collect();
+    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
 
     let context = Context::new(&module.signature, universe);
 
@@ -251,8 +212,8 @@ pub fn check(
     let time = std::time::Instant::now();
 
     let init = translate(inits)?;
-    let tr = translate(trs)?;
-    let not_safe = translate(safes)?.not();
+    let tr = translate(transitions)?;
+    let not_safe = translate(safeties)?.not();
 
     if print_timing {
         println!(

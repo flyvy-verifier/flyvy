@@ -5,8 +5,9 @@
 
 use thiserror::Error;
 
-use fly::syntax::{Proof, Signature, Span, Spanned, Term, UOp::Always};
+use fly::syntax::*;
 use fly::term::{fo::FirstOrder, prime::Next};
+use fly::transitions::Proof;
 
 /// A temporal property expressed as an invariant problem.
 #[derive(Debug, Clone)]
@@ -39,47 +40,18 @@ impl InvariantAssertion {
     /// Construct an invariant assertion to represent a temporal assertion.
     pub fn for_assert(
         sig: &Signature,
-        assumes: &[&Term],
-        pf: &Proof,
+        inits: &[Term],
+        transitions: &[Term],
+        axioms: &[Term],
+        proof: &Proof,
     ) -> Result<Self, InvariantError> {
-        let inv = match &pf.assert.x {
-            Term::UnaryOp(Always, p) => *p.clone(),
-            _ => return Err(InvariantError::NotSafety),
-        };
-
-        let mut init: Vec<Term> = vec![];
-        let mut assumed_invs: Vec<Term> = vec![];
-        let mut next: Vec<Term> = vec![];
-
-        for &t in assumes {
-            if let Term::UnaryOp(Always, t) = t {
-                match FirstOrder::unrolling(t) {
-                    Some(0) => assumed_invs.push(*t.clone()),
-                    Some(1) => next.push(*t.clone()),
-                    _ => (), // drop
-                }
-            } else if FirstOrder::unrolling(t) == Some(0) {
-                init.push(t.clone())
-            }
-        }
-
-        for t in &pf.invariants {
-            if FirstOrder::unrolling(&t.x) != Some(0) {
-                // TODO(oded): better error reporting
-                return Err(InvariantError::BadProofInvariant);
-            }
-        }
-
         Ok(Self {
             sig: sig.clone(),
-            init: Term::and(init),
-            next: Next::new(sig).normalize(&Term::and(next)),
-            assumed_inv: Term::and(assumed_invs),
-            inv: Spanned {
-                x: inv,
-                span: pf.assert.span,
-            },
-            proof_invs: pf.invariants.clone(),
+            init: Term::and(inits.iter().cloned()),
+            next: Next::new(sig).normalize(&Term::and(transitions.iter().cloned())),
+            assumed_inv: Term::and(axioms.iter().cloned()),
+            inv: proof.safety.clone(),
+            proof_invs: proof.invariants.clone(),
         })
     }
 

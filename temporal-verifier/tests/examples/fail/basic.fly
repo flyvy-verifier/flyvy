@@ -3,10 +3,10 @@
 
 sort thread
 
-mutable p(thread): bool
+immutable p(thread): bool
 immutable q: bool
 immutable t0: thread
 
 assume forall t:thread. p(t) -> q
 assume !q
-assert p(t0)
+assert always p(t0)
