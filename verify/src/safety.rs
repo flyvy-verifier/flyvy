@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use fly::syntax::*;
 use fly::term::{fo::FirstOrder, prime::Next};
-use fly::transitions::Proof;
+use fly::transitions::{MaybeSpannedTerm, Proof};
 
 /// A temporal property expressed as an invariant problem.
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub struct InvariantAssertion {
     /// The invariant given in the module
     pub inv: Spanned<Term>,
     /// The other invariants in the same proof as `inv`
-    pub proof_invs: Vec<Spanned<Term>>,
+    pub proof_invs: Vec<MaybeSpannedTerm>,
 }
 
 /// An error that occured while constructing an invariant assertion
@@ -55,12 +55,15 @@ impl InvariantAssertion {
         })
     }
 
-    fn invariants(&self) -> impl Iterator<Item = &Spanned<Term>> {
-        vec![&self.inv].into_iter().chain(self.proof_invs.iter())
+    fn invariants(&self) -> Vec<MaybeSpannedTerm> {
+        vec![MaybeSpannedTerm::Spanned(self.inv.clone())]
+            .into_iter()
+            .chain(self.proof_invs.iter().cloned())
+            .collect()
     }
 
     fn inductive_invariant(&self) -> Term {
-        Term::and(self.invariants().map(|t| t.x.clone()))
+        Term::and(self.invariants().into_iter().map(|inv| inv.to_term()))
     }
 
     /// Convert this invariant to a first order term.
@@ -75,7 +78,7 @@ impl InvariantAssertion {
     /// invariants to be proven hold in the pre state. Each check shows that
     /// given these assumptions, one of the invariants (either the proof
     /// invariants or top-level assertion) holds in the post state.
-    pub fn consecutions(&self) -> Vec<(Span, FirstOrder)> {
+    pub fn consecutions(&self) -> Vec<(Option<Span>, FirstOrder)> {
         let lhs = Term::and(vec![
             self.assumed_inv.clone(),
             self.next.clone(),
@@ -83,11 +86,12 @@ impl InvariantAssertion {
             self.inductive_invariant(),
         ]);
         self.invariants()
+            .into_iter()
             .map(|inv| {
-                log::info!("checking inductiveness of {}", inv.x);
-                let rhs = Next::new(&self.sig).prime(&inv.x);
-                let consecution = FirstOrder::new(Term::implies(lhs.clone(), rhs));
-                (inv.span, consecution)
+                log::info!("checking inductiveness of {}", inv.as_term());
+                let rhs = Next::new(&self.sig).prime(inv.as_term());
+                let consection = FirstOrder::new(Term::implies(lhs.clone(), rhs));
+                (inv.span().copied(), consection)
             })
             .collect()
     }
