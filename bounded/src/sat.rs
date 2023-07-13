@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 //! A bounded model checker for flyvy programs using the [CaDiCaL][cadical] SAT solver.
+//!
 //! [cadical]: https://fmv.jku.at/cadical/
 
 use cadical::Solver;

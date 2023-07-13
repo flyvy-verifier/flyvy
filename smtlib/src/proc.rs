@@ -208,9 +208,9 @@ impl SmtProc {
 
     /// Get an error presumed to be in resp, checking for termination first.
     ///
-    /// This function always returns a Result::Err, but is written this way for
-    /// convenient use with `?`. As a result it can return a Result<T> for any
-    /// type T.
+    /// This function always returns a `Result::Err`, but is written this way for
+    /// convenient use with `?`. As a result it can return a `Result<T>` for any
+    /// type `T`.
     fn get_error<T>(&mut self, resp: &str) -> Result<T> {
         self.check_killed()?;
         let msg = Self::parse_error(resp);
