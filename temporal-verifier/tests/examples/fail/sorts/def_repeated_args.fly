@@ -1,0 +1,9 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort s
+
+# definition argument names cannot be repeated
+def f(x: s, x: s) -> bool {
+    x = x
+}

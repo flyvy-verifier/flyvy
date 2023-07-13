@@ -1,0 +1,16 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort s
+
+immutable x: s
+
+# definition argument names can shadown global names
+def f(x: s, y: s) -> bool {
+    x = y
+}
+
+# quantified variables can shadow global names.
+# also, shadowing is allowed in nested quantifiers (but not within one quantifier)
+assume forall x: s, y: s. forall z: s, x: s. x = y & y = z
+

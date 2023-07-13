@@ -1,0 +1,11 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+sort s
+
+mutable f(s): bool
+
+# definition name cannot be the same as a global function
+def f(x: s) -> bool {
+    x = x
+}

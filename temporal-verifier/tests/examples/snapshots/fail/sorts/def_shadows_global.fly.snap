@@ -1,0 +1,11 @@
+---
+source: temporal-verifier/tests/test_examples.rs
+description: "--expect-fail -- verify tests/examples/fail/sorts/def_shadows_global.fly"
+expression: combined_stdout_stderr
+---
+
+======== STDERR: ===========
+sort checking error:
+error: f was declared multiple times
+
+
