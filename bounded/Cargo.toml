@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 fly = { path = "../fly" }
+solver = { path = "../solver" }
 
 itertools = "0.10.5"
 thiserror = "1.0.40"
