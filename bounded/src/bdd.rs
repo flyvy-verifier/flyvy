@@ -4,6 +4,7 @@
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
 use biodivine_lib_bdd::*;
+use boolean_expression::BooleanExpression;
 use fly::{ouritertools::OurItertools, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -11,6 +12,8 @@ use thiserror::Error;
 
 /// Holds an ordering of all (relation, elements) pairs
 pub struct Context<'a> {
+    /// The signature that was used to construct `indices`
+    pub signature: &'a Signature,
     /// The universe bounds that were used to construct `indices`
     pub universe: &'a Universe,
 
@@ -62,6 +65,7 @@ impl Context<'_> {
         let vars = bdds.variables();
 
         Context {
+            signature,
             universe,
             mutables,
             indices,
@@ -415,6 +419,71 @@ fn term_to_element(
         | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
     };
     Ok(element)
+}
+
+/// Convert a `BDD` back into a `Term`.
+/// Returns the term and a map from (sort, element) pairs to the name of the variable.
+pub fn bdd_to_term<'a>(
+    bdd: &Bdd,
+    context: &Context<'a>,
+) -> (Term, HashMap<(&'a str, usize), String>) {
+    fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
+        let go = |term| to_term(term, vars_to_terms);
+        use BooleanExpression::*;
+        match term {
+            Const(b) => Term::Literal(b),
+            Variable(name) => vars_to_terms.get(&name).unwrap().clone(),
+            Not(term) => Term::UnaryOp(UOp::Not, Box::new(go(*term))),
+            And(a, b) => Term::NAryOp(NOp::And, vec![go(*a), go(*b)]),
+            Or(a, b) => Term::NAryOp(NOp::Or, vec![go(*a), go(*b)]),
+            // Bdd::to_boolean_expression never produces Xor, Imp, or Iff
+            Xor(..) | Imp(..) | Iff(..) => unreachable!(),
+        }
+    }
+
+    // Build a map from sort elements to Term variable names
+    let mut next_binding = 0;
+    let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
+    for (sort, bound) in context.universe {
+        for i in 0..*bound {
+            bindings.insert((sort, i), format!("${}", next_binding));
+            next_binding += 1;
+        }
+    }
+
+    // Build a map from BDD variable names to Terms
+    let mut vars_to_terms: HashMap<String, Term> = HashMap::new();
+    for (relation, map) in &context.indices {
+        for (elements, (i, _mutable)) in map {
+            let name = context.bdds.name_of(context.vars[*i]);
+            let args = context
+                .signature
+                .relations
+                .iter()
+                .find(|r| &r.name == relation)
+                .unwrap()
+                .args
+                .iter()
+                .zip(elements)
+                .map(|(sort, element)| match sort {
+                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), *element)].clone()),
+                    Sort::Bool => match element {
+                        0 => Term::Literal(false),
+                        1 => Term::Literal(true),
+                        _ => unreachable!(),
+                    },
+                });
+            let term = match args.len() {
+                0 => Term::Id(relation.to_string()),
+                _ => Term::App(relation.to_string(), 0, args.collect()),
+            };
+            vars_to_terms.insert(name, term);
+        }
+    }
+
+    // Convert the BDD to a Term
+    let term = to_term(bdd.to_boolean_expression(&context.bdds), &vars_to_terms);
+    (term, bindings)
 }
 
 #[cfg(test)]

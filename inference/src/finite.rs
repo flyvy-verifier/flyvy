@@ -4,7 +4,6 @@
 //! Infer an inductive invariant from the set of reachable states
 //! with small sort bounds.
 
-use biodivine_lib_bdd::boolean_expression::BooleanExpression;
 use bounded::bdd::*;
 use fly::{syntax::*, transitions::*};
 use solver::conf::SolverConf;
@@ -28,56 +27,14 @@ pub fn invariant(
     universe: HashMap<String, usize>,
     conf: &SolverConf,
 ) -> Result<Option<Term>, FiniteError> {
+    // Get the set of reachable states
     let (bdd, context) = match check(module, &universe, None, false) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
         Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(FiniteError::CheckerError(e)),
     };
-
-    // Build a map from sort elements to Term variable names
-    let mut next_binding = 0;
-    let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
-    for (sort, bound) in &universe {
-        for i in 0..*bound {
-            bindings.insert((sort, i), format!("${}", next_binding));
-            next_binding += 1;
-        }
-    }
-
-    // Build a map from BDD variable names to Terms
-    let mut vars_to_terms: HashMap<String, Term> = HashMap::new();
-    for (relation, map) in context.indices {
-        for (elements, (i, _mutable)) in map {
-            let name = context.bdds.name_of(context.vars[i]);
-            let args = module
-                .signature
-                .relations
-                .iter()
-                .find(|r| r.name == relation)
-                .unwrap()
-                .args
-                .iter()
-                .zip(elements)
-                .map(|(sort, element)| match sort {
-                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), element)].clone()),
-                    Sort::Bool => match element {
-                        0 => Term::Literal(false),
-                        1 => Term::Literal(true),
-                        _ => unreachable!(),
-                    },
-                });
-            let term = match args.len() {
-                0 => Term::Id(relation.to_string()),
-                _ => Term::App(relation.to_string(), 0, args.collect()),
-            };
-            vars_to_terms.insert(name, term);
-        }
-    }
-
-    // Convert the BDD to a Term
-    let ast = bdd.to_boolean_expression(&context.bdds);
-    let ast = to_term(ast, &vars_to_terms);
+    let (ast, bindings) = bdd_to_term(&bdd, &context);
 
     // Add not-equal clauses between same-sort elements
     let mut not_equals = vec![];
@@ -119,20 +76,6 @@ pub fn invariant(
     verify_destructured_module(conf, &destructured, &module.signature)
         .map_err(FiniteError::SolveError)?;
     Ok(Some(ast))
-}
-
-fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
-    let go = |term| to_term(term, vars_to_terms);
-    use BooleanExpression::*;
-    match term {
-        Const(b) => Term::Literal(b),
-        Variable(name) => vars_to_terms.get(&name).unwrap().clone(),
-        Not(term) => Term::UnaryOp(UOp::Not, Box::new(go(*term))),
-        And(a, b) => Term::NAryOp(NOp::And, vec![go(*a), go(*b)]),
-        Or(a, b) => Term::NAryOp(NOp::Or, vec![go(*a), go(*b)]),
-        // Bdd::to_boolean_expression never produces Xor, Imp, or Iff
-        Xor(..) | Imp(..) | Iff(..) => unreachable!(),
-    }
 }
 
 #[cfg(test)]
@@ -208,6 +151,8 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
             tee: None,
         };
 
-        panic!("{:?}", invariant(&module, universe, &conf)?);
+        println!("{:?}", invariant(&module, universe, &conf)?);
+
+        Ok(())
     }
 }
