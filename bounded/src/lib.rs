@@ -16,3 +16,4 @@
 pub mod bdd;
 pub mod sat;
 pub mod set;
+pub mod smt;
