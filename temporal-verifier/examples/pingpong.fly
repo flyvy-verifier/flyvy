@@ -1,0 +1,17 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+# TEST --all-solvers -- verify
+
+mutable ping_pending: bool
+mutable pong_pending: bool
+
+assume ping_pending & !pong_pending
+
+assume
+  always
+    (ping_pending & !ping_pending' & pong_pending') |
+    (pong_pending & !pong_pending' & ping_pending')
+
+
+assert always !(ping_pending & pong_pending)

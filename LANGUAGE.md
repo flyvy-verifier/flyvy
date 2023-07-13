@@ -6,6 +6,130 @@ the grammar, binding and scoping rules, and sort checking.
 flyvy is under active development, so this file may be out of date with respect
 to the implementation. Please file an issue if you notice any discrepancies.
 
+## A first example
+
+A flyvy module describes a system in first-order linear temporal logic. Here is
+a quick example.
+
+```
+mutable ping_pending: bool
+mutable pong_pending: bool
+
+assume ping_pending & !pong_pending
+
+assume
+  always
+    (ping_pending & !ping_pending' & pong_pending') |
+    (pong_pending & !pong_pending' & ping_pending')
+
+
+assert always !(ping_pending & pong_pending)
+```
+
+This flyvy program describes a system with two nodes that exchange messages back
+and forth between each other. When the first node sends a message, we call it a
+"ping". And we call the second node's message a "pong".
+
+The flyvy program models this system using two boolean variables `ping_pending`
+and `pong_pending`, which represent whether that message is currently in flight.
+These variables are `mutable` because they change over time during the execution
+of the system.
+
+The program next uses an `assume` statement to describe the initial conditions
+of the system. In this particular system, we've decided to make the initial
+state the one where a ping message is pending but no pong message is pending.
+
+Next, the program uses another `assume` statement to describe the possible
+transitions of the system. Note the use of the `always` temporal operator to say
+that "every step of the system satisfies...". Then, inside the `always`, the
+program describes a single step of the system as one of two choices: either
+there is a ping pending, which the second node receives and sends a pong
+response; or there is a pong pending, which the first node receives and sends a
+new ping.
+
+Notice the use of primes (`'`) to describe the state of a variable in the next
+step, while unprimed variables refer to the current value of the variable. So
+the term
+
+```
+ping_pending & !ping_pending' & pong_pending'
+```
+
+is true if the current value of `ping_pending` is true, the new value of
+`ping_pending` is false, and the new value of `pong_pending'` is true.
+
+Finally, the last line of the program asserts a safety property of the system:
+in every execution, it is always the case that at most one of `ping_pending` and
+`pong_pending` are true. In other words, it's never the case that both are true.
+
+We can ask flyvy to verify this safety property using the command
+
+```
+cargo run verify examples/pingpong.fly
+```
+
+which prints messages about building flyvy from source and then prints
+
+```
+verifies!
+```
+
+indicating that flyvy was able to prove that the safety property is indeed true
+in all reachable states of the system.
+
+Try editing the program to introduce a bug by replacing the line
+
+```
+ping_pending & !ping_pending' & pong_pending'
+```
+
+with the line
+
+```
+ping_pending & pong_pending'
+```
+
+The bug is that the new value of `ping_pending` is unconstrained, which means it
+is allowed to remain true, which means that after running this transition, both
+booleans could be true, violating the safety property.
+
+Make this change to `examples/pingpong.fly` and then rerun
+
+```
+cargo run verify examples/pingpong.fly
+```
+
+You will see that flyvy is able to find a "counterexample to induction"
+
+```
+verification errors:
+error: invariant is not inductive
+   ┌─ examples/pingpong.fly:17:1
+   │
+17 │ assert always !(ping_pending & pong_pending)
+   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     ping_pending = true
+     pong_pending = false
+```
+
+The counterexample is the "before" state. Flyvy is saying that after taking one
+step from this state, the system reaches a state that violates the safety property.
+
+You can now fix the bug by reverting your edit to `examples/pingpong.fly`.
+
+Taking a step back, this example illustrated a few key features of flyvy. A
+program describes the execution of a system by describe the evolution of its
+state in temporal logic. A formula without any temporal operators refers to the
+initial state. A formula with `always` says that the formula should be true in
+each state. The prime operator (`'`) allows referring to the contents of a
+variable in the next state. Flyvy's input language is expressive enough to allow
+arbitrary mixing of these temporal constructs, but you should be aware that some
+analyses flyvy performs place further restrictions on how temporal operators are
+used.
+
+
 ## Grammar
 
 A program is a single module. (In the future, multiple modules may be supported.)
