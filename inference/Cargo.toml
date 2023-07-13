@@ -17,3 +17,4 @@ rayon = "1.7.0"
 indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 cadical = "0.1.14"
 biodivine-lib-bdd = "0.5.1"
+thiserror = "1.0.40"

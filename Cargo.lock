@@ -600,6 +600,7 @@ dependencies = [
  "log",
  "rayon",
  "solver",
+ "thiserror",
  "verify",
 ]
 

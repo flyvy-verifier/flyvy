@@ -74,7 +74,7 @@ pub fn verify_destructured_module(
                     solver.save_tee();
                     if let Err(cex) = res {
                         Some(AssertionFailure {
-                            loc: span,
+                            loc: span.unwrap_or(assert.inv.span),
                             reason: FailureType::NotInductive,
                             error: cex,
                         })
@@ -102,7 +102,7 @@ pub fn verify_destructured_module(
         if let Ok(assert) =
             InvariantAssertion::for_assert(signature, inits, transitions, &axioms, proof)
         {
-            log::info!("checking invariant {}", &proof.safety.x);
+            log::info!("checking invariant {}", proof.safety.x);
             let res = check_invariant(&assert);
             if res.is_err() {
                 errors.fails.extend(res.err().unwrap())

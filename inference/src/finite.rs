@@ -6,18 +6,33 @@
 
 use biodivine_lib_bdd::boolean_expression::BooleanExpression;
 use bounded::bdd::*;
-use fly::syntax::*;
+use fly::{syntax::*, transitions::*};
+use solver::conf::SolverConf;
 use std::collections::HashMap;
+use thiserror::Error;
+use verify::{error::SolveError, module::verify_destructured_module};
+
+#[allow(missing_docs)]
+#[derive(Debug, Error)]
+pub enum FiniteError {
+    #[error("{0}")]
+    ExtractionError(ExtractionError),
+    #[error("{0}")]
+    CheckerError(CheckerError),
+    #[error("{0:?}")]
+    SolveError(SolveError),
+}
 
 pub fn invariant(
     module: &Module,
     universe: HashMap<String, usize>,
-) -> Result<Option<Term>, CheckerError> {
+    conf: &SolverConf,
+) -> Result<Option<Term>, FiniteError> {
     let (bdd, context) = match check(module, &universe, None, false) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
         Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
         Ok(CheckerAnswer::Unknown) => unreachable!(),
-        Err(e) => return Err(e),
+        Err(e) => return Err(FiniteError::CheckerError(e)),
     };
 
     // Build a map from sort elements to Term variable names
@@ -93,8 +108,14 @@ pub fn invariant(
         binders,
     };
 
-    println!("{}", ast);
-    todo!()
+    // Try to verify the term
+    let mut destructured = extract(module).map_err(FiniteError::ExtractionError)?;
+    assert_eq!(1, destructured.proofs.len());
+    destructured.proofs[0].invariants = vec![MaybeSpannedTerm::Term(ast.clone())];
+
+    verify_destructured_module(conf, &destructured, &module.signature)
+        .map_err(FiniteError::SolveError)?;
+    Ok(Some(ast))
 }
 
 fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
@@ -115,9 +136,10 @@ fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Te
 mod tests {
     use super::*;
     use fly::sorts::sort_check_and_infer;
+    use solver::{backends::GenericBackend, backends::SolverType, solver_path};
 
     #[test]
-    fn finite_lockserver() -> Result<(), CheckerError> {
+    fn finite_lockserver() -> Result<(), FiniteError> {
         let source = "
 sort node
 
@@ -178,9 +200,11 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
 
         let universe = HashMap::from([("node".to_string(), 2)]);
+        let conf = SolverConf {
+            backend: GenericBackend::new(SolverType::Z3, &solver_path("z3")),
+            tee: None,
+        };
 
-        println!("{:?}", invariant(&module, universe)?);
-
-        Ok(())
+        panic!("{:?}", invariant(&module, universe, &conf)?);
     }
 }
