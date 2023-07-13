@@ -18,7 +18,6 @@
 
 pub mod atoms;
 pub mod basics;
-pub mod finite;
 pub mod fixpoint;
 pub mod hashmap;
 pub mod houdini;
