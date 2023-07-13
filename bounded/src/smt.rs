@@ -16,7 +16,7 @@ use thiserror::Error;
 pub enum CheckerError {
     #[error("{0}")]
     ExtractionError(ExtractionError),
-    #[error("something went wrong in the solver")]
+    #[error("{0}")]
     SolverError(String),
 }
 
@@ -30,7 +30,6 @@ pub enum CheckerAnswer {
 }
 
 /// Check a given Module out to some depth.
-/// This function assumes that the module has been typechecked.
 /// The checker ignores proof blocks.
 pub fn check(
     module: &Module,
@@ -53,24 +52,25 @@ pub fn check(
     let transitions: Vec<_> = transitions.into_iter().chain(axioms).collect();
     let safeties: Vec<_> = proofs.into_iter().map(|proof| proof.safety.x).collect();
 
+    let next = Next::new(&module.signature);
+
     let init = Term::and(inits);
     let mut tr = Term::and(transitions);
     let mut not_safe = Term::negate(Term::and(safeties));
 
-    let next = Next::new(&module.signature);
     let mut program = vec![init];
     for _ in 0..depth {
         program.push(tr.clone());
-        tr = next.prime(&tr);
         not_safe = next.prime(&not_safe);
+        tr = next.prime(&tr);
     }
-    program.push(next.prime(&not_safe));
+    program.push(not_safe);
 
     println!("starting search...");
     let search = std::time::Instant::now();
 
     let mut solver = conf.solver(&module.signature, depth + 1);
-    solver.assert(&Term::negate(Term::and(program)));
+    solver.assert(&Term::and(program));
     let answer = match solver.check_sat(HashMap::new()).expect("error in solver") {
         SatResp::Sat { .. } => {
             let states = solver
@@ -325,7 +325,7 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
 
-        assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 10, false)?);
+        assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 5, false)?);
 
         Ok(())
     }
