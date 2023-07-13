@@ -53,7 +53,9 @@ cargo doc --document-private-items --no-deps --open
 ```
 
 The code is split into several top-level crates, which are listed in the sidebar
-of the documentation. The overall organization is the following:
+of the documentation. `cargo doc` opens the alphabetically first crate, which
+happens to be `bounded`, but you may want to start reading from the `fly` crate.
+The overall organization of crates is the following:
 
 There are three "core" crates:
 
