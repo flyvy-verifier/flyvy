@@ -331,7 +331,7 @@ impl Updr {
         let module = FOModule::new(m, false, false, false);
         self.backwards_reachable_states = Vec::new();
         for proof in &module.module.proofs {
-            for clause in term_to_cnf_clauses(&proof.safety) {
+            for clause in term_to_cnf_clauses(&proof.safety.x) {
                 self.backwards_reachable_states
                     .push(BackwardsReachableState {
                         id: self.backwards_reachable_states.len(),
@@ -403,7 +403,7 @@ impl Updr {
                         .module
                         .proofs
                         .iter()
-                        .any(|proof| &proof.safety == term)
+                        .any(|proof| &proof.safety.x == term)
                 {
                     terms.push(term.clone())
                 } else {

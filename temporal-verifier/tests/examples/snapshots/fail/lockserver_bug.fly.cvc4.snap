@@ -7,23 +7,33 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: invariant is not inductive
- = counter example:
-   lock_msg(@node_0) = false
-   lock_msg(@node_1) = true
-   grant_msg(@node_0) = false
-   grant_msg(@node_1) = true
-   unlock_msg(@node_0) = true
-   unlock_msg(@node_1) = true
-   holds_lock(@node_0) = true
-   holds_lock(@node_1) = false
-   server_holds_lock = true
+   ┌─ tests/examples/fail/lockserver_bug.fly:24:1
+   │
+24 │ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
+   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     lock_msg(@node_0) = false
+     lock_msg(@node_1) = true
+     grant_msg(@node_0) = false
+     grant_msg(@node_1) = true
+     unlock_msg(@node_0) = true
+     unlock_msg(@node_1) = true
+     holds_lock(@node_0) = true
+     holds_lock(@node_1) = false
+     server_holds_lock = true
 
 error: invariant is not inductive
- = counter example:
-   lock_msg(@node_0) = true
-   grant_msg(@node_0) = false
-   unlock_msg(@node_0) = true
-   holds_lock(@node_0) = true
-   server_holds_lock = true
+   ┌─ tests/examples/fail/lockserver_bug.fly:26:5
+   │
+26 │     invariant server_holds_lock
+   │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     lock_msg(@node_0) = true
+     grant_msg(@node_0) = false
+     unlock_msg(@node_0) = true
+     holds_lock(@node_0) = true
+     server_holds_lock = true
 
 

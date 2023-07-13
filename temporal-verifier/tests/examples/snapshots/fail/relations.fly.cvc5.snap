@@ -7,13 +7,18 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: init does not imply invariant
- = counter example:
-   p(@A_0) = false
-   p(@A_1) = true
-   q(@A_0,@A_0) = true
-   q(@A_0,@A_1) = true
-   q(@A_1,@A_0) = true
-   q(@A_1,@A_1) = true
-   a0 = @A_1
+   ┌─ tests/examples/fail/relations.fly:13:1
+   │
+13 │ assert always forall a:A, b:A. q(a, b) -> a = b
+   │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     p(@A_0) = false
+     p(@A_1) = true
+     q(@A_0,@A_0) = true
+     q(@A_0,@A_1) = true
+     q(@A_1,@A_0) = true
+     q(@A_1,@A_1) = true
+     a0 = @A_1
 
 

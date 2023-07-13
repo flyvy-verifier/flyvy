@@ -50,12 +50,13 @@ pub fn verify_destructured_module(
         {
             // check initiation (init implies invariant)
             let mut solver = conf.solver(signature, 1);
-            solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv)));
+            solver.comment_with(|| format!("init implies: {}", printer::term(&assert.inv.x)));
             // TODO: break this down per invariant, as with consecutions()
             let res = verify_term(&mut solver, assert.initiation().0);
             solver.save_tee();
             if let Err(cex) = res {
                 failures.push(AssertionFailure {
+                    loc: assert.inv.span,
                     reason: FailureType::InitInv,
                     error: cex,
                 });
@@ -66,13 +67,14 @@ pub fn verify_destructured_module(
             let new_failures = assert
                 .consecutions()
                 .into_par_iter()
-                .map(|t| {
+                .map(|(span, t)| {
                     let mut solver = conf.solver(signature, 2);
-                    solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv)));
+                    solver.comment_with(|| format!("inductive: {}", printer::term(&assert.inv.x)));
                     let res = verify_term(&mut solver, t.0);
                     solver.save_tee();
                     if let Err(cex) = res {
                         Some(AssertionFailure {
+                            loc: span,
                             reason: FailureType::NotInductive,
                             error: cex,
                         })
@@ -100,19 +102,20 @@ pub fn verify_destructured_module(
         if let Ok(assert) =
             InvariantAssertion::for_assert(signature, inits, transitions, &axioms, proof)
         {
-            log::info!("checking invariant {}", &proof.safety);
+            log::info!("checking invariant {}", &proof.safety.x);
             let res = check_invariant(&assert);
             if res.is_err() {
                 errors.fails.extend(res.err().unwrap())
             }
         } else {
             errors.push(AssertionFailure {
+                loc: proof.safety.span,
                 error: QueryError::Unknown("unsupported".to_string()),
                 reason: FailureType::Unsupported,
             })
         }
         // for future assertions, treat this assertion as an assumption
-        axioms.push(proof.safety.clone());
+        axioms.push(proof.safety.x.clone());
     }
 
     if errors.fails.is_empty() {

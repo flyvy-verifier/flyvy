@@ -596,7 +596,7 @@ pub fn translate(
 
     let inits = inits.into_iter().chain(axioms.clone()).collect();
     let transitions = transitions.into_iter().chain(axioms).collect();
-    let safeties = proofs.into_iter().map(|proof| proof.safety).collect();
+    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
 
     let normalize = |term: Term| -> Result<Ast, TranslationError> {
         // change uses of nullary relations from Term::Id(name) to Term::App(name, 0, vec![])

@@ -169,7 +169,7 @@ pub fn check(
 
     let inits = inits.into_iter().chain(axioms.clone()).collect();
     let transitions = transitions.into_iter().chain(axioms).collect();
-    let safeties = proofs.into_iter().map(|proof| proof.safety).collect();
+    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
 
     let mut context = Context::new(&module.signature, universe, depth);
 

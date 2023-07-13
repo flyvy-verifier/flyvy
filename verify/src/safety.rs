@@ -20,9 +20,9 @@ pub struct InvariantAssertion {
     /// The assumptions that were recognized as invariants
     pub assumed_inv: Term,
     /// The invariant given in the module
-    pub inv: Term,
+    pub inv: Spanned<Term>,
     /// The other invariants in the same proof as `inv`
-    pub proof_invs: Vec<Term>,
+    pub proof_invs: Vec<Spanned<Term>>,
 }
 
 /// An error that occured while constructing an invariant assertion
@@ -55,12 +55,12 @@ impl InvariantAssertion {
         })
     }
 
-    fn invariants(&self) -> impl Iterator<Item = &Term> {
+    fn invariants(&self) -> impl Iterator<Item = &Spanned<Term>> {
         vec![&self.inv].into_iter().chain(self.proof_invs.iter())
     }
 
     fn inductive_invariant(&self) -> Term {
-        Term::and(self.invariants().cloned())
+        Term::and(self.invariants().map(|t| t.x.clone()))
     }
 
     /// Convert this invariant to a first order term.
@@ -75,7 +75,7 @@ impl InvariantAssertion {
     /// invariants to be proven hold in the pre state. Each check shows that
     /// given these assumptions, one of the invariants (either the proof
     /// invariants or top-level assertion) holds in the post state.
-    pub fn consecutions(&self) -> Vec<FirstOrder> {
+    pub fn consecutions(&self) -> Vec<(Span, FirstOrder)> {
         let lhs = Term::and(vec![
             self.assumed_inv.clone(),
             self.next.clone(),
@@ -84,9 +84,10 @@ impl InvariantAssertion {
         ]);
         self.invariants()
             .map(|inv| {
-                log::info!("checking inductiveness of {}", inv);
-                let rhs = Next::new(&self.sig).prime(inv);
-                FirstOrder::new(Term::implies(lhs.clone(), rhs))
+                log::info!("checking inductiveness of {}", inv.x);
+                let rhs = Next::new(&self.sig).prime(&inv.x);
+                let consecution = FirstOrder::new(Term::implies(lhs.clone(), rhs));
+                (inv.span, consecution)
             })
             .collect()
     }

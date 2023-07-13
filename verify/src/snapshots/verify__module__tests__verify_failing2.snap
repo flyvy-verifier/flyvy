@@ -3,7 +3,10 @@ source: verify/src/module.rs
 expression: "z3_verify(&m).expect_err(\"verification should fail\")"
 ---
 fails:
-  - reason: InitInv
+  - loc:
+      start: 199
+      end: 218
+    reason: InitInv
     error:
       Sat:
         signature:

@@ -7,9 +7,14 @@ expression: combined_stdout_stderr
 ======== STDERR: ===========
 verification errors:
 error: init does not imply invariant
- = counter example:
-   p(@thread_0) = false
-   q = false
-   t0 = @thread_0
+   ┌─ tests/examples/fail/basic.fly:12:1
+   │
+12 │ assert always p(t0)
+   │ ^^^^^^^^^^^^^^^^^^^
+   │
+   = counter example:
+     p(@thread_0) = false
+     q = false
+     t0 = @thread_0
 
 

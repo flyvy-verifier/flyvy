@@ -42,9 +42,9 @@ pub enum HoudiniError {
 
 impl Houdini {
     fn new(conf: SolverConf, sig: &Signature, assert: InvariantAssertion) -> Self {
-        let mut invs = vec![assert.inv.clone()];
+        let mut invs = vec![assert.inv.x.clone()];
         // TODO: support customization of initial candidate invariants
-        invs.extend(assert.proof_invs.iter().cloned());
+        invs.extend(assert.proof_invs.iter().map(|inv| inv.x.clone()));
         log::info!("Running Houdini, candidate invariants are:");
         for p in &invs {
             log::info!("    {p}")
@@ -192,7 +192,7 @@ pub fn infer(
         }
         log::info!("");
     }
-    if state.invs.is_empty() || state.invs[0] != assert.inv {
+    if state.invs.is_empty() || state.invs[0] != assert.inv.x {
         return Err(HoudiniError::NotInductive);
     }
     Ok(state.invs)
@@ -225,7 +225,7 @@ fn infer_destructured_module(
             match res {
                 Ok(invs) => {
                     println!("# inferred invariant:");
-                    println!("assert always {}", &proof.safety);
+                    println!("assert always {}", &proof.safety.x);
                     println!("proof {{");
                     for inv in invs {
                         println!("  invariant {inv}");
@@ -234,14 +234,17 @@ fn infer_destructured_module(
                 }
                 Err(err) => errors.push(match err {
                     HoudiniError::InitInvUnknown(m) => AssertionFailure {
+                        loc: proof.safety.span,
                         reason: FailureType::InitInv,
                         error: QueryError::Unknown(m),
                     },
                     HoudiniError::InductiveInvUnknown(m) => AssertionFailure {
+                        loc: proof.safety.span,
                         reason: FailureType::NotInductive,
                         error: QueryError::Unknown(m),
                     },
                     HoudiniError::NotInductive => AssertionFailure {
+                        loc: proof.safety.span,
                         reason: FailureType::NotInductive,
                         // TODO(oded): better error reporting here
                         error: QueryError::Unknown("assertion not in fixed point".to_string()),
@@ -250,12 +253,13 @@ fn infer_destructured_module(
             }
         } else {
             errors.push(AssertionFailure {
+                loc: proof.safety.span,
                 error: QueryError::Unknown("unsupported".to_string()),
                 reason: FailureType::Unsupported,
             })
         }
         // for future assertions, treat this assertion as an assumption
-        axioms.push(proof.safety.clone());
+        axioms.push(proof.safety.x.clone());
     }
     if errors.fails.is_empty() {
         Ok(())

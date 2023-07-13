@@ -3,10 +3,10 @@
 
 //! Contains error types for verification.
 
-use codespan_reporting::diagnostic::Diagnostic;
-use serde::Serialize;
-
+use codespan_reporting::diagnostic::{Diagnostic, Label};
 use fly::semantics::Model;
+use fly::syntax::Span;
+use serde::Serialize;
 
 /// Ways that an file can fail to be verified.
 #[derive(Debug, Copy, Clone, Serialize, PartialEq, Eq)]
@@ -33,6 +33,8 @@ pub enum QueryError {
 /// Contains information needed to report a good error message.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AssertionFailure {
+    /// The location of the error
+    pub loc: Span,
     /// The reason for the error
     pub reason: FailureType,
     /// The symptom of the error
@@ -41,7 +43,7 @@ pub struct AssertionFailure {
 
 impl AssertionFailure {
     /// Convert the AssertionFailure struct to a Diagnostic that can be printed.
-    pub fn diagnostic<FileId>(&self) -> Diagnostic<FileId> {
+    pub fn diagnostic<FileId>(&self, file_id: FileId) -> Diagnostic<FileId> {
         let msg = match self.reason {
             FailureType::InitInv => "init does not imply invariant",
             FailureType::NotInductive => "invariant is not inductive",
@@ -49,6 +51,7 @@ impl AssertionFailure {
         };
         Diagnostic::error()
             .with_message(msg)
+            .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
                 QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),

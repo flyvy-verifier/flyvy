@@ -22,11 +22,13 @@ pub struct DestructuredModule {
 
 /// Contains the parts of assertions in the module.
 /// Checking an Assert means checking safety & invariants.
+// This is different than the Proof in syntax.rs because
+// safety has always been unwrapped from an Always
 pub struct Proof {
     /// The safety property to check
-    pub safety: Term,
+    pub safety: Spanned<Term>,
     /// The invariants that we want to verify prove the safety property
-    pub invariants: Vec<Term>,
+    pub invariants: Vec<Spanned<Term>>,
 }
 
 /// An error during transition system extraction
@@ -86,10 +88,14 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
             }
             assert => return Err(ExtractionError::AssertWithoutAlways(assert.clone())),
         };
-        let invariants = assert.invariants.iter().map(|s| s.x.clone()).collect();
+        let safety = Spanned {
+            x: safety,
+            span: assert.assert.span,
+        };
+        let invariants = assert.invariants.clone();
         for invariant in &invariants {
-            if FirstOrder::unrolling(invariant) != Some(0) {
-                return Err(ExtractionError::AnyFuture(invariant.clone()));
+            if FirstOrder::unrolling(&invariant.x) != Some(0) {
+                return Err(ExtractionError::AnyFuture(invariant.x.clone()));
             }
         }
         proofs.push(Proof { safety, invariants })
@@ -100,9 +106,9 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
         *term = next.normalize(term);
     }
     for proof in &mut proofs {
-        proof.safety = next.normalize(&proof.safety);
+        proof.safety.x = next.normalize(&proof.safety.x);
         for invariant in &mut proof.invariants {
-            *invariant = next.normalize(invariant);
+            invariant.x = next.normalize(&invariant.x);
         }
     }
 

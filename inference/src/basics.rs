@@ -232,7 +232,7 @@ impl FOModule {
 
                 if with_safety {
                     for a in &self.module.proofs {
-                        solver.assert(&a.safety);
+                        solver.assert(&a.safety.x);
                     }
                 }
 
@@ -544,7 +544,7 @@ impl FOModule {
     pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
         for s in self.module.proofs.iter() {
             if let TransCexResult::CTI(model, _) =
-                self.trans_cex(conf, hyp, &s.safety, false, true, None)
+                self.trans_cex(conf, hyp, &s.safety.x, false, true, None)
             {
                 return Some(model);
             }
@@ -555,7 +555,7 @@ impl FOModule {
 
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
         for s in self.module.proofs.iter() {
-            if let Some(model) = self.implies_cex(conf, hyp, &s.safety) {
+            if let Some(model) = self.implies_cex(conf, hyp, &s.safety.x) {
                 return Some(model);
             }
         }

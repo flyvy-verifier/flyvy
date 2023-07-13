@@ -476,7 +476,7 @@ impl App {
                         eprintln!("verification errors:");
 
                         for fail in &err.fails {
-                            let diagnostic = fail.diagnostic();
+                            let diagnostic = fail.diagnostic(());
                             terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
                                 .unwrap();
                         }
@@ -503,7 +503,7 @@ impl App {
                         eprintln!("verification errors:");
 
                         for fail in &err.fails {
-                            let diagnostic = fail.diagnostic();
+                            let diagnostic = fail.diagnostic(());
                             terminal::emit(&mut writer.lock(), &config, &files, &diagnostic)
                                 .unwrap();
                         }
