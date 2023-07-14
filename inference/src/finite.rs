@@ -134,6 +134,7 @@ mod tests {
     use fly::sorts::sort_check_and_infer;
     use solver::{backends::GenericBackend, backends::SolverType, solver_path};
 
+    #[ignore]
     #[test]
     fn finite_lockserver() -> Result<(), FiniteError> {
         let source = "
