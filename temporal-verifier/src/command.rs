@@ -316,7 +316,13 @@ enum Command {
         compress_traces: bool,
     },
     SatCheck(BoundedArgs),
-    BddCheck(BoundedArgs),
+    BddCheck {
+        #[command(flatten)]
+        bounded: BoundedArgs,
+        /// Whether to search from the unsafe states inward
+        #[arg(long)]
+        reversed: bool,
+    },
     SmtCheck {
         #[command(flatten)]
         bounded: BoundedArgs, // universe bounds are unused
@@ -347,7 +353,10 @@ impl Command {
                 ..
             } => file,
             Command::SatCheck(BoundedArgs { file, .. }) => file,
-            Command::BddCheck(BoundedArgs { file, .. }) => file,
+            Command::BddCheck {
+                bounded: BoundedArgs { file, .. },
+                ..
+            } => file,
             Command::SmtCheck {
                 bounded: BoundedArgs { file, .. },
                 ..
@@ -586,9 +595,13 @@ impl App {
                     Err(error) => eprintln!("{}", error),
                 }
             }
-            Command::BddCheck(bounded) => {
+            Command::BddCheck { bounded, reversed } => {
                 let univ = bounded.get_universe(&m.signature);
-                match bounded::bdd::check(
+                let check = match reversed {
+                    false => bounded::bdd::check,
+                    true => bounded::bdd::check_reversed,
+                };
+                match check(
                     &m,
                     &univ,
                     bounded.depth,
