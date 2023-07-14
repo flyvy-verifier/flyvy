@@ -4,12 +4,13 @@
 //! Infer an inductive invariant from the set of reachable states
 //! with small sort bounds.
 
+use biodivine_lib_bdd::*;
 use bounded::bdd::*;
 use fly::{syntax::*, transitions::*};
 use solver::conf::SolverConf;
 use std::collections::HashMap;
 use thiserror::Error;
-use verify::{error::SolveError, module::verify_destructured_module};
+use verify::module::verify_destructured_module;
 
 #[allow(missing_docs)]
 #[derive(Debug, Error)]
@@ -18,8 +19,8 @@ pub enum FiniteError {
     ExtractionError(ExtractionError),
     #[error("{0}")]
     CheckerError(CheckerError),
-    #[error("{0:?}")]
-    SolveError(SolveError),
+    #[error("could not verify inferred invariant")]
+    VerifyError,
 }
 
 pub fn invariant(
@@ -34,6 +35,9 @@ pub fn invariant(
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(FiniteError::CheckerError(e)),
     };
+
+    // Convert the Bdd to a Term
+    let bdd = underapproximate(bdd.not(), 10000, &context.bdds, false).not();
     let (ast, bindings) = bdd_to_term(&bdd, &context);
 
     // Add not-equal clauses between same-sort elements
@@ -73,9 +77,50 @@ pub fn invariant(
     assert_eq!(1, destructured.proofs.len());
     destructured.proofs[0].invariants = vec![MaybeSpannedTerm::Term(ast.clone())];
 
-    verify_destructured_module(conf, &destructured, &module.signature)
-        .map_err(FiniteError::SolveError)?;
+    println!("testing invariant: {}", ast);
+    if let Err(err) = verify_destructured_module(conf, &destructured, &module.signature) {
+        eprintln!("\nverification errors:");
+        for fail in &err.fails {
+            use verify::error::*;
+            match fail.reason {
+                FailureType::InitInv => eprintln!("not implied by init:"),
+                FailureType::NotInductive => eprintln!("not inductive:"),
+                FailureType::Unsupported => eprintln!("unsupported:"),
+            }
+            match &fail.error {
+                QueryError::Sat(model) => eprintln!("{}", model.fmt()),
+                QueryError::Unknown(message) => eprintln!("{}", message),
+            }
+        }
+        return Err(FiniteError::VerifyError);
+    }
     Ok(Some(ast))
+}
+
+// Produces a short Bdd that represents a subset of the original Bdd's states
+fn underapproximate(
+    mut bdd: Bdd,
+    num_clauses: usize,
+    bdds: &BddVariableSet,
+    minimize_clauses: bool,
+) -> Bdd {
+    let mut clauses = vec![];
+    for _ in 0..num_clauses {
+        let clause = match bdd.most_free_clause() {
+            Some(clause) => clause,
+            None => {
+                println!("underapproximate() ended with original bdd");
+                break;
+            }
+        };
+        if minimize_clauses {
+            todo!("minimize the clause (greedily or with MARCO?)")
+        }
+        let clause = bdds.mk_conjunctive_clause(&clause);
+        bdd = bdd.and(&clause.not());
+        clauses.push(clause);
+    }
+    clauses.into_iter().fold(bdds.mk_false(), |a, b| a.or(&b))
 }
 
 #[cfg(test)]
