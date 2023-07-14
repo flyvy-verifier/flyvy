@@ -82,24 +82,90 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(&self, valuation: &BddValuation, trace: &[Bdd], tr: &Bdd) {
+    fn print_counterexample(
+        &self,
+        valuation: &BddValuation,
+        trace: &[Bdd],
+        tr: &Bdd,
+        reversed: bool,
+    ) {
         let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
         valuations.resize(trace.len(), None);
-        *valuations.last_mut().unwrap() = Some(valuation.clone());
 
-        for i in (1..trace.len()).rev() {
-            let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
-                map.iter().map(|(elements, (v, _))| {
-                    let var = self.get(relation, elements, true);
-                    if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
-                        var
-                    } else {
-                        var.not()
+        // Choose which way to search
+        let (start, stop, incr, next): (
+            usize,
+            usize,
+            Box<dyn Fn(usize) -> usize>,
+            Box<dyn Fn(usize, &mut Vec<Option<BddValuation>>) -> Bdd>,
+        ) = match reversed {
+            false => (
+                trace.len() - 1,
+                0,
+                Box::new(|i| i - 1),
+                Box::new(|i, valuations| {
+                    let unprimed = trace[i - 1].clone();
+
+                    let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
+                        map.iter().map(|(elements, (v, _))| {
+                            let var = self.get(relation, elements, true);
+                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
+                                var
+                            } else {
+                                var.not()
+                            }
+                        })
+                    }));
+
+                    self.mk_and([unprimed, tr.clone(), primed])
+                        .exists(&self.vars[self.mutables..self.mutables * 2])
+                }),
+            ),
+            true => (
+                0,
+                trace.len() - 1,
+                Box::new(|i| i + 1),
+                Box::new(|i, valuations| {
+                    let unprimed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
+                        map.iter().map(|(elements, (v, _))| {
+                            let var = self.get(relation, elements, false);
+                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
+                                var
+                            } else {
+                                var.not()
+                            }
+                        })
+                    }));
+
+                    // traces is backwards relative to valuations
+                    let mut primed = trace[trace.len() - 1 - (i + 1)].clone();
+                    for j in (0..self.mutables).rev() {
+                        unsafe {
+                            primed.rename_variable(self.vars[j], self.vars[j + self.mutables]);
+                        }
                     }
-                })
-            }));
-            let bdd = self.mk_and([primed, trace[i - 1].clone(), tr.clone()]);
-            valuations[i - 1] = Some(bdd.sat_witness().unwrap());
+
+                    let mut out = self
+                        .mk_and([unprimed, tr.clone(), primed])
+                        .exists(&self.vars[0..self.mutables]);
+                    // but valuations expects the primed variables in the unprimed slots
+                    for j in 0..self.mutables {
+                        unsafe {
+                            out.rename_variable(self.vars[j + self.mutables], self.vars[j]);
+                        }
+                    }
+                    out
+                }),
+            ),
+        };
+
+        // Do the search
+        valuations[start] = Some(valuation.clone());
+        let mut i = start;
+        while i != stop {
+            let bdd = next(i, &mut valuations);
+            i = incr(i);
+            valuations[i] = Some(bdd.sat_witness().unwrap());
         }
 
         println!("found counterexample!");
@@ -307,7 +373,7 @@ fn check_internal<'a>(
 
     // Do the search
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(&valuation, &trace, &tr);
+        context.print_counterexample(&valuation, &trace, &tr, reversed);
         return Ok(CheckerAnswer::Counterexample(valuation));
     }
     let mut i = 0;
@@ -327,7 +393,7 @@ fn check_internal<'a>(
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(&valuation, &trace, &tr);
+            context.print_counterexample(&valuation, &trace, &tr, reversed);
             return Ok(CheckerAnswer::Counterexample(valuation));
         }
 
