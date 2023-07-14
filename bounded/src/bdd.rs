@@ -180,6 +180,27 @@ pub fn check<'a>(
     depth: Option<usize>,
     print_timing: bool,
 ) -> Result<CheckerAnswer<'a>, CheckerError> {
+    check_internal(module, universe, depth, print_timing, false)
+}
+
+/// The same as `check`, but instead of starting at `init` and going until it gets to `not_safe`,
+/// it starts at `not_safe` and goes backwards until it gets to `init`.
+pub fn check_reversed<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
+    depth: Option<usize>,
+    print_timing: bool,
+) -> Result<CheckerAnswer<'a>, CheckerError> {
+    check_internal(module, universe, depth, print_timing, true)
+}
+
+fn check_internal<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
+    depth: Option<usize>,
+    print_timing: bool,
+    reversed: bool,
+) -> Result<CheckerAnswer<'a>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -232,29 +253,66 @@ pub fn check<'a>(
     println!("starting search...");
     let time = std::time::Instant::now();
 
-    let mut trace = vec![init.clone()];
+    // Choose which way to search
+    let (mut trace, mut current, mut reachable, not_safe, update): (
+        Vec<Bdd>,
+        Bdd,
+        Bdd,
+        Bdd,
+        Box<dyn Fn(&mut Bdd, &Context)>,
+    ) = match reversed {
+        false => (
+            vec![init.clone()],
+            init.clone(),
+            init,
+            not_safe,
+            Box::new(|current: &mut Bdd, context: &Context| {
+                let unprimed = 0..context.mutables;
+                *current = Bdd::binary_op_with_exists(
+                    current,
+                    &tr,
+                    op_function::and,
+                    &context.vars[unprimed.clone()],
+                );
+                for i in unprimed {
+                    unsafe {
+                        current
+                            .rename_variable(context.vars[i + context.mutables], context.vars[i]);
+                    }
+                }
+            }),
+        ),
+        true => (
+            vec![not_safe.clone()],
+            not_safe.clone(),
+            not_safe,
+            init,
+            Box::new(|current: &mut Bdd, context: &Context| {
+                let primed = context.mutables..context.mutables * 2;
+                for i in primed.clone().into_iter().rev() {
+                    unsafe {
+                        current
+                            .rename_variable(context.vars[i - context.mutables], context.vars[i]);
+                    }
+                }
+                *current = Bdd::binary_op_with_exists(
+                    current,
+                    &tr,
+                    op_function::and,
+                    &context.vars[primed],
+                );
+            }),
+        ),
+    };
 
-    let mut current = init;
-    let mut reachable = context.mk_bool(false);
-
+    // Do the search
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
         context.print_counterexample(&valuation, &trace, &tr);
         return Ok(CheckerAnswer::Counterexample(valuation));
     }
     let mut i = 0;
     while depth.map(|d| i < d).unwrap_or(true) {
-        current = Bdd::binary_op_with_exists(
-            &current,
-            &tr,
-            op_function::and,
-            &context.vars[0..context.mutables],
-        );
-        for i in 0..context.mutables {
-            unsafe {
-                current.rename_variable(context.vars[i + context.mutables], context.vars[i]);
-            }
-        }
-
+        update(&mut current, &context);
         let new_reachable = reachable.or(&current);
 
         if print_timing {
