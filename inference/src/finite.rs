@@ -4,7 +4,6 @@
 //! Infer an inductive invariant from the set of reachable states
 //! with small sort bounds.
 
-use biodivine_lib_bdd::*;
 use bounded::bdd::*;
 use fly::{syntax::*, transitions::*};
 use solver::conf::SolverConf;
@@ -29,7 +28,7 @@ pub fn invariant(
     conf: &SolverConf,
 ) -> Result<Option<Term>, FiniteError> {
     // Get the set of reachable states
-    let (bdd, context) = match check(module, &universe, None, false) {
+    let (bdd, context) = match check_reversed(module, &universe, None, false) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
         Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
         Ok(CheckerAnswer::Unknown) => unreachable!(),
@@ -37,8 +36,7 @@ pub fn invariant(
     };
 
     // Convert the Bdd to a Term
-    let bdd = underapproximate(bdd.not(), 10000, &context.bdds, false).not();
-    let (ast, bindings) = bdd_to_term(&bdd, &context);
+    let (ast, bindings) = bdd_to_term(&bdd.not(), &context);
 
     // Add not-equal clauses between same-sort elements
     let mut not_equals = vec![];
@@ -102,39 +100,12 @@ pub fn invariant(
     Ok(Some(ast))
 }
 
-// Produces a short Bdd that represents a subset of the original Bdd's states
-fn underapproximate(
-    mut bdd: Bdd,
-    num_clauses: usize,
-    bdds: &BddVariableSet,
-    minimize_clauses: bool,
-) -> Bdd {
-    let mut clauses = vec![];
-    for _ in 0..num_clauses {
-        let clause = match bdd.most_free_clause() {
-            Some(clause) => clause,
-            None => {
-                println!("underapproximate() ended with original bdd");
-                break;
-            }
-        };
-        if minimize_clauses {
-            todo!("minimize the clause (greedily or with MARCO?)")
-        }
-        let clause = bdds.mk_conjunctive_clause(&clause);
-        bdd = bdd.and(&clause.not());
-        clauses.push(clause);
-    }
-    clauses.into_iter().fold(bdds.mk_false(), |a, b| a.or(&b))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use fly::sorts::sort_check_and_infer;
     use solver::{backends::GenericBackend, backends::SolverType, solver_path};
 
-    #[ignore]
     #[test]
     fn finite_lockserver() -> Result<(), FiniteError> {
         let source = "
