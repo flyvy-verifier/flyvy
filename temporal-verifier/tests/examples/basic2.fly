@@ -1,0 +1,10 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+mutable x: bool
+
+assume x
+
+assume always (x -> !x')
+
+assert always x

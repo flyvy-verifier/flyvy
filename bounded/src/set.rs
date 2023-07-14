@@ -1354,61 +1354,7 @@ mod tests {
 
     #[test]
     fn checker_set_translate_lockserver() -> Result<(), TranslationError> {
-        let source = "
-sort node
-
-mutable lock_msg(node): bool
-mutable grant_msg(node): bool
-mutable unlock_msg(node): bool
-mutable holds_lock(node): bool
-mutable server_holds_lock: bool
-
-# inits:
-assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
-    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
-
-# transitions:
-assume always
-    (exists n:node.
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) &
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) &
-        ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. server_holds_lock & lock_msg(n) &
-            !((server_holds_lock)') &
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) &
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) &
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) |
-    (exists n:node.
-        (forall N:node. grant_msg(n) &
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) &
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node.
-            ((unlock_msg(x0))') = unlock_msg(x0)) &
-            ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. holds_lock(n) &
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) &
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node.
-            ((grant_msg(x0))') = grant_msg(x0)) &
-            ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. unlock_msg(n) &
-            (((unlock_msg(N))') <-> unlock_msg(N) & N != n) &
-            ((server_holds_lock)')) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
-
-# safety:
-assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
-        ";
+        let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
@@ -1532,75 +1478,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
 
     #[test]
     fn checker_set_translate_lockserver_buggy() -> Result<(), TranslationError> {
-        // A buggy version of lockserv. See "here is the bug" below.
-        let source = "
-sort node
-
-mutable lock_msg(node): bool
-mutable grant_msg(node): bool
-mutable unlock_msg(node): bool
-mutable holds_lock(node): bool
-mutable server_holds_lock: bool
-
-# inits:
-assume (forall N:node. !lock_msg(N)) & (forall N:node. !grant_msg(N)) & (forall N:node.
-    !unlock_msg(N)) & (forall N:node. !holds_lock(N)) & (server_holds_lock)
-
-# transitions:
-assume always
-    (exists n:node.
-        (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n) &
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)) &
-        ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. server_holds_lock & lock_msg(n) &
-            !((server_holds_lock)') &
-            (((lock_msg(N))') <-> lock_msg(N) & N != n) &
-            (((grant_msg(N))') <-> grant_msg(N) | N = n)) &
-        (forall x0:node. ((unlock_msg(x0))') = unlock_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0))) |
-    (exists n:node.
-        (forall N:node. grant_msg(n) &
-            (((grant_msg(N))') <-> grant_msg(N) & N != n) &
-            (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node.
-            ((unlock_msg(x0))') = unlock_msg(x0)) &
-            ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. holds_lock(n) &
-            (((holds_lock(N))') <-> holds_lock(N) & N != n) &
-            (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node.
-            ((grant_msg(x0))') = grant_msg(x0)) &
-            ((server_holds_lock)') = server_holds_lock) |
-    (exists n:node.
-        (forall N:node. unlock_msg(n) &
-            ### here is the bug: we don't remove n from the unlock_msg relation
-            (((unlock_msg(N))') <-> unlock_msg(N)) &
-            ((server_holds_lock)')) &
-        (forall x0:node. ((lock_msg(x0))') = lock_msg(x0)) &
-        (forall x0:node. ((grant_msg(x0))') = grant_msg(x0)) &
-        (forall x0:node. ((holds_lock(x0))') = holds_lock(x0)))
-
-# safety:
-assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = N2)
-        ";
-
-        // To exploit this bug into a safety violation, you first need to have one node acquire and
-        // release the lock via the following 5 transitions:
-        // - send lock_msg, send grant, receive grant, send unlock, receive unlock
-        // then you need two nodes to both acquire the lock:
-        // - send lock_msg, send grant, receive grant (3 transitions)
-        // - receive unlock (1 transition, exploiting the fact that it was not removed)
-        // - send lock_msg, send grant, receive grant (3 transitions)
-        //
-        // In total, that's 5 + 3 + 1 + 3 = 12 transitions to exploit it.
-        //
-        // The test below asserts that interpret finds the bug at depth 12 but not at depth 11.
+        let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
@@ -1623,57 +1501,7 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
 
     #[test]
     fn checker_set_translate_consensus() -> Result<(), TranslationError> {
-        let source = "
-sort node
-sort quorum
-sort value
-
-# relations:
-immutable member(node, quorum): bool
-mutable vote_request_msg(node, node): bool
-mutable voted(node): bool
-mutable vote_msg(node, node): bool
-mutable votes(node, node): bool
-mutable leader(node): bool
-mutable decided(node, value): bool
-
-# init:
-assume (forall N1:node, N2:node. !vote_request_msg(N1, N2)) & (forall N:node. !voted(N)) &
-    (forall N1:node, N2:node. !vote_msg(N1, N2)) & (forall N1:node, N2:node. !votes(N1, N2)) &
-    (forall N1:node. !leader(N1)) & (forall N:node, V:value. !decided(N, V))
-
-# transitions:
-assume always (exists src:node, dst:node. (forall N1:node, N2:node. (vote_request_msg(N1, N2))' <->
-    vote_request_msg(N1, N2) | N1 = src & N2 = dst) & (forall x0:node. (voted(x0))' = voted(x0)) &
-    (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) &
-    (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists src:node, dst:node.
-    (forall N1:node, N2:node, N:node. !voted(src) & vote_request_msg(dst, src) & ((vote_msg(N1, N2))' <->
-    vote_msg(N1, N2) | N1 = src & N2 = dst) & ((voted(N))' <-> voted(N) | N = src) & (!(N1 = dst &
-    N2 = src) -> ((vote_request_msg(N1, N2))' <-> vote_request_msg(N1, N2)))) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node. (leader(x0))' = leader(x0)) & (forall x0:node,
-    x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, sender:node. (forall N1:node, N2:node.
-    vote_msg(sender, n) & ((votes(N1, N2))' <-> votes(N1, N2) | N1 = n & N2 = sender)) & (forall x0:node,
-    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
-    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node. (leader(x0))' =
-    leader(x0)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) | (exists n:node, q:quorum.
-    (forall N:node. (member(N, q) -> votes(n, N)) & ((leader(N))' <-> leader(N) | N = n)) & (forall x0:node,
-    x1:node. (vote_request_msg(x0, x1))' = vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0))
-    & (forall x0:node, x1:node. (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node.
-    (votes(x0, x1))' = votes(x0, x1)) & (forall x0:node, x1:value. (decided(x0, x1))' = decided(x0, x1))) |
-    (exists n:node, v:value. (forall V:value, N:node. leader(n) & !decided(n, V) & ((decided(N, V))' <->
-    decided(N, V) | N = n & V = v)) & (forall x0:node, x1:node. (vote_request_msg(x0, x1))' =
-    vote_request_msg(x0, x1)) & (forall x0:node. (voted(x0))' = voted(x0)) & (forall x0:node, x1:node.
-    (vote_msg(x0, x1))' = vote_msg(x0, x1)) & (forall x0:node, x1:node. (votes(x0, x1))' = votes(x0, x1)) &
-    (forall x0:node. (leader(x0))' = leader(x0)))
-
-# added by hand
-# axiom
-assume always (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
-
-# safety:
-assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & decided(N2, V2) -> V1 = V2)
-        ";
+        let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
@@ -1691,11 +1519,8 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
 
     #[test]
     fn checker_set_immutability() {
-        let source = "
-immutable r: bool
-assume r
-assert always r
-        ";
+        let source =
+            include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();

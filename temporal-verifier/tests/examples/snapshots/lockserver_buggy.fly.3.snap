@@ -1,0 +1,10 @@
+---
+source: temporal-verifier/tests/test_examples.rs
+description: "--name=3 -- smt-check --print-timing false '--depth=10' tests/examples/lockserver_buggy.fly"
+expression: combined_stdout_stderr
+---
+starting search...
+answer: safe up to depth 10 for given sort bounds
+
+======== STDERR: ===========
+
