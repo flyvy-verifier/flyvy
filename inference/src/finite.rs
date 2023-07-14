@@ -35,7 +35,6 @@ pub fn invariant(
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(FiniteError::CheckerError(e)),
     };
-    println!();
 
     // Convert the Bdd to a Term
     let bdd = underapproximate(bdd.not(), 10000, &context.bdds, false).not();
