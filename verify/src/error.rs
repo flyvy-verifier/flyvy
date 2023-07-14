@@ -54,8 +54,9 @@ impl AssertionFailure {
             .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
                 QueryError::Sat(models) => {
-                    let mut message = "counter example:\n".to_string();
-                    for model in models {
+                    let mut message = "counter example:".to_string();
+                    for (i, model) in models.iter().enumerate() {
+                        message.push_str(&format!("\nstate {}:\n", i));
                         message.push_str(&model.fmt());
                     }
                     message

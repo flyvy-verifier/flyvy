@@ -13,8 +13,14 @@ error: invariant is not inductive
    │     ^^^^^^^^^^^
    │
    = counter example:
+     state 0:
      x = true
      y = true
      z = true
+     
+     state 1:
+     x = true
+     y = true
+     z = false
 
 

@@ -13,6 +13,7 @@ error: init does not imply invariant
    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
+     state 0:
      p(@A_0) = false
      p(@A_1) = true
      q(@A_0,@A_0) = true
