@@ -589,6 +589,8 @@ dependencies = [
 name = "inference"
 version = "0.1.0"
 dependencies = [
+ "biodivine-lib-bdd",
+ "bounded",
  "cadical",
  "fly",
  "fxhash",
@@ -598,6 +600,7 @@ dependencies = [
  "log",
  "rayon",
  "solver",
+ "thiserror",
  "verify",
 ]
 

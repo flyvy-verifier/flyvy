@@ -4,20 +4,28 @@
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
 use biodivine_lib_bdd::*;
+use boolean_expression::BooleanExpression;
 use fly::{ouritertools::OurItertools, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
 
 /// Holds an ordering of all (relation, elements) pairs
-struct Context<'a> {
-    universe: &'a Universe,
+pub struct Context<'a> {
+    /// The signature that was used to construct `indices`
+    pub signature: &'a Signature,
+    /// The universe bounds that were used to construct `indices`
+    pub universe: &'a Universe,
 
-    mutables: usize,
-    indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
+    /// Number of two-state variables
+    pub mutables: usize,
+    /// Map from (relation, elements) to (index into vars, is mutable)
+    pub indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
 
-    bdds: BddVariableSet,
-    vars: Vec<BddVariable>,
+    /// Data used by the BDD library to build new BDDs
+    pub bdds: BddVariableSet,
+    /// Map from indices to BddVariable objects
+    pub vars: Vec<BddVariable>,
 }
 
 impl Context<'_> {
@@ -57,6 +65,7 @@ impl Context<'_> {
         let vars = bdds.variables();
 
         Context {
+            signature,
             universe,
             mutables,
             indices,
@@ -73,10 +82,10 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(&self, valuation: BddValuation, trace: &[Bdd], tr: &Bdd) {
+    fn print_counterexample(&self, valuation: &BddValuation, trace: &[Bdd], tr: &Bdd) {
         let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
         valuations.resize(trace.len(), None);
-        *valuations.last_mut().unwrap() = Some(valuation);
+        *valuations.last_mut().unwrap() = Some(valuation.clone());
 
         for i in (1..trace.len()).rev() {
             let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
@@ -129,14 +138,13 @@ impl Context<'_> {
 }
 
 /// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
+pub enum CheckerAnswer<'a> {
     /// The checker found a counterexample
-    Counterexample,
+    Counterexample(BddValuation),
     /// The checker did not find a counterexample
     Unknown,
     /// The checker found that the set of states stopped changing
-    Convergence,
+    Convergence(Bdd, Context<'a>),
 }
 
 #[allow(missing_docs)]
@@ -166,12 +174,12 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 /// This assumes that the module has been typechecked.
 /// Passing `None` for depth means to run until a counterexample is found.
 /// The checker ignores proof blocks.
-pub fn check(
-    module: &Module,
-    universe: &Universe,
+pub fn check<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer, CheckerError> {
+) -> Result<CheckerAnswer<'a>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -230,8 +238,8 @@ pub fn check(
     let mut reachable = current.clone();
 
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(valuation, &trace, &tr);
-        return Ok(CheckerAnswer::Counterexample);
+        context.print_counterexample(&valuation, &trace, &tr);
+        return Ok(CheckerAnswer::Counterexample(valuation));
     }
     let mut i = 0;
     while depth.map(|d| i < d).unwrap_or(true) {
@@ -254,15 +262,15 @@ pub fn check(
         }
 
         if reachable == new_reachable {
-            return Ok(CheckerAnswer::Convergence);
+            return Ok(CheckerAnswer::Convergence(reachable, context));
         } else {
             reachable = new_reachable;
         }
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(valuation, &trace, &tr);
-            return Ok(CheckerAnswer::Counterexample);
+            context.print_counterexample(&valuation, &trace, &tr);
+            return Ok(CheckerAnswer::Counterexample(valuation));
         }
 
         i += 1;
@@ -413,6 +421,71 @@ fn term_to_element(
     Ok(element)
 }
 
+/// Convert a `BDD` back into a `Term`.
+/// Returns the term and a map from (sort, element) pairs to the name of the variable.
+pub fn bdd_to_term<'a>(
+    bdd: &Bdd,
+    context: &Context<'a>,
+) -> (Term, HashMap<(&'a str, usize), String>) {
+    fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
+        let go = |term| to_term(term, vars_to_terms);
+        use BooleanExpression::*;
+        match term {
+            Const(b) => Term::Literal(b),
+            Variable(name) => vars_to_terms.get(&name).unwrap().clone(),
+            Not(term) => Term::UnaryOp(UOp::Not, Box::new(go(*term))),
+            And(a, b) => Term::NAryOp(NOp::And, vec![go(*a), go(*b)]),
+            Or(a, b) => Term::NAryOp(NOp::Or, vec![go(*a), go(*b)]),
+            // Bdd::to_boolean_expression never produces Xor, Imp, or Iff
+            Xor(..) | Imp(..) | Iff(..) => unreachable!(),
+        }
+    }
+
+    // Build a map from sort elements to Term variable names
+    let mut next_binding = 0;
+    let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
+    for (sort, bound) in context.universe {
+        for i in 0..*bound {
+            bindings.insert((sort, i), format!("${}", next_binding));
+            next_binding += 1;
+        }
+    }
+
+    // Build a map from BDD variable names to Terms
+    let mut vars_to_terms: HashMap<String, Term> = HashMap::new();
+    for (relation, map) in &context.indices {
+        for (elements, (i, _mutable)) in map {
+            let name = context.bdds.name_of(context.vars[*i]);
+            let args = context
+                .signature
+                .relations
+                .iter()
+                .find(|r| &r.name == relation)
+                .unwrap()
+                .args
+                .iter()
+                .zip(elements)
+                .map(|(sort, element)| match sort {
+                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), *element)].clone()),
+                    Sort::Bool => match element {
+                        0 => Term::Literal(false),
+                        1 => Term::Literal(true),
+                        _ => unreachable!(),
+                    },
+                });
+            let term = match args.len() {
+                0 => Term::Id(relation.to_string()),
+                _ => Term::App(relation.to_string(), 0, args.collect()),
+            };
+            vars_to_terms.insert(name, term);
+        }
+    }
+
+    // Convert the BDD to a Term
+    let term = to_term(bdd.to_boolean_expression(&context.bdds), &vars_to_terms);
+    (term, bindings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,14 +507,14 @@ assert always x
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([]);
 
-        assert_eq!(
+        assert!(matches!(
+            check(&module, &universe, Some(0), false)?,
             CheckerAnswer::Unknown,
-            check(&module, &universe, Some(0), false)?
-        );
-        assert_eq!(
-            CheckerAnswer::Counterexample,
-            check(&module, &universe, Some(1), false)?
-        );
+        ));
+        assert!(matches!(
+            check(&module, &universe, Some(1), false)?,
+            CheckerAnswer::Counterexample(_),
+        ));
 
         Ok(())
     }
@@ -508,10 +581,10 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         sort_check_and_infer(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
-        assert_eq!(
-            CheckerAnswer::Convergence,
-            check(&module, &universe, None, false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(..),
+        ));
 
         Ok(())
     }
@@ -579,12 +652,12 @@ assert always (forall N1:node, N2:node. holds_lock(N1) & holds_lock(N2) -> N1 = 
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&module, &universe, Some(12), false)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
         let bug = check(&module, &universe, None, false)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
 
         let too_short = check(&module, &universe, Some(11), false)?;
-        assert_eq!(CheckerAnswer::Unknown, too_short);
+        assert!(matches!(too_short, CheckerAnswer::Unknown));
 
         Ok(())
     }
@@ -652,10 +725,10 @@ assert always (forall N1:node, V1:value, N2:node, V2:value. decided(N1, V1) & de
             ("value".to_string(), 1),
         ]);
 
-        assert_eq!(
+        assert!(matches!(
+            check(&module, &universe, Some(0), false)?,
             CheckerAnswer::Unknown,
-            check(&module, &universe, Some(0), false)?
-        );
+        ));
 
         Ok(())
     }
@@ -670,10 +743,10 @@ assert always r
         let mut module = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
-        assert_eq!(
-            CheckerAnswer::Convergence,
-            check(&module, &universe, None, false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(..),
+        ));
         Ok(())
     }
 }

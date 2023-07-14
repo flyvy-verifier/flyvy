@@ -7,6 +7,7 @@ edition.workspace = true
 fly = { path = "../fly" }
 solver = { path = "../solver" }
 verify = { path = "../verify" }
+bounded = { path = "../bounded" }
 
 fxhash = "0.2.1"
 itertools = "0.10.5"
@@ -15,3 +16,5 @@ im = "15.1.0"
 rayon = "1.7.0"
 indexmap = { version = "1.9.3", features = ["rayon", "std"] }
 cadical = "0.1.14"
+biodivine-lib-bdd = "0.5.1"
+thiserror = "1.0.40"
