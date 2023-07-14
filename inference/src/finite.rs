@@ -90,8 +90,8 @@ pub fn invariant(
             }
             match &fail.error {
                 QueryError::Sat(models) => {
-                    eprintln!("counter example:");
-                    for model in models {
+                    for (i, model) in models.iter().enumerate() {
+                        eprintln!("state {}:", i);
                         eprintln!("{}", model.fmt());
                     }
                 }
