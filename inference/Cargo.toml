@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 fly = { path = "../fly" }
+smtlib = { path = "../smtlib" }
 solver = { path = "../solver" }
 verify = { path = "../verify" }
 bounded = { path = "../bounded" }

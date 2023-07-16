@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 
 use crate::quant::QuantifierConfig;
@@ -14,8 +14,8 @@ use fly::syntax::Term::*;
 use fly::syntax::*;
 use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
+use smtlib::proc::{SatResp, SmtPid, SolverError};
 use solver::conf::SolverConf;
-use solver::SatResp;
 
 pub enum TransCexResult {
     CTI(Model, Model),
@@ -137,6 +137,7 @@ pub struct FOModule {
     disj: bool,
     gradual: bool,
     minimal: bool,
+    solver_pids: Mutex<Vec<SmtPid>>,
 }
 
 impl FOModule {
@@ -147,6 +148,19 @@ impl FOModule {
             disj,
             gradual,
             minimal,
+            solver_pids: Mutex::new(vec![]),
+        }
+    }
+
+    fn add_pid(&self, pid: &SmtPid) {
+        let mut solver_pids = self.solver_pids.lock().unwrap();
+        solver_pids.push(pid.clone());
+    }
+
+    pub fn kill_all_solvers(&self) {
+        let mut pids = self.solver_pids.lock().unwrap();
+        for pid in pids.drain(..) {
+            pid.kill();
         }
     }
 
@@ -199,6 +213,12 @@ impl FOModule {
             check_transition[t_idx] = false;
             'inner: loop {
                 let mut solver = conf.solver(&self.signature, 2);
+                let pid = solver.pid();
+                self.add_pid(&pid);
+                if cancelled() {
+                    self.kill_all_solvers();
+                    return TransCexResult::Cancelled;
+                }
                 let mut assumptions = HashMap::new();
 
                 let mut prestate = vec![];
@@ -243,15 +263,9 @@ impl FOModule {
 
                 solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
 
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
-                let resp = solver.check_sat(assumptions).expect("error in solver");
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
+                let resp = solver.check_sat(assumptions);
                 match resp {
-                    SatResp::Sat => match solver.get_minimal_model() {
+                    Ok(SatResp::Sat) => match solver.get_minimal_model() {
                         Ok(states_vec) => {
                             let mut states = states_vec.into_iter();
                             let pre = states.next().unwrap();
@@ -273,12 +287,10 @@ impl FOModule {
                                 }
                             }
                         }
-                        _ => {
-                            unknown = true;
-                            break 'inner;
-                        }
+                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(e) => panic!("error in solver: {e}"),
                     },
-                    SatResp::Unsat => {
+                    Ok(SatResp::Unsat) => {
                         assert!(unsat_cores[t_idx].is_empty());
                         for ind in solver.get_unsat_core() {
                             if let Term::Id(s) = ind.0 {
@@ -287,10 +299,12 @@ impl FOModule {
                         }
                         break 'inner;
                     }
-                    SatResp::Unknown(_) => {
+                    Ok(SatResp::Unknown(_)) => {
                         unknown = true;
                         break 'inner;
                     }
+                    Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                    Err(e) => panic!("error in solver: {e}"),
                 }
                 solver.save_tee();
             }
@@ -364,11 +378,12 @@ impl FOModule {
         width: usize,
         depth: usize,
     ) -> Vec<Model> {
-        let mut samples = vec![];
         assert!(depth >= 1);
 
         let disj_trans = self.disj_trans();
         let state_term = state.to_term();
+        let mut samples = vec![];
+        let mut block_models = vec![vec![]; disj_trans.len()];
 
         let mut solver = conf.solver(&self.signature, 2);
         solver.assert(&state_term);
@@ -388,11 +403,14 @@ impl FOModule {
                 for t in &disj_trans[i] {
                     solver.assert(t);
                 }
+                for t in &block_models[i] {
+                    solver.assert(t);
+                }
 
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 match resp {
                     SatResp::Sat => {
-                        let mut states = solver.get_model();
+                        let mut states = solver.get_model().expect("could not get model");
                         assert_eq!(states.len(), 2);
 
                         new_sample = states.pop();
@@ -405,7 +423,7 @@ impl FOModule {
                 solver.pop();
 
                 if let Some(sample) = new_sample {
-                    solver.assert(&Term::negate(
+                    block_models[i].push(Term::negate(
                         Next::new(&self.signature).prime(&sample.to_term()),
                     ));
                     samples.push(sample);

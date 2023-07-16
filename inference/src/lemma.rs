@@ -948,6 +948,7 @@ where
                             let mut cancel_lock = cancel.write().unwrap();
                             *cancel_lock = true;
                         }
+                        fo.kill_all_solvers();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
                             if first_sat_lock.is_none() {
@@ -1308,8 +1309,11 @@ where
                 let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
                 match fo.trans_cex(conf, &term, &term[0], false, false, Some(&cancel)) {
                     TransCexResult::CTI(pre, post) => {
-                        let mut lock = cancel.write().unwrap();
-                        *lock = true;
+                        {
+                            let mut lock = cancel.write().unwrap();
+                            *lock = true;
+                        }
+                        fo.kill_all_solvers();
                         return Some((pre, post));
                     }
                     TransCexResult::UnsatCore(_) => {

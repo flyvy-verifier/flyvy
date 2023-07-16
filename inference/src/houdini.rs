@@ -74,7 +74,7 @@ impl Houdini {
             match resp {
                 SatResp::Sat => {
                     log::info!("        Got model");
-                    let states = solver.get_model();
+                    let states = solver.get_model().expect("could not get model");
                     assert_eq!(states.len(), 1);
                     // TODO(oded): make 0 and 1 special constants for this use
                     assert_eq!(states[0].eval(&self.init), 1);
@@ -123,7 +123,7 @@ impl Houdini {
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 if matches!(resp, SatResp::Sat) {
                     log::info!("        Got model");
-                    let states = solver.get_model();
+                    let states = solver.get_model().expect("could not get model");
                     assert_eq!(states.len(), 2);
                     // TODO(oded): make 0 and 1 special constants for their use as Booleans
                     assert_eq!(states[1].eval(q), 0);

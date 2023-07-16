@@ -600,6 +600,7 @@ dependencies = [
  "itertools",
  "log",
  "rayon",
+ "smtlib",
  "solver",
  "thiserror",
  "verify",
