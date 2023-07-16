@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Mutex, RwLock},
+    sync::RwLock,
 };
 
 use crate::quant::QuantifierConfig;
@@ -116,6 +116,40 @@ impl<'a> Core<'a> {
     }
 }
 
+/// Maintains a set of [`SmtPid`]'s which can be canceled whenever necessary.
+/// Composed of a `bool` which tracks whether the set has been canceled, followed by the
+/// [`SmtPid`]'s of the solvers it contains.
+pub struct SolverPids(RwLock<(bool, Vec<SmtPid>)>);
+
+impl SolverPids {
+    /// Create a new empty [`SolverPids`].
+    pub fn new() -> Self {
+        SolverPids(RwLock::new((false, vec![])))
+    }
+
+    /// Add the given [`SmtPid`] to the [`SolverPids`].
+    ///
+    /// Returns `true` if the [`SmtPid`] was added, or `false` if the [`SolverPids`] was already canceled.
+    pub fn add_pid(&self, pid: SmtPid) -> bool {
+        let mut pids = self.0.write().unwrap();
+        if pids.0 {
+            false
+        } else {
+            pids.1.push(pid);
+            true
+        }
+    }
+
+    /// Cancel all solvers added to this [`SolverPids`].
+    pub fn cancel(&self) {
+        let mut pids = self.0.write().unwrap();
+        pids.0 = true;
+        for pid in pids.1.drain(..) {
+            pid.kill();
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TermOrModel {
     Model(Model),
@@ -137,7 +171,6 @@ pub struct FOModule {
     disj: bool,
     gradual: bool,
     minimal: bool,
-    solver_pids: Mutex<Vec<SmtPid>>,
 }
 
 impl FOModule {
@@ -148,19 +181,6 @@ impl FOModule {
             disj,
             gradual,
             minimal,
-            solver_pids: Mutex::new(vec![]),
-        }
-    }
-
-    fn add_pid(&self, pid: &SmtPid) {
-        let mut solver_pids = self.solver_pids.lock().unwrap();
-        solver_pids.push(pid.clone());
-    }
-
-    pub fn kill_all_solvers(&self) {
-        let mut pids = self.solver_pids.lock().unwrap();
-        for pid in pids.drain(..) {
-            pid.kill();
         }
     }
 
@@ -191,13 +211,8 @@ impl FOModule {
         t: &Term,
         with_init: bool,
         with_safety: bool,
-        cancel: Option<&RwLock<bool>>,
+        solver_pids: Option<&SolverPids>,
     ) -> TransCexResult {
-        let cancelled = || match &cancel {
-            None => false,
-            Some(lock) => *lock.read().unwrap(),
-        };
-
         let mut core: Core = if self.gradual {
             Core::new(hyp, HashSet::new(), self.minimal)
         } else {
@@ -213,10 +228,7 @@ impl FOModule {
             check_transition[t_idx] = false;
             'inner: loop {
                 let mut solver = conf.solver(&self.signature, 2);
-                let pid = solver.pid();
-                self.add_pid(&pid);
-                if cancelled() {
-                    self.kill_all_solvers();
+                if solver_pids.is_some() && !solver_pids.unwrap().add_pid(solver.pid()) {
                     return TransCexResult::Cancelled;
                 }
                 let mut assumptions = HashMap::new();
