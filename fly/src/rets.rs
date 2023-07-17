@@ -3,8 +3,10 @@
 
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
+use crate::sorts::sort_of_term;
 use crate::syntax::*;
 use lazy_static::lazy_static;
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 lazy_static! {
@@ -28,6 +30,7 @@ impl Module {
             .filter(|r| r.sort != Sort::Bool)
             .cloned()
             .collect();
+        let sorts = self.signature.sorts.iter().cloned().collect();
 
         let mut axioms = vec![];
         for relation in &mut self.signature.relations {
@@ -96,11 +99,11 @@ impl Module {
         let mut to_quantify = vec![];
         for statement in &mut self.statements {
             match statement {
-                ThmStmt::Assume(term) => fix_term(term, &changed, &mut to_quantify),
+                ThmStmt::Assume(term) => fix_term(term, &changed, &sorts, &mut to_quantify),
                 ThmStmt::Assert(Proof { assert, invariants }) => {
-                    fix_term(&mut assert.x, &changed, &mut to_quantify);
+                    fix_term(&mut assert.x, &changed, &sorts, &mut to_quantify);
                     invariants.iter_mut().for_each(|invariant| {
-                        fix_term(&mut invariant.x, &changed, &mut to_quantify)
+                        fix_term(&mut invariant.x, &changed, &sorts, &mut to_quantify)
                     });
                 }
             }
@@ -119,8 +122,13 @@ struct ToBeQuantified {
     xs: Vec<Term>,
 }
 
-fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToBeQuantified>) {
-    let mut go = |term| fix_term(term, changed, to_quantify);
+fn fix_term(
+    term: &mut Term,
+    changed: &[RelationDecl],
+    sorts: &HashSet<String>,
+    to_quantify: &mut Vec<ToBeQuantified>,
+) {
+    let mut go = |term| fix_term(term, changed, sorts, to_quantify);
     match term {
         Term::App(r, p, xs) => {
             xs.iter_mut().for_each(go);
@@ -150,7 +158,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
         Term::Quantified { body, .. } => go(body),
         Term::Literal(_) | Term::Id(_) => {}
     }
-    if sort_of(term) == Sort::Bool {
+    if sort_of_term(term, sorts) == Some(Sort::Bool) {
         for ToBeQuantified {
             name,
             sort,
@@ -160,13 +168,12 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
         } in to_quantify.drain(..)
         {
             xs.push(Term::Id(name.clone()));
-            *term = Term::exists([Binder { name, sort }], Term::and([Term::App(r, p, xs), term.clone()]));
+            *term = Term::exists(
+                [Binder { name, sort }],
+                Term::and([Term::App(r, p, xs), term.clone()]),
+            );
         }
     }
-}
-
-fn sort_of(_term: &Term) -> Sort {
-    todo!()
 }
 
 #[cfg(test)]
@@ -189,7 +196,7 @@ assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
 assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:sort. exists t:sort. f(s, true, t) & t = s
+assume always forall s:sort. exists ___0:sort. f(s, true, ___0) & ___0 = s
         ";
 
         let mut module1 = parse(source1).unwrap();

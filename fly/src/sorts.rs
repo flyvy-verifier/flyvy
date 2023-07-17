@@ -222,6 +222,21 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
     Ok(())
 }
 
+/// Simple entry point to get the sort of a term. Does not infer any sorts.
+/// This can fail if not enough information is given, e.g. `Term::Id("x")`.
+pub fn sort_of_term(term: &Term, sorts: &HashSet<String>) -> Option<Sort> {
+    let mut context = Context {
+        sorts,
+        names: im::HashMap::new(),
+        vars: &mut UnificationTable::new(),
+    };
+
+    match context.sort_of_term(&mut term.clone()) {
+        Ok(AbstractSort::Known(sort)) => Some(sort),
+        _ => None,
+    }
+}
+
 /// Return whether every quantified variable in every term in the given fly
 /// module has a (non-empty) sort annotation.
 pub fn module_has_all_sort_annotations(module: &Module) -> bool {
