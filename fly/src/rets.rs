@@ -32,34 +32,40 @@ impl Module {
                 *all_args_new_alt.last_mut().unwrap() =
                     Term::Id(binders.last().unwrap().name.clone());
 
+                let at_least_one = Term::exists(
+                    [binders[relation.args.len()].clone()],
+                    Term::App(relation.name.clone(), 0, all_args_new.clone()),
+                );
+                let at_most_one = Term::forall(
+                    new_arg_twice.iter().cloned(),
+                    Term::implies(
+                        Term::and([
+                            Term::App(relation.name.clone(), 0, all_args_new),
+                            Term::App(relation.name.clone(), 0, all_args_new_alt),
+                        ]),
+                        Term::equals(
+                            Term::Id(new_arg_twice[0].name.clone()),
+                            Term::Id(new_arg_twice[1].name.clone()),
+                        ),
+                    ),
+                );
+
+                let at_least_one = match relation.args.len() {
+                    0 => at_least_one,
+                    _ => Term::forall(other_args.iter().cloned(), at_least_one),
+                };
+                let at_most_one = match relation.args.len() {
+                    0 => at_most_one,
+                    _ => Term::forall(other_args.iter().cloned(), at_most_one),
+                };
+
                 axioms.push(ThmStmt::Assume(Term::UnaryOp(
                     UOp::Always,
-                    Box::new(Term::forall(
-                        other_args.iter().cloned(),
-                        Term::exists(
-                            [binders[relation.args.len()].clone()],
-                            Term::App(relation.name.clone(), 0, all_args_new.clone()),
-                        ),
-                    )),
+                    Box::new(at_least_one),
                 )));
                 axioms.push(ThmStmt::Assume(Term::UnaryOp(
                     UOp::Always,
-                    Box::new(Term::forall(
-                        other_args.iter().cloned(),
-                        Term::forall(
-                            new_arg_twice.iter().cloned(),
-                            Term::implies(
-                                Term::and([
-                                    Term::App(relation.name.clone(), 0, all_args_new),
-                                    Term::App(relation.name.clone(), 0, all_args_new_alt),
-                                ]),
-                                Term::equals(
-                                    Term::Id(new_arg_twice[0].name.clone()),
-                                    Term::Id(new_arg_twice[1].name.clone()),
-                                ),
-                            ),
-                        ),
-                    )),
+                    Box::new(at_most_one),
                 )));
 
                 relation.args.push(relation.sort.clone());
