@@ -4,11 +4,31 @@
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
 use crate::syntax::*;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref ID: Mutex<usize> = Mutex::new(0);
+}
+
+fn new_id() -> String {
+    let mut id = ID.lock().unwrap();
+    *id += 1;
+    format!("___{}", id)
+}
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
     /// by adding an extra argument and axioms.
     pub fn convert_non_bool_relations(&mut self) {
+        let changed: Vec<_> = self
+            .signature
+            .relations
+            .iter()
+            .filter(|r| r.sort != Sort::Bool)
+            .cloned()
+            .collect();
+
         let mut axioms = vec![];
         for relation in &mut self.signature.relations {
             if relation.sort != Sort::Bool {
@@ -72,8 +92,81 @@ impl Module {
                 relation.sort = Sort::Bool;
             }
         }
+
+        let mut to_quantify = vec![];
+        for statement in &mut self.statements {
+            match statement {
+                ThmStmt::Assume(term) => fix_term(term, &changed, &mut to_quantify),
+                ThmStmt::Assert(Proof { assert, invariants }) => {
+                    fix_term(&mut assert.x, &changed, &mut to_quantify);
+                    invariants.iter_mut().for_each(|invariant| {
+                        fix_term(&mut invariant.x, &changed, &mut to_quantify)
+                    });
+                }
+            }
+        }
+        assert!(to_quantify.is_empty());
+
         self.statements.splice(0..0, axioms);
     }
+}
+
+struct ToBeQuantified {
+    name: String,
+    sort: Sort,
+    r: String,
+    p: usize,
+    xs: Vec<Term>,
+}
+
+fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToBeQuantified>) {
+    let mut go = |term| fix_term(term, changed, to_quantify);
+    match term {
+        Term::App(r, p, xs) => {
+            xs.iter_mut().for_each(go);
+            if let Some(c) = changed.iter().find(|c| r == &c.name) {
+                let name = new_id();
+                to_quantify.push(ToBeQuantified {
+                    name: name.clone(),
+                    sort: c.sort.clone(),
+                    r: r.to_string(),
+                    p: *p,
+                    xs: xs.to_vec(),
+                });
+                *term = Term::Id(name);
+            }
+        }
+        Term::UnaryOp(_, term) => go(term),
+        Term::BinOp(_, a, b) => {
+            go(a);
+            go(b);
+        }
+        Term::NAryOp(_, terms) => terms.iter_mut().for_each(go),
+        Term::Ite { cond, then, else_ } => {
+            go(cond);
+            go(then);
+            go(else_);
+        }
+        Term::Quantified { body, .. } => go(body),
+        Term::Literal(_) | Term::Id(_) => {}
+    }
+    if sort_of(term) == Sort::Bool {
+        for ToBeQuantified {
+            name,
+            sort,
+            r,
+            p,
+            mut xs,
+        } in to_quantify.drain(..)
+        {
+            xs.push(Term::Id(name.clone()));
+            *term = Term::exists([Binder { name, sort }], Term::and([Term::App(r, p, xs), term.clone()]));
+        }
+    }
+}
+
+fn sort_of(_term: &Term) -> Sort {
+    todo!()
 }
 
 #[cfg(test)]
@@ -85,6 +178,8 @@ mod tests {
         let source1 = "
 sort s
 mutable f(sort, bool): sort
+
+assume always forall s:sort. f(s, true) = s
         ";
         let source2 = "
 sort s
@@ -93,6 +188,8 @@ mutable f(sort, bool, sort): bool
 assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
 assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
+
+assume always forall s:sort. exists t:sort. f(s, true, t) & t = s
         ";
 
         let mut module1 = parse(source1).unwrap();
