@@ -18,6 +18,7 @@ pub mod defs;
 pub mod ouritertools;
 pub mod parser;
 pub mod printer;
+pub mod rets;
 pub mod semantics;
 pub mod sorts;
 pub mod syntax;
