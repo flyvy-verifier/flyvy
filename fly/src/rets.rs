@@ -122,10 +122,30 @@ struct ToBeQuantified {
 }
 
 fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToBeQuantified>) {
-    let mut go = |term| fix_term(term, changed, to_quantify);
+    // wraps term with an exists quantifier
+    let quantify = |term: &mut Term, to_quantify: &mut Vec<ToBeQuantified>| {
+        if !to_quantify.is_empty() {
+            let mut binders = vec![];
+            let mut clauses = vec![term.clone()];
+            for mut tbq in to_quantify.drain(..) {
+                tbq.xs.push(Term::Id(tbq.name.clone()));
+                binders.insert(
+                    0,
+                    Binder {
+                        name: tbq.name,
+                        sort: tbq.sort,
+                    },
+                );
+                clauses.insert(0, Term::App(tbq.r, tbq.p, tbq.xs));
+            }
+            *term = Term::exists(binders, Term::and(clauses));
+        }
+    };
+
     match term {
         Term::App(r, p, xs) => {
-            xs.iter_mut().for_each(go);
+            xs.iter_mut()
+                .for_each(|x| fix_term(x, changed, to_quantify));
             if let Some(c) = changed.iter().find(|c| r == &c.name) {
                 let name = new_id();
                 to_quantify.push(ToBeQuantified {
@@ -138,50 +158,37 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
                 *term = Term::Id(name);
             }
         }
-        Term::UnaryOp(_, term) => go(term),
+        Term::UnaryOp(
+            UOp::Prime | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
+            a,
+        ) => {
+            fix_term(a, changed, to_quantify);
+            quantify(a, to_quantify);
+        }
+        Term::UnaryOp(_, a) => fix_term(a, changed, to_quantify),
+        Term::BinOp(BinOp::Until | BinOp::Since, a, b) => {
+            fix_term(a, changed, to_quantify);
+            quantify(a, to_quantify);
+            fix_term(b, changed, to_quantify);
+            quantify(b, to_quantify);
+        }
         Term::BinOp(_, a, b) => {
-            go(a);
-            go(b);
+            fix_term(a, changed, to_quantify);
+            fix_term(b, changed, to_quantify);
         }
-        Term::NAryOp(_, terms) => terms.iter_mut().for_each(go),
+        Term::NAryOp(_, terms) => terms
+            .iter_mut()
+            .for_each(|term| fix_term(term, changed, to_quantify)),
         Term::Ite { cond, then, else_ } => {
-            go(cond);
-            go(then);
-            go(else_);
+            fix_term(cond, changed, to_quantify);
+            fix_term(then, changed, to_quantify);
+            fix_term(else_, changed, to_quantify);
         }
-        Term::Quantified { body, .. } => go(body),
+        Term::Quantified { body, .. } => {
+            fix_term(body, changed, to_quantify);
+            quantify(body, to_quantify);
+        }
         Term::Literal(_) | Term::Id(_) => {}
-    }
-
-    if term_is_bool(term) {
-        for ToBeQuantified {
-            name,
-            sort,
-            r,
-            p,
-            mut xs,
-        } in to_quantify.drain(..)
-        {
-            xs.push(Term::Id(name.clone()));
-            *term = Term::exists(
-                [Binder { name, sort }],
-                Term::and([Term::App(r, p, xs), term.clone()]),
-            );
-        }
-    }
-}
-
-fn term_is_bool(term: &Term) -> bool {
-    match term {
-        Term::Literal(_)
-        | Term::BinOp(..)
-        | Term::NAryOp(..)
-        | Term::Quantified { .. }
-        | Term::UnaryOp(
-            UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
-            _,
-        ) => true,
-        Term::Id(_) | Term::App(..) | Term::UnaryOp(UOp::Prime, _) | Term::Ite { .. } => false,
     }
 }
 
@@ -213,6 +220,6 @@ assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
 
         let module2 = parse(source2).unwrap();
 
-        assert_eq!(module1, module2);
+        assert_eq!(module2, module1);
     }
 }
