@@ -3,23 +3,12 @@
 
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
-use crate::semantics::Model;
 use crate::syntax::*;
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
     /// by adding an extra argument and axioms.
-    /// Returns a closure that can take a Model in the new Module and back-convert it to
-    /// a Model in the old Module.
-    pub fn convert_non_bool_relations(&mut self) -> Box<dyn Fn(&Model) -> Model> {
-        let old_relations: Vec<RelationDecl> = self
-            .signature
-            .relations
-            .iter()
-            .filter(|r| r.sort != Sort::Bool)
-            .cloned()
-            .collect();
-
+    pub fn convert_non_bool_relations(&mut self) {
         let mut axioms = vec![];
         for relation in &mut self.signature.relations {
             if relation.sort != Sort::Bool {
@@ -78,13 +67,7 @@ impl Module {
             }
         }
         self.statements.splice(0..0, axioms);
-
-        Box::new(move |model| back_convert_model(model, old_relations.clone()))
     }
-}
-
-fn back_convert_model(_model: &Model, _old_changed_relations: Vec<RelationDecl>) -> Model {
-    todo!()
 }
 
 #[cfg(test)]
@@ -92,7 +75,7 @@ mod tests {
     use crate::parser::parse;
 
     #[test]
-    fn non_bool_relations_conversion() {
+    fn non_bool_relations_module_conversion() {
         let source1 = "
 sort s
 mutable f(sort, bool): sort
@@ -107,7 +90,7 @@ assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
         ";
 
         let mut module1 = parse(source1).unwrap();
-        let _back_convert_model = module1.convert_non_bool_relations();
+        module1.convert_non_bool_relations();
 
         let module2 = parse(source2).unwrap();
 
