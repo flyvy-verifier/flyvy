@@ -22,6 +22,9 @@ pub enum FiniteError {
     VerifyError,
 }
 
+/// Try to find an invariant by getting the set of all backwards reachable states.
+/// Returns Ok(Some(inv)) if an invariant is found, or Ok(None) if a counterexample is found.
+/// If the invariant that is guessed does not work, it returns Err(VerifyError),
 pub fn invariant(
     module: &Module,
     universe: HashMap<String, usize>,

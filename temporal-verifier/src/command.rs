@@ -399,6 +399,12 @@ enum Command {
         #[command(flatten)]
         solver: SolverArgs,
     },
+    FiniteInfer {
+        #[command(flatten)]
+        bounded: BoundedArgs, // depth bound is unused
+        #[command(flatten)]
+        solver: SolverArgs,
+    },
 }
 
 impl InferCommand {
@@ -428,6 +434,10 @@ impl Command {
                 ..
             } => file,
             Command::SmtCheck {
+                bounded: BoundedArgs { file, .. },
+                ..
+            } => file,
+            Command::FiniteInfer {
                 bounded: BoundedArgs { file, .. },
                 ..
             } => file,
@@ -742,6 +752,18 @@ impl App {
                         println!("answer: safe up to depth {depth} for given sort bounds")
                     }
                     Err(error) => eprintln!("{error}"),
+                }
+            }
+            Command::FiniteInfer { bounded, solver } => {
+                match inference::finite::invariant(
+                    &m,
+                    bounded.get_universe(&m.signature),
+                    &solver.get_solver_conf(&file),
+                    bounded.print_timing.unwrap_or(true),
+                ) {
+                    Ok(Some(term)) => println!("found inductive invariant: {}", term),
+                    Ok(None) => println!("found a counterexample, no inductive invariant exists"),
+                    Err(error) => eprintln!("{}", error),
                 }
             }
         }
