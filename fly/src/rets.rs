@@ -143,6 +143,19 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
     };
 
     match term {
+        Term::Id(r) => {
+            if let Some(c) = changed.iter().find(|c| r == &c.name) {
+                let name = new_id();
+                to_quantify.push(ToBeQuantified {
+                    name: name.clone(),
+                    sort: c.sort.clone(),
+                    r: r.to_string(),
+                    p: 0,
+                    xs: vec![],
+                });
+                *term = Term::Id(name);
+            }
+        }
         Term::App(r, p, xs) => {
             xs.iter_mut()
                 .for_each(|x| fix_term(x, changed, to_quantify));
@@ -188,7 +201,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
             fix_term(body, changed, to_quantify);
             quantify(body, to_quantify);
         }
-        Term::Literal(_) | Term::Id(_) => {}
+        Term::Literal(_) => {}
     }
 }
 
