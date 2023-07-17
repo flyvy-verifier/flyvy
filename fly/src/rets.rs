@@ -3,10 +3,9 @@
 
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
-use crate::sorts::sort_of_term;
 use crate::syntax::*;
 use lazy_static::lazy_static;
-use std::collections::HashSet;
+
 use std::sync::Mutex;
 
 lazy_static! {
@@ -30,7 +29,6 @@ impl Module {
             .filter(|r| r.sort != Sort::Bool)
             .cloned()
             .collect();
-        let sorts = self.signature.sorts.iter().cloned().collect();
 
         let mut axioms = vec![];
         for relation in &mut self.signature.relations {
@@ -99,21 +97,22 @@ impl Module {
         let mut to_quantify = vec![];
         for statement in &mut self.statements {
             match statement {
-                ThmStmt::Assume(term) => fix_term(term, &changed, &sorts, &mut to_quantify),
+                ThmStmt::Assume(term) => fix_term(term, &changed, &mut to_quantify),
                 ThmStmt::Assert(Proof { assert, invariants }) => {
-                    fix_term(&mut assert.x, &changed, &sorts, &mut to_quantify);
+                    fix_term(&mut assert.x, &changed, &mut to_quantify);
                     invariants.iter_mut().for_each(|invariant| {
-                        fix_term(&mut invariant.x, &changed, &sorts, &mut to_quantify)
+                        fix_term(&mut invariant.x, &changed, &mut to_quantify)
                     });
                 }
             }
         }
-        assert!(to_quantify.is_empty());
+        assert!(to_quantify.is_empty(), "{:?}", to_quantify);
 
         self.statements.splice(0..0, axioms);
     }
 }
 
+#[derive(Debug)]
 struct ToBeQuantified {
     name: String,
     sort: Sort,
@@ -122,13 +121,8 @@ struct ToBeQuantified {
     xs: Vec<Term>,
 }
 
-fn fix_term(
-    term: &mut Term,
-    changed: &[RelationDecl],
-    sorts: &HashSet<String>,
-    to_quantify: &mut Vec<ToBeQuantified>,
-) {
-    let mut go = |term| fix_term(term, changed, sorts, to_quantify);
+fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToBeQuantified>) {
+    let mut go = |term| fix_term(term, changed, to_quantify);
     match term {
         Term::App(r, p, xs) => {
             xs.iter_mut().for_each(go);
@@ -158,7 +152,8 @@ fn fix_term(
         Term::Quantified { body, .. } => go(body),
         Term::Literal(_) | Term::Id(_) => {}
     }
-    if sort_of_term(term, sorts) == Some(Sort::Bool) {
+
+    if term_is_bool(term) {
         for ToBeQuantified {
             name,
             sort,
@@ -173,6 +168,20 @@ fn fix_term(
                 Term::and([Term::App(r, p, xs), term.clone()]),
             );
         }
+    }
+}
+
+fn term_is_bool(term: &Term) -> bool {
+    match term {
+        Term::Literal(_)
+        | Term::BinOp(..)
+        | Term::NAryOp(..)
+        | Term::Quantified { .. }
+        | Term::UnaryOp(
+            UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
+            _,
+        ) => true,
+        Term::Id(_) | Term::App(..) | Term::UnaryOp(UOp::Prime, _) | Term::Ite { .. } => false,
     }
 }
 
@@ -196,7 +205,7 @@ assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
 assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:sort. exists ___0:sort. f(s, true, ___0) & ___0 = s
+assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
         ";
 
         let mut module1 = parse(source1).unwrap();
