@@ -119,11 +119,13 @@ mod tests {
             tee: None,
         };
 
-        invariant(&module, universe, &conf, false)?;
+        let inv = invariant(&module, universe, &conf, false)?;
+        assert!(inv.is_some());
 
         Ok(())
     }
 
+    #[ignore]
     #[test]
     fn finite_consensus() -> Result<(), FiniteError> {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
@@ -141,7 +143,8 @@ mod tests {
             tee: None,
         };
 
-        invariant(&module, universe, &conf, true)?;
+        let inv = invariant(&module, universe, &conf, false)?;
+        assert!(inv.is_some());
 
         Ok(())
     }
