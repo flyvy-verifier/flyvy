@@ -332,10 +332,7 @@ impl FOModule {
             .reduce(|x, y| x.union(&y).cloned().collect())
             .unwrap();
 
-        log::debug!(
-            "Found UNSAT with {} formulas in prestate.",
-            unsat_core.len()
-        );
+        log::debug!("Found UNSAT with {} formulas in prestate.", core.len());
 
         if self.minimal {
             assert_eq!(unsat_core, core.participants);
