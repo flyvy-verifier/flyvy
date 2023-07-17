@@ -18,19 +18,17 @@ pub enum FiniteError {
     ExtractionError(ExtractionError),
     #[error("{0}")]
     CheckerError(CheckerError),
-    #[error("could not verify inferred invariant")]
-    VerifyError,
 }
 
 /// Try to find an invariant by getting the set of all backwards reachable states.
-/// Returns Ok(Some(inv)) if an invariant is found, or Ok(None) if a counterexample is found.
-/// If the invariant that is guessed does not work, it returns Err(VerifyError),
+/// Returns Some((inv, true)) if an invariant is found, or None if a counterexample is found.
+/// If the invariant that is guessed does not work, it returns Some((inv, false)).
 pub fn invariant(
     module: &Module,
     universe: HashMap<String, usize>,
     conf: &SolverConf,
     print_timing: bool,
-) -> Result<Option<Term>, FiniteError> {
+) -> Result<Option<(Term, bool)>, FiniteError> {
     // Get the set of reachable states
     let (bdd, context) = match check_reversed(module, &universe, None, print_timing) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
@@ -98,9 +96,10 @@ pub fn invariant(
                 QueryError::Unknown(message) => eprintln!("{}", message),
             }
         }
-        return Err(FiniteError::VerifyError);
+        Ok(Some((ast, false)))
+    } else {
+        Ok(Some((ast, true)))
     }
-    Ok(Some(ast))
 }
 
 #[cfg(test)]
@@ -122,33 +121,10 @@ mod tests {
             tee: None,
         };
 
-        let inv = invariant(&module, universe, &conf, false)?;
-        assert!(inv.is_some());
-
-        Ok(())
-    }
-
-    #[ignore]
-    #[test]
-    fn finite_consensus() -> Result<(), FiniteError> {
-        let source = include_str!("../../temporal-verifier/examples/consensus.fly");
-
-        let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
-
-        let universe = HashMap::from([
-            ("node".to_string(), 3),
-            ("quorum".to_string(), 3),
-            ("value".to_string(), 3),
-        ]);
-        let conf = SolverConf {
-            backend: GenericBackend::new(SolverType::Z3, &solver_path("z3")),
-            tee: None,
-        };
-
-        let inv = invariant(&module, universe, &conf, false)?;
-        assert!(inv.is_some());
-
-        Ok(())
+        match invariant(&module, universe, &conf, false)? {
+            Some((_, true)) => Ok(()),
+            Some((inv, false)) => panic!("invariant wasn't inductive: {}", inv),
+            None => panic!("counterexample found"),
+        }
     }
 }

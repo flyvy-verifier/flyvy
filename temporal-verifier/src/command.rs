@@ -761,7 +761,8 @@ impl App {
                     &solver.get_solver_conf(&file),
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(Some(term)) => println!("found inductive invariant: {}", term),
+                    Ok(Some((term, true))) => println!("found inductive invariant: {}", term),
+                    Ok(Some((term, false))) => eprintln!("invariant wasn't inductive: {}", term),
                     Ok(None) => println!("found a counterexample, no inductive invariant exists"),
                     Err(error) => eprintln!("{}", error),
                 }
