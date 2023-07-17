@@ -300,8 +300,7 @@ impl<B: Backend> Solver<B> {
                     return Ok(new_card + 1);
                 }
                 SatResp::Unknown(msg) => {
-                    // TODO: add a case to SolverError for unknown
-                    return Err(SolverError::UnexpectedClose(msg));
+                    return Err(SolverError::Unknown(msg));
                 }
             }
             prev_ind = Some(ind);

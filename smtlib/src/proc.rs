@@ -85,6 +85,9 @@ pub enum SolverError {
     /// I/O went wrong
     #[error("some I/O went wrong: {0}")]
     Io(#[from] io::Error),
+    /// Solver returned `unknown
+    #[error("solver returned unknown:\n{0}")]
+    Unknown(String),
     /// Solver returned an `(error ...)` response
     #[error("solver returned an error:\n{0}")]
     UnexpectedClose(String),
