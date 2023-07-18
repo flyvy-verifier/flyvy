@@ -122,7 +122,7 @@ fn fix_term(
         if !to_quantify.is_empty() {
             let mut binders = vec![];
             let mut clauses = vec![term.clone()];
-            for mut tbq in to_quantify.drain(..) {
+            for mut tbq in to_quantify.drain(..).rev() {
                 tbq.xs.push(Term::Id(tbq.name.clone()));
                 binders.insert(
                     0,
