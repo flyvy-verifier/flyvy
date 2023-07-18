@@ -316,6 +316,7 @@ fn check_internal<'a>(
     let translate = |term| {
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = fly::term::prime::Next::new(&module.signature).normalize(&term);
+        println!("{}\n", term);
         term_to_bdd(&term, &context, &HashMap::new())
     };
 

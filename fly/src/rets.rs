@@ -222,19 +222,19 @@ mod tests {
     fn non_bool_relations_module_conversion_basic() {
         let source1 = "
 sort s
-mutable f(sort, bool): sort
+mutable f(s, bool): s
 
-assume always forall s:sort. f(s, true) = s
+assume always forall s:s. f(s, true) = s
         ";
         let source2 = "
 sort s
-mutable f(sort, bool, sort): bool
+mutable f(s, bool, s): bool
 
-assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
-assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
+assume always forall __0:s, __1: bool. exists __2:s. f(__0, __1, __2)
+assume always forall __0:s, __1: bool. forall __2:s, __3:s.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
+assume always forall s:s. exists ___1:s. f(s, true, ___1) & ___1 = s
         ";
 
         let mut module1 = parse(source1).unwrap();
@@ -249,18 +249,44 @@ assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
     fn non_bool_relations_module_conversion_primes() {
         let source1 = "
 sort s
-mutable f(sort): sort
+mutable f(s): s
 
-assume always forall s:sort. (f(s))' = s
+assume always forall s:s. (f(s))' = s
         ";
         let source2 = "
 sort s
-mutable f(sort, sort): bool
+mutable f(s, s): bool
 
-assume always forall __0:sort. exists __1:sort. f(__0, __1)
-assume always forall __0:sort. forall __1:sort, __2:sort. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
+assume always forall __0:s. exists __1:s. f(__0, __1)
+assume always forall __0:s. forall __1:s, __2:s. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
 
-assume always forall s:sort. exists ___1:sort. (f(s, ___1))' & ___1' = s
+assume always forall s:s. exists ___1:s. (f(s, ___1))' & ___1' = s
+        ";
+
+        let mut module1 = parse(source1).unwrap();
+        module1.convert_non_bool_relations();
+
+        let module2 = parse(source2).unwrap();
+
+        assert_eq!(module2, module1);
+    }
+
+    #[test]
+    fn non_bool_relations_module_conversion_nested() {
+        let source1 = "
+sort s
+mutable f: s
+
+assume always forall s:s. f = s & (forall s:s. s=s)
+        ";
+        let source2 = "
+sort s
+mutable f(s): bool
+
+assume always exists __0:s. f(__0)
+assume always forall __0:s, __1:s. (f(__0) & f(__1)) -> (__0 = __1)
+
+assume always forall s:s. exists ___1:s. f(s, ___1) & ___1 = s & (forall s:s. s=s)
         ";
 
         let mut module1 = parse(source1).unwrap();
