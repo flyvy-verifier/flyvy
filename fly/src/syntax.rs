@@ -140,7 +140,7 @@ impl Term {
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
         }
-        Self::NAryOp(NOp::And, ts)
+        Self::NAryOp(NOp::And, ts).flatten_nary()
     }
 
     /// Smart constructor equivalent to the Or of an iterator of terms
@@ -155,7 +155,7 @@ impl Term {
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
         }
-        Self::NAryOp(NOp::Or, ts)
+        Self::NAryOp(NOp::Or, ts).flatten_nary()
     }
 
     /// Convenience function to create `lhs ==> rhs`

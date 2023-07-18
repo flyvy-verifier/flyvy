@@ -81,21 +81,22 @@ impl Module {
             }
         }
 
-        let mut to_quantify = vec![];
         let mut name = 0;
-        let mut go = |term: &mut Term| fix_term(term, &changed, &mut to_quantify, &mut name);
+        let mut go = |term: &mut Term| {
+            let to_quantify = fix_term(term, &changed, &mut name);
+            assert!(to_quantify.is_empty(), "{:?}", to_quantify);
+        };
         for statement in &mut self.statements {
             match statement {
                 ThmStmt::Assume(term) => go(term),
                 ThmStmt::Assert(Proof { assert, invariants }) => {
                     go(&mut assert.x);
-                    invariants
-                        .iter_mut()
-                        .for_each(|invariant| go(&mut invariant.x));
+                    for invariant in invariants {
+                        go(&mut invariant.x);
+                    }
                 }
             }
         }
-        assert!(to_quantify.is_empty(), "{:?}", to_quantify);
 
         self.statements.splice(0..0, axioms);
     }
@@ -111,18 +112,13 @@ struct ToBeQuantified {
     primes: usize,
 }
 
-fn fix_term(
-    term: &mut Term,
-    changed: &[RelationDecl],
-    to_quantify: &mut Vec<ToBeQuantified>,
-    name: &mut usize,
-) {
+fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<ToBeQuantified> {
     // wraps term with an exists quantifier
-    let quantify = |term: &mut Term, to_quantify: &mut Vec<ToBeQuantified>| {
+    let quantify = |term: &mut Term, to_quantify: Vec<ToBeQuantified>| {
         if !to_quantify.is_empty() {
             let mut binders = vec![];
             let mut clauses = vec![term.clone()];
-            for mut tbq in to_quantify.drain(..).rev() {
+            for mut tbq in to_quantify.into_iter().rev() {
                 tbq.xs.push(Term::Id(tbq.name.clone()));
                 binders.insert(
                     0,
@@ -143,10 +139,11 @@ fn fix_term(
 
     match term {
         Term::Id(r) => {
+            let mut out = vec![];
             if let Some(c) = changed.iter().find(|c| r == &c.name) {
                 *name += 1;
                 let name = format!("___{}", *name);
-                to_quantify.push(ToBeQuantified {
+                out.push(ToBeQuantified {
                     name: name.clone(),
                     sort: c.sort.clone(),
                     r: r.to_string(),
@@ -156,14 +153,17 @@ fn fix_term(
                 });
                 *term = Term::Id(name);
             }
+            out
         }
         Term::App(r, p, xs) => {
-            xs.iter_mut()
-                .for_each(|x| fix_term(x, changed, to_quantify, name));
+            let mut out = vec![];
+            for x in &mut *xs {
+                out.extend(fix_term(x, changed, name));
+            }
             if let Some(c) = changed.iter().find(|c| r == &c.name) {
                 *name += 1;
                 let name = format!("___{}", *name);
-                to_quantify.push(ToBeQuantified {
+                out.push(ToBeQuantified {
                     name: name.clone(),
                     sort: c.sort.clone(),
                     r: r.to_string(),
@@ -173,44 +173,55 @@ fn fix_term(
                 });
                 *term = Term::Id(name);
             }
+            out
         }
         Term::UnaryOp(UOp::Always | UOp::Eventually, a) => {
-            fix_term(a, changed, to_quantify, name);
+            let to_quantify = fix_term(a, changed, name);
             quantify(a, to_quantify);
+            vec![]
         }
-        Term::UnaryOp(UOp::Prime | UOp::Next, a) => {
-            let mut tq = vec![];
-            fix_term(a, changed, &mut tq, name);
-            to_quantify.extend(tq.into_iter().map(|tbq| ToBeQuantified {
+        Term::UnaryOp(UOp::Prime | UOp::Next, a) => fix_term(a, changed, name)
+            .into_iter()
+            .map(|tbq| ToBeQuantified {
                 primes: tbq.primes + 1,
                 ..tbq
-            }));
-        }
+            })
+            .collect(),
         Term::UnaryOp(UOp::Previously, _) => todo!(),
-        Term::UnaryOp(_, a) => fix_term(a, changed, to_quantify, name),
+        Term::UnaryOp(_, a) => fix_term(a, changed, name),
         Term::BinOp(BinOp::Until | BinOp::Since, a, b) => {
-            fix_term(a, changed, to_quantify, name);
+            let to_quantify = fix_term(a, changed, name);
             quantify(a, to_quantify);
-            fix_term(b, changed, to_quantify, name);
+            let to_quantify = fix_term(b, changed, name);
             quantify(b, to_quantify);
+            vec![]
         }
         Term::BinOp(_, a, b) => {
-            fix_term(a, changed, to_quantify, name);
-            fix_term(b, changed, to_quantify, name);
+            let mut out = vec![];
+            out.extend(fix_term(a, changed, name));
+            out.extend(fix_term(b, changed, name));
+            out
         }
-        Term::NAryOp(_, terms) => terms
-            .iter_mut()
-            .for_each(|term| fix_term(term, changed, to_quantify, name)),
+        Term::NAryOp(_, terms) => {
+            let mut out = vec![];
+            for term in terms {
+                out.extend(fix_term(term, changed, name));
+            }
+            out
+        }
         Term::Ite { cond, then, else_ } => {
-            fix_term(cond, changed, to_quantify, name);
-            fix_term(then, changed, to_quantify, name);
-            fix_term(else_, changed, to_quantify, name);
+            let mut out = vec![];
+            out.extend(fix_term(cond, changed, name));
+            out.extend(fix_term(then, changed, name));
+            out.extend(fix_term(else_, changed, name));
+            out
         }
         Term::Quantified { body, .. } => {
-            fix_term(body, changed, to_quantify, name);
+            let to_quantify = fix_term(body, changed, name);
             quantify(body, to_quantify);
+            vec![]
         }
-        Term::Literal(_) => {}
+        Term::Literal(_) => vec![],
     }
 }
 
@@ -286,7 +297,7 @@ mutable f(s): bool
 assume always exists __0:s. f(__0)
 assume always forall __0:s, __1:s. (f(__0) & f(__1)) -> (__0 = __1)
 
-assume always forall s:s. exists ___1:s. f(s, ___1) & ___1 = s & (forall s:s. s=s)
+assume always forall s:s. exists ___1:s. f(___1) & ___1 = s & forall s:s. s=s
         ";
 
         let mut module1 = parse(source1).unwrap();
