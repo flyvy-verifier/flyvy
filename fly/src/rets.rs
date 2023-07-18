@@ -4,7 +4,6 @@
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
 use crate::syntax::*;
-use crate::term::prime::Next;
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
@@ -84,10 +83,7 @@ impl Module {
 
         let mut to_quantify = vec![];
         let mut name = 0;
-        let mut go = |term: &mut Term| {
-            *term = Next::new(&self.signature).normalize(term);
-            fix_term(term, &changed, &mut to_quantify, &mut name);
-        };
+        let mut go = |term: &mut Term| fix_term(term, &changed, &mut to_quantify, &mut name);
         for statement in &mut self.statements {
             match statement {
                 ThmStmt::Assume(term) => go(term),
