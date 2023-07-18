@@ -108,6 +108,7 @@ struct ToBeQuantified {
     r: String,
     p: usize,
     xs: Vec<Term>,
+    primes: usize,
 }
 
 fn fix_term(
@@ -130,7 +131,11 @@ fn fix_term(
                         sort: tbq.sort,
                     },
                 );
-                clauses.insert(0, Term::App(tbq.r, tbq.p, tbq.xs));
+                let mut clause = Term::App(tbq.r, tbq.p, tbq.xs);
+                for _ in 0..tbq.primes {
+                    clause = Term::UnaryOp(UOp::Prime, Box::new(clause));
+                }
+                clauses.insert(0, clause);
             }
             *term = Term::exists(binders, Term::and(clauses));
         }
@@ -147,6 +152,7 @@ fn fix_term(
                     r: r.to_string(),
                     p: 0,
                     xs: vec![],
+                    primes: 0,
                 });
                 *term = Term::Id(name);
             }
@@ -163,6 +169,7 @@ fn fix_term(
                     r: r.to_string(),
                     p: *p,
                     xs: xs.to_vec(),
+                    primes: 0,
                 });
                 *term = Term::Id(name);
             }
@@ -171,6 +178,15 @@ fn fix_term(
             fix_term(a, changed, to_quantify, name);
             quantify(a, to_quantify);
         }
+        Term::UnaryOp(UOp::Prime | UOp::Next, a) => {
+            let mut tq = vec![];
+            fix_term(a, changed, &mut tq, name);
+            to_quantify.extend(tq.into_iter().map(|tbq| ToBeQuantified {
+                primes: tbq.primes + 1,
+                ..tbq
+            }));
+        }
+        Term::UnaryOp(UOp::Previously, _) => todo!(),
         Term::UnaryOp(_, a) => fix_term(a, changed, to_quantify, name),
         Term::BinOp(BinOp::Until | BinOp::Since, a, b) => {
             fix_term(a, changed, to_quantify, name);
@@ -233,18 +249,18 @@ assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
     fn non_bool_relations_module_conversion_primes() {
         let source1 = "
 sort s
-mutable f: sort
+mutable f(sort): sort
 
-assume always forall s:sort. f' = s
+assume always forall s:sort. (f(s))' = s
         ";
         let source2 = "
 sort s
-mutable f(sort): bool
+mutable f(sort, sort): bool
 
-assume always exists __0:sort. f(__0)
-assume always forall __0:sort, __1:sort. (f(__0) & f(__1)) -> (__0 = __1)
+assume always forall __0:sort. exists __1:sort. f(__0, __1)
+assume always forall __0:sort. forall __1:sort, __2:sort. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
 
-assume always forall s:sort. exists ___1:sort. f'(___1) & ___1 = s
+assume always forall s:sort. exists ___1:sort. (f(s, ___1))' & ___1' = s
         ";
 
         let mut module1 = parse(source1).unwrap();
