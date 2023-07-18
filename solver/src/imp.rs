@@ -300,7 +300,7 @@ impl<B: Backend> Solver<B> {
                     return Ok(new_card + 1);
                 }
                 SatResp::Unknown(msg) => {
-                    return Err(SolverError::Unknown(msg));
+                    return Err(SolverError::CouldNotMinimize(msg));
                 }
             }
             prev_ind = Some(ind);

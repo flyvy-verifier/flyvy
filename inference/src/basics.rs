@@ -297,7 +297,7 @@ impl FOModule {
                             }
                         }
                         Err(SolverError::Killed) => return TransCexResult::Cancelled,
-                        Err(SolverError::Unknown(_)) => (),
+                        Err(SolverError::CouldNotMinimize(_)) => (),
                         Err(e) => panic!("error in solver: {e}"),
                     },
                     Ok(SatResp::Unsat) => {
@@ -319,7 +319,7 @@ impl FOModule {
                         break 'inner;
                     }
                     Err(SolverError::Killed) => return TransCexResult::Cancelled,
-                    Ok(SatResp::Unknown(_)) | Err(SolverError::Unknown(_)) => (),
+                    Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
                     Err(e) => panic!("error in solver: {e}"),
                 }
                 solver.save_tee();
