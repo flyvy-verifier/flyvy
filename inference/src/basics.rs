@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Mutex, RwLock},
+    sync::Mutex,
 };
 
 use crate::quant::QuantifierConfig;
@@ -128,19 +128,19 @@ impl<'a> Core<'a> {
 /// Maintains a set of [`SmtPid`]'s which can be canceled whenever necessary.
 /// Composed of a `bool` which tracks whether the set has been canceled, followed by the
 /// [`SmtPid`]'s of the solvers it contains.
-pub struct SolverPids(RwLock<(bool, Vec<SmtPid>)>);
+pub struct SolverPids(Mutex<(bool, Vec<SmtPid>)>);
 
 impl SolverPids {
     /// Create a new empty [`SolverPids`].
     pub fn new() -> Self {
-        SolverPids(RwLock::new((false, vec![])))
+        SolverPids(Mutex::new((false, vec![])))
     }
 
     /// Add the given [`SmtPid`] to the [`SolverPids`].
     ///
     /// Returns `true` if the [`SmtPid`] was added, or `false` if the [`SolverPids`] was already canceled.
     pub fn add_pid(&self, pid: SmtPid) -> bool {
-        let mut pids = self.0.write().unwrap();
+        let mut pids = self.0.lock().unwrap();
         if pids.0 {
             false
         } else {
@@ -151,7 +151,7 @@ impl SolverPids {
 
     /// Cancel all solvers added to this [`SolverPids`].
     pub fn cancel(&self) {
-        let mut pids = self.0.write().unwrap();
+        let mut pids = self.0.lock().unwrap();
         pids.0 = true;
         for pid in pids.1.drain(..) {
             pid.kill();
