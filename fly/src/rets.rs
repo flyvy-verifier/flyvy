@@ -4,6 +4,7 @@
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
 use crate::syntax::*;
+use crate::term::prime::Next;
 use lazy_static::lazy_static;
 
 use std::sync::Mutex;
@@ -95,14 +96,18 @@ impl Module {
         }
 
         let mut to_quantify = vec![];
+        let mut go = |term: &mut Term| {
+            *term = Next::new(&self.signature).normalize(term);
+            fix_term(term, &changed, &mut to_quantify);
+        };
         for statement in &mut self.statements {
             match statement {
-                ThmStmt::Assume(term) => fix_term(term, &changed, &mut to_quantify),
+                ThmStmt::Assume(term) => go(term),
                 ThmStmt::Assert(Proof { assert, invariants }) => {
-                    fix_term(&mut assert.x, &changed, &mut to_quantify);
-                    invariants.iter_mut().for_each(|invariant| {
-                        fix_term(&mut invariant.x, &changed, &mut to_quantify)
-                    });
+                    go(&mut assert.x);
+                    invariants
+                        .iter_mut()
+                        .for_each(|invariant| go(&mut invariant.x));
                 }
             }
         }
@@ -212,7 +217,7 @@ mod tests {
 sort s
 mutable f(sort, bool): sort
 
-assume always forall s:sort. (f(s, true))' = s
+assume always forall s:sort. f(s, true) = s
         ";
         let source2 = "
 sort s
@@ -222,7 +227,33 @@ assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
 assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1' = s
+assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
+        ";
+
+        let mut module1 = parse(source1).unwrap();
+        module1.convert_non_bool_relations();
+
+        let module2 = parse(source2).unwrap();
+
+        assert_eq!(module2, module1);
+    }
+
+    #[test]
+    fn non_bool_relations_module_conversion_primes() {
+        let source1 = "
+sort s
+mutable f: sort
+
+assume always forall s:sort. f' = s
+        ";
+        let source2 = "
+sort s
+mutable f(sort): bool
+
+assume always exists __0:sort. f(__0)
+assume always forall __0:sort, __1:sort. (f(__0) & f(__1)) -> (__0 = __1)
+
+assume always forall s:sort. exists ___1:sort. f'(___1) & ___1 = s
         ";
 
         let mut module1 = parse(source1).unwrap();
