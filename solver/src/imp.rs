@@ -221,21 +221,22 @@ impl<B: Backend> Solver<B> {
         r
     }
 
-    fn get_fo_model(&mut self, typ: TimeType, start: Instant) -> FOModel {
-        let model = self.proc.get_model().expect("could not get model");
+    fn get_fo_model(&mut self, typ: TimeType, start: Instant) -> Result<FOModel, SolverError> {
+        let model = self.proc.get_model()?;
         fly::timing::elapsed(typ, start);
-        self.backend
-            .parse(&self.signature, self.n_states, &self.indicators, &model)
+        Ok(self
+            .backend
+            .parse(&self.signature, self.n_states, &self.indicators, &model))
     }
 
     /// After a sat response to check_sat or check_sat_assuming, produce a trace
     /// of models, one per state. Each model interprets all of the symbols in
     /// the signature.
-    pub fn get_model(&mut self) -> Vec<Model> {
+    pub fn get_model(&mut self) -> Result<Vec<Model>, SolverError> {
         self.last_assumptions = None;
         let start = fly::timing::start();
-        let fo_model = self.get_fo_model(TimeType::GetModel, start);
-        fo_model.into_trace(&self.signature, self.n_states)
+        let fo_model = self.get_fo_model(TimeType::GetModel, start)?;
+        Ok(fo_model.into_trace(&self.signature, self.n_states))
     }
 
     /// Construct an assertion that enforces `univ` has max cardinality `card`.
@@ -299,8 +300,7 @@ impl<B: Backend> Solver<B> {
                     return Ok(new_card + 1);
                 }
                 SatResp::Unknown(msg) => {
-                    // TODO: add a case to SolverError for unknown
-                    return Err(SolverError::UnexpectedClose(msg));
+                    return Err(SolverError::CouldNotMinimize(msg));
                 }
             }
             prev_ind = Some(ind);
@@ -314,7 +314,11 @@ impl<B: Backend> Solver<B> {
     ///
     /// Returns true on success and adds indicators to `indicators` to enforce
     /// the cardinality `card`.
-    fn is_valid_max_card(&mut self, card: usize, indicators: &mut Vec<Term>) -> bool {
+    fn is_valid_max_card(
+        &mut self,
+        card: usize,
+        indicators: &mut Vec<Term>,
+    ) -> Result<bool, SolverError> {
         let mut new_indicators = vec![];
         let sorts = self.signature.sorts.clone();
         for sort in &sorts {
@@ -326,15 +330,14 @@ impl<B: Backend> Solver<B> {
             .chain(new_indicators.iter())
             .map(sexp::term)
             .collect::<Vec<_>>();
-        let r = self.proc.check_sat_assuming(&assumptions);
+        let r = self.proc.check_sat_assuming(&assumptions)?;
         match r {
-            Ok(SatResp::Sat) => {
+            SatResp::Sat => {
                 indicators.extend(new_indicators);
-                true
+                Ok(true)
             }
-            Ok(SatResp::Unsat) => false,
-            Ok(SatResp::Unknown(msg)) => panic!("could not check card {card}: {msg}"),
-            Err(err) => panic!("error checking card: {err}"),
+            SatResp::Unsat => Ok(false),
+            SatResp::Unknown(msg) => panic!("could not check card {card}: {msg}"),
         }
     }
 
@@ -342,13 +345,13 @@ impl<B: Backend> Solver<B> {
     /// where all universes are at `card` in size.
     ///
     /// Returns the cardinality `card` and adds indicators to enforce this cardinality to `indicators`.
-    fn get_min_max_card(&mut self, indicators: &mut Vec<Term>) -> usize {
+    fn get_min_max_card(&mut self, indicators: &mut Vec<Term>) -> Result<usize, SolverError> {
         if self.signature.sorts.is_empty() {
-            return 0;
+            return Ok(0);
         }
         for card in 1..100 {
-            if self.is_valid_max_card(card, indicators) {
-                return card;
+            if self.is_valid_max_card(card, indicators)? {
+                return Ok(card);
             }
         }
         panic!("max cardinality got too high");
@@ -377,7 +380,7 @@ impl<B: Backend> Solver<B> {
             .map(|(ind, val)| if val { ind } else { Term::negate(ind) })
             .sorted()
             .collect::<Vec<_>>();
-        let max_card = self.get_min_max_card(&mut indicators);
+        let max_card = self.get_min_max_card(&mut indicators)?;
         // Minimize each sort in turn, greedily in the order of the signature.
         //
         // (This does not produce a global optimum but the search process is
@@ -388,7 +391,7 @@ impl<B: Backend> Solver<B> {
                 self.minimize_card(max_card, &mut indicators, &sort)?;
             }
         }
-        let model = self.get_fo_model(TimeType::GetMinimalModel, start);
+        let model = self.get_fo_model(TimeType::GetMinimalModel, start)?;
         Ok(model.into_trace(&self.signature, self.n_states))
     }
 

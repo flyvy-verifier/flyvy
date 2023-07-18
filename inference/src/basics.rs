@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::RwLock,
+    sync::Mutex,
 };
 
 use crate::quant::QuantifierConfig;
@@ -14,8 +14,8 @@ use fly::syntax::Term::*;
 use fly::syntax::*;
 use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
+use smtlib::proc::{SatResp, SmtPid, SolverError};
 use solver::conf::SolverConf;
-use solver::SatResp;
 
 pub enum TransCexResult {
     CTI(Model, Model),
@@ -46,15 +46,24 @@ impl<'a> Core<'a> {
         }
     }
 
-    fn add_counter_model(&mut self, counter_model: Model) -> bool {
+    fn add_counter_model(
+        &mut self,
+        counter_model: Model,
+        check_first: Option<&HashSet<usize>>,
+    ) -> bool {
         // We assume that the new counter-model satisfies all previous formulas.
         for &p_idx in &self.participants {
             assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
         }
 
-        let new_participant = (0..self.formulas.len()).find(|i| {
-            !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
-        });
+        let new_participant = check_first
+            .unwrap_or(&HashSet::new())
+            .iter()
+            .cloned()
+            .chain(0..self.formulas.len())
+            .find(|i| {
+                !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
+            });
 
         match new_participant {
             Some(p_idx) => {
@@ -113,6 +122,40 @@ impl<'a> Core<'a> {
 
     fn len(&self) -> usize {
         self.participants.len()
+    }
+}
+
+/// Maintains a set of [`SmtPid`]'s which can be canceled whenever necessary.
+/// Composed of a `bool` which tracks whether the set has been canceled, followed by the
+/// [`SmtPid`]'s of the solvers it contains.
+pub struct SolverPids(Mutex<(bool, Vec<SmtPid>)>);
+
+impl SolverPids {
+    /// Create a new empty [`SolverPids`].
+    pub fn new() -> Self {
+        SolverPids(Mutex::new((false, vec![])))
+    }
+
+    /// Add the given [`SmtPid`] to the [`SolverPids`].
+    ///
+    /// Returns `true` if the [`SmtPid`] was added, or `false` if the [`SolverPids`] was already canceled.
+    pub fn add_pid(&self, pid: SmtPid) -> bool {
+        let mut pids = self.0.lock().unwrap();
+        if pids.0 {
+            false
+        } else {
+            pids.1.push(pid);
+            true
+        }
+    }
+
+    /// Cancel all solvers added to this [`SolverPids`].
+    pub fn cancel(&self) {
+        let mut pids = self.0.lock().unwrap();
+        pids.0 = true;
+        for pid in pids.1.drain(..) {
+            pid.kill();
+        }
     }
 }
 
@@ -177,28 +220,24 @@ impl FOModule {
         t: &Term,
         with_init: bool,
         with_safety: bool,
-        cancel: Option<&RwLock<bool>>,
+        solver_pids: Option<&SolverPids>,
     ) -> TransCexResult {
-        let cancelled = || match &cancel {
-            None => false,
-            Some(lock) => *lock.read().unwrap(),
-        };
-
-        let mut core: Core = if self.gradual {
-            Core::new(hyp, HashSet::new(), self.minimal)
-        } else {
-            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
-        };
-
         let transitions = self.disj_trans();
-        let mut check_transition: Vec<bool> = vec![true; transitions.len()];
-        let mut unsat_cores: Vec<HashSet<usize>> = vec![HashSet::new(); transitions.len()];
-        let mut unknown = false;
+        let mut separate_cores: Vec<Option<HashSet<usize>>> = vec![None; transitions.len()];
+        let mut unsat_core = HashSet::new();
 
-        while let Some(t_idx) = (0..transitions.len()).find(|i| check_transition[*i]) {
-            check_transition[t_idx] = false;
+        for t_idx in 0..transitions.len() {
+            let mut core: Core = if self.gradual {
+                Core::new(hyp, HashSet::new(), self.minimal)
+            } else {
+                Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+            };
+
             'inner: loop {
                 let mut solver = conf.solver(&self.signature, 2);
+                if solver_pids.is_some() && !solver_pids.unwrap().add_pid(solver.pid()) {
+                    return TransCexResult::Cancelled;
+                }
                 let mut assumptions = HashMap::new();
 
                 let mut prestate = vec![];
@@ -243,77 +282,64 @@ impl FOModule {
 
                 solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
 
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
-                let resp = solver.check_sat(assumptions).expect("error in solver");
-                if cancelled() {
-                    return TransCexResult::Cancelled;
-                }
+                let resp = solver.check_sat(assumptions);
                 match resp {
-                    SatResp::Sat => match solver.get_minimal_model() {
+                    Ok(SatResp::Sat) => match solver.get_minimal_model() {
                         Ok(states_vec) => {
                             let mut states = states_vec.into_iter();
                             let pre = states.next().unwrap();
                             let post = states.next().unwrap();
                             assert_eq!(states.next(), None);
 
-                            if !core.add_counter_model(pre.clone()) {
+                            if !core.add_counter_model(pre.clone(), Some(&unsat_core)) {
                                 log::debug!("Found SAT with {} formulas in prestate.", core.len());
                                 return TransCexResult::CTI(pre, post);
                             }
-
-                            for i in 0..transitions.len() {
-                                if i != t_idx
-                                    && !check_transition[i]
-                                    && !unsat_cores[i].is_subset(&core.participants)
-                                {
-                                    check_transition[i] = true;
-                                    unsat_cores[i] = HashSet::new();
-                                }
-                            }
                         }
-                        _ => {
-                            unknown = true;
-                            break 'inner;
-                        }
+                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(SolverError::CouldNotMinimize(_)) => (),
+                        Err(e) => panic!("error in solver: {e}"),
                     },
-                    SatResp::Unsat => {
-                        assert!(unsat_cores[t_idx].is_empty());
+                    Ok(SatResp::Unsat) => {
+                        assert!(separate_cores[t_idx].is_none());
+                        let mut my_core = HashSet::new();
                         for ind in solver.get_unsat_core() {
                             if let Term::Id(s) = ind.0 {
-                                unsat_cores[t_idx].insert(s[6..].parse().unwrap());
+                                let ind = s[6..].parse::<usize>().unwrap();
+                                my_core.insert(ind);
+                                unsat_core.insert(ind);
                             }
                         }
+
+                        if self.minimal {
+                            assert_eq!(my_core, core.participants);
+                        }
+
+                        separate_cores[t_idx] = Some(my_core);
                         break 'inner;
                     }
-                    SatResp::Unknown(_) => {
-                        unknown = true;
-                        break 'inner;
-                    }
+                    Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                    Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
+                    Err(e) => panic!("error in solver: {e}"),
                 }
                 solver.save_tee();
             }
         }
 
-        if unknown {
+        if separate_cores.iter().any(|core| core.is_none()) {
             log::debug!("Found unknown.");
             return TransCexResult::Unknown;
         }
 
-        let unsat_core = unsat_cores
-            .into_iter()
-            .reduce(|x, y| x.union(&y).cloned().collect())
-            .unwrap();
-
+        let core_sizes = separate_cores
+            .iter()
+            .map(|core| core.as_ref().unwrap().len())
+            .collect_vec();
         log::debug!(
-            "Found UNSAT with {} formulas in prestate.",
-            unsat_core.len()
+            "Found UNSAT with {} formulas in core (by transition: {:?})",
+            unsat_core.len(),
+            core_sizes
         );
-
-        if self.minimal {
-            assert_eq!(unsat_core, core.participants);
-        }
 
         TransCexResult::UnsatCore(unsat_core)
     }
@@ -343,7 +369,7 @@ impl FOModule {
                         .expect("solver error while minimizing");
                     assert_eq!(states.len(), 1);
 
-                    if !core.add_counter_model(states[0].clone()) {
+                    if !core.add_counter_model(states[0].clone(), None) {
                         solver.save_tee();
                         return Some(states.pop().unwrap());
                     }
@@ -364,56 +390,55 @@ impl FOModule {
         width: usize,
         depth: usize,
     ) -> Vec<Model> {
-        let mut samples = vec![];
         assert!(depth >= 1);
 
-        let disj_trans = self.disj_trans();
+        let transitions = self.disj_trans();
         let state_term = state.to_term();
+        let samples = Mutex::new(vec![]);
+        let solver_pids = SolverPids::new();
 
-        let mut solver = conf.solver(&self.signature, 2);
-        solver.assert(&state_term);
-        for a in &self.module.axioms {
-            solver.assert(&Next::new(&self.signature).prime(a));
-        }
+        transitions.into_par_iter().for_each(|transition| {
+            let mut solver = conf.solver(&self.signature, 2);
+            solver_pids.add_pid(solver.pid());
+            solver.assert(&state_term);
+            for a in &self.module.axioms {
+                solver.assert(&Next::new(&self.signature).prime(a));
+            }
+            for t in transition {
+                solver.assert(t);
+            }
 
-        let mut unblocked_trans: HashSet<usize> = HashSet::from_iter(0..disj_trans.len());
-        while !unblocked_trans.is_empty() && samples.len() < width {
-            for i in unblocked_trans.iter().copied().sorted().collect_vec() {
-                if samples.len() >= width {
-                    break;
-                }
-
-                let mut new_sample = None;
-                solver.push();
-                for t in &disj_trans[i] {
-                    solver.assert(t);
-                }
-
-                let resp = solver.check_sat(HashMap::new()).expect("error in solver");
+            'this_loop: loop {
+                let resp = solver.check_sat(HashMap::new());
                 match resp {
-                    SatResp::Sat => {
-                        let mut states = solver.get_model();
-                        assert_eq!(states.len(), 2);
-
-                        new_sample = states.pop();
-                    }
-                    SatResp::Unsat | SatResp::Unknown(_) => {
-                        unblocked_trans.remove(&i);
-                    }
-                }
-
-                solver.pop();
-
-                if let Some(sample) = new_sample {
-                    solver.assert(&Term::negate(
-                        Next::new(&self.signature).prime(&sample.to_term()),
-                    ));
-                    samples.push(sample);
+                    Ok(SatResp::Sat) => match solver.get_model() {
+                        Ok(mut states) => {
+                            assert_eq!(states.len(), 2);
+                            let new_sample = states.pop().unwrap();
+                            solver.assert(&Term::negate(
+                                Next::new(&self.signature).prime(&new_sample.to_term()),
+                            ));
+                            {
+                                let mut samples_lock = samples.lock().unwrap();
+                                if samples_lock.len() < width {
+                                    samples_lock.push(new_sample);
+                                }
+                                if samples_lock.len() >= width {
+                                    solver_pids.cancel();
+                                    break 'this_loop;
+                                }
+                            }
+                        }
+                        _ => break 'this_loop,
+                    },
+                    _ => break 'this_loop,
                 }
             }
-        }
 
-        solver.save_tee();
+            solver.save_tee();
+        });
+
+        let mut samples = samples.into_inner().unwrap();
 
         if depth > 1 {
             let mut deep_samples: Vec<Model> = samples

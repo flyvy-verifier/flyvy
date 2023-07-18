@@ -7,7 +7,7 @@ use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use fly::semantics::Model;
@@ -17,7 +17,7 @@ use solver::conf::SolverConf;
 
 use crate::{
     atoms::{Literal, RestrictedAtoms},
-    basics::{FOModule, InferenceConfig, TransCexResult},
+    basics::{FOModule, InferenceConfig, SolverPids, TransCexResult},
     hashmap::{HashMap, HashSet},
     quant::QuantifierPrefix,
     subsume::OrderSubsumption,
@@ -929,7 +929,7 @@ where
             self.lemmas.to_terms_ids().into_iter().unzip();
 
         let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
-        let cancel = RwLock::new(false);
+        let solver_pids = SolverPids::new();
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
@@ -942,12 +942,9 @@ where
             .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
-                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&cancel)) {
+                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&solver_pids)) {
                     TransCexResult::CTI(_, model) => {
-                        {
-                            let mut cancel_lock = cancel.write().unwrap();
-                            *cancel_lock = true;
-                        }
+                        solver_pids.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
                             if first_sat_lock.is_none() {
@@ -1296,7 +1293,7 @@ where
 
     pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
-        let cancel = RwLock::new(false);
+        let solver_pids = SolverPids::new();
         let unknown = Mutex::new(false);
         log::info!("Getting weakest lemmas...");
         let weakest = self.weaken_set.as_vec();
@@ -1306,10 +1303,9 @@ where
             .filter(|(prefix, body)| !self.inductive.subsumes(prefix, body))
             .find_map_any(|(prefix, body)| {
                 let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
-                match fo.trans_cex(conf, &term, &term[0], false, false, Some(&cancel)) {
+                match fo.trans_cex(conf, &term, &term[0], false, false, Some(&solver_pids)) {
                     TransCexResult::CTI(pre, post) => {
-                        let mut lock = cancel.write().unwrap();
-                        *lock = true;
+                        solver_pids.cancel();
                         return Some((pre, post));
                     }
                     TransCexResult::UnsatCore(_) => {

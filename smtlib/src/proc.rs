@@ -85,6 +85,9 @@ pub enum SolverError {
     /// I/O went wrong
     #[error("some I/O went wrong: {0}")]
     Io(#[from] io::Error),
+    /// Could not minimize
+    #[error("could not minimize:\n{0}")]
+    CouldNotMinimize(String),
     /// Solver returned an `(error ...)` response
     #[error("solver returned an error:\n{0}")]
     UnexpectedClose(String),
