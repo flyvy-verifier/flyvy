@@ -5,19 +5,6 @@
 
 use crate::syntax::*;
 use crate::term::prime::Next;
-use lazy_static::lazy_static;
-
-use std::sync::Mutex;
-
-lazy_static! {
-    static ref ID: Mutex<usize> = Mutex::new(0);
-}
-
-fn new_id() -> String {
-    let mut id = ID.lock().unwrap();
-    *id += 1;
-    format!("___{}", id)
-}
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
@@ -96,9 +83,10 @@ impl Module {
         }
 
         let mut to_quantify = vec![];
+        let mut name = 0;
         let mut go = |term: &mut Term| {
             *term = Next::new(&self.signature).normalize(term);
-            fix_term(term, &changed, &mut to_quantify);
+            fix_term(term, &changed, &mut to_quantify, &mut name);
         };
         for statement in &mut self.statements {
             match statement {
@@ -126,7 +114,12 @@ struct ToBeQuantified {
     xs: Vec<Term>,
 }
 
-fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToBeQuantified>) {
+fn fix_term(
+    term: &mut Term,
+    changed: &[RelationDecl],
+    to_quantify: &mut Vec<ToBeQuantified>,
+    name: &mut usize,
+) {
     // wraps term with an exists quantifier
     let quantify = |term: &mut Term, to_quantify: &mut Vec<ToBeQuantified>| {
         if !to_quantify.is_empty() {
@@ -150,7 +143,8 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
     match term {
         Term::Id(r) => {
             if let Some(c) = changed.iter().find(|c| r == &c.name) {
-                let name = new_id();
+                *name += 1;
+                let name = format!("___{}", *name);
                 to_quantify.push(ToBeQuantified {
                     name: name.clone(),
                     sort: c.sort.clone(),
@@ -163,9 +157,10 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
         }
         Term::App(r, p, xs) => {
             xs.iter_mut()
-                .for_each(|x| fix_term(x, changed, to_quantify));
+                .for_each(|x| fix_term(x, changed, to_quantify, name));
             if let Some(c) = changed.iter().find(|c| r == &c.name) {
-                let name = new_id();
+                *name += 1;
+                let name = format!("___{}", *name);
                 to_quantify.push(ToBeQuantified {
                     name: name.clone(),
                     sort: c.sort.clone(),
@@ -177,30 +172,30 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
             }
         }
         Term::UnaryOp(UOp::Always | UOp::Eventually, a) => {
-            fix_term(a, changed, to_quantify);
+            fix_term(a, changed, to_quantify, name);
             quantify(a, to_quantify);
         }
-        Term::UnaryOp(_, a) => fix_term(a, changed, to_quantify),
+        Term::UnaryOp(_, a) => fix_term(a, changed, to_quantify, name),
         Term::BinOp(BinOp::Until | BinOp::Since, a, b) => {
-            fix_term(a, changed, to_quantify);
+            fix_term(a, changed, to_quantify, name);
             quantify(a, to_quantify);
-            fix_term(b, changed, to_quantify);
+            fix_term(b, changed, to_quantify, name);
             quantify(b, to_quantify);
         }
         Term::BinOp(_, a, b) => {
-            fix_term(a, changed, to_quantify);
-            fix_term(b, changed, to_quantify);
+            fix_term(a, changed, to_quantify, name);
+            fix_term(b, changed, to_quantify, name);
         }
         Term::NAryOp(_, terms) => terms
             .iter_mut()
-            .for_each(|term| fix_term(term, changed, to_quantify)),
+            .for_each(|term| fix_term(term, changed, to_quantify, name)),
         Term::Ite { cond, then, else_ } => {
-            fix_term(cond, changed, to_quantify);
-            fix_term(then, changed, to_quantify);
-            fix_term(else_, changed, to_quantify);
+            fix_term(cond, changed, to_quantify, name);
+            fix_term(then, changed, to_quantify, name);
+            fix_term(else_, changed, to_quantify, name);
         }
         Term::Quantified { body, .. } => {
-            fix_term(body, changed, to_quantify);
+            fix_term(body, changed, to_quantify, name);
             quantify(body, to_quantify);
         }
         Term::Literal(_) => {}
@@ -212,7 +207,7 @@ mod tests {
     use crate::parser::parse;
 
     #[test]
-    fn non_bool_relations_module_conversion() {
+    fn non_bool_relations_module_conversion_basic() {
         let source1 = "
 sort s
 mutable f(sort, bool): sort
