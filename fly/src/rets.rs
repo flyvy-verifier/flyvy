@@ -171,10 +171,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], to_quantify: &mut Vec<ToB
                 *term = Term::Id(name);
             }
         }
-        Term::UnaryOp(
-            UOp::Prime | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
-            a,
-        ) => {
+        Term::UnaryOp(UOp::Always | UOp::Eventually, a) => {
             fix_term(a, changed, to_quantify);
             quantify(a, to_quantify);
         }
@@ -215,7 +212,7 @@ mod tests {
 sort s
 mutable f(sort, bool): sort
 
-assume always forall s:sort. f(s, true) = s
+assume always forall s:sort. (f(s, true))' = s
         ";
         let source2 = "
 sort s
@@ -225,7 +222,7 @@ assume always forall __0:sort, __1: bool. exists __2:sort. f(__0, __1, __2)
 assume always forall __0:sort, __1: bool. forall __2:sort, __3:sort.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1 = s
+assume always forall s:sort. exists ___1:sort. f(s, true, ___1) & ___1' = s
         ";
 
         let mut module1 = parse(source1).unwrap();
