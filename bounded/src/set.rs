@@ -34,14 +34,24 @@ pub fn check(
         InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
         InterpreterResult::Counterexample(trace) => {
             let u = module.signature.sorts.iter().map(|s| universe[s]).collect();
-            let models = match compress_traces {
+            let states = match compress_traces {
                 TraceCompression::Yes => {
                     let (state, depth) = match trace {
                         Trace::Trace(..) => unreachable!(),
                         Trace::CompressedTrace(state, depth) => (state, depth),
                     };
                     println!("counterexample is at depth {}, not 0", depth);
-                    vec![Model::new(
+                    vec![state]
+                }
+                TraceCompression::No => match trace {
+                    Trace::Trace(states) => states,
+                    Trace::CompressedTrace(..) => unreachable!(),
+                },
+            };
+            let models = states
+                .into_iter()
+                .map(|state| {
+                    Model::new(
                         &module.signature,
                         &u,
                         module
@@ -62,43 +72,9 @@ pub fn check(
                                 })
                             })
                             .collect(),
-                    )]
-                }
-                TraceCompression::No => {
-                    let states = match trace {
-                        Trace::Trace(states) => states,
-                        Trace::CompressedTrace(..) => unreachable!(),
-                    };
-                    states
-                        .into_iter()
-                        .map(|state| {
-                            Model::new(
-                                &module.signature,
-                                &u,
-                                module
-                                    .signature
-                                    .relations
-                                    .iter()
-                                    .map(|r| {
-                                        let shape = r
-                                            .args
-                                            .iter()
-                                            .map(|s| cardinality(universe, s))
-                                            .chain([2])
-                                            .collect();
-                                        Interpretation::new(&shape, |elements| {
-                                            state.0[indices[&(
-                                                r.name.as_str(),
-                                                Elements::new(elements.to_vec()),
-                                            )]] as usize
-                                        })
-                                    })
-                                    .collect(),
-                            )
-                        })
-                        .collect()
-                }
-            };
+                    )
+                })
+                .collect();
             Ok(CheckerAnswer::Counterexample(models))
         }
     }
