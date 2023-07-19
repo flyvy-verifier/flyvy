@@ -1487,7 +1487,6 @@ mod tests {
 
         let bug = interpret(&target, Some(12), TraceCompression::No, false);
         if let InterpreterResult::Counterexample(trace) = &bug {
-            println!("{:#?}", trace);
             assert_eq!(trace.depth(), 12);
         } else {
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
