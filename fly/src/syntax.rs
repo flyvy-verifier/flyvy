@@ -66,6 +66,26 @@ pub struct Binder {
     pub sort: Sort,
 }
 
+impl From<&str> for Sort {
+    fn from(value: &str) -> Self {
+        Sort::Id(value.to_string())
+    }
+}
+
+impl Binder {
+    /// Smart constructor for a Binder that takes arguments by reference.
+    pub fn new<N, S>(name: N, sort: S) -> Self
+    where
+        N: AsRef<str>,
+        S: Into<Sort>,
+    {
+        Binder {
+            name: name.as_ref().to_string(),
+            sort: sort.into(),
+        }
+    }
+}
+
 /// A Term is a temporal-logical formula (in LTL), which can be interpreted as
 /// being a sequence of values of some sort (often bool for example) under a
 /// given signature and an infinite sequence of states (consisting of values for
@@ -121,6 +141,11 @@ impl Term {
             }
             _ => self,
         }
+    }
+
+    /// Smart constructor for function applications
+    pub fn app(f: &str, n_primes: usize, args: &[Term]) -> Self {
+        Self::App(f.to_string(), n_primes, args.to_vec())
     }
 
     /// Smart constructor for an n-ary op from two arguments
