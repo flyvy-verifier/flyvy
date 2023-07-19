@@ -155,10 +155,31 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
         }
     }
 
+    // optimization: axioms that only mention immutable relations can be treated as inits
+    let (mut immutable_axioms, axioms) = axioms
+        .into_iter()
+        .partition(|term| contains_only_immutables(term, &module.signature.relations));
+    inits.append(&mut immutable_axioms);
+
     Ok(DestructuredModule {
         inits,
         transitions,
         axioms,
         proofs,
     })
+}
+
+fn contains_only_immutables(term: &Term, relations: &[RelationDecl]) -> bool {
+    let is_immutable = |name: &str| relations.iter().any(|r| r.name == name && !r.mutable);
+    let go = |term| contains_only_immutables(term, relations);
+    match term {
+        Term::Literal(_) => true,
+        Term::Id(name) => is_immutable(name),
+        Term::App(name, _, xs) => is_immutable(name) && xs.iter().all(go),
+        Term::UnaryOp(_, x) => go(x),
+        Term::BinOp(_, x, y) => go(x) && go(y),
+        Term::NAryOp(_, xs) => xs.iter().all(go),
+        Term::Ite { cond, then, else_ } => go(cond) && go(then) && go(else_),
+        Term::Quantified { body, .. } => go(body),
+    }
 }
