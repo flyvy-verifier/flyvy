@@ -251,6 +251,7 @@ pub fn check<'a>(
 
 /// The same as `check`, but instead of starting at `init` and going until it gets to `not_safe`,
 /// it starts at `not_safe` and goes backwards until it gets to `init`.
+/// It also returns a negated Bdd if it returns Convergence.
 pub fn check_reversed<'a>(
     module: &'a Module,
     universe: &'a Universe,
