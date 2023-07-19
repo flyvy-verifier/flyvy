@@ -610,7 +610,7 @@ impl App {
                     Ok(bounded::bdd::CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("\nstate {}:\n", i);
+                            println!("state {}:", i);
                             println!("{}", model.fmt());
                         }
                     }
@@ -643,7 +643,13 @@ impl App {
                     depth,
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(bounded::smt::CheckerAnswer::Counterexample(_)) => {}
+                    Ok(bounded::smt::CheckerAnswer::Counterexample(models)) => {
+                        println!("found counterexample:");
+                        for (i, model) in models.iter().enumerate() {
+                            println!("state {}:", i);
+                            println!("{}", model.fmt());
+                        }
+                    }
                     Ok(bounded::smt::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
                     }
