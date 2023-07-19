@@ -9,6 +9,7 @@ fn temporal_verifier() -> Command {
     cmd
 }
 
+#[ignore]
 #[test]
 fn updr_determinism() {
     let mut expected_output: Option<String> = None;

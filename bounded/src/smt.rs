@@ -137,7 +137,7 @@ mod tests {
         Ok(())
     }
 
-    #[ignore] // too slow
+    #[ignore]
     #[test]
     fn checker_smt_lockserver_buggy() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
