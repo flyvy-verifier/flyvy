@@ -169,33 +169,33 @@ impl Context<'_> {
 
         // Convert valuations to models
         let valuations: Vec<_> = valuations.into_iter().map(Option::unwrap).collect();
+        let universe = self
+            .signature
+            .sorts
+            .iter()
+            .map(|s| self.universe[s])
+            .collect();
         valuations
             .into_iter()
             .map(|valuation| {
                 Model::new(
                     self.signature,
-                    &self
-                        .signature
-                        .sorts
-                        .iter()
-                        .map(|s| self.universe[s])
-                        .collect(),
+                    &universe,
                     self.signature
                         .relations
                         .iter()
                         .map(|r| {
-                            Interpretation::new(
-                                &r.args
-                                    .iter()
-                                    .map(|s| cardinality(self.universe, s))
-                                    .chain([2])
-                                    .collect(),
-                                |elements| {
-                                    valuation
-                                        .value(self.vars[self.indices[r.name.as_str()][elements].0])
-                                        as usize
-                                },
-                            )
+                            let shape = r
+                                .args
+                                .iter()
+                                .map(|s| cardinality(self.universe, s))
+                                .chain([2])
+                                .collect();
+                            Interpretation::new(&shape, |elements| {
+                                valuation
+                                    .value(self.vars[self.indices[r.name.as_str()][elements].0])
+                                    as usize
+                            })
                         })
                         .collect(),
                 )

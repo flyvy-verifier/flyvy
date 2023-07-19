@@ -5,153 +5,321 @@ expression: combined_stdout_stderr
 ---
 starting translation...
 starting search...
-found counterexample!
+found counterexample:
 state 0:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {}
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = false
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 1:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 2:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 3:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 4:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 5:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 6:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], }
-server_holds_lock: {[], }
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 7:
-grant_msg: {[1], }
-holds_lock: {}
-lock_msg: {[0], }
-server_holds_lock: {}
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = true
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 8:
-grant_msg: {}
-holds_lock: {[1], }
-lock_msg: {[0], }
-server_holds_lock: {}
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 9:
-grant_msg: {}
-holds_lock: {[1], }
-lock_msg: {[0], }
-server_holds_lock: {}
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = false
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 10:
-grant_msg: {}
-holds_lock: {[1], }
-lock_msg: {[0], [1], }
-server_holds_lock: {}
-unlock_msg: {}
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 11:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], }
-server_holds_lock: {}
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 12:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], [2], }
-server_holds_lock: {}
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 13:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], [2], }
-server_holds_lock: {[], }
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 14:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], [2], }
-server_holds_lock: {[], }
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 15:
-grant_msg: {}
-holds_lock: {}
-lock_msg: {[0], [1], [2], }
-server_holds_lock: {[], }
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 16:
-grant_msg: {[2], }
-holds_lock: {}
-lock_msg: {[0], [1], }
-server_holds_lock: {}
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = true
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = false
 
 state 17:
-grant_msg: {[2], }
-holds_lock: {}
-lock_msg: {[0], [1], }
-server_holds_lock: {[], }
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = true
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
 
 state 18:
-grant_msg: {}
-holds_lock: {[2], }
-lock_msg: {[0], [1], }
-server_holds_lock: {[], }
-unlock_msg: {[1], }
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = true
+server_holds_lock = true
 
 state 19:
-grant_msg: {[0], }
-holds_lock: {[2], }
-lock_msg: {[1], }
-server_holds_lock: {}
-unlock_msg: {[1], }
+lock_msg(@node_0) = false
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = true
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = true
+server_holds_lock = false
 
 state 20:
-grant_msg: {}
-holds_lock: {[0], [2], }
-lock_msg: {[1], }
-server_holds_lock: {}
-unlock_msg: {[1], }
+lock_msg(@node_0) = false
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = true
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = true
+holds_lock(@node_1) = false
+holds_lock(@node_2) = true
+server_holds_lock = false
 
 
 ======== STDERR: ===========
