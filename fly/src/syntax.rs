@@ -74,14 +74,13 @@ impl From<&str> for Sort {
 
 impl Binder {
     /// Smart constructor for a Binder that takes arguments by reference.
-    pub fn new<N, S>(name: N, sort: S) -> Self
+    pub fn new<N>(name: N, sort: &Sort) -> Self
     where
         N: AsRef<str>,
-        S: Into<Sort>,
     {
         Binder {
             name: name.as_ref().to_string(),
-            sort: sort.into(),
+            sort: sort.clone(),
         }
     }
 }
