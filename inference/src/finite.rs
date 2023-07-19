@@ -35,6 +35,7 @@ pub fn invariant(
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(FiniteError::CheckerError(e)),
     };
+    println!();
 
     // Convert the Bdd to a Term
     let bdd = underapproximate(bdd.not(), 10000, &context.bdds, false).not();
@@ -77,7 +78,7 @@ pub fn invariant(
     assert_eq!(1, destructured.proofs.len());
     destructured.proofs[0].invariants = vec![MaybeSpannedTerm::Term(ast.clone())];
 
-    println!("testing invariant: {}", ast);
+    println!("\ntesting invariant: {}", ast);
     if let Err(err) = verify_destructured_module(conf, &destructured, &module.signature) {
         eprintln!("\nverification errors:");
         for fail in &err.fails {
@@ -88,7 +89,12 @@ pub fn invariant(
                 FailureType::Unsupported => eprintln!("unsupported:"),
             }
             match &fail.error {
-                QueryError::Sat(model) => eprintln!("{}", model.fmt()),
+                QueryError::Sat(models) => {
+                    eprintln!("counter example:");
+                    for model in models {
+                        eprintln!("{}", model.fmt());
+                    }
+                }
                 QueryError::Unknown(message) => eprintln!("{}", message),
             }
         }
