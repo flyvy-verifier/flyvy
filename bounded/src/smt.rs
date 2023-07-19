@@ -40,16 +40,14 @@ pub fn check(
         todo!("definitions are not supported yet");
     }
 
-    let DestructuredModule {
-        inits,
-        transitions,
-        axioms,
-        proofs,
-    } = extract(module).map_err(CheckerError::ExtractionError)?;
-
-    let inits: Vec<_> = inits.into_iter().chain(axioms.clone()).collect();
-    let transitions: Vec<_> = transitions.into_iter().chain(axioms).collect();
-    let safeties: Vec<_> = proofs.into_iter().map(|proof| proof.safety.x).collect();
+    let d = extract(module).map_err(CheckerError::ExtractionError)?;
+    let inits = d.inits.iter().chain(&d.axioms).cloned();
+    let transitions = d
+        .transitions
+        .iter()
+        .chain(d.mutable_axioms(&module.signature.relations))
+        .cloned();
+    let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
     let next = Next::new(&module.signature);
 

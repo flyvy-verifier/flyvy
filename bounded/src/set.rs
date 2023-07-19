@@ -587,16 +587,14 @@ pub fn translate(
         todo!("definitions are not supported yet");
     }
 
-    let DestructuredModule {
-        inits,
-        transitions,
-        axioms,
-        proofs,
-    } = extract(module).map_err(TranslationError::ExtractionError)?;
-
-    let inits = inits.into_iter().chain(axioms.clone()).collect();
-    let transitions = transitions.into_iter().chain(axioms).collect();
-    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
+    let d = extract(module).map_err(TranslationError::ExtractionError)?;
+    let inits = d.inits.iter().chain(&d.axioms).cloned();
+    let transitions = d
+        .transitions
+        .iter()
+        .chain(d.mutable_axioms(&module.signature.relations))
+        .cloned();
+    let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
     let normalize = |term: Term| -> Result<Ast, TranslationError> {
         // change uses of nullary relations from Term::Id(name) to Term::App(name, 0, vec![])
@@ -611,9 +609,9 @@ pub fn translate(
         Ok(distribute_conjunction(term))
     };
 
-    let inits = normalize(Term::NAryOp(NOp::And, inits))?;
-    let trs = normalize(Term::NAryOp(NOp::And, transitions))?;
-    let safes = normalize(Term::NAryOp(NOp::And, safeties))?;
+    let inits = normalize(Term::and(inits))?;
+    let trs = normalize(Term::and(transitions))?;
+    let safes = normalize(Term::and(safeties))?;
 
     let get_guards_from_dnf = |valued: Ast| -> Result<Vec<Vec<Guard>>, TranslationError> {
         valued
