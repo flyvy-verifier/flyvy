@@ -755,6 +755,8 @@ impl App {
                 }
             }
             Command::FiniteInfer { bounded, solver } => {
+                m.inline_defs();
+                m.convert_non_bool_relations();
                 match inference::finite::invariant(
                     &m,
                     bounded.get_universe(&m.signature),
