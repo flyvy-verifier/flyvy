@@ -83,13 +83,6 @@ pub fn check(
         println!("search finished in {:0.1}s", search.elapsed().as_secs_f64());
     }
 
-    if let CheckerAnswer::Counterexample(ref models) = answer {
-        for (i, model) in models.iter().enumerate() {
-            println!("state {}:", i);
-            println!("{}", model.fmt());
-        }
-    }
-
     Ok(answer)
 }
 
