@@ -329,6 +329,11 @@ fn term_to_ast(
     let ast: Ast = match term {
         Term::Literal(true) => Ast::And(vec![]),
         Term::Literal(false) => Ast::Or(vec![]),
+        Term::Id(id) => match assignments.get(id) {
+            Some(0) => Ast::Or(vec![]),
+            Some(1) => Ast::And(vec![]),
+            _ => return Err(CheckerError::CouldNotTranslateToAst(term.clone())),
+        },
         Term::App(relation, primes, args) => Ast::Var(
             relation.to_string(),
             args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
@@ -387,8 +392,9 @@ fn term_to_ast(
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
         | Term::UnaryOp(UOp::Next | UOp::Previously, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::Id(_) => return Err(CheckerError::CouldNotTranslateToAst(term.clone())),
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
+            return Err(CheckerError::CouldNotTranslateToAst(term.clone()))
+        }
     };
     Ok(ast)
 }
