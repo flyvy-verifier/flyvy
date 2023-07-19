@@ -25,7 +25,7 @@ pub enum FailureType {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum QueryError {
     /// The solver returned Sat
-    Sat(Model),
+    Sat(Vec<Model>),
     /// The solver returned Unknown
     Unknown(String),
 }
@@ -53,7 +53,13 @@ impl AssertionFailure {
             .with_message(msg)
             .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
-                QueryError::Sat(model) => format!("counter example:\n{}", model.fmt()),
+                QueryError::Sat(models) => {
+                    let mut message = "counter example:\n".to_string();
+                    for model in models {
+                        message.push_str(&model.fmt());
+                    }
+                    message
+                }
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
             }])
     }
