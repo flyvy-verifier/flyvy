@@ -588,7 +588,13 @@ impl App {
                 };
                 let univ = bounded.get_universe(&m.signature);
                 match bounded::sat::check(&m, &univ, depth, bounded.print_timing.unwrap_or(true)) {
-                    Ok(bounded::sat::CheckerAnswer::Counterexample) => {}
+                    Ok(bounded::sat::CheckerAnswer::Counterexample(models)) => {
+                        println!("found counterexample:");
+                        for (i, model) in models.iter().enumerate() {
+                            println!("state {}:", i);
+                            println!("{}", model.fmt());
+                        }
+                    }
                     Ok(bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {} for given sort bounds", depth)
                     }
