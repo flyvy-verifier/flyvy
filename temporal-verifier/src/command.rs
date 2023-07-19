@@ -570,13 +570,34 @@ impl App {
                 compress_traces,
             } => {
                 let univ = bounded.get_universe(&m.signature);
-                bounded::set::check(
+                match bounded::set::check(
                     &m,
                     &univ,
                     bounded.depth,
                     compress_traces.into(),
                     bounded.print_timing.unwrap_or(true),
-                );
+                ) {
+                    Ok(bounded::set::CheckerAnswer::Counterexample(models)) => {
+                        println!("found counterexample:");
+                        for (i, model) in models.iter().enumerate() {
+                            println!("state {}:", i);
+                            println!("{}", model.fmt());
+                        }
+                    }
+                    Ok(bounded::set::CheckerAnswer::Unknown) => {
+                        println!(
+                            "answer: safe up to {} for given sort bounds",
+                            bounded
+                                .depth
+                                .map(|d| format!("depth {}", d))
+                                .unwrap_or("any depth".to_string())
+                        );
+                    }
+                    Ok(bounded::set::CheckerAnswer::Convergence) => {
+                        println!("answer: safe forever with given sort bounds")
+                    }
+                    Err(error) => eprintln!("{}", error),
+                }
             }
             Command::SatCheck(bounded) => {
                 let depth = match bounded.depth {
