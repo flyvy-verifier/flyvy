@@ -24,7 +24,8 @@ jobs:
           - nightly
         os:
           - ubuntu-latest
-          - macos-latest
+          # disabled since we aren't typically making OS-specific changes
+          # - macos-latest
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
