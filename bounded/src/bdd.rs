@@ -235,7 +235,7 @@ pub fn check<'a>(
     let mut trace = vec![init.clone()];
 
     let mut current = init;
-    let mut reachable = current.clone();
+    let mut reachable = context.mk_bool(false);
 
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
         context.print_counterexample(&valuation, &trace, &tr);

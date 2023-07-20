@@ -13,8 +13,18 @@ error: invariant is not inductive
    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
+     state 0:
      member(@node_0,@quorum_0) = true
      vote_request_msg(@node_0,@node_0) = false
+     voted(@node_0) = false
+     vote_msg(@node_0,@node_0) = false
+     votes(@node_0,@node_0) = false
+     leader(@node_0) = false
+     decided(@node_0,@value_0) = false
+     
+     state 1:
+     member(@node_0,@quorum_0) = true
+     vote_request_msg(@node_0,@node_0) = true
      voted(@node_0) = false
      vote_msg(@node_0,@node_0) = false
      votes(@node_0,@node_0) = false
@@ -28,8 +38,18 @@ error: invariant is not inductive
    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    │
    = counter example:
+     state 0:
      member(@node_0,@quorum_0) = true
      vote_request_msg(@node_0,@node_0) = false
+     voted(@node_0) = false
+     vote_msg(@node_0,@node_0) = false
+     votes(@node_0,@node_0) = false
+     leader(@node_0) = false
+     decided(@node_0,@value_0) = false
+     
+     state 1:
+     member(@node_0,@quorum_0) = true
+     vote_request_msg(@node_0,@node_0) = true
      voted(@node_0) = false
      vote_msg(@node_0,@node_0) = false
      votes(@node_0,@node_0) = false

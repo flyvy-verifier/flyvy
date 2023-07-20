@@ -9,25 +9,46 @@ fails:
     reason: NotInductive
     error:
       Sat:
-        signature:
-          sorts: []
-          relations:
-            - mutable: true
-              name: p
-              args: []
-              sort: Bool
-            - mutable: true
-              name: q
-              args: []
-              sort: Bool
-        universe: []
-        interp:
-          - shape:
-              - 2
-            data:
-              - 0
-          - shape:
-              - 2
-            data:
-              - 1
+        - signature:
+            sorts: []
+            relations:
+              - mutable: true
+                name: p
+                args: []
+                sort: Bool
+              - mutable: true
+                name: q
+                args: []
+                sort: Bool
+          universe: []
+          interp:
+            - shape:
+                - 2
+              data:
+                - 0
+            - shape:
+                - 2
+              data:
+                - 1
+        - signature:
+            sorts: []
+            relations:
+              - mutable: true
+                name: p
+                args: []
+                sort: Bool
+              - mutable: true
+                name: q
+                args: []
+                sort: Bool
+          universe: []
+          interp:
+            - shape:
+                - 2
+              data:
+                - 1
+            - shape:
+                - 2
+              data:
+                - 1
 
