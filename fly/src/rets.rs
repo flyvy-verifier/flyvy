@@ -3,14 +3,14 @@
 
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
-use crate::syntax::*;
+use crate::{semantics::*, syntax::*};
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
     /// by adding an extra argument and axioms.
-    pub fn convert_non_bool_relations(&mut self) {
-        let changed: Vec<_> = self
-            .signature
+    pub fn convert_non_bool_relations(&mut self) -> Box<dyn Fn(&Model) -> Model> {
+        let old_signature = self.signature.clone();
+        let changed: Vec<_> = old_signature
             .relations
             .iter()
             .filter(|r| r.sort != Sort::Bool)
@@ -99,6 +99,44 @@ impl Module {
         }
 
         self.statements.splice(0..0, axioms);
+
+        Box::new(move |model| {
+            Model::new(
+                &old_signature,
+                &model.universe,
+                old_signature
+                    .relations
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, r)| {
+                        let cardinality = |sort: &Sort| match sort {
+                            Sort::Bool => 2,
+                            Sort::Id(id) => {
+                                model.universe
+                                    [old_signature.sorts.iter().position(|s| s == id).unwrap()]
+                            }
+                        };
+                        let shape = r
+                            .args
+                            .iter()
+                            .map(cardinality)
+                            .chain([cardinality(&r.sort)])
+                            .collect();
+                        let f = |elements: &[Element]| {
+                            for i in 0..cardinality(&r.sort) {
+                                let mut elements = elements.to_vec();
+                                elements.push(i);
+                                if model.interp[idx].get(&elements) == 1 {
+                                    return i;
+                                }
+                            }
+                            unreachable!()
+                        };
+                        Interpretation::new(&shape, f)
+                    })
+                    .collect(),
+            )
+        })
     }
 }
 
@@ -249,7 +287,7 @@ assume always forall s:s. exists ___1:s. f(s, true, ___1) & ___1 = s
         ";
 
         let mut module1 = parse(source1).unwrap();
-        module1.convert_non_bool_relations();
+        let _ = module1.convert_non_bool_relations();
 
         let module2 = parse(source2).unwrap();
 
@@ -275,7 +313,7 @@ assume always forall s:s. exists ___1:s. (f(s, ___1))' & ___1' = s
         ";
 
         let mut module1 = parse(source1).unwrap();
-        module1.convert_non_bool_relations();
+        let _ = module1.convert_non_bool_relations();
 
         let module2 = parse(source2).unwrap();
 
@@ -301,7 +339,7 @@ assume always forall s:s. exists ___1:s. f(___1) & ___1 = s & forall s:s. s=s
         ";
 
         let mut module1 = parse(source1).unwrap();
-        module1.convert_non_bool_relations();
+        let _ = module1.convert_non_bool_relations();
 
         let module2 = parse(source2).unwrap();
 

@@ -569,7 +569,7 @@ impl App {
                 compress_traces,
             } => {
                 m.inline_defs();
-                m.convert_non_bool_relations();
+                let back_convert_model = m.convert_non_bool_relations();
                 let univ = bounded.get_universe(&m.signature);
                 match bounded::set::check(
                     &m,
@@ -582,7 +582,7 @@ impl App {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
                             println!("state {i}:");
-                            println!("{}", model.fmt());
+                            println!("{}", back_convert_model(model).fmt());
                         }
                     }
                     Ok(bounded::set::CheckerAnswer::Unknown) => {
@@ -602,7 +602,7 @@ impl App {
             }
             Command::SatCheck(bounded) => {
                 m.inline_defs();
-                m.convert_non_bool_relations();
+                let back_convert_model = m.convert_non_bool_relations();
                 let depth = match bounded.depth {
                     Some(depth) => depth,
                     None => {
@@ -616,7 +616,7 @@ impl App {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
                             println!("state {i}:");
-                            println!("{}", model.fmt());
+                            println!("{}", back_convert_model(model).fmt());
                         }
                     }
                     Ok(bounded::sat::CheckerAnswer::Unknown) => {
@@ -627,7 +627,7 @@ impl App {
             }
             Command::BddCheck { bounded, reversed } => {
                 m.inline_defs();
-                m.convert_non_bool_relations();
+                let back_convert_model = m.convert_non_bool_relations();
                 let univ = bounded.get_universe(&m.signature);
                 let check = match reversed {
                     false => bounded::bdd::check,
@@ -643,7 +643,7 @@ impl App {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
                             println!("state {i}:");
-                            println!("{}", model.fmt());
+                            println!("{}", back_convert_model(model).fmt());
                         }
                     }
                     Ok(bounded::bdd::CheckerAnswer::Unknown) => {
