@@ -763,9 +763,36 @@ impl App {
                     &solver.get_solver_conf(&file),
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(Some((term, true))) => println!("found inductive invariant: {}", term),
-                    Ok(Some((term, false))) => eprintln!("invariant wasn't inductive: {}", term),
-                    Ok(None) => println!("found a counterexample, no inductive invariant exists"),
+                    Ok(inference::finite::FiniteAnswer::BddCounterexample(models)) => {
+                        println!("found counterexample:");
+                        for (i, model) in models.iter().enumerate() {
+                            println!("state {}:", i);
+                            println!("{}", model.fmt());
+                        }
+                    }
+                    Ok(inference::finite::FiniteAnswer::InvariantFail(term, err)) => {
+                        eprintln!("invariant wasn't inductive: {}", term);
+                        for fail in &err.fails {
+                            use verify::error::*;
+                            match fail.reason {
+                                FailureType::InitInv => println!("not implied by init:"),
+                                FailureType::NotInductive => println!("not inductive:"),
+                                FailureType::Unsupported => println!("unsupported:"),
+                            }
+                            match &fail.error {
+                                QueryError::Sat(models) => {
+                                    for (i, model) in models.iter().enumerate() {
+                                        eprintln!("state {}:", i);
+                                        eprintln!("{}", model.fmt());
+                                    }
+                                }
+                                QueryError::Unknown(message) => eprintln!("{}", message),
+                            }
+                        }
+                    }
+                    Ok(inference::finite::FiniteAnswer::InvariantInferred(term)) => {
+                        println!("found inductive invariant: {}", term);
+                    }
                     Err(error) => eprintln!("{}", error),
                 }
             }

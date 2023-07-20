@@ -5,11 +5,21 @@
 //! with small sort bounds.
 
 use bounded::bdd::*;
-use fly::{syntax::*, transitions::*};
+use fly::{semantics::*, syntax::*, transitions::*};
 use solver::conf::SolverConf;
 use std::collections::HashMap;
 use thiserror::Error;
-use verify::module::verify_destructured_module;
+use verify::{error::SolveError, module::verify_destructured_module};
+
+/// The result of a successful run of finite::invariant.
+pub enum FiniteAnswer {
+    /// The module wasn't safe to begin with
+    BddCounterexample(Vec<Model>),
+    /// The inferred invariant failed
+    InvariantFail(Term, SolveError),
+    /// The inferred invariant succeeded
+    InvariantInferred(Term),
+}
 
 #[allow(missing_docs)]
 #[derive(Debug, Error)]
@@ -28,11 +38,13 @@ pub fn invariant(
     universe: HashMap<String, usize>,
     conf: &SolverConf,
     print_timing: bool,
-) -> Result<Option<(Term, bool)>, FiniteError> {
+) -> Result<FiniteAnswer, FiniteError> {
     // Get the set of reachable states
     let (bdd, context) = match check_reversed(module, &universe, None, print_timing) {
         Ok(CheckerAnswer::Convergence(bdd, context)) => (bdd, context),
-        Ok(CheckerAnswer::Counterexample(_)) => return Ok(None),
+        Ok(CheckerAnswer::Counterexample(models)) => {
+            return Ok(FiniteAnswer::BddCounterexample(models))
+        }
         Ok(CheckerAnswer::Unknown) => unreachable!(),
         Err(e) => return Err(FiniteError::CheckerError(e)),
     };
@@ -78,27 +90,9 @@ pub fn invariant(
     destructured.proofs[0].invariants = vec![MaybeSpannedTerm::Term(ast.clone())];
 
     if let Err(err) = verify_destructured_module(conf, &destructured, &module.signature) {
-        eprintln!("\nverification errors:");
-        for fail in &err.fails {
-            use verify::error::*;
-            match fail.reason {
-                FailureType::InitInv => eprintln!("not implied by init:"),
-                FailureType::NotInductive => eprintln!("not inductive:"),
-                FailureType::Unsupported => eprintln!("unsupported:"),
-            }
-            match &fail.error {
-                QueryError::Sat(models) => {
-                    for (i, model) in models.iter().enumerate() {
-                        eprintln!("state {}:", i);
-                        eprintln!("{}", model.fmt());
-                    }
-                }
-                QueryError::Unknown(message) => eprintln!("{}", message),
-            }
-        }
-        Ok(Some((ast, false)))
+        Ok(FiniteAnswer::InvariantFail(ast, err))
     } else {
-        Ok(Some((ast, true)))
+        Ok(FiniteAnswer::InvariantInferred(ast))
     }
 }
 
@@ -122,9 +116,9 @@ mod tests {
         };
 
         match invariant(&module, universe, &conf, false)? {
-            Some((_, true)) => Ok(()),
-            Some((inv, false)) => panic!("invariant wasn't inductive: {}", inv),
-            None => panic!("counterexample found"),
+            FiniteAnswer::InvariantInferred(_) => Ok(()),
+            FiniteAnswer::InvariantFail(inv, _) => panic!("invariant wasn't inductive: {}", inv),
+            FiniteAnswer::BddCounterexample(_) => panic!("counterexample found"),
         }
     }
 }
