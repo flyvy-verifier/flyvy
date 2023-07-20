@@ -300,24 +300,28 @@ impl FOModule {
                         Err(SolverError::CouldNotMinimize(_)) => (),
                         Err(e) => panic!("error in solver: {e}"),
                     },
-                    Ok(SatResp::Unsat) => {
-                        assert!(separate_cores[t_idx].is_none());
-                        let mut my_core = HashSet::new();
-                        for ind in solver.get_unsat_core() {
-                            if let Term::Id(s) = ind.0 {
-                                let ind = s[6..].parse::<usize>().unwrap();
-                                my_core.insert(ind);
-                                unsat_core.insert(ind);
+                    Ok(SatResp::Unsat) => match solver.get_unsat_core() {
+                        Ok(solver_core) => {
+                            assert!(separate_cores[t_idx].is_none());
+                            let mut my_core = HashSet::new();
+                            for ind in solver_core {
+                                if let Term::Id(s) = ind.0 {
+                                    let ind = s[6..].parse::<usize>().unwrap();
+                                    my_core.insert(ind);
+                                    unsat_core.insert(ind);
+                                }
                             }
-                        }
 
-                        if self.minimal {
-                            assert_eq!(my_core, core.participants);
-                        }
+                            if self.minimal {
+                                assert_eq!(my_core, core.participants);
+                            }
 
-                        separate_cores[t_idx] = Some(my_core);
-                        break 'inner;
-                    }
+                            separate_cores[t_idx] = Some(my_core);
+                            break 'inner;
+                        }
+                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(e) => panic!("error in solver: {e}"),
+                    },
                     Err(SolverError::Killed) => return TransCexResult::Cancelled,
                     Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
                     Err(e) => panic!("error in solver: {e}"),
@@ -533,7 +537,10 @@ impl FOModule {
                 }
                 SatResp::Unsat => {
                     // println!("adding group");
-                    for (ind, b) in solver.get_unsat_core() {
+                    for (ind, b) in solver
+                        .get_unsat_core()
+                        .expect("could not get unsat assumptions")
+                    {
                         assert!(b, "got false in core");
                         // println!("adding to core: {}", clear_next(ind_to_term[&ind].clone()));
                         core.insert(clear_next(ind_to_term[&ind].clone()), b);

@@ -397,11 +397,8 @@ impl<B: Backend> Solver<B> {
 
     /// Returns an unsat core as a set of indicator variables (a subset of the
     /// assumptions passed to `check_sat`).
-    pub fn get_unsat_core(&mut self) -> HashMap<Term, bool> {
-        let indicators = self
-            .proc
-            .get_unsat_assumptions()
-            .expect("could not get unsat assumptions");
+    pub fn get_unsat_core(&mut self) -> Result<HashMap<Term, bool>, SolverError> {
+        let indicators = self.proc.get_unsat_assumptions()?;
         let mut assumptions = HashMap::new();
         for t in indicators {
             // TODO: this is very ugly, replace with Sexp destructor methods
@@ -428,14 +425,14 @@ impl<B: Backend> Solver<B> {
             }
         }
         self.last_assumptions = None;
-        assumptions
+        Ok(assumptions)
     }
 
     /// After a call to check-sat returns unsat, get a minimized unsat core: a
     /// minimal set of indicator variables which still result in unsat.
     ///
     /// Not yet implemented so there is no algorithm here.
-    pub fn get_minimal_unsat_core(&mut self) -> HashMap<Term, bool> {
+    pub fn get_minimal_unsat_core(&mut self) -> Result<HashMap<Term, bool>, SolverError> {
         eprintln!("unsat code minimization is not yet implemented");
         self.get_unsat_core()
     }
