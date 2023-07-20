@@ -662,6 +662,7 @@ impl App {
                 }
             }
             Command::SmtCheck { bounded, solver } => {
+                m.inline_defs();
                 let depth = match bounded.depth {
                     Some(depth) => depth,
                     None => {
