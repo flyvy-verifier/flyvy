@@ -89,7 +89,7 @@ fn parse_sort(sort: &Sexp) -> Sort {
     if sort_name == "Bool" {
         Sort::Bool
     } else {
-        Sort::Uninterpreted(sort_name.to_string())
+        Sort::uninterp(sort_name)
     }
 }
 

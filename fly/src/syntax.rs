@@ -21,7 +21,7 @@ pub enum Sort {
 
 impl Sort {
     /// Smart constructor for uninterpreted sort that takes &str
-    pub fn unintereted(name: &str) -> Self {
+    pub fn uninterp(name: &str) -> Self {
         Sort::Uninterpreted(name.to_string())
     }
 }
@@ -30,7 +30,7 @@ impl From<&str> for Sort {
     /// This is mostly for the Binder smart constructor, making it possible to
     /// pass either Sort, &Sort, or &str
     fn from(value: &str) -> Self {
-        Self::unintereted(value)
+        Self::uninterp(value)
     }
 }
 

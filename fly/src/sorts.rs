@@ -280,7 +280,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
         } => {
             binders
                 .iter()
-                .all(|binder| binder.sort != Sort::Uninterpreted("".to_owned()))
+                .all(|binder| binder.sort != Sort::uninterp(""))
                 && term_has_all_sort_annotations(body)
         }
     }
