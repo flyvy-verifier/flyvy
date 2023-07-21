@@ -454,6 +454,11 @@ fn term_to_bdd(
 
     let bdd: Bdd = match term {
         Term::Literal(value) => context.mk_bool(*value),
+        Term::Id(id) => match assignments.get(id) {
+            Some(0) => context.mk_bool(false),
+            Some(1) => context.mk_bool(true),
+            _ => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
+        },
         Term::App(relation, primes, args) => context.get(
             relation,
             &args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
@@ -508,8 +513,9 @@ fn term_to_bdd(
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
         | Term::UnaryOp(UOp::Next | UOp::Previously, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::Id(_) => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
+            return Err(CheckerError::CouldNotTranslateToBdd(term.clone()))
+        }
     };
     Ok(bdd)
 }

@@ -1061,6 +1061,11 @@ fn term_to_ast(
     let ast: Ast = match term {
         Term::Literal(true) => Ast::And(btreeset![]),
         Term::Literal(false) => Ast::Or(btreeset![]),
+        Term::Id(id) => match assignments.get(id) {
+            Some(0) => Ast::Or(btreeset![]),
+            Some(1) => Ast::And(btreeset![]),
+            _ => return Err(TranslationError::CouldNotTranslateToAst(term.clone())),
+        },
         Term::App(name, 0, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
             Ast::Includes(name.clone(), Elements::new(args))
@@ -1120,7 +1125,6 @@ fn term_to_ast(
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
         | Term::UnaryOp(UOp::Next | UOp::Previously, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::Id(_)
         | Term::App(..) => return Err(TranslationError::CouldNotTranslateToAst(term.clone())),
     };
     Ok(ast)
