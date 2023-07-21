@@ -107,26 +107,23 @@ impl Module {
                 old_signature
                     .relations
                     .iter()
-                    .enumerate()
-                    .map(|(idx, r)| {
-                        let cardinality = |sort: &Sort| match sort {
-                            Sort::Bool => 2,
-                            Sort::Id(id) => {
-                                model.universe
-                                    [old_signature.sorts.iter().position(|s| s == id).unwrap()]
-                            }
-                        };
+                    .map(|r| {
+                        let interp = &model.interp[old_signature.relation_idx(&r.name)];
+                        if r.sort == Sort::Bool {
+                            return interp.clone();
+                        }
+
                         let shape = r
                             .args
                             .iter()
-                            .map(cardinality)
-                            .chain([cardinality(&r.sort)])
+                            .map(|s| model.cardinality(s))
+                            .chain([model.cardinality(&r.sort)])
                             .collect();
                         let f = |elements: &[Element]| {
-                            for i in 0..cardinality(&r.sort) {
+                            for i in 0..model.cardinality(&r.sort) {
                                 let mut elements = elements.to_vec();
                                 elements.push(i);
-                                if model.interp[idx].get(&elements) == 1 {
+                                if interp.get(&elements) == 1 {
                                     return i;
                                 }
                             }
@@ -265,7 +262,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::parse;
+    use crate::{parser::parse, semantics::*};
 
     #[test]
     fn non_bool_relations_module_conversion_basic() {
@@ -344,5 +341,41 @@ assume always forall s:s. exists ___1:s. f(___1) & ___1 = s & forall s:s. s=s
         let module2 = parse(source2).unwrap();
 
         assert_eq!(module2, module1);
+    }
+
+    #[test]
+    fn non_bool_relations_model_back_conversion() {
+        let source = "
+sort s
+
+mutable f(bool): s
+        ";
+        let mut module = parse(source).unwrap();
+
+        let model1 = Model::new(
+            &module.signature,
+            &vec![3],
+            vec![Interpretation::new(&vec![2, 3], |xs| {
+                if xs[0] == 0 {
+                    2
+                } else {
+                    0
+                }
+            })],
+        );
+
+        let back_convert_model = module.convert_non_bool_relations();
+        let model2 = Model::new(
+            &module.signature,
+            &vec![3],
+            vec![Interpretation::new(&vec![2, 3, 2], |xs| match xs {
+                [0, 2] | [1, 0] => 1,
+                _ => 0,
+            })],
+        );
+
+        let model3 = back_convert_model(&model2);
+
+        assert_eq!(model1, model3);
     }
 }
