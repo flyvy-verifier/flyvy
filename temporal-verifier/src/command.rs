@@ -645,7 +645,7 @@ impl App {
                             "answer: safe up to {} for given sort bounds",
                             bounded
                                 .depth
-                                .map(|d| format!("depth {}", d))
+                                .map(|d| format!("depth {d}"))
                                 .unwrap_or("any depth".to_string())
                         );
                     }

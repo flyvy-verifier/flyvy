@@ -383,9 +383,9 @@ sort C
             vec![0, 1, 2],
             &[2, 1, 2],
         );
-        let a = |i: usize| format!("A_{}", i);
-        let b = |i: usize| format!("B_{}", i);
-        let c = |i: usize| format!("C_{}", i);
+        let a = |i: usize| format!("A_{i}");
+        let b = |i: usize| format!("B_{i}");
+        let c = |i: usize| format!("C_{i}");
         let ta = |i: usize| Term::Id(a(i));
         let tb = |i: usize| Term::Id(b(i));
         let tc = |i: usize| Term::Id(c(i));
