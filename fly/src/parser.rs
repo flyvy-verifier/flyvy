@@ -73,7 +73,7 @@ grammar parser() for str {
         --
         // NOTE(tej): precedence of these operators was an arbitrary choice
         "X" __ x:@ { Term::UnaryOp(UOp::Next, Box::new(x)) }
-        "X^-1" __ x:@ { Term::UnaryOp(UOp::Previously, Box::new(x)) }
+        "X^-1" __ x:@ { Term::UnaryOp(UOp::Previous, Box::new(x)) }
         --
         x:(@) _ "=" _ y:@ { Term::BinOp(Equals, Box::new(x), Box::new(y)) }
         x:(@) _ "!=" _ y:@ { Term::BinOp(NotEquals, Box::new(x), Box::new(y)) }

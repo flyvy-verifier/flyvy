@@ -527,10 +527,13 @@ fn term_to_bdd(
             }
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
             return Err(CheckerError::CouldNotTranslateToBdd(term.clone()))
         }
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
+        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
+        | Term::Id(_) => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
     };
     Ok(bdd)
 }
@@ -560,7 +563,7 @@ fn term_to_element(
             _ => unreachable!(),
         },
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
         | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
     };

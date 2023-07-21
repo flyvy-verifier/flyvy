@@ -16,7 +16,7 @@ use crate::ouritertools::OurItertools;
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
 pub enum Sort {
     Bool,
-    Uninterpreted(String), // TODO(oded): rename to Uninterpreted
+    Uninterpreted(String),
 }
 
 impl Sort {
@@ -91,8 +91,7 @@ pub enum UOp {
     /// Used for the l2s construction (may end up replaced with just Prime)
     Next,
     /// Past operator, used only for the l2s construction
-    /// TODO(oded): rename this to Previous, I think it's more standard
-    Previously,
+    Previous,
 }
 
 /// Binary operators
@@ -264,12 +263,12 @@ impl Term {
         Self::UnaryOp(UOp::Next, Box::new(t.into()))
     }
 
-    /// Smart constructor for previously
-    pub fn previously<T>(t: T) -> Self
+    /// Smart constructor for previous
+    pub fn previous<T>(t: T) -> Self
     where
         T: Into<Term>,
     {
-        Self::UnaryOp(UOp::Previously, Box::new(t.into()))
+        Self::UnaryOp(UOp::Previous, Box::new(t.into()))
     }
 
     //////////////////

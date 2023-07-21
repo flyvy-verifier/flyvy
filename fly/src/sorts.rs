@@ -254,7 +254,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
         Term::Literal(_) | Term::Id(_) => true,
         Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
         Term::UnaryOp(
-            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
             x,
         ) => term_has_all_sort_annotations(x),
         Term::BinOp(
@@ -472,7 +472,7 @@ impl Context<'_> {
                 Ok(())
             }
             Term::UnaryOp(
-                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
                 x,
             ) => self.fix_sorts_in_term(x),
             Term::BinOp(
@@ -567,7 +567,7 @@ impl Context<'_> {
                 None => Err(SortError::UnknownFunction(f.clone())),
             },
             Term::UnaryOp(
-                UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous,
                 x,
             ) => {
                 let x = self.sort_of_term(x)?;

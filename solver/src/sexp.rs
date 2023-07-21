@@ -49,7 +49,7 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
                     term_primes(arg, num_primes + 1)
                 }
                 // TODO: temporal stuff should be eliminated before here
-                UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously => {
+                UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous => {
                     panic!("attempt to encode a temporal formula for smt")
                 }
             }

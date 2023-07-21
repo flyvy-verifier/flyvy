@@ -295,7 +295,7 @@ impl Model {
                     0
                 }
             }
-            Term::UnaryOp(Always | Eventually | Prime | Next | Previously, _)
+            Term::UnaryOp(Always | Eventually | Prime | Next | Previous, _)
             | Term::BinOp(Until | Since, _, _) => {
                 panic!("tried to eval temporal {t}")
             }

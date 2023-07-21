@@ -402,7 +402,7 @@ fn term_to_ast(
             }
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
             return Err(CheckerError::CouldNotTranslateToAst(term.clone()))
         }
@@ -435,7 +435,7 @@ fn term_to_element(
             _ => unreachable!(),
         },
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
         | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
     };
