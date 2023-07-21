@@ -168,39 +168,39 @@ impl Context<'_> {
         }
 
         // Convert valuations to models
-        let valuations: Vec<_> = valuations.into_iter().map(Option::unwrap).collect();
+        valuations
+            .into_iter()
+            .map(|valuation| self.convert_valuation(valuation.unwrap()))
+            .collect()
+    }
+
+    fn convert_valuation(&self, valuation: BddValuation) -> Model {
         let universe = self
             .signature
             .sorts
             .iter()
             .map(|s| self.universe[s])
             .collect();
-        valuations
-            .into_iter()
-            .map(|valuation| {
-                Model::new(
-                    self.signature,
-                    &universe,
-                    self.signature
-                        .relations
+        Model::new(
+            self.signature,
+            &universe,
+            self.signature
+                .relations
+                .iter()
+                .map(|r| {
+                    let shape = r
+                        .args
                         .iter()
-                        .map(|r| {
-                            let shape = r
-                                .args
-                                .iter()
-                                .map(|s| cardinality(self.universe, s))
-                                .chain([2])
-                                .collect();
-                            Interpretation::new(&shape, |elements| {
-                                valuation
-                                    .value(self.vars[self.indices[r.name.as_str()][elements].0])
-                                    as usize
-                            })
-                        })
-                        .collect(),
-                )
-            })
-            .collect()
+                        .map(|s| cardinality(self.universe, s))
+                        .chain([2])
+                        .collect();
+                    Interpretation::new(&shape, |elements| {
+                        valuation.value(self.vars[self.indices[r.name.as_str()][elements].0])
+                            as usize
+                    })
+                })
+                .collect(),
+        )
     }
 
     fn mk_bool(&self, value: bool) -> Bdd {
