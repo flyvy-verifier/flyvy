@@ -202,7 +202,7 @@ mod tests {
 fn sort(s: &Sort) -> String {
     match s {
         Sort::Bool => "bool".to_string(),
-        Sort::Id(i) => i.to_string(),
+        Sort::Uninterpreted(i) => i.to_string(),
     }
 }
 

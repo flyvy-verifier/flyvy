@@ -16,13 +16,13 @@ use crate::ouritertools::OurItertools;
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
 pub enum Sort {
     Bool,
-    Id(String), // TODO(oded): rename to Uninterpreted
+    Uninterpreted(String), // TODO(oded): rename to Uninterpreted
 }
 
 impl Sort {
-    /// Smart constructor for Sord::Id that takes &str
-    pub fn id(name: &str) -> Self {
-        Sort::Id(name.to_string())
+    /// Smart constructor for uninterpreted sort that takes &str
+    pub fn unintereted(name: &str) -> Self {
+        Sort::Uninterpreted(name.to_string())
     }
 }
 
@@ -30,7 +30,7 @@ impl From<&str> for Sort {
     /// This is mostly for the Binder smart constructor, making it possible to
     /// pass either Sort, &Sort, or &str
     fn from(value: &str) -> Self {
-        Self::id(value)
+        Self::unintereted(value)
     }
 }
 
@@ -46,7 +46,7 @@ impl fmt::Display for Sort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Sort::Bool => "bool".to_string(),
-            Sort::Id(i) => i.to_string(),
+            Sort::Uninterpreted(i) => i.to_string(),
         };
         write!(f, "{s}")
     }
@@ -532,7 +532,7 @@ impl Signature {
     pub fn sort_idx(&self, sort: &Sort) -> usize {
         match sort {
             Sort::Bool => panic!("invalid sort {sort}"),
-            Sort::Id(sort) => self
+            Sort::Uninterpreted(sort) => self
                 .sorts
                 .iter()
                 .position(|x| x == sort)
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_terms_by_sort() {
-        let sort = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Uninterpreted(format!("T{n}"));
 
         let mut sig = Signature {
             sorts: vec!["T1".to_string(), "T2".to_string()],

@@ -11,7 +11,7 @@ use smtlib::sexp::{app, atom_s, sexp_l, Sexp};
 pub fn sort(s: &Sort) -> Sexp {
     match s {
         Sort::Bool => atom_s("Bool"),
-        Sort::Id(s) => atom_s(s),
+        Sort::Uninterpreted(s) => atom_s(s),
     }
 }
 

@@ -137,7 +137,7 @@ impl Model {
                     "true".to_string()
                 }
             }
-            Sort::Id(s) => format!("@{s}_{element}"),
+            Sort::Uninterpreted(s) => format!("@{s}_{element}"),
         }
     }
 
@@ -344,7 +344,7 @@ impl Model {
                 assignment.insert(name.clone(), j);
                 exists_binders.push(Binder {
                     name: name.clone(),
-                    sort: Sort::Id(self.signature.sorts[i].clone()),
+                    sort: Sort::Uninterpreted(self.signature.sorts[i].clone()),
                 });
             }
         }
@@ -379,7 +379,7 @@ impl Model {
                     quantifier: Quantifier::Forall,
                     binders: vec![Binder {
                         name: univ_vars[i].clone(),
-                        sort: Sort::Id(self.signature.sorts[i].clone()),
+                        sort: Sort::Uninterpreted(self.signature.sorts[i].clone()),
                     }],
                     body: Box::new(Term::NAryOp(
                         NOp::Or,
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_wf() {
-        let sort = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Uninterpreted(format!("T{n}"));
 
         let sig = Signature {
             sorts: vec!["T1".to_string(), "T2".to_string()],
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     #[allow(clippy::redundant_clone)]
     fn test_eval() {
-        let sort = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Uninterpreted(format!("T{n}"));
 
         let sig = Signature {
             sorts: vec!["T1".to_string(), "T2".to_string()],
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_to_term() {
-        let sort = |n: usize| Sort::Id(format!("T{n}"));
+        let sort = |n: usize| Sort::Uninterpreted(format!("T{n}"));
 
         let sig = Signature {
             sorts: vec!["T1".to_string(), "T2".to_string()],

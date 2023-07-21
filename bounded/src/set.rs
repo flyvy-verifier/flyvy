@@ -811,7 +811,7 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
 fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(sort) => *universe.get(sort).unwrap(),
+        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
     }
 }
 

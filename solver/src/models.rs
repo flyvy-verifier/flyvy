@@ -89,7 +89,7 @@ fn parse_sort(sort: &Sexp) -> Sort {
     if sort_name == "Bool" {
         Sort::Bool
     } else {
-        Sort::Id(sort_name.to_string())
+        Sort::Uninterpreted(sort_name.to_string())
     }
 }
 
@@ -277,7 +277,7 @@ impl PartialInterp {
                     "false".to_string()
                 }
             }
-            Sort::Id(sort) => self.universes[sort][result_el].clone(),
+            Sort::Uninterpreted(sort) => self.universes[sort][result_el].clone(),
         }
     }
 }

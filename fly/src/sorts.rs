@@ -280,7 +280,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
         } => {
             binders
                 .iter()
-                .all(|binder| binder.sort != Sort::Id("".to_owned()))
+                .all(|binder| binder.sort != Sort::Uninterpreted("".to_owned()))
                 && term_has_all_sort_annotations(body)
         }
     }
@@ -364,8 +364,8 @@ impl Context<'_> {
     ) -> Result<(), SortError> {
         match sort {
             Sort::Bool => Ok(()),
-            Sort::Id(a) if a.is_empty() && empty_allowed => Ok(()),
-            Sort::Id(a) => {
+            Sort::Uninterpreted(a) if a.is_empty() && empty_allowed => Ok(()),
+            Sort::Uninterpreted(a) => {
                 if !self.sorts.contains(a) {
                     Err(SortError::UnknownSort(a.clone()))
                 } else {
@@ -418,9 +418,9 @@ impl Context<'_> {
                 return Err(SortError::RedeclaredName(binder.name.clone()));
             }
             self.check_sort_exists_or_empty(&binder.sort)?;
-            let sort = if binder.sort == Sort::Id("".to_owned()) {
+            let sort = if binder.sort == Sort::Uninterpreted("".to_owned()) {
                 let var = self.vars.new_key(OptionSort(None));
-                binder.sort = Sort::Id(format!("var {}", var.0));
+                binder.sort = Sort::Uninterpreted(format!("var {}", var.0));
                 NamedSort::Unknown(var)
             } else {
                 NamedSort::Known(vec![], binder.sort.clone())
@@ -507,7 +507,7 @@ impl Context<'_> {
                 body,
             } => {
                 for binder in binders {
-                    if let Sort::Id(s) = binder.sort.clone() {
+                    if let Sort::Uninterpreted(s) = binder.sort.clone() {
                         let s: Vec<&str> = s.split_whitespace().collect();
                         match s[..] {
                             [_] => {} // user sort annotation

@@ -138,7 +138,7 @@ type Universe = HashMap<String, usize>;
 fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(id) => universe[id],
+        Sort::Uninterpreted(id) => universe[id],
     }
 }
 

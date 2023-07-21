@@ -250,7 +250,7 @@ type Universe = HashMap<String, usize>;
 fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(id) => universe[id],
+        Sort::Uninterpreted(id) => universe[id],
     }
 }
 
@@ -612,7 +612,9 @@ pub fn bdd_to_term<'a>(
                 .iter()
                 .zip(elements)
                 .map(|(sort, element)| match sort {
-                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), *element)].clone()),
+                    Sort::Uninterpreted(sort) => {
+                        Term::Id(bindings[&(sort.as_str(), *element)].clone())
+                    }
                     Sort::Bool => match element {
                         0 => Term::Literal(false),
                         1 => Term::Literal(true),
