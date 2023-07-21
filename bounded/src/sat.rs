@@ -161,21 +161,18 @@ pub fn check(
         todo!("definitions are not supported yet");
     }
 
-    let DestructuredModule {
-        inits,
-        transitions,
-        axioms,
-        proofs,
-    } = extract(module).map_err(CheckerError::ExtractionError)?;
-
-    let inits = inits.into_iter().chain(axioms.clone()).collect();
-    let transitions = transitions.into_iter().chain(axioms).collect();
-    let safeties = proofs.into_iter().map(|proof| proof.safety.x).collect();
+    let d = extract(module).map_err(CheckerError::ExtractionError)?;
+    let inits = d.inits.iter().chain(&d.axioms).cloned();
+    let transitions = d
+        .transitions
+        .iter()
+        .chain(d.mutable_axioms(&module.signature.relations))
+        .cloned();
+    let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
     let mut context = Context::new(&module.signature, universe, depth);
 
-    let translate = |terms| {
-        let term = Term::NAryOp(NOp::And, terms);
+    let translate = |term| {
         let term = nullary_id_to_app(term, &module.signature.relations);
         let term = fly::term::prime::Next::new(&module.signature).normalize(&term);
         term_to_ast(&term, &context, &HashMap::new())
@@ -184,9 +181,9 @@ pub fn check(
     println!("starting translation...");
     let translation = std::time::Instant::now();
 
-    let init = translate(inits)?;
-    let tr = translate(transitions)?;
-    let not_safe = Ast::Not(Box::new(translate(safeties)?));
+    let init = translate(Term::and(inits))?;
+    let tr = translate(Term::and(transitions))?;
+    let not_safe = Ast::Not(Box::new(translate(Term::and(safeties))?));
 
     let mut program = vec![init];
     for i in 0..depth {

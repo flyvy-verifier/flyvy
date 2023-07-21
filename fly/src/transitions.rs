@@ -162,3 +162,32 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
         proofs,
     })
 }
+
+impl DestructuredModule {
+    /// Returns only the axioms that mention at least one mutable relation
+    // optimization: axioms that only mention immutable relations can be treated as inits
+    // by the bounded model checkers
+    pub fn mutable_axioms<'a>(
+        &'a self,
+        relations: &'a [RelationDecl],
+    ) -> impl Iterator<Item = &Term> + 'a {
+        self.axioms
+            .iter()
+            .filter(|term| !contains_only_immutables(term, relations))
+    }
+}
+
+fn contains_only_immutables(term: &Term, relations: &[RelationDecl]) -> bool {
+    let is_immutable = |name: &str| relations.iter().any(|r| r.name == name && !r.mutable);
+    let go = |term| contains_only_immutables(term, relations);
+    match term {
+        Term::Literal(_) => true,
+        Term::Id(name) => is_immutable(name),
+        Term::App(name, _, xs) => is_immutable(name) && xs.iter().all(go),
+        Term::UnaryOp(_, x) => go(x),
+        Term::BinOp(_, x, y) => go(x) && go(y),
+        Term::NAryOp(_, xs) => xs.iter().all(go),
+        Term::Ite { cond, then, else_ } => go(cond) && go(then) && go(else_),
+        Term::Quantified { body, .. } => go(body),
+    }
+}
