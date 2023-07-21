@@ -82,24 +82,90 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(&self, valuation: &BddValuation, trace: &[Bdd], tr: &Bdd) {
+    fn print_counterexample(
+        &self,
+        valuation: &BddValuation,
+        trace: &[Bdd],
+        tr: &Bdd,
+        reversed: bool,
+    ) {
         let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
         valuations.resize(trace.len(), None);
-        *valuations.last_mut().unwrap() = Some(valuation.clone());
 
-        for i in (1..trace.len()).rev() {
-            let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
-                map.iter().map(|(elements, (v, _))| {
-                    let var = self.get(relation, elements, true);
-                    if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
-                        var
-                    } else {
-                        var.not()
+        // Choose which way to search
+        let (start, stop, incr, next): (
+            usize,
+            usize,
+            Box<dyn Fn(usize) -> usize>,
+            Box<dyn Fn(usize, &mut Vec<Option<BddValuation>>) -> Bdd>,
+        ) = match reversed {
+            false => (
+                trace.len() - 1,
+                0,
+                Box::new(|i| i - 1),
+                Box::new(|i, valuations| {
+                    let unprimed = trace[i - 1].clone();
+
+                    let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
+                        map.iter().map(|(elements, (v, _))| {
+                            let var = self.get(relation, elements, true);
+                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
+                                var
+                            } else {
+                                var.not()
+                            }
+                        })
+                    }));
+
+                    self.mk_and([unprimed, tr.clone(), primed])
+                        .exists(&self.vars[self.mutables..self.mutables * 2])
+                }),
+            ),
+            true => (
+                0,
+                trace.len() - 1,
+                Box::new(|i| i + 1),
+                Box::new(|i, valuations| {
+                    let unprimed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
+                        map.iter().map(|(elements, (v, _))| {
+                            let var = self.get(relation, elements, false);
+                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
+                                var
+                            } else {
+                                var.not()
+                            }
+                        })
+                    }));
+
+                    // traces is backwards relative to valuations
+                    let mut primed = trace[trace.len() - 1 - (i + 1)].clone();
+                    for j in (0..self.mutables).rev() {
+                        unsafe {
+                            primed.rename_variable(self.vars[j], self.vars[j + self.mutables]);
+                        }
                     }
-                })
-            }));
-            let bdd = self.mk_and([primed, trace[i - 1].clone(), tr.clone()]);
-            valuations[i - 1] = Some(bdd.sat_witness().unwrap());
+
+                    let mut out = self
+                        .mk_and([unprimed, tr.clone(), primed])
+                        .exists(&self.vars[0..self.mutables]);
+                    // but valuations expects the primed variables in the unprimed slots
+                    for j in 0..self.mutables {
+                        unsafe {
+                            out.rename_variable(self.vars[j + self.mutables], self.vars[j]);
+                        }
+                    }
+                    out
+                }),
+            ),
+        };
+
+        // Do the search
+        valuations[start] = Some(valuation.clone());
+        let mut i = start;
+        while i != stop {
+            let bdd = next(i, &mut valuations);
+            i = incr(i);
+            valuations[i] = Some(bdd.sat_witness().unwrap());
         }
 
         println!("found counterexample!");
@@ -180,6 +246,28 @@ pub fn check<'a>(
     depth: Option<usize>,
     print_timing: bool,
 ) -> Result<CheckerAnswer<'a>, CheckerError> {
+    check_internal(module, universe, depth, print_timing, false)
+}
+
+/// The same as `check`, but instead of starting at `init` and going until it gets to `not_safe`,
+/// it starts at `not_safe` and goes backwards until it gets to `init`.
+/// It also returns a negated Bdd if it returns Convergence.
+pub fn check_reversed<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
+    depth: Option<usize>,
+    print_timing: bool,
+) -> Result<CheckerAnswer<'a>, CheckerError> {
+    check_internal(module, universe, depth, print_timing, true)
+}
+
+fn check_internal<'a>(
+    module: &'a Module,
+    universe: &'a Universe,
+    depth: Option<usize>,
+    print_timing: bool,
+    reversed: bool,
+) -> Result<CheckerAnswer<'a>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -232,29 +320,66 @@ pub fn check<'a>(
     println!("starting search...");
     let time = std::time::Instant::now();
 
-    let mut trace = vec![init.clone()];
+    // Choose which way to search
+    let (mut trace, mut current, mut reachable, not_safe, update): (
+        Vec<Bdd>,
+        Bdd,
+        Bdd,
+        Bdd,
+        Box<dyn Fn(&mut Bdd, &Context)>,
+    ) = match reversed {
+        false => (
+            vec![init.clone()],
+            init.clone(),
+            init,
+            not_safe,
+            Box::new(|current: &mut Bdd, context: &Context| {
+                let unprimed = 0..context.mutables;
+                *current = Bdd::binary_op_with_exists(
+                    current,
+                    &tr,
+                    op_function::and,
+                    &context.vars[unprimed.clone()],
+                );
+                for i in unprimed {
+                    unsafe {
+                        current
+                            .rename_variable(context.vars[i + context.mutables], context.vars[i]);
+                    }
+                }
+            }),
+        ),
+        true => (
+            vec![not_safe.clone()],
+            not_safe.clone(),
+            not_safe,
+            init,
+            Box::new(|current: &mut Bdd, context: &Context| {
+                let primed = context.mutables..context.mutables * 2;
+                for i in primed.clone().rev() {
+                    unsafe {
+                        current
+                            .rename_variable(context.vars[i - context.mutables], context.vars[i]);
+                    }
+                }
+                *current = Bdd::binary_op_with_exists(
+                    current,
+                    &tr,
+                    op_function::and,
+                    &context.vars[primed],
+                );
+            }),
+        ),
+    };
 
-    let mut current = init;
-    let mut reachable = context.mk_bool(false);
-
+    // Do the search
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(&valuation, &trace, &tr);
+        context.print_counterexample(&valuation, &trace, &tr, reversed);
         return Ok(CheckerAnswer::Counterexample(valuation));
     }
     let mut i = 0;
     while depth.map(|d| i < d).unwrap_or(true) {
-        current = Bdd::binary_op_with_exists(
-            &current,
-            &tr,
-            op_function::and,
-            &context.vars[0..context.mutables],
-        );
-        for i in 0..context.mutables {
-            unsafe {
-                current.rename_variable(context.vars[i + context.mutables], context.vars[i]);
-            }
-        }
-
+        update(&mut current, &context);
         let new_reachable = reachable.or(&current);
 
         if print_timing {
@@ -269,7 +394,7 @@ pub fn check<'a>(
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(&valuation, &trace, &tr);
+            context.print_counterexample(&valuation, &trace, &tr, reversed);
             return Ok(CheckerAnswer::Counterexample(valuation));
         }
 
@@ -575,6 +700,95 @@ mod tests {
         let universe = std::collections::HashMap::new();
         assert!(matches!(
             check(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(..),
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn checker_bdd_basic_reversed() -> Result<(), CheckerError> {
+        let source = include_str!("../../temporal-verifier/tests/examples/basic2.fly");
+
+        let mut module = fly::parser::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
+        let universe = HashMap::from([]);
+
+        assert!(matches!(
+            check_reversed(&module, &universe, Some(0), false)?,
+            CheckerAnswer::Unknown,
+        ));
+        assert!(matches!(
+            check_reversed(&module, &universe, Some(1), false)?,
+            CheckerAnswer::Counterexample(_),
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_bdd_lockserver_reversed() -> Result<(), CheckerError> {
+        let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
+
+        let mut module = fly::parser::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        assert!(matches!(
+            check_reversed(&module, &universe, None, false)?,
+            CheckerAnswer::Convergence(..),
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_bdd_lockserver_buggy_reversed() -> Result<(), CheckerError> {
+        let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
+
+        let mut module = fly::parser::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
+        let universe = HashMap::from([("node".to_string(), 2)]);
+
+        let bug = check_reversed(&module, &universe, Some(12), false)?;
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
+        let bug = check_reversed(&module, &universe, None, false)?;
+        assert!(matches!(bug, CheckerAnswer::Counterexample(_)));
+
+        let too_short = check_reversed(&module, &universe, Some(11), false)?;
+        assert!(matches!(too_short, CheckerAnswer::Unknown));
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_bdd_consensus_reversed() -> Result<(), CheckerError> {
+        let source = include_str!("../../temporal-verifier/examples/consensus.fly");
+
+        let mut module = fly::parser::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
+        let universe = std::collections::HashMap::from([
+            ("node".to_string(), 1),
+            ("quorum".to_string(), 1),
+            ("value".to_string(), 1),
+        ]);
+
+        assert!(matches!(
+            check_reversed(&module, &universe, Some(0), false)?,
+            CheckerAnswer::Unknown,
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_bdd_immutability_reversed() -> Result<(), CheckerError> {
+        let source =
+            include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
+        let mut module = fly::parser::parse(source).unwrap();
+        sort_check_and_infer(&mut module).unwrap();
+        let universe = std::collections::HashMap::new();
+        assert!(matches!(
+            check_reversed(&module, &universe, None, false)?,
             CheckerAnswer::Convergence(..),
         ));
         Ok(())
