@@ -7,11 +7,15 @@ use crate::syntax::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use peg::{error::ParseError, str::LineCol};
 
+// TODO(oded): Use smart constructors in this module. In principle, no Term
+// should be constructed directly by a (non-smart) constructor. I expect this
+// will simplify the code, and if there are exceptions then we can revisit the
+// design of the smart consturctors.
+
 peg::parser! {
 
 grammar parser() for str {
     use BinOp::*;
-    use NOp::*;
     use UOp::*;
     use Quantifier::*;
 
@@ -59,9 +63,9 @@ grammar parser() for str {
             Term::Ite { cond: Box::new(cond), then: Box::new(then), else_: Box::new(else_) }
         }
         --
-        x:(@) _ "|" _ y:@ { Term::nary(Or, x, y) }
+        x:(@) _ "|" _ y:@ { Term::or([x, y]) }
         --
-        x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
+        x:(@) _ "&" _ y:@ { Term::and([x, y]) }
         --
         // NOTE(tej): precedence of these operators was an arbitrary choice
         x:@ _ "until" _ y:(@) { Term::BinOp(BinOp::Until, Box::new(x), Box::new(y)) }

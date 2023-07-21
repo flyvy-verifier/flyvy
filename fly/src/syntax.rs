@@ -10,6 +10,52 @@ use serde::Serialize;
 
 use crate::ouritertools::OurItertools;
 
+/// A Sort represents a collection of values, which can be the built-in boolean
+/// sort or a named sort (coming from a Signature).
+#[allow(missing_docs)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
+pub enum Sort {
+    Bool,
+    Id(String), // TODO(oded): rename to Uninterpreted
+}
+
+impl Sort {
+    /// Smart constructor for uninterpreted sort
+    ///
+    /// TODO(oded): I'm not sure we need to keep this. Even if we do, I'm not
+    ///             sure we need AsRef<str> and not just &str, which seems
+    ///             simpler.
+    pub fn new<S: AsRef<str>>(s: S) -> Self {
+        Self::Id(s.as_ref().to_string())
+    }
+}
+
+impl From<&str> for Sort {
+    /// This is mostly for the Binder smart constructor, making it possible to
+    /// pass either Sort, &Sort, or &str
+    fn from(value: &str) -> Self {
+        Sort::Id(value.to_string())
+    }
+}
+
+impl From<&Sort> for Sort {
+    /// This is mostly for the Binder smart constructor, making it possible to
+    /// pass either Sort, &Sort, or &str
+    fn from(value: &Self) -> Self {
+        value.clone()
+    }
+}
+
+impl fmt::Display for Sort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Sort::Bool => "bool".to_string(),
+            Sort::Id(i) => i.to_string(),
+        };
+        write!(f, "{s}")
+    }
+}
+
 /// Unary operators
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 pub enum UOp {
@@ -24,6 +70,7 @@ pub enum UOp {
     /// Used for the l2s construction (may end up replaced with just Prime)
     Next,
     /// Past operator, used only for the l2s construction
+    /// TODO(oded): rename this to Previous, I think it's more standard
     Previously,
 }
 
@@ -66,29 +113,25 @@ pub struct Binder {
     pub sort: Sort,
 }
 
-impl From<&str> for Sort {
-    fn from(value: &str) -> Self {
-        Sort::Id(value.to_string())
-    }
-}
-
 impl Binder {
     /// Smart constructor for a Binder that takes arguments by reference.
-    pub fn new<N>(name: N, sort: &Sort) -> Self
+    ///
+    /// TODO(oded): Tej, I made name &str instead of AsRef<str> and everything
+    ///             seems fine. Is that okay?
+    pub fn new<T>(name: &str, sort: T) -> Self
     where
-        N: AsRef<str>,
+        T: Into<Sort>,
     {
         Binder {
-            name: name.as_ref().to_string(),
-            sort: sort.clone(),
+            name: name.to_string(),
+            sort: sort.into(),
         }
     }
 }
 
-/// A Term is a temporal-logical formula (in LTL), which can be interpreted as
-/// being a sequence of values of some sort (often bool for example) under a
-/// given signature and an infinite sequence of states (consisting of values for
-/// all the functions in the signature at each point in time).
+/// A Term is an FO-LTL (first-order linear temporal logic) term or formula. The
+/// temporal operators supported are: Prime, Next, Prev, Until, Since, Always,
+/// Eventually (see [`UOp`] and [`BinOp`]).
 #[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
 pub enum Term {
     /// A constant true or false
@@ -124,80 +167,314 @@ pub enum Term {
     },
 }
 
+impl From<&Term> for Term {
+    /// This is mostly for smart constructor, making it possible to
+    /// pass either Sort or &Sort with an automatic clone if needed
+    fn from(value: &Self) -> Self {
+        value.clone()
+    }
+}
+
+/// Smart constructors for Term. These generally take arguments by reference and
+/// clone them. Should this become a performence concern we can revisit this
+/// choice.
 impl Term {
-    /// Flatten an n-ary relation one level deep.
-    fn flatten_nary(self) -> Self {
-        match self {
-            Self::NAryOp(op, ts) => {
-                let new_ts = ts
-                    .into_iter()
-                    .flat_map(|t| match t {
-                        Self::NAryOp(op2, ts2) if op == op2 => ts2,
-                        _ => vec![t],
-                    })
-                    .collect();
-                Self::NAryOp(op, new_ts)
-            }
-            _ => self,
+    /// Smart constructor for Literal. Mainly here for uniformity.
+    pub fn literal(value: bool) -> Self {
+        Self::Literal(value)
+    }
+
+    /// Smart constructor for Literal(true)
+    pub fn true_() -> Self {
+        Self::Literal(true)
+    }
+
+    /// Smart constructor for Literal(false)
+    pub fn false_() -> Self {
+        Self::Literal(false)
+    }
+
+    /// Smart constructor for Id
+    /// TODO(oded): should this take AsRef<str>?
+    pub fn id(name: &str) -> Self {
+        Self::Id(name.to_string())
+    }
+
+    /// Smart constructor for function application
+    ///
+    /// TODO(oded): I think in case args is empty we should return Id, but maybe
+    /// we do that after Id has n_primes
+    pub fn app<I>(f: &str, n_primes: usize, args: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Term>,
+    {
+        Self::App(
+            f.to_string(),
+            n_primes,
+            args.into_iter().map(|x| x.into()).collect(),
+        )
+    }
+
+    //////////////////
+    // Unary operations: Not, Prime, Always, Eventually, Next, Previously
+    //////////////////
+
+    /// Smart constructor for not. Note this does not push negation inwards, but
+    /// it does cancel double negation and flips Equals and NotEquals
+    pub fn not<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        let t = t.into();
+        match t {
+            Self::UnaryOp(UOp::Not, body) => *body,
+            Self::BinOp(BinOp::Equals, lhs, rhs) => Self::BinOp(BinOp::NotEquals, lhs, rhs),
+            Self::BinOp(BinOp::NotEquals, lhs, rhs) => Self::BinOp(BinOp::Equals, lhs, rhs),
+            _ => Self::UnaryOp(UOp::Not, Box::new(t)),
         }
     }
 
-    /// Smart constructor for function applications
-    pub fn app(f: &str, n_primes: usize, args: &[Term]) -> Self {
-        Self::App(f.to_string(), n_primes, args.to_vec())
+    /// Smart constructor for prime. Note this does not push primes (which would
+    /// require a signature and context)
+    pub fn prime<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        Self::UnaryOp(UOp::Prime, Box::new(t.into()))
     }
 
-    /// Smart constructor for an n-ary op from two arguments
-    pub fn nary(op: NOp, lhs: Term, rhs: Term) -> Self {
-        Self::NAryOp(op, vec![lhs, rhs]).flatten_nary()
+    /// Smart constructor for always
+    pub fn always<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        Self::UnaryOp(UOp::Always, Box::new(t.into()))
     }
 
-    /// Smart constructor equivalent to the And of an iterator of terms
+    /// Smart constructor for eventually
+    pub fn eventually<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        Self::UnaryOp(UOp::Eventually, Box::new(t.into()))
+    }
+
+    /// Smart constructor for next
+    pub fn next<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        Self::UnaryOp(UOp::Next, Box::new(t.into()))
+    }
+
+    /// Smart constructor for previously
+    pub fn previously<T>(t: T) -> Self
+    where
+        T: Into<Term>,
+    {
+        Self::UnaryOp(UOp::Previously, Box::new(t.into()))
+    }
+
+    //////////////////
+    // Binary operations: Equals, NotEquals, Implies, Iff, Until, Since
+    //////////////////
+
+    /// Smart constructor for `lhs = rhs`
+    pub fn equals<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::Equals, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    /// Smart constructor for `lhs != rhs`
+    pub fn not_equals<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::NotEquals, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    /// Smart constructor for `lhs -> rhs`
+    pub fn implies<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::Implies, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    /// Smart constructor for `lhs <-> rhs`
+    pub fn iff<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::Iff, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    /// Smart constructor for `lhs until rhs`
+    pub fn until<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::Until, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    /// Smart constructor for `lhs since rhs`
+    pub fn since<T1, T2>(lhs: T1, rhs: T2) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+    {
+        Self::BinOp(BinOp::Since, Box::new(lhs.into()), Box::new(rhs.into()))
+    }
+
+    //////////////////
+    // N-ary operations: And, Or
+    //////////////////
+
+    /// Helper function for [`and`] and [`or`]
+    fn flatten_terms_of_op(ts: Vec<Term>, op: NOp) -> Vec<Term> {
+        ts.into_iter()
+            .flat_map(|t| match t {
+                Self::NAryOp(op2, ts2) if op == op2 => ts2,
+                _ => vec![t],
+            })
+            .collect()
+    }
+
+    /// Smart constructor for And. Zero and one conjuncts are handled specially, and
+    /// conjuncts that are And are flattened (but not recursively).
     pub fn and<I>(ts: I) -> Self
     where
         I: IntoIterator,
-        I::IntoIter: Iterator<Item = Term>,
+        I::Item: Into<Term>,
     {
-        let mut ts: Vec<Term> = ts.into_iter().collect();
+        let mut ts = ts.into_iter().map(|x| x.into()).collect_vec();
         if ts.is_empty() {
-            return Term::Literal(true);
+            Self::true_()
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
+        } else {
+            Self::NAryOp(NOp::And, Self::flatten_terms_of_op(ts, NOp::And))
         }
-        Self::NAryOp(NOp::And, ts)
     }
 
-    /// Smart constructor equivalent to the Or of an iterator of terms
+    /// Smart constructor for Or. Zero and one disjuncts are handled specially,
+    /// and disjuncts that are Or are flattened (but not recursively).
     pub fn or<I>(ts: I) -> Self
     where
         I: IntoIterator,
-        I::IntoIter: Iterator<Item = Term>,
+        I::Item: Into<Term>,
     {
-        let mut ts: Vec<Term> = ts.into_iter().collect();
+        let mut ts = ts.into_iter().map(|x| x.into()).collect_vec();
         if ts.is_empty() {
-            return Term::Literal(false);
+            Self::false_()
         } else if ts.len() == 1 {
             return ts.pop().unwrap();
+        } else {
+            Self::NAryOp(NOp::Or, Self::flatten_terms_of_op(ts, NOp::Or))
         }
-        Self::NAryOp(NOp::Or, ts)
     }
 
-    /// Convenience function to create `lhs ==> rhs`
-    pub fn implies(lhs: Term, rhs: Term) -> Self {
-        Self::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs))
+    //////////////////
+    // Remaining operations: Ite, Forall, Exists
+    //////////////////
+
+    /// Smart constructor for Ite
+    pub fn ite<T1, T2, T3>(cond: T1, then: T2, else_: T3) -> Self
+    where
+        T1: Into<Term>,
+        T2: Into<Term>,
+        T3: Into<Term>,
+    {
+        Self::Ite {
+            cond: Box::new(cond.into()),
+            then: Box::new(then.into()),
+            else_: Box::new(else_.into()),
+        }
     }
 
-    /// Convenience function to create `lhs == rhs`
-    pub fn equals(lhs: Term, rhs: Term) -> Self {
-        Self::BinOp(BinOp::Equals, Box::new(lhs), Box::new(rhs))
+    /// Helper function for forall, exists. Special handling for zero binders
+    /// and one level flattening.
+    fn quantify(quantifier: Quantifier, binders: Vec<Binder>, body: Self) -> Self {
+        if binders.is_empty() {
+            body
+        } else {
+            match body {
+                Term::Quantified {
+                    quantifier: quantifier2,
+                    binders: binders2,
+                    body: body2,
+                } if quantifier == quantifier2 => {
+                    // Handle shadowing
+                    let mut combined_binders = binders
+                        .into_iter()
+                        .filter(|b| binders2.iter().all(|b2| b.name != b2.name))
+                        .collect_vec();
+                    combined_binders.extend(binders2);
+                    Self::Quantified {
+                        quantifier,
+                        binders: combined_binders,
+                        body: body2,
+                    }
+                }
+                _ => Self::Quantified {
+                    quantifier,
+                    binders,
+                    body: Box::new(body),
+                },
+            }
+        }
     }
 
+    /// Smart constructor for `forall binders. body`. Zero binders is handled
+    /// specially, and nested forall is kept flat (but not recursively).
+    pub fn forall<I, T>(binders: I, body: T) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Binder>,
+        T: Into<Term>,
+    {
+        let binders = binders.into_iter().collect_vec();
+        let body = body.into();
+        Self::quantify(Quantifier::Forall, binders, body)
+    }
+
+    /// Smart constructor for `exists binders. body`. Zero binders is handled
+    /// specially, and nested exists is kept flat (but not recursively).
+    pub fn exists<I, T>(binders: I, body: T) -> Self
+    where
+        I: IntoIterator,
+        I::IntoIter: Iterator<Item = Binder>,
+        T: Into<Term>,
+    {
+        let binders = binders.into_iter().collect_vec();
+        let body = body.into();
+        Self::quantify(Quantifier::Exists, binders, body)
+    }
+}
+
+/// Leftovers that should be eliminated
+impl Term {
     /// Convenience function to create `!t`
+    ///
+    /// TODO(oded): eliminate this in favor of not, or maybe make it a "method"
     pub fn negate(t: Term) -> Self {
         Self::UnaryOp(UOp::Not, Box::new(t))
     }
 
     /// Construct a simplified term logically equivalent to `!t`
+    ///
+    /// TODO(oded): I think this should be eliminated once we have NNF
+    ///             conversion (or even before). This is a very strange function
+    ///             anyway, used only once in UPDR. Note that it supports
+    ///             negating forall but not exists. Maybe for now it should be moved to updr.rs.
     pub fn negate_and_simplify(t: Term) -> Self {
         match t {
             Term::Literal(b) => Term::Literal(!b),
@@ -225,58 +502,6 @@ impl Term {
             },
             _ => panic!("got illegal operator in negate and simplify"),
         }
-    }
-
-    /// Convenience to construct `exists (binders), body`
-    pub fn exists<I>(binders: I, body: Term) -> Self
-    where
-        I: IntoIterator,
-        I::IntoIter: Iterator<Item = Binder>,
-    {
-        Self::Quantified {
-            quantifier: Quantifier::Exists,
-            binders: binders.into_iter().collect(),
-            body: Box::new(body),
-        }
-    }
-
-    /// Convenience to construct `forall (binders), body`
-    pub fn forall<I>(binders: I, body: Term) -> Self
-    where
-        I: IntoIterator,
-        I::IntoIter: Iterator<Item = Binder>,
-    {
-        Self::Quantified {
-            quantifier: Quantifier::Forall,
-            binders: binders.into_iter().collect(),
-            body: Box::new(body),
-        }
-    }
-}
-
-/// A Sort represents a collection of values, which can be the built-in boolean
-/// sort or a named sort (coming from a Signature).
-#[allow(missing_docs)]
-#[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
-pub enum Sort {
-    Bool,
-    Id(String),
-}
-
-impl Sort {
-    /// Smart constructor for a named sort
-    pub fn new<S: AsRef<str>>(s: S) -> Self {
-        Self::Id(s.as_ref().to_string())
-    }
-}
-
-impl fmt::Display for Sort {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Sort::Bool => "bool".to_string(),
-            Sort::Id(i) => i.to_string(),
-        };
-        write!(f, "{s}")
     }
 }
 
