@@ -62,15 +62,15 @@ pub trait SubsumptionMap: Clone + Send + Sync {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Reversed<O: OrderSubsumption>(O);
 
-impl<O: OrderSubsumption> PartialOrd for Reversed<O> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.leq_cmp(other))
-    }
-}
-
 impl<O: OrderSubsumption> Ord for Reversed<O> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.leq_cmp(other)
+    }
+}
+
+impl<O: OrderSubsumption> PartialOrd for Reversed<O> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -187,7 +187,7 @@ impl<O: OrderSubsumption> AndLike<O> {
 
 impl<O: OrderSubsumption> PartialOrd for AndLike<O> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.leq_cmp(other))
+        Some(self.cmp(other))
     }
 }
 
@@ -489,7 +489,7 @@ pub struct Pair<O1: OrderSubsumption, O2: OrderSubsumption>(O1, O2);
 
 impl<O1: OrderSubsumption, O2: OrderSubsumption> PartialOrd for Pair<O1, O2> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.leq_cmp(other))
+        Some(self.cmp(other))
     }
 }
 
