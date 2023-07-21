@@ -193,7 +193,7 @@ impl<B: Backend> Solver<B> {
         let start = fly::timing::start();
         let r = if assumptions.is_empty() {
             let sat = self.proc.check_sat()?;
-            self.comment_with(|| format!("check sat result: {:?}", sat));
+            self.comment_with(|| format!("check sat result: {sat:?}"));
             Ok(sat)
         } else {
             self.last_assumptions = Some(assumptions.clone());
@@ -209,7 +209,7 @@ impl<B: Backend> Solver<B> {
                 .sorted()
                 .collect::<Vec<_>>();
             let sat = self.proc.check_sat_assuming(&assumptions)?;
-            self.comment_with(|| format!("check sat result: {:?}", sat));
+            self.comment_with(|| format!("check sat result: {sat:?}"));
             Ok(sat)
         };
         fly::timing::elapsed(
