@@ -344,7 +344,7 @@ impl Model {
                 assignment.insert(name.clone(), j);
                 exists_binders.push(Binder {
                     name: name.clone(),
-                    sort: Sort::uninterp(&self.signature.sorts[i]),
+                    sort: Sort::uninterpreted(&self.signature.sorts[i]),
                 });
             }
         }
