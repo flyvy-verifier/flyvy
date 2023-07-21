@@ -20,13 +20,9 @@ pub enum Sort {
 }
 
 impl Sort {
-    /// Smart constructor for uninterpreted sort
-    ///
-    /// TODO(oded): I'm not sure we need to keep this. Even if we do, I'm not
-    ///             sure we need AsRef<str> and not just &str, which seems
-    ///             simpler.
-    pub fn new<S: AsRef<str>>(s: S) -> Self {
-        Self::Id(s.as_ref().to_string())
+    /// Smart constructor for Sord::Id that takes &str
+    pub fn id(name: &str) -> Self {
+        Sort::Id(name.to_string())
     }
 }
 
@@ -34,7 +30,7 @@ impl From<&str> for Sort {
     /// This is mostly for the Binder smart constructor, making it possible to
     /// pass either Sort, &Sort, or &str
     fn from(value: &str) -> Self {
-        Sort::Id(value.to_string())
+        Self::id(value)
     }
 }
 
@@ -53,6 +49,31 @@ impl fmt::Display for Sort {
             Sort::Id(i) => i.to_string(),
         };
         write!(f, "{s}")
+    }
+}
+
+/// A binder is a variable name and a sort (used e.g. for a quantifier)
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
+pub struct Binder {
+    /// Bound name
+    pub name: String,
+    /// Sort for this binder
+    pub sort: Sort,
+}
+
+impl Binder {
+    /// Smart constructor for a Binder that takes arguments by reference.
+    ///
+    /// TODO(oded): Tej, I made name &str instead of AsRef<str> and everything
+    ///             seems fine. Is that okay?
+    pub fn new<T>(name: &str, sort: T) -> Self
+    where
+        T: Into<Sort>,
+    {
+        Binder {
+            name: name.to_string(),
+            sort: sort.into(),
+        }
     }
 }
 
@@ -102,31 +123,6 @@ pub enum NOp {
 pub enum Quantifier {
     Forall,
     Exists,
-}
-
-/// A binder for a quantifier
-#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
-pub struct Binder {
-    /// Bound name
-    pub name: String,
-    /// Sort for this binder
-    pub sort: Sort,
-}
-
-impl Binder {
-    /// Smart constructor for a Binder that takes arguments by reference.
-    ///
-    /// TODO(oded): Tej, I made name &str instead of AsRef<str> and everything
-    ///             seems fine. Is that okay?
-    pub fn new<T>(name: &str, sort: T) -> Self
-    where
-        T: Into<Sort>,
-    {
-        Binder {
-            name: name.to_string(),
-            sort: sort.into(),
-        }
-    }
 }
 
 /// A Term is an FO-LTL (first-order linear temporal logic) term or formula. The
