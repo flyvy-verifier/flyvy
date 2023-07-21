@@ -280,7 +280,7 @@ where
         let (covered, size) = invariant_cover(m, conf, &fo, &proof);
 
         println!("    Fixpoint size = {}", proof.len());
-        println!("    Fixpoint runtime = {:.2}s", total_time);
+        println!("    Fixpoint runtime = {total_time:.2}s");
         println!("    Covers {covered} / {size} of handwritten invariant.");
     }
 

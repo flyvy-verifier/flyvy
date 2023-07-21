@@ -56,7 +56,7 @@ impl AssertionFailure {
                 QueryError::Sat(models) => {
                     let mut message = "counter example:".to_string();
                     for (i, model) in models.iter().enumerate() {
-                        message.push_str(&format!("\nstate {}:\n", i));
+                        message.push_str(&format!("\nstate {i}:\n"));
                         message.push_str(&model.fmt());
                     }
                     message

@@ -369,7 +369,7 @@ impl Updr {
             if inductive_frame.is_some() {
                 println!("inductive_frame");
                 for t in &inductive_frame.as_ref().unwrap().terms {
-                    println!("{}", t);
+                    println!("{t}");
                 }
                 return inductive_frame;
             }
@@ -442,7 +442,7 @@ impl Updr {
         for frame in self.frames.iter() {
             print!("[");
             for term in frame.terms.iter() {
-                print!("{}, ", term);
+                print!("{term}, ");
             }
             println!("]");
         }

@@ -270,24 +270,23 @@ impl BoundedArgs {
             if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
                 let sort_name = sort_name.to_string();
                 if !sig.sorts.contains(&sort_name) {
-                    eprintln!("unknown sort name {} in bound {}", sort_name, b);
+                    eprintln!("unknown sort name {sort_name} in bound {b}");
                     process::exit(1);
                 }
                 if let Ok(bound_size) = bound_size.parse::<usize>() {
                     universe.insert(sort_name, bound_size);
                 } else {
-                    eprintln!("could not parse bound as integer in {}", b);
+                    eprintln!("could not parse bound as integer in {b}");
                     process::exit(1);
                 }
             } else {
-                eprintln!("expected exactly one '=' in bound {}", b);
+                eprintln!("expected exactly one '=' in bound {b}");
                 process::exit(1);
             }
         }
         if let Some(unbounded_sort) = sig.sorts.iter().find(|&s| !universe.contains_key(s)) {
             eprintln!(
-                "need a bound for sort {} on the command line, as in --bound {}=N",
-                unbounded_sort, unbounded_sort
+                "need a bound for sort {unbounded_sort} on the command line, as in --bound {unbounded_sort}=N"
             );
             process::exit(1);
         }
@@ -468,7 +467,7 @@ impl App {
         if let Err((err, span)) = r {
             eprintln!("sort checking error:");
 
-            let mut diagnostic = Diagnostic::error().with_message(format!("{}", err));
+            let mut diagnostic = Diagnostic::error().with_message(format!("{err}"));
             if let Some(span) = span {
                 diagnostic = diagnostic.with_labels(vec![Label::primary((), span.start..span.end)]);
             }
@@ -617,9 +616,9 @@ impl App {
                         }
                     }
                     Ok(bounded::sat::CheckerAnswer::Unknown) => {
-                        println!("answer: safe up to depth {} for given sort bounds", depth)
+                        println!("answer: safe up to depth {depth} for given sort bounds")
                     }
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("{error}"),
                 }
             }
             Command::BddCheck { bounded, reversed } => {
@@ -653,7 +652,7 @@ impl App {
                     Ok(bounded::bdd::CheckerAnswer::Convergence(..)) => {
                         println!("answer: safe forever with given sort bounds")
                     }
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("{error}"),
                 }
             }
             Command::SmtCheck { bounded, solver } => {
@@ -678,9 +677,9 @@ impl App {
                         }
                     }
                     Ok(bounded::smt::CheckerAnswer::Unknown) => {
-                        println!("answer: safe up to depth {} for given sort bounds", depth)
+                        println!("answer: safe up to depth {depth} for given sort bounds")
                     }
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("{error}"),
                 }
             }
         }
