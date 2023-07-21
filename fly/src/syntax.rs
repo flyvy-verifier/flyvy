@@ -22,7 +22,12 @@ pub enum Sort {
 impl Sort {
     /// Smart constructor for uninterpreted sort that takes &str
     pub fn uninterpreted(name: &str) -> Self {
-        Sort::Uninterpreted(name.to_string())
+        Self::Uninterpreted(name.to_string())
+    }
+
+    /// Unknown sort (used in sort inference) is represented as Uninterpreted("")
+    pub fn unknown() -> Self {
+        Self::uninterpreted("")
     }
 }
 
