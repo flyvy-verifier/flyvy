@@ -5,8 +5,7 @@
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
 use bitvec::prelude::*;
-use fly::{ouritertools::OurItertools, sorts::*, syntax::*, transitions::*};
-use itertools::Itertools;
+use fly::{ouritertools::OurItertools, semantics::*, sorts::*, syntax::*, transitions::*};
 use std::collections::{BTreeSet, VecDeque};
 use thiserror::Error;
 
@@ -14,9 +13,11 @@ use thiserror::Error;
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample,
+    Counterexample(Vec<Model>),
     /// The checker did not find a counterexample
     Unknown,
+    /// The checker found that the set of states stopped changing
+    Convergence,
 }
 
 /// Combined entry point to both translate and search the module.
@@ -26,63 +27,56 @@ pub fn check(
     depth: Option<usize>,
     compress_traces: TraceCompression,
     print_timing: bool,
-) -> Option<CheckerAnswer> {
-    match translate(module, universe) {
-        Err(e) => {
-            eprintln!("{}", e);
-            None
-        }
-        Ok(program) => match interpret(&program, depth, compress_traces, print_timing) {
-            InterpreterResult::Unknown => {
-                println!("no counterexample found");
-                Some(CheckerAnswer::Unknown)
-            }
-            InterpreterResult::Counterexample(trace) => {
-                println!("found counterexample!");
-                let indices = Indices::new(&module.signature, universe);
-                match compress_traces {
-                    TraceCompression::Yes => {
-                        let (state, depth) = match trace {
-                            Trace::Trace(..) => unreachable!(),
-                            Trace::CompressedTrace(state, depth) => (state, depth),
-                        };
-                        println!("final state (depth {}):", depth);
-                        for r in &module.signature.relations {
-                            let relation = &r.name;
-                            print!("{}: {{", relation);
-                            for ((r, elements), i) in indices.0.iter().sorted() {
-                                if r == relation && state.0[*i] {
-                                    print!("{:?}, ", elements);
-                                }
-                            }
-                            println!("}}");
-                        }
-                        println!();
-                    }
-                    TraceCompression::No => {
-                        let states = match trace {
-                            Trace::Trace(states) => states,
-                            Trace::CompressedTrace(..) => unreachable!(),
-                        };
-                        for (i, state) in states.iter().enumerate() {
-                            println!("state {}:", i);
-                            for r in &module.signature.relations {
-                                let relation = &r.name;
-                                print!("{}: {{", relation);
-                                for ((r, elements), i) in indices.0.iter().sorted() {
-                                    if r == relation && state.0[*i] {
-                                        print!("{:?}, ", elements);
-                                    }
-                                }
-                                println!("}}");
-                            }
-                            println!();
-                        }
-                    }
+) -> Result<CheckerAnswer, TranslationError> {
+    let (program, indices) = translate(module, universe)?;
+    match interpret(&program, depth, compress_traces, print_timing) {
+        InterpreterResult::Unknown => Ok(CheckerAnswer::Unknown),
+        InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
+        InterpreterResult::Counterexample(trace) => {
+            let u = module.signature.sorts.iter().map(|s| universe[s]).collect();
+            let states = match compress_traces {
+                TraceCompression::Yes => {
+                    let (state, depth) = match trace {
+                        Trace::Trace(..) => unreachable!(),
+                        Trace::CompressedTrace(state, depth) => (state, depth),
+                    };
+                    println!("counterexample is at depth {}, not 0", depth);
+                    vec![state]
                 }
-                Some(CheckerAnswer::Counterexample)
-            }
-        },
+                TraceCompression::No => match trace {
+                    Trace::Trace(states) => states,
+                    Trace::CompressedTrace(..) => unreachable!(),
+                },
+            };
+            let models = states
+                .into_iter()
+                .map(|state| {
+                    Model::new(
+                        &module.signature,
+                        &u,
+                        module
+                            .signature
+                            .relations
+                            .iter()
+                            .map(|r| {
+                                let shape = r
+                                    .args
+                                    .iter()
+                                    .map(|s| cardinality(universe, s))
+                                    .chain([2])
+                                    .collect();
+                                Interpretation::new(&shape, |elements| {
+                                    state.0[indices
+                                        [&(r.name.as_str(), Elements::new(elements.to_vec()))]]
+                                        as usize
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            Ok(CheckerAnswer::Counterexample(models))
+        }
     }
 }
 
@@ -187,6 +181,7 @@ impl PartialEq for BoundedState {
 }
 
 /// A map from (relation name, Elements) pairs to their index in the [BoundedState] bit vector.
+#[derive(Debug, PartialEq)]
 struct Indices<'a>(HashMap<(&'a str, Elements), usize>);
 
 impl Indices<'_> {
@@ -433,6 +428,8 @@ pub enum InterpreterResult {
     Counterexample(Trace),
     /// The checker could not find any counterexamples
     Unknown,
+    /// The checker found that the set of states stopped changing
+    Convergence,
 }
 
 /// Explore reachable states of a BoundedProgram up to (and including) the given max_depth using
@@ -442,8 +439,7 @@ pub enum InterpreterResult {
 /// so if max_depth is Some(3), it means there will be 3 transitions (so 4 states).
 /// If max_depth is None, it means "no upper bound". The program will run until its
 /// state space is exhausted or the process is killed.
-#[allow(dead_code)]
-pub fn interpret(
+fn interpret(
     program: &BoundedProgram,
     max_depth: Option<usize>,
     compress_traces: TraceCompression,
@@ -523,7 +519,11 @@ pub fn interpret(
         }
     }
 
-    InterpreterResult::Unknown
+    if max_depth.map(|md| current_depth < md).unwrap_or(true) {
+        InterpreterResult::Convergence
+    } else {
+        InterpreterResult::Unknown
+    }
 }
 
 #[allow(missing_docs)]
@@ -562,10 +562,10 @@ type UniverseBounds = std::collections::HashMap<String, usize>;
 /// Universe should contain the sizes of all the sorts in module.signature.sorts.
 /// The module is assumed to have already been typechecked.
 /// The translator ignores proof blocks.
-pub fn translate(
-    module: &Module,
+fn translate<'a>(
+    module: &'a Module,
     universe: &UniverseBounds,
-) -> Result<BoundedProgram, TranslationError> {
+) -> Result<(BoundedProgram, Indices<'a>), TranslationError> {
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             todo!("non-bool relations")
@@ -771,7 +771,7 @@ pub fn translate(
         }
     }
 
-    Ok(BoundedProgram { inits, trs, safes })
+    Ok((BoundedProgram { inits, trs, safes }, indices))
 }
 
 fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
@@ -1464,7 +1464,7 @@ mod tests {
             ],
         };
 
-        let target = translate(&m, &universe)?;
+        let (target, _) = translate(&m, &universe)?;
         assert_eq!(target.inits, expected.inits);
         assert_eq!(target.safes, expected.safes);
         assert_eq!(
@@ -1473,7 +1473,7 @@ mod tests {
         );
 
         let output = interpret(&target, None, TraceCompression::No, false);
-        assert_eq!(output, InterpreterResult::Unknown);
+        assert_eq!(output, InterpreterResult::Convergence);
 
         Ok(())
     }
@@ -1485,7 +1485,7 @@ mod tests {
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let target = translate(&m, &universe)?;
+        let (target, _) = translate(&m, &universe)?;
 
         let bug = interpret(&target, Some(12), TraceCompression::No, false);
         if let InterpreterResult::Counterexample(trace) = &bug {
@@ -1511,7 +1511,7 @@ mod tests {
             ("quorum".to_string(), 2),
             ("value".to_string(), 2),
         ]);
-        let target = translate(&m, &universe)?;
+        let (target, _) = translate(&m, &universe)?;
         let output = interpret(&target, Some(10), TraceCompression::No, false);
         assert_eq!(output, InterpreterResult::Unknown);
 
@@ -1526,7 +1526,7 @@ mod tests {
         sort_check_and_infer(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
-            Some(CheckerAnswer::Unknown),
+            Ok(CheckerAnswer::Convergence),
             check(&module, &universe, Some(10), true.into(), false)
         );
     }

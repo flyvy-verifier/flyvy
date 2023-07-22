@@ -5,8 +5,7 @@
 
 use biodivine_lib_bdd::*;
 use boolean_expression::BooleanExpression;
-use fly::{ouritertools::OurItertools, syntax::*, transitions::*};
-use itertools::Itertools;
+use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -82,13 +81,13 @@ impl Context<'_> {
         self.bdds.mk_var(self.vars[i])
     }
 
-    fn print_counterexample(
+    fn convert_counterexample(
         &self,
         valuation: &BddValuation,
         trace: &[Bdd],
         tr: &Bdd,
         reversed: bool,
-    ) {
+    ) -> Vec<Model> {
         let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
         valuations.resize(trace.len(), None);
 
@@ -168,21 +167,40 @@ impl Context<'_> {
             valuations[i] = Some(bdd.sat_witness().unwrap());
         }
 
-        println!("found counterexample!");
-        for (i, valuation) in valuations.iter().enumerate() {
-            println!("state {}:", i);
-            let valuation = valuation.clone().unwrap();
-            for relation in self.indices.keys().sorted() {
-                print!("{}: {{", relation);
-                for (elements, (i, _mutable)) in self.indices[relation].iter().sorted() {
-                    if valuation.value(self.vars[*i]) {
-                        print!("{:?}, ", elements);
-                    }
-                }
-                println!("}}");
-            }
-            println!();
-        }
+        // Convert valuations to models
+        valuations
+            .into_iter()
+            .map(|valuation| self.convert_valuation(valuation.unwrap()))
+            .collect()
+    }
+
+    fn convert_valuation(&self, valuation: BddValuation) -> Model {
+        let universe = self
+            .signature
+            .sorts
+            .iter()
+            .map(|s| self.universe[s])
+            .collect();
+        Model::new(
+            self.signature,
+            &universe,
+            self.signature
+                .relations
+                .iter()
+                .map(|r| {
+                    let shape = r
+                        .args
+                        .iter()
+                        .map(|s| cardinality(self.universe, s))
+                        .chain([2])
+                        .collect();
+                    Interpretation::new(&shape, |elements| {
+                        valuation.value(self.vars[self.indices[r.name.as_str()][elements].0])
+                            as usize
+                    })
+                })
+                .collect(),
+        )
     }
 
     fn mk_bool(&self, value: bool) -> Bdd {
@@ -206,7 +224,7 @@ impl Context<'_> {
 /// The result of a successful run of the bounded model checker
 pub enum CheckerAnswer<'a> {
     /// The checker found a counterexample
-    Counterexample(BddValuation),
+    Counterexample(Vec<Model>),
     /// The checker did not find a counterexample
     Unknown,
     /// The checker found that the set of states stopped changing
@@ -371,8 +389,8 @@ fn check_internal<'a>(
 
     // Do the search
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        context.print_counterexample(&valuation, &trace, &tr, reversed);
-        return Ok(CheckerAnswer::Counterexample(valuation));
+        let models = context.convert_counterexample(&valuation, &trace, &tr, reversed);
+        return Ok(CheckerAnswer::Counterexample(models));
     }
     let mut i = 0;
     while depth.map(|d| i < d).unwrap_or(true) {
@@ -391,8 +409,8 @@ fn check_internal<'a>(
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            context.print_counterexample(&valuation, &trace, &tr, reversed);
-            return Ok(CheckerAnswer::Counterexample(valuation));
+            let models = context.convert_counterexample(&valuation, &trace, &tr, reversed);
+            return Ok(CheckerAnswer::Counterexample(models));
         }
 
         i += 1;

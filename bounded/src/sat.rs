@@ -6,13 +6,14 @@
 //! [cadical]: https://fmv.jku.at/cadical/
 
 use cadical::Solver;
-use fly::{ouritertools::OurItertools, sorts::*, syntax::*, transitions::*};
+use fly::{ouritertools::OurItertools, semantics::*, sorts::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
 
 /// Holds an ordering of all variables, as well as other context
 struct Context<'a> {
+    signature: &'a Signature,
     universe: &'a Universe,
     indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
     mutables: usize,
@@ -56,6 +57,7 @@ impl Context<'_> {
         }
 
         Context {
+            signature,
             universe,
             indices,
             mutables,
@@ -76,25 +78,38 @@ impl Context<'_> {
         Variable(self.vars - 1)
     }
 
-    fn print_counterexample(&self, solver: Solver, depth: usize) {
-        println!("found counterexample!");
-        for state in 0..=depth {
-            println!("state {}:", state);
-            for relation in self.indices.keys().sorted() {
-                print!("{}: {{", relation);
-                for (elements, (i, mutable)) in self.indices[relation].iter().sorted() {
-                    let mut var = *i;
-                    if *mutable {
-                        var += state * self.mutables;
-                    }
-                    if solver.value(var as i32 + 1) == Some(true) {
-                        print!("{:?}, ", elements);
-                    }
-                }
-                println!("}}");
-            }
-            println!();
-        }
+    fn convert_counterexample(&self, solver: Solver, depth: usize) -> Vec<Model> {
+        let universe = self
+            .signature
+            .sorts
+            .iter()
+            .map(|s| self.universe[s])
+            .collect();
+        (0..=depth)
+            .map(|primes| {
+                Model::new(
+                    self.signature,
+                    &universe,
+                    self.signature
+                        .relations
+                        .iter()
+                        .map(|r| {
+                            let shape = r
+                                .args
+                                .iter()
+                                .map(|s| cardinality(self.universe, s))
+                                .chain([2])
+                                .collect();
+                            Interpretation::new(&shape, |elements| {
+                                solver
+                                    .value(self.get_var(&r.name, elements, primes).0 as i32 + 1)
+                                    .unwrap_or(false) as usize
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -131,7 +146,7 @@ fn cardinality(universe: &Universe, sort: &Sort) -> usize {
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
     /// The checker found a counterexample
-    Counterexample,
+    Counterexample(Vec<Model>),
     /// The checker did not find a counterexample
     Unknown,
 }
@@ -215,10 +230,9 @@ pub fn check(
     let answer = match solver.solve() {
         None => Err(CheckerError::SolverFailed),
         Some(false) => Ok(CheckerAnswer::Unknown),
-        Some(true) => {
-            context.print_counterexample(solver, depth);
-            Ok(CheckerAnswer::Counterexample)
-        }
+        Some(true) => Ok(CheckerAnswer::Counterexample(
+            context.convert_counterexample(solver, depth),
+        )),
     };
 
     if print_timing {
@@ -521,10 +535,10 @@ mod tests {
         let universe = HashMap::from([]);
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 0, false)?);
-        assert_eq!(
-            CheckerAnswer::Counterexample,
-            check(&module, &universe, 1, false)?
-        );
+        assert!(matches!(
+            check(&module, &universe, 1, false)?,
+            CheckerAnswer::Counterexample(..),
+        ));
 
         Ok(())
     }
@@ -554,7 +568,7 @@ mod tests {
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&module, &universe, 12, false)?;
-        assert_eq!(CheckerAnswer::Counterexample, bug);
+        assert!(matches!(bug, CheckerAnswer::Counterexample(..)));
 
         let too_short = check(&module, &universe, 11, false)?;
         assert_eq!(CheckerAnswer::Unknown, too_short);
