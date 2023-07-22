@@ -531,9 +531,6 @@ fn term_to_bdd(
         | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
             return Err(CheckerError::CouldNotTranslateToBdd(term.clone()))
         }
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::Id(_) => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
     };
     Ok(bdd)
 }
