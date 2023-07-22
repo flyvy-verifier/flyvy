@@ -471,9 +471,8 @@ fn interpret(
                 print!("({:0.1}s since start) ", start_time.elapsed().as_secs_f64());
             }
             println!(
-                "considering new depth: {}. \
+                "considering new depth: {current_depth}. \
                  queue length is {}. seen {} unique states.",
-                current_depth,
                 queue.len(),
                 seen.len()
             );
@@ -499,11 +498,10 @@ fn interpret(
                 if !seen.contains(&next) {
                     seen.insert(next.clone());
                     if seen.len() % 1_000_000 == 0 {
+                        let elapsed = start_time.elapsed().as_secs_f64();
                         println!(
-                            "progress report: ({:?} since start) considering depth {}. \
+                            "progress report: ({elapsed:0.1}s since start) considering depth {current_depth}. \
                              queue length is {}. visited {} states.",
-                            start_time.elapsed(),
-                            current_depth,
                             queue.len(),
                             seen.len()
                         );

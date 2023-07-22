@@ -579,7 +579,7 @@ impl App {
                     Ok(bounded::set::CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("state {}:", i);
+                            println!("state {i}:");
                             println!("{}", model.fmt());
                         }
                     }
@@ -595,7 +595,7 @@ impl App {
                     Ok(bounded::set::CheckerAnswer::Convergence) => {
                         println!("answer: safe forever with given sort bounds")
                     }
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("{error}"),
                 }
             }
             Command::SatCheck(bounded) => {
@@ -611,7 +611,7 @@ impl App {
                     Ok(bounded::sat::CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("state {}:", i);
+                            println!("state {i}:");
                             println!("{}", model.fmt());
                         }
                     }
@@ -636,7 +636,7 @@ impl App {
                     Ok(bounded::bdd::CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("state {}:", i);
+                            println!("state {i}:");
                             println!("{}", model.fmt());
                         }
                     }
@@ -672,7 +672,7 @@ impl App {
                     Ok(bounded::smt::CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("state {}:", i);
+                            println!("state {i}:");
                             println!("{}", model.fmt());
                         }
                     }
