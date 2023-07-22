@@ -68,9 +68,6 @@ pub struct Binder {
 
 impl Binder {
     /// Smart constructor for a Binder that takes arguments by reference.
-    ///
-    /// TODO(oded): Tej, I made name &str instead of AsRef<str> and everything
-    ///             seems fine. Is that okay?
     pub fn new<T>(name: &str, sort: T) -> Self
     where
         T: Into<Sort>,
