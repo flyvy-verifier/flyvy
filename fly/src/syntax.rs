@@ -338,7 +338,7 @@ impl Term {
     // N-ary operations: And, Or
     //////////////////
 
-    /// Helper function for [`and`] and [`or`]
+    /// Helper function for [`Self::and`] and [`Self::or`]
     fn flatten_terms_of_op(ts: Vec<Term>, op: NOp) -> Vec<Term> {
         ts.into_iter()
             .flat_map(|t| match t {
