@@ -27,7 +27,7 @@ impl Module {
                     .enumerate()
                     .map(|(i, sort)| Binder {
                         sort: sort.clone(),
-                        name: format!("__{}", i),
+                        name: format!("__{i}"),
                     })
                     .collect();
                 let other_args = &binders[0..relation.args.len()];
@@ -84,7 +84,7 @@ impl Module {
         let mut name = 0;
         let mut go = |term: &mut Term| {
             let to_quantify = fix_term(term, &changed, &mut name);
-            assert!(to_quantify.is_empty(), "{:?}", to_quantify);
+            assert!(to_quantify.is_empty(), "{to_quantify:?}");
         };
         for statement in &mut self.statements {
             match statement {
