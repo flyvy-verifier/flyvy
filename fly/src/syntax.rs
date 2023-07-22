@@ -400,6 +400,11 @@ impl Term {
     /// Helper function for forall, exists. Special handling for zero binders
     /// and one level flattening.
     fn quantify(quantifier: Quantifier, binders: Vec<Binder>, body: Self) -> Self {
+        // debug_assert that all binders have distinct names
+        debug_assert!(binders
+            .iter()
+            .enumerate()
+            .all(|(i, b1)| binders[(i + 1)..].iter().all(|b2| b1.name != b2.name)));
         if binders.is_empty() {
             body
         } else {
