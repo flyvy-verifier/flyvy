@@ -756,7 +756,7 @@ impl App {
             }
             Command::FiniteInfer { bounded, solver } => {
                 m.inline_defs();
-                m.convert_non_bool_relations();
+                let back_convert_model = m.convert_non_bool_relations();
                 match inference::finite::invariant(
                     &m,
                     bounded.get_universe(&m.signature),
@@ -767,7 +767,7 @@ impl App {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
                             println!("state {}:", i);
-                            println!("{}", model.fmt());
+                            println!("{}", back_convert_model(model).fmt());
                         }
                     }
                     Ok(inference::finite::FiniteAnswer::InvariantFail(term, err)) => {
@@ -783,7 +783,7 @@ impl App {
                                 QueryError::Sat(models) => {
                                     for (i, model) in models.iter().enumerate() {
                                         eprintln!("state {}:", i);
-                                        eprintln!("{}", model.fmt());
+                                        eprintln!("{}", back_convert_model(model).fmt());
                                     }
                                 }
                                 QueryError::Unknown(message) => eprintln!("{}", message),
