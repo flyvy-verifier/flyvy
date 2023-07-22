@@ -1,0 +1,445 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
+//! Processing of temporal formulas, useful for liveness to safety reduction
+//! (may become a separate crate later)
+
+use fly::printer;
+use thiserror::Error;
+
+use fly::syntax::{BinOp, Binder, RelationDecl, Signature, Sort, Term, UOp};
+
+use crate::safety::InvariantAssertion;
+
+/// A formula or term with free variables, fixing an order and sorts for the
+/// free variables. This is used in the tableaux construction and also for
+/// prophecy formulas.
+#[derive(Debug, Clone)]
+pub struct TermWithFreeVariables {
+    /// Variables that appear in the formula
+    pub binders: Vec<Binder>,
+    /// The formula
+    pub body: Term,
+}
+
+/// The declaration possibly multiple witnesses (each may be a constant or a
+/// function).
+///
+/// Arguments must be a growing sequence. For example c, f(X:s1), g(X:s1, Y:s2)
+/// is fine but f(X:s1),g(Y:s2) is not.
+///
+/// The semantics of c, f(X:s1), g(X:s1, Y:s2) witnessing r(c,f(X),g(X,Y),X,Y) is:
+/// (exists C. forall X. exists F. forall Y. exists G. r(C,F,G,X,Y)) -> forall X,Y. r(c,f(X),g(X,Y),X,Y)
+#[derive(Debug, Clone)]
+pub struct WitnessDecl {
+    /// each witness is (name, args, sort)
+    pub witnesses: Vec<(String, Vec<Binder>, Sort)>,
+    /// all witnesses share a body
+    pub body: Term,
+}
+
+/// A declaration of function saving another formula (can be of any sort)
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub struct SavesDecl {
+    pub name: String,
+    pub binders: Vec<Binder>,
+    pub sort: Sort,
+    pub body: Term,
+}
+
+/// A declaration of relation waiting for a formula
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub struct WaitsDecl {
+    pub name: String,
+    pub binders: Vec<Binder>,
+    pub body: Term,
+}
+
+/// A temporal property assertion to be proven by liveness to safety
+#[derive(Debug, Clone)]
+pub struct TemporalAssertion {
+    /// A signature with sorts, mutable, and immutable symbols
+    sig: Signature,
+
+    /// Axioms over the immutable symbols (first-order zero-state formulas)
+    pub axioms: Vec<Term>,
+
+    /// Assumed invariants are similar to axioms but over mutable symbols too
+    /// (first-order one-state formulas)
+    pub assumed_invariants: Vec<Term>,
+
+    /// Formula specifying the initial states (first-order one-state formulas)
+    pub init: Term,
+
+    /// Formula specifying the transition relation (first-order two-state formula)
+    ///
+    /// TODO(oded): this should be separate transitions, probably with a
+    /// Transition datatype.
+    pub transition_relation: Term,
+
+    /// Temporal properties assumed (temporal formulas)
+    pub temporal_assumptions: Vec<Term>,
+
+    /// The proof goal (temporal formula)
+    pub temporal_property: Term,
+
+    /// Bound on number of abstract fair cycles for the liveness to safety
+    /// construction
+    pub max_cycles: usize,
+
+    /// Prophecy formulas for the liveness to safety construction
+    pub prophecy: Vec<TermWithFreeVariables>,
+
+    /// Witnesses for the liveness to safety construction (see [`SavesDecl`])
+    pub witnesses: Vec<WitnessDecl>,
+
+    /// Formulas to save in the liveness to safety construction (see [`SavesDecl`])
+    pub saves: Vec<SavesDecl>,
+
+    /// Formulas to wait for in the liveness to safety construction (see [`WaitsDecl`])
+    pub waits: Vec<WaitsDecl>,
+
+    /// Invariants used to prove safety of the result of the liveness to safety construction
+    pub invariants: Vec<Term>,
+}
+
+/// An error that occured in the liveness to safety transformation
+#[derive(Error, Debug)]
+pub enum TemporalError {
+    /// Assertion is not a safety property
+    #[error("assertion is not of the form (always p)")]
+    NotSafety,
+    /// Proof invariant mentioned more than one timestep
+    #[error("proof invariant is not a well-formed single-state fomula")]
+    BadProofInvariant,
+}
+
+impl TemporalAssertion {
+    /// Perform the liveness to safety transformation to get an InvariantAssertion.
+    ///
+    /// TODO(oded): should this return InvariantAssertion or something else?
+    /// TODO(oded): what to do about the spans?
+    pub fn livenss_to_safety(&self) -> Result<InvariantAssertion, TemporalError> {
+        // Start with some type checking assertions?
+
+        let mut sig = self.sig.clone();
+
+        // Add $d_sort, $sd_sort, $a_sort unary relations for each sort
+        for sort in &self.sig.sorts {
+            // ODED: why doesn't extend work?
+            sig.relations.extend([
+                RelationDecl {
+                    mutable: true,
+                    name: format!("$d_{sort}"),
+                    args: vec![Sort::uninterpreted(sort)],
+                    sort: Sort::Bool,
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: format!("$sd_{sort}"),
+                    args: vec![Sort::uninterpreted(sort)],
+                    sort: Sort::Bool,
+                },
+                RelationDecl {
+                    mutable: true,
+                    name: format!("$a_{sort}"),
+                    args: vec![Sort::uninterpreted(sort)],
+                    sort: Sort::Bool,
+                },
+            ]);
+        }
+
+        // Compute update for $d
+        // forall X:sort. $d_sort'(X) <-> ($d_sort(X) | X = c_1 | ... | X = c_n)
+        // where c_1,...,c_n are constants of sort
+        // TODO(oded): we also need to add transition inputs to $d
+        let update_d = Term::and(
+            self.sig
+                .sorts
+                .iter()
+                .map(|name| Sort::uninterpreted(name))
+                .map(|sort| {
+                    let binder = Binder::new("%X", &sort);
+                    let d_sort = format!("$d_{sort}");
+                    let x = Term::id("%X");
+                    let lhs = Term::app(&d_sort, 1, [&x]);
+                    let rhs = Term::or([Term::app(&d_sort, 0, [&x])].into_iter().chain(
+                        sig.relations.iter().filter_map(|d| {
+                            if d.args.is_empty() && d.sort == sort {
+                                Some(Term::equals(&x, Term::id(&d.name)))
+                            } else {
+                                None
+                            }
+                        }),
+                    ));
+                    Term::forall([binder], Term::iff(&lhs, &rhs))
+                }),
+        );
+
+        // Collect temporal subformulas from temporal_assumptions,
+        // temporal_property, prophecy, saves, and waits
+        let mut temporal_subformulas: Vec<TermWithFreeVariables> = vec![];
+        let mut worklist: Vec<TermWithFreeVariables> = vec![];
+
+        // TODO(oded): assert that self.temporal_assumptions and
+        // self.temporal_property are closed
+        //
+        // TODO(oded): we should normalize away everything except until and
+        // since, for now we should not support prime and next here. for now,
+        // the following code asserts that the temporal formulas only contain
+        // until and since, and no other temporal operators or primes
+        //
+        // TODO(oded): maybe normalize to NNF or some other normalization
+        //
+        // TODO(oded): right now we don't check formulas for any kind of
+        // equivalence beyond syntactic equality, but we should do something
+        // better, and maybe eventually  use a solver as a quick check
+        //
+        // TODO(oded): Right now, both in subformulas and in worklist, there
+        // might be some variables that are actually unused. This can happen
+        // e.g. if we start with X,Y. r(X) until q(Y). We should fix this and
+        // maintain the invariant that at least in subformulas, all the
+        // variables are used.
+
+        // Add temporal assumptions and temporal property to worklist
+        worklist.extend(
+            self.temporal_assumptions
+                .iter()
+                .chain([&self.temporal_property])
+                .map(|f| TermWithFreeVariables {
+                    binders: vec![],
+                    body: f.clone(),
+                }),
+        );
+
+        // Add prophecy formulas to worklist
+        worklist.extend(self.prophecy.clone());
+        assert!(self.witnesses.is_empty()); // TODO(oded): add support for witnesses. note we'll need to consider both the formulas with exists and the formulas with the witnesses
+
+        // Add saved terms and formulas to worklist
+        worklist.extend(self.saves.iter().map(|s| TermWithFreeVariables {
+            binders: s.binders.clone(),
+            body: s.body.clone(),
+        }));
+
+        // Add (true until phi) to worklist for every phi that is waited for
+        worklist.extend(self.waits.iter().map(|w| TermWithFreeVariables {
+            binders: w.binders.clone(),
+            body: Term::until(&Term::literal(true), &w.body),
+        }));
+
+        // Collect all temporal subformulas from worklist into temporal_subformulas
+        while let Some(TermWithFreeVariables { binders, body }) = worklist.pop() {
+            match body {
+                Term::Literal(_) => {}
+                Term::Id(_) => {}
+                Term::App(_, n_primes, args) => {
+                    // Recurse on terms to assert there are no primes. this can
+                    // be eliminated once we check this somewhere else (e.g.,
+                    // above)
+                    assert_eq!(n_primes, 0);
+                    worklist.extend(args.into_iter().map(|t| TermWithFreeVariables {
+                        binders: binders.clone(),
+                        body: t,
+                    }));
+                }
+                Term::UnaryOp(UOp::Not, t) => worklist.push(TermWithFreeVariables {
+                    binders: binders.clone(),
+                    body: *t,
+                }),
+                Term::UnaryOp(UOp::Always, _)
+                | Term::UnaryOp(UOp::Eventually, _)
+                | Term::UnaryOp(UOp::Next, _)
+                | Term::UnaryOp(UOp::Previous, _)
+                | Term::UnaryOp(UOp::Prime, _) => {
+                    panic!("Unexpected temporal operator: {}", body)
+                }
+                Term::BinOp(BinOp::Equals, t1, t2)
+                | Term::BinOp(BinOp::Iff, t1, t2)
+                | Term::BinOp(BinOp::Implies, t1, t2)
+                | Term::BinOp(BinOp::NotEquals, t1, t2) => {
+                    worklist.extend([
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t1,
+                        },
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t2,
+                        },
+                    ]);
+                }
+                Term::BinOp(BinOp::Since, t1, t2) => {
+                    temporal_subformulas.push(TermWithFreeVariables {
+                        binders: binders.clone(),
+                        body: Term::BinOp(BinOp::Since, t1.clone(), t2.clone()),
+                    });
+                    worklist.extend([
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t1,
+                        },
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t2,
+                        },
+                    ]);
+                }
+                Term::BinOp(BinOp::Until, t1, t2) => {
+                    temporal_subformulas.push(TermWithFreeVariables {
+                        binders: binders.clone(),
+                        body: Term::BinOp(BinOp::Until, t1.clone(), t2.clone()),
+                    });
+                    worklist.extend([
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t1,
+                        },
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *t2,
+                        },
+                    ]);
+                }
+                Term::NAryOp(_, ts) => {
+                    worklist.extend(ts.into_iter().map(|t| TermWithFreeVariables {
+                        binders: binders.clone(),
+                        body: t,
+                    }));
+                }
+                Term::Ite { cond, then, else_ } => {
+                    worklist.extend([
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *cond,
+                        },
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *then,
+                        },
+                        TermWithFreeVariables {
+                            binders: binders.clone(),
+                            body: *else_,
+                        },
+                    ]);
+                }
+                Term::Quantified {
+                    quantifier: _,
+                    binders,
+                    body,
+                } => {
+                    // carefully support shadowing, e.g.: X:t1. r(X) until forall X:t2. q(X)
+                    let vs: Vec<Binder> = binders
+                        .iter()
+                        .filter(|v| binders.iter().all(|b| v.name != b.name))
+                        .chain(binders.iter())
+                        .cloned()
+                        .collect();
+                    worklist.push(TermWithFreeVariables {
+                        binders: vs,
+                        body: *body,
+                    })
+                }
+            }
+        }
+
+        // Add tableaux construction for temporal formulas
+        let mut tableaux: Vec<Term> = vec![];
+        for TermWithFreeVariables { binders, body } in &temporal_subformulas {
+            // Add temporal relation to sig
+            let print_variables = binders
+                .iter()
+                .map(printer::binder)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let print_body = printer::term(body);
+            let relation_name = format!("r\"{print_variables}. {print_body}\""); // TODO(oded): do we put r" and " inside the name or not?
+            sig.relations.push(RelationDecl {
+                mutable: true,
+                name: relation_name.clone(),
+                args: binders.iter().map(|b| b.sort.clone()).collect(),
+                sort: Sort::Bool,
+            });
+
+            match body {
+                Term::BinOp(BinOp::Until, p, q) => {
+                    // Add (p until q) <-> (q | (p & (p until q)'))
+                    let p = p.as_ref(); // TODO(oded): not sure if this is the nicest, but otherwise p doesn't have Into<Term>, unless we implement that for &Box<Term>
+                    let q = q.as_ref();
+                    let args: Vec<Term> = binders.iter().map(|b| Term::id(&b.name)).collect();
+                    let (p_until_q, p_until_q_prime) = if args.is_empty() {
+                        // TODO(oded): eliminate if once Term:app is better (see TODO there)
+                        (
+                            Term::id(&relation_name),
+                            Term::prime(Term::id(&relation_name)),
+                        )
+                    } else {
+                        (
+                            Term::app(&relation_name, 0, &args),
+                            Term::app(&relation_name, 1, &args),
+                        )
+                    };
+                    let body = Term::iff(
+                        &p_until_q,
+                        &Term::or([q.clone(), Term::and([p, &p_until_q_prime])]),
+                    );
+                    tableaux.push(Term::forall(binders.clone(), body));
+                    // Add q' -> (p until q)'
+                    tableaux.push(Term::forall(
+                        binders.clone(),
+                        Term::implies(Term::prime(q), &p_until_q_prime),
+                    ));
+                    // Add (p until q)' -> (p' | q')
+                    tableaux.push(Term::forall(
+                        binders.clone(),
+                        Term::implies(p_until_q_prime, Term::or([Term::prime(p), Term::prime(q)])),
+                    ));
+                    // TODO(oded): maybe the last two should become axioms/assumptions, and then the first one can be simplified
+                }
+                // TODO(oded): Term::BinOp(BinOp::Since, p, q) => {}
+                _ => {
+                    panic!("Unexpected term: {body}");
+                }
+            }
+        }
+
+        // add a separate transition to update $r, $a, and saved
+
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fly::parser::{parse_signature, term};
+
+    use crate::temporal::TemporalAssertion;
+
+    #[test]
+    fn test_livenss_to_safety() {
+        let a = TemporalAssertion {
+            sig: parse_signature(
+                r#"
+                mutable p: bool
+                "#,
+            ),
+            axioms: vec![],
+            assumed_invariants: vec![],
+            init: term("p"),
+            transition_relation: term("p' <-> p"),
+            temporal_assumptions: vec![],
+            temporal_property: term("always p"),
+            max_cycles: 0,
+            prophecy: vec![],
+            witnesses: vec![],
+            saves: vec![],
+            waits: vec![],
+            invariants: vec![term("p")],
+        };
+
+        println!("{a:?}");
+        // println!("\n\n\n{:?}", a.livenss_to_safety().unwrap());
+    }
+}
