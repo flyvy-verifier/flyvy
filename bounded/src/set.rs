@@ -40,7 +40,7 @@ pub fn check(
                         Trace::Trace(..) => unreachable!(),
                         Trace::CompressedTrace(state, depth) => (state, depth),
                     };
-                    println!("counterexample is at depth {}, not 0", depth);
+                    println!("counterexample is at depth {depth}, not 0");
                     vec![state]
                 }
                 TraceCompression::No => match trace {
@@ -110,7 +110,7 @@ impl Elements {
     pub fn new(vec: Vec<usize>) -> Elements {
         let len = vec.len();
         if len > ELEMENT_LEN {
-            panic!("raise ELEMENT_LEN to be at least {}", len);
+            panic!("raise ELEMENT_LEN to be at least {len}");
         }
         let mut out = Elements {
             len: len as u8,
@@ -120,10 +120,7 @@ impl Elements {
             if let Ok(xu8) = x.try_into() {
                 out.data[i] = xu8;
             } else {
-                panic!(
-                    "vec[{}] = {} size was too large (must be less than 256)",
-                    i, x
-                );
+                panic!("vec[{i}] = {x} size was too large (must be less than 256)");
             }
         }
         out
@@ -135,7 +132,7 @@ impl std::fmt::Debug for Elements {
         if self.len > 0 {
             write!(f, "{:?}", self.data[0])?;
             for x in &self.data[1..self.len as usize] {
-                write!(f, ", {:?}", x)?;
+                write!(f, ", {x:?}")?;
             }
         }
         write!(f, "]")
@@ -474,9 +471,8 @@ fn interpret(
                 print!("({:0.1}s since start) ", start_time.elapsed().as_secs_f64());
             }
             println!(
-                "considering new depth: {}. \
+                "considering new depth: {current_depth}. \
                  queue length is {}. seen {} unique states.",
-                current_depth,
                 queue.len(),
                 seen.len()
             );
@@ -502,11 +498,10 @@ fn interpret(
                 if !seen.contains(&next) {
                     seen.insert(next.clone());
                     if seen.len() % 1_000_000 == 0 {
+                        let elapsed = start_time.elapsed().as_secs_f64();
                         println!(
-                            "progress report: ({:?} since start) considering depth {}. \
+                            "progress report: ({elapsed:0.1}s since start) considering depth {current_depth}. \
                              queue length is {}. visited {} states.",
-                            start_time.elapsed(),
-                            current_depth,
                             queue.len(),
                             seen.len()
                         );
@@ -718,8 +713,7 @@ fn translate<'a>(
 
     if unconstrained_delta > 0 {
         println!(
-            "some relations were unconstrained, added {} transitions to constrain them",
-            unconstrained_delta
+            "some relations were unconstrained, added {unconstrained_delta} transitions to constrain them"
         );
     }
 
@@ -760,7 +754,7 @@ fn translate<'a>(
                     Guard { index: b, value: false, },
                 ) if a == b)
             }) {
-                panic!("found an untakeable transition\n{:?}", tr);
+                panic!("found an untakeable transition\n{tr:?}");
             }
         }
         // check that all redundant updates have been removed

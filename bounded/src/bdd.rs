@@ -592,7 +592,7 @@ pub fn bdd_to_term<'a>(
     let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
     for (sort, bound) in context.universe {
         for i in 0..*bound {
-            bindings.insert((sort, i), format!("${}", next_binding));
+            bindings.insert((sort, i), format!("${next_binding}"));
             next_binding += 1;
         }
     }

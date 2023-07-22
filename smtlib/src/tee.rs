@@ -24,7 +24,7 @@ fn calculate_hash<T: Hash>(v: T) -> String {
     let mut hash_state = DefaultHasher::new();
     v.hash(&mut hash_state);
     let h = hash_state.finish();
-    return format!("{:016x}", h)[..8].to_string();
+    return format!("{h:016x}")[..8].to_string();
 }
 
 impl Tee {
