@@ -277,7 +277,7 @@ sort s
 mutable f(s, bool, s): bool
 
 assume always forall __0:s, __1: bool. exists __2:s. f(__0, __1, __2)
-assume always forall __0:s, __1: bool. forall __2:s, __3:s.
+assume always forall __0:s, __1: bool, __2:s, __3:s.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
 assume always forall s:s. exists ___1:s. f(s, true, ___1) & ___1 = s
@@ -304,7 +304,7 @@ sort s
 mutable f(s, s): bool
 
 assume always forall __0:s. exists __1:s. f(__0, __1)
-assume always forall __0:s. forall __1:s, __2:s. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
+assume always forall __0:s, __1:s, __2:s. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
 
 assume always forall s:s. exists ___1:s. (f(s, ___1))' & ___1' = s
         ";
