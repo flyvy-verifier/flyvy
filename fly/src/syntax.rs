@@ -134,9 +134,20 @@ pub enum Quantifier {
     Exists,
 }
 
-/// A Term is an FO-LTL (first-order linear temporal logic) term or formula. The
-/// temporal operators supported are: Prime, Next, Prev, Until, Since, Always,
-/// Eventually (see [`UOp`] and [`BinOp`]).
+/// FO-LTL term or formula
+///
+/// FO-LTL (first-order linear temporal logic) is an extension of
+/// first-order logic where the semantics is given in terms of
+/// infinite sequences of models (over a shared universe). A term is
+/// interpreted at a particular point (time) in the sequence, and
+/// using temporal operators it can also query the past or future. For
+/// example: `exists x. p(x) & (previous !p(x)) & always r(x)` means
+/// that there exists some element for which `p` now holds, but it
+/// didn't hold a moment ago, and from this point onwards `r` keeps
+/// holding for it.
+///
+/// The temporal operators supported are: Prime, Next, Prev, Until,
+/// Since, Always, Eventually (see [`UOp`] and [`BinOp`]).
 #[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
 pub enum Term {
     /// A constant true or false
