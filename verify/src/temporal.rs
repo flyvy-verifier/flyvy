@@ -4,7 +4,10 @@
 //! Processing of temporal formulas, useful for liveness to safety reduction
 //! (may become a separate crate later)
 
-use fly::printer;
+use fly::{
+    printer,
+    syntax::{Span, Spanned},
+};
 use thiserror::Error;
 
 use fly::syntax::{BinOp, Binder, RelationDecl, Signature, Sort, Term, UOp};
@@ -122,13 +125,12 @@ impl TemporalAssertion {
     /// TODO(oded): should this return InvariantAssertion or something else?
     /// TODO(oded): what to do about the spans?
     pub fn livenss_to_safety(&self) -> Result<InvariantAssertion, TemporalError> {
-        // Start with some type checking assertions?
+        // TODO(oded): start with some type checking assertions?
 
         let mut sig = self.sig.clone();
 
         // Add $d_sort, $sd_sort, $a_sort unary relations for each sort
         for sort in &self.sig.sorts {
-            // ODED: why doesn't extend work?
             sig.relations.extend([
                 RelationDecl {
                     mutable: true,
@@ -346,16 +348,26 @@ impl TemporalAssertion {
         }
 
         // Add tableaux construction for temporal formulas
-        let mut tableaux: Vec<Term> = vec![];
+
+        // TODO(oded): right now this only supports Until and Since. We should
+        // also support Previos and Next
+
+        let mut tableaux_invariants: Vec<Term> = vec![];
+        let mut tableaux_transition: Vec<Term> = vec![];
         for TermWithFreeVariables { binders, body } in &temporal_subformulas {
             // Add temporal relation to sig
-            let print_variables = binders
-                .iter()
-                .map(printer::binder)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let print_variables = if binders.is_empty() {
+                "".to_string()
+            } else {
+                binders
+                    .iter()
+                    .map(printer::binder)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    + ". "
+            };
             let print_body = printer::term(body);
-            let relation_name = format!("r\"{print_variables}. {print_body}\""); // TODO(oded): do we put r" and " inside the name or not?
+            let relation_name = format!("%{{{print_variables}{print_body}}}"); // TODO(oded): do we put r" and " inside the name or not?
             sig.relations.push(RelationDecl {
                 mutable: true,
                 name: relation_name.clone(),
@@ -363,14 +375,15 @@ impl TemporalAssertion {
                 sort: Sort::Bool,
             });
 
+            // Add appropriate formulas to tableaux_invariants and tableaux_tr
+            let close = |t: Term| Term::forall(binders.clone(), t);
             match body {
                 Term::BinOp(BinOp::Until, p, q) => {
-                    // Add (p until q) <-> (q | (p & (p until q)'))
                     let p = p.as_ref(); // TODO(oded): not sure if this is the nicest, but otherwise p doesn't have Into<Term>, unless we implement that for &Box<Term>
                     let q = q.as_ref();
                     let args: Vec<Term> = binders.iter().map(|b| Term::id(&b.name)).collect();
                     let (p_until_q, p_until_q_prime) = if args.is_empty() {
-                        // TODO(oded): eliminate if once Term:app is better (see TODO there)
+                        // TODO(oded): eliminate once Term:app is better (see TODO there)
                         (
                             Term::id(&relation_name),
                             Term::prime(Term::id(&relation_name)),
@@ -381,33 +394,152 @@ impl TemporalAssertion {
                             Term::app(&relation_name, 1, &args),
                         )
                     };
-                    let body = Term::iff(
+
+                    // Add `q -> (p until q)` to tableaux_invariants
+                    tableaux_invariants.push(close(Term::implies(q, &p_until_q)));
+                    // Add `(p until q) -> (p | q)` to tableaux_invariants
+                    tableaux_invariants.push(close(Term::implies(&p_until_q, Term::or([p, q]))));
+
+                    // Add `(p until q) <-> (q | (p & (p until q)'))` to
+                    // tableaux_transition
+                    //
+                    // TODO(oded): this can be weakened due to the invaraints,
+                    // but not sure what's better. The weakened version would
+                    // be:
+                    // * !q & (p until q) -> (p until q)'
+                    // * p & (p until q)' -> (p until q)
+                    tableaux_transition.push(close(Term::iff(
                         &p_until_q,
-                        &Term::or([q.clone(), Term::and([p, &p_until_q_prime])]),
-                    );
-                    tableaux.push(Term::forall(binders.clone(), body));
-                    // Add q' -> (p until q)'
-                    tableaux.push(Term::forall(
-                        binders.clone(),
-                        Term::implies(Term::prime(q), &p_until_q_prime),
-                    ));
-                    // Add (p until q)' -> (p' | q')
-                    tableaux.push(Term::forall(
-                        binders.clone(),
-                        Term::implies(p_until_q_prime, Term::or([Term::prime(p), Term::prime(q)])),
-                    ));
-                    // TODO(oded): maybe the last two should become axioms/assumptions, and then the first one can be simplified
+                        &Term::or([q, &Term::and([p, &p_until_q_prime])]),
+                    )));
                 }
-                // TODO(oded): Term::BinOp(BinOp::Since, p, q) => {}
+                Term::BinOp(BinOp::Since, p, q) => {
+                    let p = p.as_ref(); // TODO(oded): not sure if this is the nicest, but otherwise p doesn't have Into<Term>, unless we implement that for &Box<Term>
+                    let q = q.as_ref();
+                    let args: Vec<Term> = binders.iter().map(|b| Term::id(&b.name)).collect();
+                    let (p_since_q, p_since_q_prime) = if args.is_empty() {
+                        // TODO(oded): eliminate once Term:app is better (see TODO there)
+                        (
+                            Term::id(&relation_name),
+                            Term::prime(Term::id(&relation_name)),
+                        )
+                    } else {
+                        (
+                            Term::app(&relation_name, 0, &args),
+                            Term::app(&relation_name, 1, &args),
+                        )
+                    };
+
+                    // Add `q -> (p since q)` to tableaux_invariants
+                    tableaux_invariants.push(close(Term::implies(q, &p_since_q)));
+                    // Add `(p since q) -> (p | q)` to tableaux_invariants
+                    tableaux_invariants.push(close(Term::implies(&p_since_q, Term::or([p, q]))));
+
+                    // Add `(p since q)' <-> (q' | (p' & (p since q)))` to
+                    // tableaux_transition
+                    //
+                    // TODO(oded): this can be weakened due to the invaraints,
+                    // but not sure what's better. The weakened version would
+                    // be:
+                    // * !q' & (p since q)' -> (p since q)
+                    // * p' & (p since q) -> (p since q)'
+                    tableaux_transition.push(close(Term::iff(
+                        &p_since_q_prime,
+                        &Term::or([Term::prime(q), Term::and([&Term::prime(p), &p_since_q])]),
+                    )));
+                }
                 _ => {
                     panic!("Unexpected term: {body}");
                 }
             }
         }
 
-        // add a separate transition to update $r, $a, and saved
+        // add $cycle_0,...,cycle_{max_cycles} to signature
+        let cycle = |i: usize| {
+            debug_assert!(i <= self.max_cycles);
+            Term::id(&format!("$cycle_{i}"))
+        };
+        sig.relations
+            .extend((0..(self.max_cycles + 1)).map(|i| RelationDecl {
+                mutable: true,
+                name: format!("$cycle_{i}"),
+                args: vec![],
+                sort: Sort::Bool,
+            }));
 
-        todo!()
+        let cycle_safety = Term::or((0..(self.max_cycles + 1)).map(cycle));
+
+        let mut cycle_init = vec![cycle(0)];
+        for i in 1..(self.max_cycles + 1) {
+            cycle_init.push(Term::not(cycle(i)));
+        }
+        let mut cycle_transition: Vec<Term> = vec![Term::true_()];
+
+        // Increase "$cycle"
+        cycle_transition.push(Term::not(Term::prime(cycle(0))));
+        for i in 1..(self.max_cycles + 1) {
+            cycle_transition.push(Term::iff(Term::prime(cycle(i)), cycle(i - 1)));
+        }
+
+        // Check that the current state is identical to the saved state in the
+        // current abstraction
+        // TODO
+
+        // Wait for all the waiting formulas
+        // TODO
+
+        // Update $a and $sa and leave $d unchaged
+        for sort_name in sig.sorts.iter() {
+            let sort = Sort::uninterpreted(sort_name);
+            let binder = Binder::new("%X", &sort);
+            let x = Term::id("%X");
+            // TODO(oded): move these magic strings for d,a,sd to once place
+            let d_sort = format!("$d_{sort}");
+            let a_sort = format!("$a_{sort}");
+            let sd_sort = format!("$sd_{sort}");
+            // update a from sd
+            cycle_transition.push(Term::forall(
+                [binder.clone()], // TODO(oded): I think we should make Binder (and Sort) impl From<&Binder> (and From<&Sort>) similar to what we do for Term, and then we should remove clone here
+                Term::iff(Term::app(&a_sort, 1, [&x]), Term::app(&sd_sort, 0, [&x])),
+            ));
+
+            // update sd from d
+            cycle_transition.push(Term::forall(
+                [binder.clone()], // TODO(oded): remove clone
+                Term::iff(Term::app(&sd_sort, 1, [&x]), Term::app(&d_sort, 0, [&x])),
+            ));
+
+            // keep d the same
+            cycle_transition.push(Term::forall(
+                [binder.clone()], // TODO(oded): remove clone
+                Term::iff(Term::app(&d_sort, 1, [&x]), Term::app(&d_sort, 0, [&x])),
+            ));
+        }
+
+        // Update saved state
+        // TODO
+
+        // Update waiting formulas
+        // TODO
+
+        Ok(InvariantAssertion {
+            sig,
+            init: Term::and(cycle_init), // TODO(oded): initialize $d,$sd,$a
+            next: Term::or([
+                Term::and([
+                    &self.transition_relation,
+                    &Term::and(tableaux_transition),
+                    &update_d,
+                ]),
+                Term::and(cycle_transition),
+            ]),
+            assumed_inv: Term::and(tableaux_invariants),
+            inv: Spanned {
+                x: cycle_safety,
+                span: Span { start: 0, end: 0 },
+            },
+            proof_invs: vec![],
+        })
     }
 }
 
@@ -430,7 +562,8 @@ mod tests {
             init: term("p"),
             transition_relation: term("p' <-> p"),
             temporal_assumptions: vec![],
-            temporal_property: term("always p"),
+            // temporal_property: term("always p"),
+            temporal_property: term("!(true until !p)"),
             max_cycles: 0,
             prophecy: vec![],
             witnesses: vec![],
@@ -440,6 +573,11 @@ mod tests {
         };
 
         println!("{a:?}");
-        // println!("\n\n\n{:?}", a.livenss_to_safety().unwrap());
+        let s = a.livenss_to_safety().unwrap();
+        println!("\n\n\n{:?}\n\n\n", s);
+        println!("\ninit:\n{}\n", s.init);
+        println!("\nnext:\n{}\n", s.next);
+        println!("\nassumed_inv:\n{}\n", s.assumed_inv);
+        println!("\ninv:\n{}\n", s.inv.x);
     }
 }
