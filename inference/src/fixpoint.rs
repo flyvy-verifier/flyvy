@@ -34,7 +34,7 @@ pub mod defaults {
     pub const MAX_CLAUSE_SIZE: Option<usize> = None;
     pub const MAX_CUBES: Option<usize> = Some(6);
     pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
-    pub const MAX_NON_UNIT: Option<usize> = Some(6);
+    pub const MAX_NON_UNIT: Option<usize> = Some(3);
 }
 
 /// Check how much of the handwritten invariant the given lemmas cover.
@@ -81,6 +81,14 @@ pub struct FoundFixpoint {
 
 impl FoundFixpoint {
     pub fn report(&self, print_invariant: bool) {
+        let print_inv = |inv: &[Term]| {
+            println!("proof {{");
+            for lemma in inv {
+                println!("  invariant {lemma}");
+            }
+            println!("}}");
+        };
+
         println!("Fixpoint runtime = {:.2}s", self.time_taken.as_secs_f64());
 
         if self.safe {
@@ -97,23 +105,13 @@ impl FoundFixpoint {
                     covered_handwritten, size_handwritten
                 );
             }
-            if print_invariant {
-                println!("proof {{");
-                for lemma in proof {
-                    println!("  invariant {lemma}");
-                }
-                println!("}}");
-            }
-        }
 
-        if let Some(minimized_proof) = &self.minimized_proof {
-            println!("Minimized invariant size = {}", minimized_proof.len());
             if print_invariant {
-                println!("proof {{");
-                for lemma in minimized_proof {
-                    println!("  invariant {lemma}");
+                print_inv(&proof);
+                if let Some(minimized_proof) = &self.minimized_proof {
+                    println!("Safety invariant size = {}", minimized_proof.len());
+                    print_inv(&minimized_proof);
                 }
-                println!("}}");
             }
         }
     }

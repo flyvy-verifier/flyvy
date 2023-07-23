@@ -29,12 +29,15 @@ use rayon::prelude::*;
 /// This corresponds to number of cubes in DNF, or the clause size in CNF.
 const MIN_DISJUNCTS: usize = 3;
 
+fn choose(n: usize, k: usize) -> usize {
+    ((n - k + 1)..=n).product::<usize>() / (1..=k).product::<usize>()
+}
+
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
     if len > atoms {
         0
     } else {
-        ((atoms - len + 1)..=atoms).product::<usize>() / (1..=len).product::<usize>()
-            * 2_usize.pow(len as u32)
+        choose(atoms, len) * 2_usize.pow(len as u32)
     }
 }
 
@@ -177,11 +180,11 @@ impl LemmaQf for LemmaCnf {
 
     fn approx_space_size(&self) -> usize {
         let atoms = self.atoms.len();
-        let clauses: usize = (0..=self.clause_size)
+        let possible_clauses: usize = (0..=self.clause_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
 
-        ((clauses - self.clauses + 1)..=clauses).product()
+        choose(possible_clauses, self.clauses)
     }
 
     fn sub_spaces(&self) -> Vec<Self> {
@@ -491,7 +494,7 @@ impl LemmaQf for LemmaPDnfNaive {
 
     fn approx_space_size(&self) -> usize {
         let atoms = self.atoms.len();
-        let cubes: usize = (0..=self.cube_size)
+        let possible_cubes: usize = (0..=self.cube_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
 
@@ -500,7 +503,7 @@ impl LemmaQf for LemmaPDnfNaive {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(atoms, len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
+            total += literals * choose(possible_cubes, non_unit);
         }
 
         total
@@ -731,7 +734,7 @@ impl LemmaQf for LemmaPDnf {
     }
 
     fn approx_space_size(&self) -> usize {
-        let cubes: usize = (0..=self.cube_size)
+        let possible_cubes: usize = (0..=self.cube_size)
             .map(|len| {
                 clauses_cubes_count(
                     self.atoms.atoms_containing_vars(&self.non_universal_vars),
@@ -745,7 +748,7 @@ impl LemmaQf for LemmaPDnf {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(self.atoms.len(), len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
+            total += literals * choose(possible_cubes, non_unit);
         }
 
         total
