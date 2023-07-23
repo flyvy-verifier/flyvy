@@ -5,11 +5,11 @@
 //!
 //! The main entry point is [sort_check_and_infer].
 //!
-//! The parser represents missing sort annotations as `Sort::Id("")`. One of the
-//! main purposes of sort inference is to replace these placeholders with proper
-//! sort annotations. Sort inference is combined with sort checking, so another
-//! main purpose of this module is to make sure the given fly program is well
-//! sorted.
+//! The parser represents missing sort annotations as `Sort::Uninterpreted("")`.
+//! One of the main purposes of sort inference is to replace these placeholders
+//! with proper sort annotations. Sort inference is combined with sort checking,
+//! so another main purpose of this module is to make sure the given fly program
+//! is well sorted.
 
 use crate::syntax::*;
 use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
@@ -84,8 +84,8 @@ pub enum SortError {
 /// given explicitly. (This last requirement is enforced by the parser.)
 ///
 /// The parser represents missing sort annotations in the input AST as
-/// `Sort::Id("")`. `sort_check_and_infer` guarantees that, after it returns, no
-/// sort annotation is `Sort::Id("")` anywhere in the given fly module. In other
+/// `Sort::Uninterpreted("")`. `sort_check_and_infer` guarantees that, after it returns, no
+/// sort annotation is `Sort::Uninterpreted("")` anywhere in the given fly module. In other
 /// words, it guarantees that [module_has_all_sort_annotations] returns true.
 ///
 /// If sort checking detects an error (see [SortError]), it will attempt to
@@ -226,8 +226,8 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
 /// module has a (non-empty) sort annotation.
 pub fn module_has_all_sort_annotations(module: &Module) -> bool {
     // This function should be kept in sync with the parser. Currently the
-    // parser only generates Sort::Id("") on quantified variables, so that is
-    // the only place we need to check. If future changes to the parser
+    // parser only generates Sort::Uninterpreted("") on quantified variables, so
+    // that is the only place we need to check. If future changes to the parser
     // introduce more opportunities for sort inference, then this function
     // should be adjusted as well.
 
@@ -254,7 +254,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
         Term::Literal(_) | Term::Id(_) => true,
         Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
         Term::UnaryOp(
-            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+            UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
             x,
         ) => term_has_all_sort_annotations(x),
         Term::BinOp(
@@ -278,9 +278,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
             binders,
             body,
         } => {
-            binders
-                .iter()
-                .all(|binder| binder.sort != Sort::Id("".to_owned()))
+            binders.iter().all(|binder| binder.sort != Sort::unknown())
                 && term_has_all_sort_annotations(body)
         }
     }
@@ -355,7 +353,7 @@ impl Context<'_> {
     }
 
     // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
-    // if empty_allowed is true, then Sort("") does not cause an error.
+    // if empty_allowed is true, then Sort::Uninterpreted("") does not cause an error.
     // callers should not call this function directly, but rather [check_sort_exists] or [check_sort_exists_or_empty]
     fn check_sort_exists_internal(
         &self,
@@ -364,8 +362,8 @@ impl Context<'_> {
     ) -> Result<(), SortError> {
         match sort {
             Sort::Bool => Ok(()),
-            Sort::Id(a) if a.is_empty() && empty_allowed => Ok(()),
-            Sort::Id(a) => {
+            Sort::Uninterpreted(a) if a.is_empty() && empty_allowed => Ok(()),
+            Sort::Uninterpreted(a) => {
                 if !self.sorts.contains(a) {
                     Err(SortError::UnknownSort(a.clone()))
                 } else {
@@ -381,7 +379,7 @@ impl Context<'_> {
     }
 
     // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
-    // Sort("") does not cause an error.
+    // Sort::Uninterpreted("") does not cause an error.
     fn check_sort_exists_or_empty(&self, sort: &Sort) -> Result<(), SortError> {
         self.check_sort_exists_internal(sort, true)
     }
@@ -418,9 +416,9 @@ impl Context<'_> {
                 return Err(SortError::RedeclaredName(binder.name.clone()));
             }
             self.check_sort_exists_or_empty(&binder.sort)?;
-            let sort = if binder.sort == Sort::Id("".to_owned()) {
+            let sort = if binder.sort == Sort::Uninterpreted("".to_owned()) {
                 let var = self.vars.new_key(OptionSort(None));
-                binder.sort = Sort::Id(format!("var {}", var.0));
+                binder.sort = Sort::Uninterpreted(format!("var {}", var.0));
                 NamedSort::Unknown(var)
             } else {
                 NamedSort::Known(vec![], binder.sort.clone())
@@ -472,7 +470,7 @@ impl Context<'_> {
                 Ok(())
             }
             Term::UnaryOp(
-                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previously,
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
                 x,
             ) => self.fix_sorts_in_term(x),
             Term::BinOp(
@@ -507,7 +505,7 @@ impl Context<'_> {
                 body,
             } => {
                 for binder in binders {
-                    if let Sort::Id(s) = binder.sort.clone() {
+                    if let Sort::Uninterpreted(s) = binder.sort.clone() {
                         let s: Vec<&str> = s.split_whitespace().collect();
                         match s[..] {
                             [_] => {} // user sort annotation
@@ -567,7 +565,7 @@ impl Context<'_> {
                 None => Err(SortError::UnknownFunction(f.clone())),
             },
             Term::UnaryOp(
-                UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously,
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous,
                 x,
             ) => {
                 let x = self.sort_of_term(x)?;

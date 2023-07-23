@@ -11,7 +11,7 @@ use smtlib::sexp::{app, atom_s, sexp_l, Sexp};
 pub fn sort(s: &Sort) -> Sexp {
     match s {
         Sort::Bool => atom_s("Bool"),
-        Sort::Id(s) => atom_s(s),
+        Sort::Uninterpreted(s) => atom_s(s),
     }
 }
 
@@ -49,7 +49,7 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
                     term_primes(arg, num_primes + 1)
                 }
                 // TODO: temporal stuff should be eliminated before here
-                UOp::Always | UOp::Eventually | UOp::Next | UOp::Previously => {
+                UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous => {
                     panic!("attempt to encode a temporal formula for smt")
                 }
             }

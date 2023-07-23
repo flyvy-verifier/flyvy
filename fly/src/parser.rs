@@ -7,11 +7,15 @@ use crate::syntax::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use peg::{error::ParseError, str::LineCol};
 
+// TODO(oded): Use smart constructors in this module. In principle, no Term
+// should be constructed directly by a (non-smart) constructor. I expect this
+// will simplify the code, and if there are exceptions then we can revisit the
+// design of the smart consturctors.
+
 peg::parser! {
 
 grammar parser() for str {
     use BinOp::*;
-    use NOp::*;
     use UOp::*;
     use Quantifier::*;
 
@@ -33,7 +37,7 @@ grammar parser() for str {
     =  "(" name:ident() _ ":" _ sort:sort() ")" { Binder {name, sort } } /
         name:ident() sort:(_ ":" _ s:sort() { s })? { Binder {
             name,
-            sort: sort.unwrap_or(Sort::Id("".to_owned()))
+            sort: sort.unwrap_or(Sort::unknown())
         } }
 
     pub(super) rule term() -> Term = precedence!{
@@ -59,9 +63,9 @@ grammar parser() for str {
             Term::Ite { cond: Box::new(cond), then: Box::new(then), else_: Box::new(else_) }
         }
         --
-        x:(@) _ "|" _ y:@ { Term::nary(Or, x, y) }
+        x:(@) _ "|" _ y:@ { Term::or([x, y]) }
         --
-        x:(@) _ "&" _ y:@ { Term::nary(And, x, y) }
+        x:(@) _ "&" _ y:@ { Term::and([x, y]) }
         --
         // NOTE(tej): precedence of these operators was an arbitrary choice
         x:@ _ "until" _ y:(@) { Term::BinOp(BinOp::Until, Box::new(x), Box::new(y)) }
@@ -69,7 +73,7 @@ grammar parser() for str {
         --
         // NOTE(tej): precedence of these operators was an arbitrary choice
         "X" __ x:@ { Term::UnaryOp(UOp::Next, Box::new(x)) }
-        "X^-1" __ x:@ { Term::UnaryOp(UOp::Previously, Box::new(x)) }
+        "X^-1" __ x:@ { Term::UnaryOp(UOp::Previous, Box::new(x)) }
         --
         x:(@) _ "=" _ y:@ { Term::BinOp(Equals, Box::new(x), Box::new(y)) }
         x:(@) _ "!=" _ y:@ { Term::BinOp(NotEquals, Box::new(x), Box::new(y)) }
@@ -91,7 +95,7 @@ grammar parser() for str {
 
     rule sort() -> Sort
     = ("bool" word_boundary() { Sort::Bool }) /
-      s:ident() { Sort::Id(s) }
+      s:ident() { Sort::Uninterpreted(s) }
 
     rule sort_decl() -> String
     = "sort" __ s:ident() { s }

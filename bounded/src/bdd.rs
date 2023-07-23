@@ -250,7 +250,7 @@ type Universe = HashMap<String, usize>;
 fn cardinality(universe: &Universe, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(id) => universe[id],
+        Sort::Uninterpreted(id) => universe[id],
     }
 }
 
@@ -527,7 +527,7 @@ fn term_to_bdd(
             }
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
             return Err(CheckerError::CouldNotTranslateToBdd(term.clone()))
         }
@@ -560,7 +560,7 @@ fn term_to_element(
             _ => unreachable!(),
         },
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
         | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
     };
@@ -612,7 +612,9 @@ pub fn bdd_to_term<'a>(
                 .iter()
                 .zip(elements)
                 .map(|(sort, element)| match sort {
-                    Sort::Id(sort) => Term::Id(bindings[&(sort.as_str(), *element)].clone()),
+                    Sort::Uninterpreted(sort) => {
+                        Term::Id(bindings[&(sort.as_str(), *element)].clone())
+                    }
                     Sort::Bool => match element {
                         0 => Term::Literal(false),
                         1 => Term::Literal(true),

@@ -283,7 +283,7 @@ impl QuantifierPrefix {
                     if present_ids.contains(name) {
                         Some(Binder {
                             name: name.clone(),
-                            sort: Sort::Id(self.signature.sorts[self.sorts[i]].clone()),
+                            sort: Sort::Uninterpreted(self.signature.sorts[self.sorts[i]].clone()),
                         })
                     } else {
                         None

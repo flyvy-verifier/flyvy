@@ -811,7 +811,7 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
 fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(sort) => *universe.get(sort).unwrap(),
+        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
     }
 }
 
@@ -1115,7 +1115,7 @@ fn term_to_ast(
             }
         }
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
         | Term::App(..) => return Err(TranslationError::CouldNotTranslateToAst(term.clone())),
     };
@@ -1147,7 +1147,7 @@ fn term_to_element(
             _ => unreachable!(),
         },
         Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previously, _)
+        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
         | Term::BinOp(BinOp::Until | BinOp::Since, ..)
         | Term::App(..) => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
     };

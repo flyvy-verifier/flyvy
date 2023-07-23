@@ -14,23 +14,23 @@ error: invariant is not inductive
    │
    = counter example:
      state 0:
-     lock_msg(@node_0) = true
-     lock_msg(@node_1) = true
+     lock_msg(@node_0) = false
+     lock_msg(@node_1) = false
      grant_msg(@node_0) = true
      grant_msg(@node_1) = true
-     unlock_msg(@node_0) = true
-     unlock_msg(@node_1) = true
+     unlock_msg(@node_0) = false
+     unlock_msg(@node_1) = false
      holds_lock(@node_0) = true
      holds_lock(@node_1) = false
      server_holds_lock = true
      
      state 1:
-     lock_msg(@node_0) = true
-     lock_msg(@node_1) = true
+     lock_msg(@node_0) = false
+     lock_msg(@node_1) = false
      grant_msg(@node_0) = true
      grant_msg(@node_1) = false
-     unlock_msg(@node_0) = true
-     unlock_msg(@node_1) = true
+     unlock_msg(@node_0) = false
+     unlock_msg(@node_1) = false
      holds_lock(@node_0) = true
      holds_lock(@node_1) = true
      server_holds_lock = true
@@ -45,15 +45,15 @@ error: invariant is not inductive
      state 0:
      lock_msg(@node_0) = true
      grant_msg(@node_0) = true
-     unlock_msg(@node_0) = false
-     holds_lock(@node_0) = true
+     unlock_msg(@node_0) = true
+     holds_lock(@node_0) = false
      server_holds_lock = true
      
      state 1:
      lock_msg(@node_0) = false
      grant_msg(@node_0) = true
-     unlock_msg(@node_0) = false
-     holds_lock(@node_0) = true
+     unlock_msg(@node_0) = true
+     holds_lock(@node_0) = false
      server_holds_lock = false
 
 

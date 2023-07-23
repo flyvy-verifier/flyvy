@@ -74,7 +74,7 @@ impl GenericBackend {
 fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
-        Sort::Id(s) => *universes
+        Sort::Uninterpreted(s) => *universes
             .get(s)
             .unwrap_or_else(|| panic!("unknown sort {s}")),
     }
@@ -177,7 +177,7 @@ impl Backend for &GenericBackend {
                                 Atom::S("true".to_string())
                             }
                         }
-                        Sort::Id(sort) => {
+                        Sort::Uninterpreted(sort) => {
                             let elements = &model.universes[sort];
                             let element = elements[e_idx].clone();
                             Atom::S(element)
@@ -200,7 +200,7 @@ impl Backend for &GenericBackend {
                             panic!("unexpected bool {res}")
                         }
                     }
-                    Sort::Id(sort) => {
+                    Sort::Uninterpreted(sort) => {
                         let elements = &model.universes[sort];
                         let res_idx = elements
                             .iter()

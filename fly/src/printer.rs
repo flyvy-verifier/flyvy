@@ -21,7 +21,7 @@ fn precedence(t: &Term) -> usize {
         NAryOp(Or, _) => 40,
         NAryOp(And, _) => 50,
         BinOp(Until | Since, _, _) => 52,
-        UnaryOp(Next | Previously, _) => 54,
+        UnaryOp(Next | Previous, _) => 54,
         BinOp(Equals | NotEquals, _, _) => 60,
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
@@ -71,7 +71,7 @@ pub fn term(t: &Term) -> String {
                 UOp::Always => format!("always {arg}"),
                 UOp::Eventually => format!("eventually {arg}"),
                 UOp::Next => format!("X {arg}"),
-                UOp::Previously => format!("X^-1 {arg}"),
+                UOp::Previous => format!("X^-1 {arg}"),
             }
         }
         Term::BinOp(op, arg1, arg2) => {
@@ -202,7 +202,7 @@ mod tests {
 fn sort(s: &Sort) -> String {
     match s {
         Sort::Bool => "bool".to_string(),
-        Sort::Id(i) => i.to_string(),
+        Sort::Uninterpreted(i) => i.to_string(),
     }
 }
 

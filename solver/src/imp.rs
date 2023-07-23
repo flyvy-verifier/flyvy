@@ -248,7 +248,7 @@ impl<B: Backend> Solver<B> {
             .comment_with(|| format!("setting {univ} to cardinality {card}"));
         let ind = self.get_indicator(&format!("{univ}_card_{card}"));
 
-        let univ: Sort = Sort::new(univ);
+        let univ: Sort = Sort::uninterpreted(univ);
 
         // (exists ((x0 univ) ... (xn univ)) (forall ((x univ)) (or (= x x1) ... (= x xn))))
         let univ_card =

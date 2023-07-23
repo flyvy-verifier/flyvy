@@ -637,7 +637,7 @@ pub fn parse_quantifier(
 
     let sort_id = parts.next().unwrap().to_string();
     let sort = if sig.sorts.contains(&sort_id) {
-        Sort::Id(sort_id)
+        Sort::Uninterpreted(sort_id)
     } else {
         return Err(format!("invalid sort {sort_id}"));
     };

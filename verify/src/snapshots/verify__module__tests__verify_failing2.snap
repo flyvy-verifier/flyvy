@@ -16,7 +16,7 @@ fails:
               - mutable: false
                 name: p
                 args:
-                  - Id: thread
+                  - Uninterpreted: thread
                 sort: Bool
               - mutable: false
                 name: q
@@ -26,7 +26,7 @@ fails:
                 name: t0
                 args: []
                 sort:
-                  Id: thread
+                  Uninterpreted: thread
           universe:
             - 1
           interp:
