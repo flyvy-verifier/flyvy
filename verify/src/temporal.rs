@@ -256,7 +256,7 @@ impl TemporalAssertion {
                 | Term::UnaryOp(UOp::Next, _)
                 | Term::UnaryOp(UOp::Previous, _)
                 | Term::UnaryOp(UOp::Prime, _) => {
-                    panic!("Unexpected temporal operator: {}", body)
+                    panic!("Unexpected temporal operator: {body}")
                 }
                 Term::BinOp(BinOp::Equals, t1, t2)
                 | Term::BinOp(BinOp::Iff, t1, t2)
@@ -574,7 +574,7 @@ mod tests {
 
         println!("{a:?}");
         let s = a.livenss_to_safety().unwrap();
-        println!("\n\n\n{:?}\n\n\n", s);
+        println!("\n\n\n{s:?}\n\n\n");
         println!("\ninit:\n{}\n", s.init);
         println!("\nnext:\n{}\n", s.next);
         println!("\nassumed_inv:\n{}\n", s.assumed_inv);
