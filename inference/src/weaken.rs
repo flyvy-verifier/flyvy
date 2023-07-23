@@ -27,6 +27,8 @@ use fly::{
 
 use rayon::prelude::*;
 
+pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<RestrictedAtoms>);
+
 /// Extend an assignment by all possible assignments to the given variables
 /// over a domain containing the given number of elements.
 fn extend_assignment(
@@ -589,7 +591,7 @@ where
     pub fn minimized(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> =
             LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
-        for (prefix, body) in self.as_vec() {
+        for (prefix, body) in self.as_iter() {
             lemmas.insert_minimized(prefix.clone(), body.clone());
         }
 

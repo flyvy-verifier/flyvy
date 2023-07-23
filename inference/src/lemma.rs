@@ -6,7 +6,7 @@
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use std::collections::VecDeque;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ use crate::{
     basics::{FOModule, InferenceConfig, SolverPids, TransCexResult},
     hashmap::{HashMap, HashSet},
     subsume::OrderSubsumption,
-    weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
+    weaken::{Domain, LemmaQf, LemmaSet, WeakenLemmaSet},
 };
 
 use rayon::prelude::*;
@@ -798,68 +798,85 @@ pub fn ids(term: &Term) -> HashSet<String> {
     }
 }
 
-/// A [`Frontier`] maintains quantified formulas during invariant inference.
-pub struct Frontier<O, L, B>
-where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug,
-{
-    /// The set of lemmas used to sample pre-states when sampling from a transition.
-    /// This is referred to as the _frontier_.
-    lemmas: LemmaSet<O, L, B>,
-    /// A set of lemmas blocked by the current frontier. That is, any post-state of
-    /// a transition from the frontier satisfies `blocked`.
-    blocked: LemmaSet<O, L, B>,
-    /// A mapping between each blocked lemma and a core in the frontier that blocks it.
-    blocked_to_core: HashMap<usize, HashSet<usize>>,
-    /// A mapping between frontier elements and the blocked lemmas they block.
-    core_to_blocked: HashMap<usize, HashSet<usize>>,
-    /// Whether to extend CTI traces, and how much.
-    extend: Option<(usize, usize)>,
-    /// A set of CTI's to extend.
-    ctis: VecDeque<Model>,
-    /// A subset of the frontier's lemmas which inductively implies the safety assertions.
-    safety_core: Option<HashSet<usize>>,
-}
-
-impl<O, L, B> Frontier<O, L, B>
+/// A [`InductionFrame`] maintains quantified formulas during invariant inference.
+pub struct InductionFrame<O, L, B>
 where
     O: OrderSubsumption<Base = B>,
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    /// Create a new frontier from the given set of lemmas.
-    pub fn new(lemmas_init: LemmaSet<O, L, B>, extend: Option<(usize, usize)>) -> Self {
-        let blocked = lemmas_init.clone_empty();
+    /// The set of lemmas in the frame.
+    lemmas: LemmaSet<O, L, B>,
+    /// The lemmas in the frame, maintained in a way that supports weakening them.
+    weaken_lemmas: WeakenLemmaSet<O, L, B>,
+    /// The set of lemmas inductively implied by the current frame. That is, any post-state of
+    /// a transition from the frame satisfies `blocked`.
+    blocked: LemmaSet<O, L, B>,
+    /// A mapping between each blocked lemma and a core in the frame that blocks it.
+    blocked_to_core: HashMap<usize, HashSet<usize>>,
+    /// A mapping between frame lemmas and the lemmas they block.
+    core_to_blocked: HashMap<usize, HashSet<usize>>,
+    /// Whether to extend CTI traces, and how much.
+    extend: Option<(usize, usize)>,
+    /// A set of CTI's to extend.
+    ctis: VecDeque<Model>,
+    /// A subset of the frame's lemmas which inductively implies the safety assertions.
+    safety_core: Option<HashSet<usize>>,
+    /// The time of creation of the frame (for logging purposes)
+    start_time: Instant,
+}
 
-        Frontier {
-            lemmas: lemmas_init,
+impl<O, L, B> InductionFrame<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+{
+    /// Create a new frame from the given set of lemmas.
+    pub fn new(
+        infer_cfg: Arc<InferenceConfig>,
+        atoms: Arc<RestrictedAtoms>,
+        domains: Vec<Domain<L>>,
+        extend: Option<(usize, usize)>,
+    ) -> Self {
+        let mut weaken_lemmas: WeakenLemmaSet<O, L, B> =
+            WeakenLemmaSet::new(Arc::new(infer_cfg.cfg.clone()), infer_cfg, atoms, domains);
+        weaken_lemmas.init();
+        let lemmas = weaken_lemmas.minimized();
+
+        let blocked = lemmas.clone_empty();
+
+        InductionFrame {
+            lemmas,
+            weaken_lemmas,
             blocked,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
             extend,
             ctis: VecDeque::new(),
             safety_core: None,
+            start_time: Instant::now(),
         }
     }
 
-    /// Get the length of the frontier.
+    /// Get the length of the frame.
     pub fn len(&self) -> usize {
         self.lemmas.len()
     }
 
-    /// Check if the frontier is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Get the number of lemmas in the weaken-supporting representation.
+    pub fn weaken_len(&self) -> usize {
+        self.weaken_lemmas.len()
     }
 
-    /// Get the term representation of the lemmas in the frontier.
+    /// Get the term representation of the lemmas in the frame.
     pub fn proof(&self) -> Vec<Term> {
         self.lemmas.to_terms()
     }
 
-    pub fn minimal_proof(&self) -> Option<Vec<Term>> {
+    /// Get a minimized inductive set of lemmas in the frame which inductively implies safety,
+    /// provided that `is_safe` has been called and returned `true`.
+    pub fn minimized_proof(&self) -> Option<Vec<Term>> {
         if self.safety_core.is_none() {
             return None;
         }
@@ -891,21 +908,37 @@ where
         )
     }
 
-    /// Get an initial state which violates one of the given lemmas.
-    /// This doesn't use the frontier, only previously blocked lemmas.
-    pub fn init_cex(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &WeakenLemmaSet<O, L, B>,
-    ) -> Option<Model> {
+    /// Add details about the frame to the given [`Display`].
+    pub fn add_details<D: Display>(&self, d: D) -> String {
+        format!(
+            "[{:.2}s] [{} | {}] {}",
+            self.start_time.elapsed().as_secs_f64(),
+            self.len(),
+            self.weaken_len(),
+            d,
+        )
+    }
+
+    /// Log at `info` level along with details about the frame.
+    pub fn log_info<D: Display>(&self, d: D) {
+        log::info!("{}", self.add_details(d));
+    }
+
+    /// Log at `debug` level along with details about the frame.
+    pub fn log_debug<D: Display>(&self, d: D) {
+        log::debug!("{}", self.add_details(d));
+    }
+
+    /// Get an initial state which violates one of the frame's lemmas.
+    fn init_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
         let blocked_lock = RwLock::new((
             &mut self.blocked,
             &mut self.blocked_to_core,
             &mut self.core_to_blocked,
         ));
 
-        let res = lemmas
+        let res = self
+            .weaken_lemmas
             .as_vec()
             .into_par_iter()
             .filter(|(prefix, body)| {
@@ -940,67 +973,82 @@ where
         res
     }
 
+    /// Perform an initiation cycle, which attempts to sample an initial state
+    /// violating the frame and weaken it. Return whether such a counterexample was found.
+    ///
+    /// Note: only when no initial counterexamples are found, the frame is updated.
+    pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        self.log_info("Finding CTI...");
+        match self.init_cex(fo, conf) {
+            Some(cti) => {
+                self.log_info("CTI found, type=initial");
+                self.log_info("Weakening...");
+                self.weaken_lemmas.weaken(&cti);
+
+                true
+            }
+            None => {
+                self.log_info("No initial CTI found");
+                self.log_info("Updating frame...");
+                self.update();
+
+                false
+            }
+        }
+    }
+
     /// Extend CTI traces and weaken the given lemmas accordingly,
     /// until no more states can be sampled.
-    pub fn extend(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &mut WeakenLemmaSet<O, L, B>,
-    ) {
+    pub fn extend(&mut self, fo: &FOModule, conf: &SolverConf) {
+        self.log_info("Simulating CTI traces...");
         let (width, depth) = self.extend.unwrap();
         while !self.ctis.is_empty() {
             let mut new_ctis = VecDeque::new();
-            log::debug!(
-                "[{}] Extending traces from {} CTI's...",
-                lemmas.len(),
+            self.log_debug(format!(
+                "Extending traces from {} CTI's...",
                 self.ctis.len()
-            );
+            ));
             let samples: Vec<Model> = self
                 .ctis
                 .par_iter()
                 .enumerate()
                 .flat_map_iter(|(id, state)| {
-                    log::debug!("[{}] Extending CTI trace #{id}...", lemmas.len());
+                    self.log_debug(format!("Extending CTI trace #{id}..."));
                     let samples = fo.simulate_from(conf, state, width, depth);
-                    log::debug!(
-                        "[{}] Found {} simulated samples from CTI #{id}...",
-                        lemmas.len(),
+                    self.log_debug(format!(
+                        "Found {} simulated samples from CTI #{id}...",
                         samples.len(),
-                    );
+                    ));
 
                     samples
                 })
                 .collect();
 
             let samples_len = samples.len();
-            log::debug!(
-                "[{}] Found a total of {samples_len} simulated samples from {} CTI's...",
-                lemmas.len(),
+            self.log_debug(format!(
+                "Found a total of {samples_len} simulated samples from {} CTI's...",
                 self.ctis.len(),
-            );
+            ));
             let mut idx = 0;
             while let Some(i) = (idx..samples.len())
                 .into_par_iter()
-                .find_first(|i| lemmas.unsat(&samples[*i]))
+                .find_first(|i| self.weaken_lemmas.unsat(&samples[*i]))
             {
-                assert!(lemmas.weaken(&samples[i]));
-                log::debug!("[{}] Weakened ({} / {samples_len}).", lemmas.len(), i + 1);
+                assert!(self.weaken_lemmas.weaken(&samples[i]));
+                self.log_debug(format!("Weakened ({} / {samples_len}).", i + 1));
                 new_ctis.push_back(samples[i].clone());
                 idx = i + 1;
             }
 
             self.ctis = new_ctis;
         }
+
+        self.log_info("Updating frame...");
+        self.update();
     }
 
-    /// Get an post-state of the frontier which violates one of the given lemmas.
-    pub fn trans_cex(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &WeakenLemmaSet<O, L, B>,
-    ) -> Option<Model> {
+    /// Get an post-state of the frame which violates one of the frame's lemmas.
+    fn trans_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
         let solver_pids = SolverPids::new();
@@ -1015,7 +1063,8 @@ where
         ));
 
         let start_time = Instant::now();
-        let res = lemmas
+        let res = self
+            .weaken_lemmas
             .as_vec()
             .into_par_iter()
             .filter(|(prefix, body)| {
@@ -1085,7 +1134,29 @@ where
         res
     }
 
-    /// Return whether the current frontier inductively implies the safety assertions
+    /// Perform a transition cycle, which attempts to sample a transition from the frame
+    /// whose post-state violates the frame, and weaken it. Return whether such a counterexample was found.
+    pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        self.log_info("Finding CTI...");
+        match self.trans_cex(fo, conf) {
+            Some(cti) => {
+                self.log_info("CTI found, type=initial");
+                self.log_info("Weakening...");
+                self.weaken_lemmas.weaken(&cti);
+                self.log_info("Updating frame...");
+                self.update();
+
+                true
+            }
+            None => {
+                self.log_info("No transition CTI found");
+
+                false
+            }
+        }
+    }
+
+    /// Return whether the current frame inductively implies the safety assertions
     /// of the given module.
     pub fn is_safe(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
         if self.safety_core.is_some() {
@@ -1104,7 +1175,7 @@ where
     }
 
     fn remove_lemma(&mut self, id: &usize) {
-        // Remove the lemma from the frontier.
+        // Remove the lemma from the frame.
         self.lemmas.remove(id);
         // Nullify the safey core if it includes this lemma.
         if self
@@ -1119,7 +1190,7 @@ where
             for lemma in &unblocked {
                 // Signal that the lemma isn't blocked anymore.
                 self.blocked.remove(lemma);
-                // For any other frontier element in the core, signal that it doesn't block the lemma anymore.
+                // For any other frame lemma in the core, signal that it doesn't block the previously blocked lemma anymore.
                 for in_core in &self.blocked_to_core.remove(lemma).unwrap() {
                     if in_core != id {
                         let blocked_by_in_core = self.core_to_blocked.get_mut(in_core).unwrap();
@@ -1133,25 +1204,24 @@ where
         }
     }
 
-    /// Advance the fontier using the new lemmas. That is, remove each lemma in the frontier
-    /// which isn't in the new lemmas, and add all weakenings of it (lemmas subsumed by it)
-    /// to the frontier. However, to keep the frontier minimized, do not add lemmas
-    /// that are subsumed by existing, unweakened lemmas.
+    /// Update the frame. That is, remove each lemma in `self.lemmas` which isn't in the weakened lemmas,
+    /// and add all weakenings of it (lemmas subsumed by it) to the frame. However, to keep the frame minimized,
+    /// do not add lemmas that are subsumed by existing, unweakened lemmas.
     ///
-    /// Return whether the advancement caused any change in the frontier.
-    pub fn advance(&mut self, new_lemmas: &WeakenLemmaSet<O, L, B>) -> bool {
-        // If there are no lemmas in the frontier, it cannot be advanced.
+    /// Return whether the update caused any change in the frame.
+    fn update(&mut self) -> bool {
+        // If there are no lemmas in the frame, it cannot be advanced.
         if self.lemmas.is_empty() {
             return false;
         }
 
-        // Find all lemmas in the frontier (parents) which have been weakened in the new lemmas.
-        // These are precisely the lemmas in the fontier which are not part of the new lemmas.
+        // Find all lemmas in the frame (parents) which have been weakened in the new lemmas.
+        // These are precisely the lemmas in the frame which are not part of the new lemmas.
         let weakened_parents: HashSet<usize> = self
             .lemmas
             .as_iter()
             .filter_map(|(prefix, body, id)| {
-                if !new_lemmas.contains(&prefix, body) {
+                if !self.weaken_lemmas.contains(&prefix, body) {
                     Some(id)
                 } else {
                     None
@@ -1164,14 +1234,18 @@ where
             self.remove_lemma(id)
         }
 
-        let mut added_lemmas = self.lemmas.clone_empty();
-        for (prefix, body) in new_lemmas.as_iter() {
-            if !self.lemmas.subsumes(prefix.as_ref(), body) {
-                added_lemmas.insert_minimized(prefix, body.clone());
-            }
-        }
+        let new_lemmas = Mutex::new(self.lemmas.clone_empty());
+        self.weaken_lemmas
+            .as_vec()
+            .into_par_iter()
+            .for_each(|(prefix, body)| {
+                if !self.lemmas.subsumes(prefix.as_ref(), body) {
+                    let mut new_lemmas_lock = new_lemmas.lock().unwrap();
+                    new_lemmas_lock.insert_minimized(prefix, body.clone());
+                }
+            });
 
-        for (prefix, body, _) in added_lemmas.as_iter() {
+        for (prefix, body, _) in new_lemmas.into_inner().unwrap().as_iter() {
             self.lemmas.insert(prefix, body.clone());
         }
 

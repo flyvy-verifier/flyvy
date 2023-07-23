@@ -14,10 +14,9 @@ use crate::{atoms, lemma, subsume};
 use crate::{
     atoms::{restrict, restrict_by_prefix, Atoms, RestrictedAtoms},
     basics::{FOModule, InferenceConfig},
-    lemma::Frontier,
-    quant::QuantifierPrefix,
+    lemma::InductionFrame,
     subsume::OrderSubsumption,
-    weaken::{LemmaQf, WeakenLemmaSet},
+    weaken::{Domain, LemmaQf},
 };
 use fly::syntax::{Module, Term, ThmStmt};
 use solver::conf::SolverConf;
@@ -37,8 +36,6 @@ pub mod defaults {
     pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
     pub const MAX_NON_UNIT: Option<usize> = Some(6);
 }
-
-type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<RestrictedAtoms>);
 
 /// Check how much of the handwritten invariant the given lemmas cover.
 fn invariant_cover(
@@ -72,7 +69,7 @@ pub struct FoundFixpoint {
     /// If `None`, the run has been abort before reaching the fixpoint
     proof: Option<Vec<Term>>,
     /// A subset of the fixpoint term which suffices to prove safety
-    minimal_proof: Option<Vec<Term>>,
+    minimized_proof: Option<Vec<Term>>,
     /// Whether the discovered fixpoint implies the safety predicates
     safe: bool,
     /// Total time for fixpoint calculation
@@ -109,11 +106,11 @@ impl FoundFixpoint {
             }
         }
 
-        if let Some(minimal_proof) = &self.minimal_proof {
-            println!("Minimized invariant size = {}", minimal_proof.len());
+        if let Some(minimized_proof) = &self.minimized_proof {
+            println!("Minimized invariant size = {}", minimized_proof.len());
             if print_invariant {
                 println!("proof {{");
-                for lemma in minimal_proof {
+                for lemma in minimized_proof {
                     println!("  invariant {lemma}");
                 }
                 println!("}}");
@@ -314,60 +311,25 @@ where
         log::debug!("    {a}");
     }
 
-    let print = |f: &Frontier<O, L, B>, wls: &WeakenLemmaSet<O, L, B>, s: String| {
-        log::info!(
-            "[{:.2}s] [{} | {}] {}",
-            start.elapsed().as_secs_f32(),
-            f.len(),
-            wls.len(),
-            s
-        );
-    };
-
-    let mut weaken_set: WeakenLemmaSet<O, L, B> = WeakenLemmaSet::new(
-        Arc::new(infer_cfg.cfg.clone()),
-        infer_cfg.clone(),
-        atoms,
-        domains,
-    );
-    weaken_set.init();
-    let mut frontier: Frontier<O, L, B> = Frontier::new(weaken_set.minimized(), extend);
+    let mut frame: InductionFrame<O, L, B> =
+        InductionFrame::new(infer_cfg.clone(), atoms, domains, extend);
 
     // Begin by overapproximating the initial states.
-    print(&frontier, &weaken_set, "Finding CTI...".to_string());
-    while let Some(cti) = frontier.init_cex(fo, conf, &weaken_set) {
-        print(
-            &frontier,
-            &weaken_set,
-            "CTI found, type=initial".to_string(),
-        );
-
-        print(&frontier, &weaken_set, "Weakening...".to_string());
-        weaken_set.weaken(&cti);
-        print(&frontier, &weaken_set, "Finding CTI...".to_string());
-    }
+    while frame.init_cycle(fo, conf) {}
 
     // Handle transition CTI's.
     loop {
         // If enabled, extend CTI traces using simulations.
         if extend.is_some() {
-            print(
-                &frontier,
-                &weaken_set,
-                "Simulating CTI traces...".to_string(),
-            );
-            frontier.extend(fo, conf, &mut weaken_set);
+            frame.extend(fo, conf);
         }
 
-        print(&frontier, &weaken_set, "Advancing...".to_string());
-        frontier.advance(&weaken_set);
-
         if infer_cfg.abort_unsafe {
-            print(&frontier, &weaken_set, "Checking safety...".to_string());
-            if !frontier.is_safe(fo, conf) {
+            frame.log_info("Checking safety...");
+            if !frame.is_safe(fo, conf) {
                 return FoundFixpoint {
                     proof: None,
-                    minimal_proof: None,
+                    minimized_proof: None,
                     safe: false,
                     time_taken: start.elapsed(),
                     covering: None,
@@ -375,31 +337,21 @@ where
             }
         }
 
-        print(&frontier, &weaken_set, "Finding CTI...".to_string());
-        if let Some(cti) = frontier.trans_cex(fo, conf, &weaken_set) {
-            print(
-                &frontier,
-                &weaken_set,
-                "CTI found, type=transition".to_string(),
-            );
-
-            print(&frontier, &weaken_set, "Weakening...".to_string());
-            weaken_set.weaken(&cti);
-        } else {
+        if !frame.trans_cycle(fo, conf) {
             break;
         }
     }
 
-    print(&frontier, &weaken_set, "Checking safety...".to_string());
-    let safe = frontier.is_safe(fo, conf);
+    frame.log_info("Checking safety...");
+    let safe = frame.is_safe(fo, conf);
     let time_taken = start.elapsed();
-    let proof: Vec<Term> = frontier.proof();
-    let minimal_proof = frontier.minimal_proof();
+    let proof: Vec<Term> = frame.proof();
+    let minimized_proof = frame.minimized_proof();
     let covering = Some(invariant_cover(m, conf, fo, &proof));
 
     FoundFixpoint {
         proof: Some(proof),
-        minimal_proof,
+        minimized_proof,
         safe,
         time_taken,
         covering,
