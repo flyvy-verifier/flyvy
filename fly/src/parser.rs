@@ -37,7 +37,7 @@ grammar parser() for str {
     =  "(" name:ident() _ ":" _ sort:sort() ")" { Binder {name, sort } } /
         name:ident() sort:(_ ":" _ s:sort() { s })? { Binder {
             name,
-            sort: sort.unwrap_or(Sort::uninterpreted(""))
+            sort: sort.unwrap_or(Sort::unknown())
         } }
 
     pub(super) rule term() -> Term = precedence!{

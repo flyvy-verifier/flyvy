@@ -12,11 +12,19 @@ use crate::ouritertools::OurItertools;
 
 /// A Sort represents a collection of values, which can be the built-in boolean
 /// sort or a named sort (coming from a Signature).
-#[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Serialize, PartialOrd, Ord)]
 pub enum Sort {
+    /// Boolean sort
     Bool,
+    /// Uninterpreted sort identified by its name
     Uninterpreted(String),
+    /*
+    /// Unspecified sort
+    ///
+    /// This is used in sort inference, and assumed to not occur anywhere after
+    /// sort inference.
+    Unknown,
+    */
 }
 
 impl Sort {
@@ -192,7 +200,6 @@ impl Term {
     }
 
     /// Smart constructor for Id
-    /// TODO(oded): should this take AsRef<str>?
     pub fn id(name: &str) -> Self {
         Self::Id(name.to_string())
     }
