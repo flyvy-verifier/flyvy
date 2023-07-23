@@ -661,13 +661,16 @@ where
         self.len() == 0
     }
 
+    pub fn id_to_term(&self, id: &usize) -> Term {
+        self.to_prefixes[id].quantify(self.body_to_term(&self.to_bodies[id]))
+    }
+
+    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, &O) {
+        (self.to_prefixes[id].clone(), &self.to_bodies[id])
+    }
+
     pub fn to_terms_ids(&self) -> impl Iterator<Item = (usize, Term)> + '_ {
-        self.as_iter().map(|(prefix, body, id)| {
-            (
-                id,
-                prefix.quantify(self.lemma_qf.base_to_term(&body.to_base())),
-            )
-        })
+        self.ids().map(|id| (id, self.id_to_term(&id)))
     }
 
     pub fn to_terms(&self) -> Vec<Term> {
@@ -683,10 +686,21 @@ where
     }
 
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O, usize)> {
-        self.to_prefixes
-            .iter()
-            .map(|(id, prefix)| (prefix.clone(), &self.to_bodies[id], *id))
+        self.ids()
+            .map(|id| {
+                let (prefix, body) = self.id_to_lemma(&id);
+                (prefix, body, id)
+            })
             .sorted_by_key(|(prefix, _, _)| (prefix.existentials(), prefix.num_vars()))
+    }
+
+    pub fn get_id(&self, prefix: &QuantifierPrefix, body: &O) -> Option<usize> {
+        self.bodies
+            .get(body)
+            .unwrap()
+            .iter()
+            .copied()
+            .find(|id| self.to_prefixes[id].contains(prefix))
     }
 
     pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {

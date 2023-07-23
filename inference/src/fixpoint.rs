@@ -70,14 +70,16 @@ fn invariant_cover(
 pub struct FoundFixpoint {
     /// The fixpoint term (the conjunction of these lemmas).
     /// If `None`, the run has been abort before reaching the fixpoint
-    pub proof: Option<Vec<Term>>,
+    proof: Option<Vec<Term>>,
+    /// A subset of the fixpoint term which suffices to prove safety
+    minimal_proof: Option<Vec<Term>>,
     /// Whether the discovered fixpoint implies the safety predicates
-    pub safe: bool,
+    safe: bool,
     /// Total time for fixpoint calculation
-    pub time_taken: Duration,
+    time_taken: Duration,
     /// Number of terms of handwritten invariant covered
     /// and total number of terms in the handwritten invariant
-    pub covering: Option<(usize, usize)>,
+    covering: Option<(usize, usize)>,
 }
 
 impl FoundFixpoint {
@@ -90,18 +92,28 @@ impl FoundFixpoint {
             println!("Fixpoint UNSAFE!");
         }
 
-        if let Some((covered_handwritten, size_handwritten)) = self.covering {
-            println!(
-                "Covers {} / {} of handwritten invariant.",
-                covered_handwritten, size_handwritten
-            );
-        }
-
         if let Some(proof) = &self.proof {
             println!("Fixpoint size = {}", proof.len());
+            if let Some((covered_handwritten, size_handwritten)) = self.covering {
+                println!(
+                    "Covers {} / {} of handwritten invariant.",
+                    covered_handwritten, size_handwritten
+                );
+            }
             if print_invariant {
                 println!("proof {{");
                 for lemma in proof {
+                    println!("  invariant {lemma}");
+                }
+                println!("}}");
+            }
+        }
+
+        if let Some(minimal_proof) = &self.minimal_proof {
+            println!("Minimized invariant size = {}", minimal_proof.len());
+            if print_invariant {
+                println!("proof {{");
+                for lemma in minimal_proof {
                     println!("  invariant {lemma}");
                 }
                 println!("}}");
@@ -352,10 +364,10 @@ where
 
         if infer_cfg.abort_unsafe {
             print(&frontier, &weaken_set, "Checking safety...".to_string());
-            let proof = frontier.lemmas.to_terms();
-            if fo.trans_safe_cex(conf, &proof).is_some() {
+            if !frontier.is_safe(fo, conf) {
                 return FoundFixpoint {
                     proof: None,
+                    minimal_proof: None,
                     safe: false,
                     time_taken: start.elapsed(),
                     covering: None,
@@ -378,14 +390,16 @@ where
         }
     }
 
-    let proof = frontier.lemmas.to_terms();
     print(&frontier, &weaken_set, "Checking safety...".to_string());
-    let safe = fo.trans_safe_cex(conf, &proof).is_none();
+    let safe = frontier.is_safe(fo, conf);
     let time_taken = start.elapsed();
+    let proof: Vec<Term> = frontier.proof();
+    let minimal_proof = frontier.minimal_proof();
     let covering = Some(invariant_cover(m, conf, fo, &proof));
 
     FoundFixpoint {
         proof: Some(proof),
+        minimal_proof,
         safe,
         time_taken,
         covering,

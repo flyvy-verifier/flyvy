@@ -586,16 +586,16 @@ impl FOModule {
         }
     }
 
-    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
+    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> TransCexResult {
+        let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            if let TransCexResult::CTI(model, _) =
-                self.trans_cex(conf, hyp, &s.safety.x, false, true, None)
-            {
-                return Some(model);
+            match self.trans_cex(conf, hyp, &s.safety.x, false, true, None) {
+                TransCexResult::UnsatCore(new_core) => core.extend(new_core),
+                res => return res,
             }
         }
 
-        None
+        TransCexResult::UnsatCore(core)
     }
 
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {

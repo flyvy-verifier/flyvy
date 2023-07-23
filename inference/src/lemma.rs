@@ -807,7 +807,7 @@ where
 {
     /// The set of lemmas used to sample pre-states when sampling from a transition.
     /// This is referred to as the _frontier_.
-    pub lemmas: LemmaSet<O, L, B>,
+    lemmas: LemmaSet<O, L, B>,
     /// A set of lemmas blocked by the current frontier. That is, any post-state of
     /// a transition from the frontier satisfies `blocked`.
     blocked: LemmaSet<O, L, B>,
@@ -819,6 +819,8 @@ where
     extend: Option<(usize, usize)>,
     /// A set of CTI's to extend.
     ctis: VecDeque<Model>,
+    /// A subset of the frontier's lemmas which inductively implies the safety assertions.
+    safety_core: Option<HashSet<usize>>,
 }
 
 impl<O, L, B> Frontier<O, L, B>
@@ -838,6 +840,7 @@ where
             core_to_blocked: HashMap::default(),
             extend,
             ctis: VecDeque::new(),
+            safety_core: None,
         }
     }
 
@@ -846,9 +849,46 @@ where
         self.lemmas.len()
     }
 
-    /// Check if the frontier is empty
+    /// Check if the frontier is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Get the term representation of the lemmas in the frontier.
+    pub fn proof(&self) -> Vec<Term> {
+        self.lemmas.to_terms()
+    }
+
+    pub fn minimal_proof(&self) -> Option<Vec<Term>> {
+        if self.safety_core.is_none() {
+            return None;
+        }
+
+        let mut extended_core = HashSet::default();
+        let mut new_ids = self.safety_core.as_ref().unwrap().clone();
+
+        while !new_ids.is_empty() {
+            let mut new_new_ids = HashSet::default();
+            for id in &new_ids {
+                let (prefix, body) = self.lemmas.id_to_lemma(id);
+                let blocked_id = self.blocked.get_id(&prefix, body).unwrap();
+                new_new_ids.extend(
+                    self.blocked_to_core[&blocked_id]
+                        .difference(&extended_core)
+                        .copied(),
+                );
+            }
+
+            extended_core.extend(new_ids);
+            new_ids = new_new_ids;
+        }
+
+        Some(
+            extended_core
+                .into_iter()
+                .map(|id| self.lemmas.id_to_term(&id))
+                .collect_vec(),
+        )
     }
 
     /// Get an initial state which violates one of the given lemmas.
@@ -1045,9 +1085,35 @@ where
         res
     }
 
+    /// Return whether the current frontier inductively implies the safety assertions
+    /// of the given module.
+    pub fn is_safe(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        if self.safety_core.is_some() {
+            return true;
+        }
+
+        let (ids, terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
+        match fo.trans_safe_cex(conf, &terms) {
+            TransCexResult::CTI(_, _) => false,
+            TransCexResult::UnsatCore(core) => {
+                self.safety_core = Some(core.into_iter().map(|i| ids[i]).collect());
+                true
+            }
+            _ => panic!("safety check failed"),
+        }
+    }
+
     fn remove_lemma(&mut self, id: &usize) {
         // Remove the lemma from the frontier.
         self.lemmas.remove(id);
+        // Nullify the safey core if it includes this lemma.
+        if self
+            .safety_core
+            .as_ref()
+            .is_some_and(|core| core.contains(id))
+        {
+            self.safety_core = None;
+        }
         // Remove blocking cores that contain the replaced lemma.
         if let Some(unblocked) = self.core_to_blocked.remove(id) {
             for lemma in &unblocked {
