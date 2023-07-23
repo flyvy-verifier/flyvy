@@ -71,7 +71,7 @@ pub fn invariant(
         .into_iter()
         .map(|((sort, _), name)| Binder {
             name,
-            sort: Sort::Id(sort.to_string()),
+            sort: Sort::Uninterpreted(sort.to_string()),
         })
         .collect();
     let ast = Term::Quantified {
@@ -117,7 +117,7 @@ mod tests {
 
         match invariant(&module, universe, &conf, false)? {
             FiniteAnswer::InvariantInferred(_) => Ok(()),
-            FiniteAnswer::InvariantFail(inv, _) => panic!("invariant wasn't inductive: {}", inv),
+            FiniteAnswer::InvariantFail(inv, _) => panic!("invariant wasn't inductive: {inv}"),
             FiniteAnswer::BddCounterexample(_) => panic!("counterexample found"),
         }
     }
