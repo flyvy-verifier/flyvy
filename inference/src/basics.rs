@@ -293,10 +293,14 @@ impl FOModule {
 
                             if !core.add_counter_model(pre.clone(), Some(&unsat_core)) {
                                 log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                                solver.save_tee();
                                 return TransCexResult::CTI(pre, post);
                             }
                         }
-                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(SolverError::Killed) => {
+                            solver.save_tee();
+                            return TransCexResult::Cancelled;
+                        }
                         Err(SolverError::CouldNotMinimize(_)) => (),
                         Err(e) => panic!("error in solver: {e}"),
                     },
@@ -317,15 +321,23 @@ impl FOModule {
                             }
 
                             separate_cores[t_idx] = Some(my_core);
+                            solver.save_tee();
                             break 'inner;
                         }
-                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(SolverError::Killed) => {
+                            solver.save_tee();
+                            return TransCexResult::Cancelled;
+                        }
                         Err(e) => panic!("error in solver: {e}"),
                     },
-                    Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                    Err(SolverError::Killed) => {
+                        solver.save_tee();
+                        return TransCexResult::Cancelled;
+                    }
                     Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
                     Err(e) => panic!("error in solver: {e}"),
                 }
+
                 solver.save_tee();
             }
         }
@@ -344,7 +356,6 @@ impl FOModule {
             unsat_core.len(),
             core_sizes
         );
-
         TransCexResult::UnsatCore(unsat_core)
     }
 
@@ -384,6 +395,8 @@ impl FOModule {
                 }
                 SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
             }
+
+            solver.save_tee();
         }
     }
 
@@ -606,7 +619,7 @@ pub struct InferenceConfig {
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
 
-    pub max_size: Option<usize>,
+    pub max_size: usize,
     pub max_existentials: Option<usize>,
 
     pub clauses: Option<usize>,
@@ -622,11 +635,14 @@ pub struct InferenceConfig {
     pub disj: bool,
     pub gradual_smt: bool,
     pub minimal_smt: bool,
-    pub gradual_advance: bool,
-    pub indiv: bool,
 
     pub extend_width: Option<usize>,
     pub extend_depth: Option<usize>,
+
+    pub until_safe: bool,
+    pub abort_unsafe: bool,
+    pub no_search: bool,
+    pub growth_factor: Option<usize>,
 }
 
 pub fn parse_quantifier(
