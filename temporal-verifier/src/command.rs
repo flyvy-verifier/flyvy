@@ -766,12 +766,12 @@ impl App {
                     Ok(inference::finite::FiniteAnswer::BddCounterexample(models)) => {
                         println!("found counterexample:");
                         for (i, model) in models.iter().enumerate() {
-                            println!("state {}:", i);
+                            println!("state {i}:");
                             println!("{}", back_convert_model(model).fmt());
                         }
                     }
                     Ok(inference::finite::FiniteAnswer::InvariantFail(term, err)) => {
-                        eprintln!("invariant wasn't inductive: {}", term);
+                        eprintln!("invariant wasn't inductive: {term}");
                         for fail in &err.fails {
                             use verify::error::*;
                             match fail.reason {
@@ -782,18 +782,18 @@ impl App {
                             match &fail.error {
                                 QueryError::Sat(models) => {
                                     for (i, model) in models.iter().enumerate() {
-                                        eprintln!("state {}:", i);
+                                        eprintln!("state {i}:");
                                         eprintln!("{}", back_convert_model(model).fmt());
                                     }
                                 }
-                                QueryError::Unknown(message) => eprintln!("{}", message),
+                                QueryError::Unknown(message) => eprintln!("{message}"),
                             }
                         }
                     }
                     Ok(inference::finite::FiniteAnswer::InvariantInferred(term)) => {
-                        println!("found inductive invariant: {}", term);
+                        println!("found inductive invariant: {term}");
                     }
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("{error}"),
                 }
             }
         }
