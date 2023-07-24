@@ -92,7 +92,8 @@ pub struct Model {
 }
 
 impl Model {
-    fn cardinality(&self, sort: &Sort) -> usize {
+    /// Get the cardinality using the universe from this model
+    pub fn cardinality(&self, sort: &Sort) -> usize {
         match sort {
             Sort::Bool => 2,
             _ => self.universe[self.signature.sort_idx(sort)],
@@ -111,8 +112,7 @@ impl Model {
                 &self.cardinality(&relation.sort),
             );
             for j in 0..relation.args.len() {
-                let k = self.signature.sort_idx(&relation.args[j]);
-                assert_eq!(interp.shape[j], self.universe[k]);
+                assert_eq!(self.cardinality(&relation.args[j]), interp.shape[j]);
             }
         }
     }

@@ -37,7 +37,7 @@ pub fn check(
     print_timing: bool,
 ) -> Result<CheckerAnswer, CheckerError> {
     if !module.defs.is_empty() {
-        todo!("definitions are not supported yet");
+        panic!("definitions are not supported yet");
     }
 
     let d = extract(module).map_err(CheckerError::ExtractionError)?;

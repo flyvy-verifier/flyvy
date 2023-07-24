@@ -294,12 +294,12 @@ fn check_internal<'a>(
 
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
-            todo!("non-bool relations")
+            panic!("non-bool relations in checker (use Module::convert_non_bool_relations)")
         }
     }
 
     if !module.defs.is_empty() {
-        todo!("definitions are not supported yet");
+        panic!("definitions in checker (use Module::inline_defs)")
     }
 
     let d = extract(module).map_err(CheckerError::ExtractionError)?;
