@@ -196,10 +196,6 @@ struct InferenceConfigArgs {
     minimal_smt: bool,
 
     #[arg(long)]
-    /// Advance the prestate frontier gradually
-    gradual_advance: bool,
-
-    #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
     extend_width: Option<usize>,
 
