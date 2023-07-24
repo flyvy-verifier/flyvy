@@ -20,7 +20,7 @@ cargo run -- infer qalpha temporal-verifier/examples/lockserver.fly --max-exist 
 
 env RUST_LOG=info cargo run --release -- \
   infer qalpha temporal-verifier/examples/consensus_epr.fly --time \
-  --custom-prefix --sort quorum --sort node --sort value \
+  --custom-quant --sort quorum --sort node --sort value \
   --max-exist 1 --abort-unsafe --until-safe --minimal-smt \
   --extend-depth 1 --extend-width 10
 # note: this last example takes several minutes to run

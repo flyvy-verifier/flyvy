@@ -84,7 +84,7 @@ struct QuantifierConfigArgs {
     #[arg(long)]
     /// Use a custom prefix, given either by the sort ordering (via `--sort`) or by exact quantifiers (via `--quantifier`).
     /// Otherwise, use the sort ordering found in the loaded module
-    custom_prefix: bool,
+    custom_quant: bool,
 
     #[arg(short, long)]
     /// Sorts in the order they should appear in the quantifier prefix
@@ -100,7 +100,7 @@ impl QuantifierConfigArgs {
         let mut quantifiers;
         let mut sorts: Vec<usize>;
         let mut counts: Vec<usize>;
-        if !self.custom_prefix {
+        if !self.custom_quant {
             sorts = (0..sig.sorts.len()).collect();
             quantifiers = vec![None; sorts.len()];
             counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
