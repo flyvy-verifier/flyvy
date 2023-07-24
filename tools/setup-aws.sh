@@ -1,7 +1,7 @@
+#!/bin/bash
+
 # Copyright 2022-2023 VMware, Inc.
 # SPDX-License-Identifier: BSD-2-Clause
-
-#!/bin/bash
 
 # Install dependencies for an EC2 instance running Amazon Linux
 
