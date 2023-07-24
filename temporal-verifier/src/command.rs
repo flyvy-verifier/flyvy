@@ -108,7 +108,7 @@ impl QuantifierConfigArgs {
             sorts = self
                 .sort
                 .iter()
-                .map(|s| sig.sort_idx(&Sort::Id(s.clone())))
+                .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
                 .collect();
             quantifiers = vec![None; sorts.len()];
             counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
