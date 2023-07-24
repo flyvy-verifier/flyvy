@@ -89,8 +89,6 @@ impl FoundFixpoint {
             println!("}}");
         };
 
-        println!("Fixpoint runtime = {:.2}s", self.time_taken.as_secs_f64());
-
         if self.safe {
             println!("Fixpoint SAFE!");
         } else {
@@ -101,16 +99,16 @@ impl FoundFixpoint {
             println!("Fixpoint size = {}", proof.len());
             if let Some((covered_handwritten, size_handwritten)) = self.covering {
                 println!(
-                    "Covers {} / {} of handwritten invariant.",
-                    covered_handwritten, size_handwritten
+                    "Covers {covered_handwritten} / {size_handwritten} of handwritten invariant."
                 );
             }
 
             if print_invariant {
-                print_inv(&proof);
+                println!("Fixpoint runtime = {:.2}s", self.time_taken.as_secs_f64());
+                print_inv(proof);
                 if let Some(minimized_proof) = &self.minimized_proof {
                     println!("Safety invariant size = {}", minimized_proof.len());
-                    print_inv(&minimized_proof);
+                    print_inv(minimized_proof);
                 }
             }
         }
@@ -238,7 +236,7 @@ pub fn qalpha<O, L, B>(
             extend,
         );
 
-        fixpoint.report(fixpoint.safe && print_invariant);
+        fixpoint.report(print_invariant);
 
         if (fixpoint.safe && infer_cfg.until_safe) || domains.is_empty() {
             break;
@@ -250,8 +248,6 @@ pub fn qalpha<O, L, B>(
                 .growth_factor
                 .unwrap_or(defaults::DOMAIN_GROWTH_FACTOR);
     }
-
-    println!();
 }
 
 pub fn qalpha_by_qf_body(

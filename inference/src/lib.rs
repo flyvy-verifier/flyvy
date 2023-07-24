@@ -14,6 +14,7 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
 #![deny(clippy::uninlined_format_args)]
+#![allow(clippy::len_without_is_empty)]
 // documentation-related lints (only checked when running rustdoc)
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]

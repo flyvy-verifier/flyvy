@@ -880,9 +880,7 @@ where
     /// Get a minimized inductive set of lemmas in the frame which inductively implies safety,
     /// provided that `is_safe` has been called and returned `true`.
     pub fn minimized_proof(&self) -> Option<Vec<Term>> {
-        if self.safety_core.is_none() {
-            return None;
-        }
+        self.safety_core.as_ref()?;
 
         let mut extended_core = HashSet::default();
         let mut new_ids = self.safety_core.as_ref().unwrap().clone();
