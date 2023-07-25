@@ -258,9 +258,9 @@ impl InferenceConfigArgs {
 
         if self.qf_body.is_none() {
             cfg.clauses = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSES);
-            cfg.clause_size = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
-            cfg.cubes = cfg.clauses.or(fixpoint::defaults::MAX_CUBES);
-            cfg.cube_size = cfg.clauses.or(fixpoint::defaults::MAX_CUBE_SIZE);
+            cfg.clause_size = cfg.clause_size.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
+            cfg.cubes = cfg.cubes.or(fixpoint::defaults::MAX_CUBES);
+            cfg.cube_size = cfg.cube_size.or(fixpoint::defaults::MAX_CUBE_SIZE);
             cfg.non_unit = cfg.non_unit.or(fixpoint::defaults::MAX_NON_UNIT);
         }
 
