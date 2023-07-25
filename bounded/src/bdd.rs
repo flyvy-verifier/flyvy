@@ -637,14 +637,14 @@ pub fn bdd_to_term<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fly::sorts::sort_check_and_infer;
+    use fly::sorts::sort_check_module;
 
     #[test]
     fn checker_bdd_basic() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/tests/examples/basic2.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([]);
 
         assert!(matches!(
@@ -664,7 +664,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         assert!(matches!(
@@ -680,7 +680,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&module, &universe, Some(12), false)?;
@@ -699,7 +699,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 1),
             ("quorum".to_string(), 1),
@@ -719,7 +719,7 @@ mod tests {
         let source =
             include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert!(matches!(
             check(&module, &universe, None, false)?,
@@ -733,7 +733,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/basic2.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([]);
 
         assert!(matches!(
@@ -753,7 +753,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         assert!(matches!(
@@ -769,7 +769,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check_reversed(&module, &universe, Some(12), false)?;
@@ -788,7 +788,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 1),
             ("quorum".to_string(), 1),
@@ -808,7 +808,7 @@ mod tests {
         let source =
             include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert!(matches!(
             check_reversed(&module, &universe, None, false)?,

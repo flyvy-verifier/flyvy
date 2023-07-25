@@ -3,7 +3,7 @@
 
 //! Infer and check sorts.
 //!
-//! The main entry point is [sort_check_and_infer].
+//! The main entry point is [sort_check_module].
 //!
 //! The parser represents missing sort annotations as `Sort::Uninterpreted("")`.
 //! One of the main purposes of sort inference is to replace these placeholders
@@ -92,7 +92,7 @@ pub enum SortError {
 /// provide a [Span] to locate this error in the source code. The AST has
 /// limited span information, so some errors will be returned without location
 /// information (the span will be `None` in that case).
-pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
+pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
     let mut sorts = HashSet::new();
     for sort in &module.signature.sorts {
         if !sorts.insert(sort.clone()) {
