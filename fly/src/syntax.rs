@@ -552,7 +552,7 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Get the index of an unintereted sort.
+    /// Get the index of an uninterpreted sort.
     pub fn sort_idx(&self, sort: &Sort) -> usize {
         match sort {
             Sort::Bool => panic!("invalid sort {sort}"),
@@ -594,7 +594,7 @@ impl Signature {
 
     /// Check if `name` is a relation in the signature, or a primed version of
     /// one.
-    pub fn contains_name(&self, name: &str) -> bool {
+    pub fn contains_relation(&self, name: &str) -> bool {
         let symbol_no_primes = name.trim_end_matches(|c| c == '\'');
         return self.relations.iter().any(|r| r.name == symbol_no_primes);
     }
