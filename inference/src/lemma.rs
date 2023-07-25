@@ -1141,7 +1141,7 @@ where
         self.log_info("Finding CTI...");
         match self.trans_cex(fo, conf) {
             Some(cti) => {
-                self.log_info("CTI found, type=initial");
+                self.log_info("CTI found, type=transition");
                 self.log_info("Weakening...");
                 self.weaken_lemmas.weaken(&cti);
                 self.log_info("Updating frame...");
