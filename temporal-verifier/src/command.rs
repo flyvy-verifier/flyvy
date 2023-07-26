@@ -4,8 +4,14 @@
 //! The temporal-verifier binary's command-line interface.
 
 use bounded::checker::CheckerAnswer;
-use clap::Args;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use path_slash::PathExt;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::{fs, process};
+
+use clap::Args;
 use codespan_reporting::{
     files::SimpleFile,
     term::{
@@ -21,15 +27,8 @@ use inference::fixpoint::{self, qalpha_by_qf_body};
 use inference::houdini;
 use inference::quant::QuantifierConfig;
 use inference::updr::Updr;
-use path_slash::PathExt;
-use solver::backends::{self, GenericBackend};
+use solver::backends;
 use solver::conf::SolverConf;
-use solver::{log_dir, solver_path};
-use std::collections::HashMap;
-use std::fs::create_dir_all;
-use std::path::Path;
-use std::sync::Arc;
-use std::{fs, path::PathBuf, process};
 use verify::module::verify_module;
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -449,14 +448,6 @@ pub struct App {
     command: Command,
 }
 
-fn solver_default_bin(t: SolverType) -> &'static str {
-    match t {
-        SolverType::Z3 => "z3",
-        SolverType::Cvc5 => "cvc5",
-        SolverType::Cvc4 => "cvc4",
-    }
-}
-
 impl SolverArgs {
     fn get_solver_conf(&self, fname: &String) -> SolverConf {
         let backend_type = match &self.solver {
@@ -464,32 +455,14 @@ impl SolverArgs {
             SolverType::Cvc5 => backends::SolverType::Cvc5,
             SolverType::Cvc4 => backends::SolverType::Cvc4,
         };
-        let solver_bin = solver_path(solver_default_bin(self.solver));
-        let tee: Option<PathBuf> = if self.smt {
-            let dir = log_dir(Path::new(fname));
-            create_dir_all(&dir).expect("could not create log dir");
-            if let Ok(rdir) = dir.read_dir() {
-                for entry in rdir {
-                    match entry {
-                        Err(_) => {}
-                        Ok(name) => {
-                            _ = fs::remove_file(name.path());
-                        }
-                    }
-                }
-            }
-            Some(dir)
-        } else {
-            None
-        };
-        let mut backend = GenericBackend::new(backend_type, &solver_bin);
-        backend.timeout_ms(if self.timeout > 0 {
-            Some(self.timeout * 1000)
-        } else {
-            None
-        });
-        backend.seed(self.solver_seed);
-        SolverConf { backend, tee }
+
+        SolverConf::new(
+            backend_type,
+            self.smt,
+            fname,
+            self.timeout,
+            self.solver_seed,
+        )
     }
 }
 
