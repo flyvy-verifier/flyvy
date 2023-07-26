@@ -293,35 +293,51 @@ impl FOModule {
 
                             if !core.add_counter_model(pre.clone(), Some(&unsat_core)) {
                                 log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                                solver.save_tee();
                                 return TransCexResult::CTI(pre, post);
                             }
                         }
-                        Err(SolverError::Killed) => return TransCexResult::Cancelled,
+                        Err(SolverError::Killed) => {
+                            solver.save_tee();
+                            return TransCexResult::Cancelled;
+                        }
                         Err(SolverError::CouldNotMinimize(_)) => (),
                         Err(e) => panic!("error in solver: {e}"),
                     },
-                    Ok(SatResp::Unsat) => {
-                        assert!(separate_cores[t_idx].is_none());
-                        let mut my_core = HashSet::new();
-                        for ind in solver.get_unsat_core() {
-                            if let Term::Id(s) = ind.0 {
-                                let ind = s[6..].parse::<usize>().unwrap();
-                                my_core.insert(ind);
-                                unsat_core.insert(ind);
+                    Ok(SatResp::Unsat) => match solver.get_unsat_core() {
+                        Ok(solver_core) => {
+                            assert!(separate_cores[t_idx].is_none());
+                            let mut my_core = HashSet::new();
+                            for ind in solver_core {
+                                if let Term::Id(s) = ind.0 {
+                                    let ind = s[6..].parse::<usize>().unwrap();
+                                    my_core.insert(ind);
+                                    unsat_core.insert(ind);
+                                }
                             }
-                        }
 
-                        if self.minimal {
-                            assert_eq!(my_core, core.participants);
-                        }
+                            if self.minimal {
+                                assert_eq!(my_core, core.participants);
+                            }
 
-                        separate_cores[t_idx] = Some(my_core);
-                        break 'inner;
+                            separate_cores[t_idx] = Some(my_core);
+                            solver.save_tee();
+                            break 'inner;
+                        }
+                        Err(SolverError::Killed) => {
+                            solver.save_tee();
+                            return TransCexResult::Cancelled;
+                        }
+                        Err(e) => panic!("error in solver: {e}"),
+                    },
+                    Err(SolverError::Killed) => {
+                        solver.save_tee();
+                        return TransCexResult::Cancelled;
                     }
-                    Err(SolverError::Killed) => return TransCexResult::Cancelled,
                     Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
                     Err(e) => panic!("error in solver: {e}"),
                 }
+
                 solver.save_tee();
             }
         }
@@ -340,7 +356,6 @@ impl FOModule {
             unsat_core.len(),
             core_sizes
         );
-
         TransCexResult::UnsatCore(unsat_core)
     }
 
@@ -380,6 +395,8 @@ impl FOModule {
                 }
                 SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
             }
+
+            solver.save_tee();
         }
     }
 
@@ -533,7 +550,10 @@ impl FOModule {
                 }
                 SatResp::Unsat => {
                     // println!("adding group");
-                    for (ind, b) in solver.get_unsat_core() {
+                    for (ind, b) in solver
+                        .get_unsat_core()
+                        .expect("could not get unsat assumptions")
+                    {
                         assert!(b, "got false in core");
                         // println!("adding to core: {}", clear_next(ind_to_term[&ind].clone()));
                         core.insert(clear_next(ind_to_term[&ind].clone()), b);
@@ -566,16 +586,16 @@ impl FOModule {
         }
     }
 
-    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
+    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> TransCexResult {
+        let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            if let TransCexResult::CTI(model, _) =
-                self.trans_cex(conf, hyp, &s.safety.x, false, true, None)
-            {
-                return Some(model);
+            match self.trans_cex(conf, hyp, &s.safety.x, false, true, None) {
+                TransCexResult::UnsatCore(new_core) => core.extend(new_core),
+                res => return res,
             }
         }
 
-        None
+        TransCexResult::UnsatCore(core)
     }
 
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
@@ -599,7 +619,7 @@ pub struct InferenceConfig {
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
 
-    pub max_size: Option<usize>,
+    pub max_size: usize,
     pub max_existentials: Option<usize>,
 
     pub clauses: Option<usize>,
@@ -615,11 +635,14 @@ pub struct InferenceConfig {
     pub disj: bool,
     pub gradual_smt: bool,
     pub minimal_smt: bool,
-    pub gradual_advance: bool,
-    pub indiv: bool,
 
     pub extend_width: Option<usize>,
     pub extend_depth: Option<usize>,
+
+    pub until_safe: bool,
+    pub abort_unsafe: bool,
+    pub no_search: bool,
+    pub growth_factor: Option<usize>,
 }
 
 pub fn parse_quantifier(

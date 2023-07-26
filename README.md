@@ -14,15 +14,16 @@ correctness properties, including safety and liveness.
 Run `./tools/download-solvers.sh` to get compatible versions of the supported SMT solvers (Z3, CVC5, and CVC4).
 
 ```sh
-cargo run -- verify examples/lockserver.fly`
+cargo run -- verify temporal-verifier/examples/lockserver.fly
 
-cargo run -- infer qalpha examples/lockserver.fly --quantifier "F node 2" --qf-body cnf --clauses 1 --clause-size 3
+cargo run -- infer qalpha temporal-verifier/examples/lockserver.fly --max-exist 0 --until-safe
 
 env RUST_LOG=info cargo run --release -- \
-  infer qalpha examples/consensus_epr.fly  --time \
-  --quantifier "E quorum 1" --quantifier "F node 3" --quantifier "F value 1" \
-  --max-size 3 --qf-body cnf --clauses 1 --clause-size 3
-# note: this last example takes about two minutes to run
+  infer qalpha temporal-verifier/examples/consensus_epr.fly --time \
+  --custom-quant --sort quorum --sort node --sort value \
+  --max-exist 1 --abort-unsafe --until-safe --minimal-smt \
+  --extend-depth 1 --extend-width 10
+# note: this last example takes several minutes to run
 ```
 
 ### Prerequisites

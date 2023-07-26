@@ -27,6 +27,8 @@ use fly::{
 
 use rayon::prelude::*;
 
+pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<RestrictedAtoms>);
+
 /// Extend an assignment by all possible assignments to the given variables
 /// over a domain containing the given number of elements.
 fn extend_assignment(
@@ -51,7 +53,7 @@ fn extend_assignment(
 }
 
 /// [`LemmaQf`] defines how quantifier-free bodies of lemmas are handled.
-pub trait LemmaQf: Clone + Sync + Send {
+pub trait LemmaQf: Clone + Sync + Send + Debug {
     /// The type of the quantifier-free bodies which are weakened.
     type Base: Clone + Debug;
 
@@ -491,7 +493,12 @@ where
     }
 
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
-        self.by_id.values().map(|body| (self.prefix.clone(), body))
+        self.by_id.values().map(|body| {
+            (
+                Arc::new(self.prefix.restrict(self.lemma_qf.ids(&body.to_base()))),
+                body,
+            )
+        })
     }
 }
 
@@ -568,10 +575,7 @@ where
     }
 
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
-        self.sets
-            .iter()
-            .sorted_by_key(|set| set.prefix.existentials())
-            .flat_map(|set| set.as_iter())
+        self.sets.iter().flat_map(|set| set.as_iter()).sorted()
     }
 
     pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
@@ -587,7 +591,7 @@ where
     pub fn minimized(&self) -> LemmaSet<O, L, B> {
         let mut lemmas: LemmaSet<O, L, B> =
             LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
-        for (prefix, body) in self.as_vec() {
+        for (prefix, body) in self.as_iter() {
             lemmas.insert_minimized(prefix.clone(), body.clone());
         }
 
@@ -597,7 +601,7 @@ where
     pub fn contains(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
         self.sets
             .iter()
-            .any(|set| set.prefix.as_ref() == prefix && set.bodies.get(body).is_some())
+            .any(|set| set.prefix.contains(prefix) && set.bodies.get(body).is_some())
     }
 }
 
@@ -610,9 +614,9 @@ where
     B: Clone + Debug,
 {
     config: Arc<QuantifierConfig>,
-    pub lemma_qf: Arc<L>,
-    pub to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
-    pub to_bodies: HashMap<usize, O>,
+    lemma_qf: Arc<L>,
+    to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
+    to_bodies: HashMap<usize, O>,
     bodies: O::Map<HashSet<usize>>,
     next: usize,
 }
@@ -659,28 +663,46 @@ where
         self.len() == 0
     }
 
-    pub fn to_terms_ids(&self) -> Vec<(usize, Term)> {
-        self.to_prefixes
-            .iter()
-            .sorted_by_key(|(_, prefix)| prefix.existentials())
-            .map(|(id, prefix)| {
-                (
-                    *id,
-                    prefix.quantify(self.lemma_qf.base_to_term(&self.to_bodies[id].to_base())),
-                )
-            })
-            .collect_vec()
+    pub fn id_to_term(&self, id: &usize) -> Term {
+        self.to_prefixes[id].quantify(self.body_to_term(&self.to_bodies[id]))
+    }
+
+    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, &O) {
+        (self.to_prefixes[id].clone(), &self.to_bodies[id])
+    }
+
+    pub fn to_terms_ids(&self) -> impl Iterator<Item = (usize, Term)> + '_ {
+        self.ids().map(|id| (id, self.id_to_term(&id)))
     }
 
     pub fn to_terms(&self) -> Vec<Term> {
-        self.to_terms_ids().into_iter().map(|(_, t)| t).collect()
+        self.to_terms_ids().map(|(_, t)| t).collect()
     }
 
-    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, O)> {
-        self.to_prefixes
+    pub fn ids(&self) -> impl Iterator<Item = usize> + '_ {
+        self.to_prefixes.keys().copied()
+    }
+
+    pub fn body_to_term(&self, body: &O) -> Term {
+        self.lemma_qf.base_to_term(&body.to_base())
+    }
+
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O, usize)> {
+        self.ids()
+            .map(|id| {
+                let (prefix, body) = self.id_to_lemma(&id);
+                (prefix, body, id)
+            })
+            .sorted_by_key(|(prefix, _, _)| (prefix.existentials(), prefix.num_vars()))
+    }
+
+    pub fn get_id(&self, prefix: &QuantifierPrefix, body: &O) -> Option<usize> {
+        self.bodies
+            .get(body)
+            .unwrap()
             .iter()
-            .map(|(id, prefix)| (prefix.clone(), self.to_bodies[id].clone()))
-            .collect_vec()
+            .copied()
+            .find(|id| self.to_prefixes[id].contains(prefix))
     }
 
     pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {

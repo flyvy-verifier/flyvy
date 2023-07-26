@@ -6,8 +6,8 @@
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::fmt::{Debug, Display};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use fly::semantics::Model;
@@ -19,18 +19,25 @@ use crate::{
     atoms::{Literal, RestrictedAtoms},
     basics::{FOModule, InferenceConfig, SolverPids, TransCexResult},
     hashmap::{HashMap, HashSet},
-    quant::QuantifierPrefix,
     subsume::OrderSubsumption,
-    weaken::{LemmaQf, LemmaSet, WeakenLemmaSet},
+    weaken::{Domain, LemmaQf, LemmaSet, WeakenLemmaSet},
 };
 
 use rayon::prelude::*;
+
+/// The minimal number of disjuncts a lemma is allowed to have.
+/// This corresponds to number of cubes in DNF, or the clause size in CNF.
+const MIN_DISJUNCTS: usize = 3;
+
+fn choose(n: usize, k: usize) -> usize {
+    ((n - k + 1)..=n).product::<usize>() / (1..=k).product::<usize>()
+}
 
 fn clauses_cubes_count(atoms: usize, len: usize) -> usize {
     if len > atoms {
         0
     } else {
-        ((atoms - len + 1)..=atoms).product::<usize>() * 2_usize.pow(len as u32)
+        choose(atoms, len) * 2_usize.pow(len as u32)
     }
 }
 
@@ -41,6 +48,15 @@ pub struct LemmaCnf {
     /// The maximal number of literals in each clause.
     pub clause_size: usize,
     atoms: Arc<RestrictedAtoms>,
+}
+
+impl Debug for LemmaCnf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CNF")
+            .field("clauses", &self.clauses)
+            .field("clause_size", &self.clause_size)
+            .finish()
+    }
 }
 
 impl LemmaQf for LemmaCnf {
@@ -164,19 +180,21 @@ impl LemmaQf for LemmaCnf {
 
     fn approx_space_size(&self) -> usize {
         let atoms = self.atoms.len();
-        let clauses: usize = (0..=self.clause_size)
+        let possible_clauses: usize = (0..=self.clause_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
 
-        ((clauses - self.clauses + 1)..=clauses).product()
+        choose(possible_clauses, self.clauses)
     }
 
     fn sub_spaces(&self) -> Vec<Self> {
         (1..=self.clauses)
-            .map(|clauses| Self {
-                clauses,
-                clause_size: self.clause_size,
-                atoms: self.atoms.clone(),
+            .flat_map(|clauses| {
+                (MIN_DISJUNCTS..=self.clause_size).map(move |clause_size| Self {
+                    clauses,
+                    clause_size,
+                    atoms: self.atoms.clone(),
+                })
             })
             .collect_vec()
     }
@@ -339,6 +357,16 @@ impl LemmaPDnfNaive {
     }
 }
 
+impl Debug for LemmaPDnfNaive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("pDNF (naive)")
+            .field("cubes", &self.cubes)
+            .field("cube_size", &self.cube_size)
+            .field("non_unit", &self.non_unit)
+            .finish()
+    }
+}
+
 impl LemmaQf for LemmaPDnfNaive {
     type Base = Vec<Vec<Literal>>;
 
@@ -466,7 +494,7 @@ impl LemmaQf for LemmaPDnfNaive {
 
     fn approx_space_size(&self) -> usize {
         let atoms = self.atoms.len();
-        let cubes: usize = (0..=self.cube_size)
+        let possible_cubes: usize = (0..=self.cube_size)
             .map(|len| clauses_cubes_count(atoms, len))
             .sum();
 
@@ -475,25 +503,27 @@ impl LemmaQf for LemmaPDnfNaive {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(atoms, len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
+            total += literals * choose(possible_cubes, non_unit);
         }
 
         total
     }
 
     fn sub_spaces(&self) -> Vec<Self> {
-        (0..=self.non_unit)
-            .flat_map(move |non_unit| {
-                let max_cube_size = match non_unit {
-                    0 => 1,
-                    _ => self.cube_size,
-                };
+        (MIN_DISJUNCTS..=self.cubes)
+            .flat_map(|cubes| {
+                (0..=self.non_unit.min(cubes)).flat_map(move |non_unit| {
+                    let cube_sizes = match non_unit {
+                        0 => 0..=0,
+                        _ => 2..=self.cube_size,
+                    };
 
-                (1..=max_cube_size).map(move |cube_size| Self {
-                    cubes: self.cubes,
-                    cube_size,
-                    non_unit,
-                    atoms: self.atoms.clone(),
+                    cube_sizes.map(move |cube_size| Self {
+                        cubes,
+                        cube_size,
+                        non_unit,
+                        atoms: self.atoms.clone(),
+                    })
                 })
             })
             .collect_vec()
@@ -513,6 +543,16 @@ pub struct LemmaPDnf {
     pub non_unit: usize,
     atoms: Arc<RestrictedAtoms>,
     non_universal_vars: HashSet<String>,
+}
+
+impl Debug for LemmaPDnf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("pDNF")
+            .field("cubes", &self.cubes)
+            .field("cube_size", &self.cube_size)
+            .field("non_unit", &self.non_unit)
+            .finish()
+    }
 }
 
 impl LemmaQf for LemmaPDnf {
@@ -694,7 +734,7 @@ impl LemmaQf for LemmaPDnf {
     }
 
     fn approx_space_size(&self) -> usize {
-        let cubes: usize = (0..=self.cube_size)
+        let possible_cubes: usize = (0..=self.cube_size)
             .map(|len| {
                 clauses_cubes_count(
                     self.atoms.atoms_containing_vars(&self.non_universal_vars),
@@ -708,26 +748,30 @@ impl LemmaQf for LemmaPDnf {
             let literals: usize = (0..=(self.cubes - non_unit))
                 .map(|len| clauses_cubes_count(self.atoms.len(), len))
                 .sum();
-            total += literals * ((cubes - non_unit + 1)..=cubes).product::<usize>();
+            total += literals * choose(possible_cubes, non_unit);
         }
 
         total
     }
 
     fn sub_spaces(&self) -> Vec<Self> {
-        (0..=self.non_unit)
-            .flat_map(move |non_unit| {
-                let max_cube_size = match non_unit {
-                    0 => 1,
-                    _ => self.cube_size,
-                };
+        let atoms = self.atoms.len();
+        let cube_atoms = self.atoms.atoms_containing_vars(&self.non_universal_vars);
+        (MIN_DISJUNCTS..=self.cubes.min(atoms))
+            .flat_map(|cubes| {
+                (0..=self.non_unit.min(cubes)).flat_map(move |non_unit| {
+                    let cube_sizes = match non_unit {
+                        0 => 0..=0,
+                        _ => 2..=self.cube_size.min(cube_atoms),
+                    };
 
-                (1..=max_cube_size).map(move |cube_size| Self {
-                    cubes: self.cubes,
-                    cube_size,
-                    non_unit,
-                    atoms: self.atoms.clone(),
-                    non_universal_vars: self.non_universal_vars.clone(),
+                    cube_sizes.map(move |cube_size| Self {
+                        cubes,
+                        cube_size,
+                        non_unit,
+                        atoms: self.atoms.clone(),
+                        non_universal_vars: self.non_universal_vars.clone(),
+                    })
                 })
             })
             .collect_vec()
@@ -757,105 +801,171 @@ pub fn ids(term: &Term) -> HashSet<String> {
     }
 }
 
-/// A [`Frontier`] maintains quantified formulas during invariant inference.
-pub struct Frontier<O, L, B>
-where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug,
-{
-    /// The set of lemmas used to sample pre-states when sampling from a transition.
-    /// This is referred to as the _frontier_.
-    pub lemmas: LemmaSet<O, L, B>,
-    /// A set of lemmas blocked by the current frontier. That is, any post-state of
-    /// a transition from the frontier satisfies `blocked`.
-    blocked: LemmaSet<O, L, B>,
-    /// A mapping between each blocked lemma and a core in the frontier that blocks it.
-    blocked_to_core: HashMap<usize, HashSet<usize>>,
-    /// A mapping between frontier elements and the blocked lemmas they block.
-    core_to_blocked: HashMap<usize, HashSet<usize>>,
-    /// Whether to advance all lemmas or do so minimally.
-    gradual_advance: bool,
-    /// Whether to extend CTI traces, and how much.
-    extend: Option<(usize, usize)>,
-    /// A set of CTI's to extend.
-    ctis: VecDeque<Model>,
-}
-
-impl<O, L, B> Frontier<O, L, B>
+/// A [`InductionFrame`] maintains quantified formulas during invariant inference.
+pub struct InductionFrame<O, L, B>
 where
     O: OrderSubsumption<Base = B>,
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    /// Create a new frontier from the given set of lemmas.
+    /// The set of lemmas in the frame.
+    lemmas: LemmaSet<O, L, B>,
+    /// The lemmas in the frame, maintained in a way that supports weakening them.
+    weaken_lemmas: WeakenLemmaSet<O, L, B>,
+    /// The set of lemmas inductively implied by the current frame. That is, any post-state of
+    /// a transition from the frame satisfies `blocked`.
+    blocked: LemmaSet<O, L, B>,
+    /// A mapping between each blocked lemma and a core in the frame that blocks it.
+    blocked_to_core: HashMap<usize, HashSet<usize>>,
+    /// A mapping between frame lemmas and the lemmas they block.
+    core_to_blocked: HashMap<usize, HashSet<usize>>,
+    /// Whether to extend CTI traces, and how much.
+    extend: Option<(usize, usize)>,
+    /// A set of CTI's to extend.
+    ctis: VecDeque<Model>,
+    /// A subset of the frame's lemmas which inductively implies the safety assertions.
+    safety_core: Option<HashSet<usize>>,
+    /// The time of creation of the frame (for logging purposes)
+    start_time: Instant,
+}
+
+impl<O, L, B> InductionFrame<O, L, B>
+where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+{
+    /// Create a new frame from the given set of lemmas.
     pub fn new(
-        lemmas_init: LemmaSet<O, L, B>,
-        gradual_advance: bool,
+        infer_cfg: Arc<InferenceConfig>,
+        atoms: Arc<RestrictedAtoms>,
+        domains: Vec<Domain<L>>,
         extend: Option<(usize, usize)>,
     ) -> Self {
-        let blocked = lemmas_init.clone_empty();
+        let mut weaken_lemmas: WeakenLemmaSet<O, L, B> =
+            WeakenLemmaSet::new(Arc::new(infer_cfg.cfg.clone()), infer_cfg, atoms, domains);
+        weaken_lemmas.init();
+        let lemmas = weaken_lemmas.minimized();
 
-        Frontier {
-            lemmas: lemmas_init,
+        let blocked = lemmas.clone_empty();
+
+        InductionFrame {
+            lemmas,
+            weaken_lemmas,
             blocked,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
-            gradual_advance,
             extend,
             ctis: VecDeque::new(),
+            safety_core: None,
+            start_time: Instant::now(),
         }
     }
 
-    /// Get the length of the frontier.
+    /// Get the length of the frame.
     pub fn len(&self) -> usize {
         self.lemmas.len()
     }
 
-    /// Check if the frontier is empty
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Get the number of lemmas in the weaken-supporting representation.
+    pub fn weaken_len(&self) -> usize {
+        self.weaken_lemmas.len()
     }
 
-    /// Get an initial state which violates one of the given lemmas.
-    /// This doesn't use the frontier, only previously blocked lemmas.
-    pub fn init_cex(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &WeakenLemmaSet<O, L, B>,
-    ) -> Option<Model> {
-        let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
+    /// Get the term representation of the lemmas in the frame.
+    pub fn proof(&self) -> Vec<Term> {
+        self.lemmas.to_terms()
+    }
 
-        let res = lemmas
+    /// Get a minimized inductive set of lemmas in the frame which inductively implies safety,
+    /// provided that `is_safe` has been called and returned `true`.
+    pub fn minimized_proof(&self) -> Option<Vec<Term>> {
+        self.safety_core.as_ref()?;
+
+        let mut extended_core = HashSet::default();
+        let mut new_ids = self.safety_core.as_ref().unwrap().clone();
+
+        while !new_ids.is_empty() {
+            let mut new_new_ids = HashSet::default();
+            for id in &new_ids {
+                let (prefix, body) = self.lemmas.id_to_lemma(id);
+                let blocked_id = self.blocked.get_id(&prefix, body).unwrap();
+                new_new_ids.extend(
+                    self.blocked_to_core[&blocked_id]
+                        .difference(&extended_core)
+                        .copied(),
+                );
+            }
+
+            extended_core.extend(new_ids);
+            new_ids = new_new_ids;
+        }
+
+        Some(
+            extended_core
+                .into_iter()
+                .map(|id| self.lemmas.id_to_term(&id))
+                .collect_vec(),
+        )
+    }
+
+    /// Add details about the frame to the given [`Display`].
+    pub fn add_details<D: Display>(&self, d: D) -> String {
+        format!(
+            "[{:.2}s] [{} | {}] {}",
+            self.start_time.elapsed().as_secs_f64(),
+            self.len(),
+            self.weaken_len(),
+            d,
+        )
+    }
+
+    /// Log at `info` level along with details about the frame.
+    pub fn log_info<D: Display>(&self, d: D) {
+        log::info!("{}", self.add_details(d));
+    }
+
+    /// Log at `debug` level along with details about the frame.
+    pub fn log_debug<D: Display>(&self, d: D) {
+        log::debug!("{}", self.add_details(d));
+    }
+
+    /// Get an initial state which violates one of the frame's lemmas.
+    fn init_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
+        let blocked_lock = RwLock::new((
+            &mut self.blocked,
+            &mut self.blocked_to_core,
+            &mut self.core_to_blocked,
+        ));
+
+        let res = self
+            .weaken_lemmas
             .as_vec()
             .into_par_iter()
-            .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
+            .filter(|(prefix, body)| {
+                let blocked_read = blocked_lock.read().unwrap();
+                !blocked_read.0.subsumes(prefix, body)
+            })
             .find_map_any(|(prefix, body)| {
-                let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
+                let term = prefix.quantify(self.lemmas.body_to_term(body));
                 if let Some(model) = fo.init_cex(conf, &term) {
                     return Some(model);
                 } else {
-                    let core = self.lemmas.to_prefixes.keys().copied().collect();
-                    let mut new_cores_vec = new_cores.lock().unwrap();
-                    new_cores_vec.push((prefix, body.clone(), core))
+                    let mut blocked_write = blocked_lock.write().unwrap();
+                    let core = self.lemmas.ids().collect();
+                    let blocked_id = blocked_write.0.insert(prefix, body.clone());
+                    for i in &core {
+                        if let Some(hs) = blocked_write.2.get_mut(i) {
+                            hs.insert(blocked_id);
+                        } else {
+                            blocked_write.2.insert(*i, HashSet::from_iter([blocked_id]));
+                        }
+                    }
+                    blocked_write.1.insert(blocked_id, core);
                 }
 
                 None
             });
-
-        for (prefix, body, core) in new_cores.into_inner().unwrap() {
-            let blocked_id = self.blocked.insert(prefix, body);
-            for i in &core {
-                if let Some(hs) = self.core_to_blocked.get_mut(i) {
-                    hs.insert(blocked_id);
-                } else {
-                    self.core_to_blocked
-                        .insert(*i, HashSet::from_iter([blocked_id]));
-                }
-            }
-            self.blocked_to_core.insert(blocked_id, core);
-        }
 
         if self.extend.is_some() {
             self.ctis.extend(res.iter().cloned());
@@ -864,84 +974,106 @@ where
         res
     }
 
+    /// Perform an initiation cycle, which attempts to sample an initial state
+    /// violating the frame and weaken it. Return whether such a counterexample was found.
+    ///
+    /// Note: only when no initial counterexamples are found, the frame is updated.
+    pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        self.log_info("Finding CTI...");
+        match self.init_cex(fo, conf) {
+            Some(cti) => {
+                self.log_info("CTI found, type=initial");
+                self.log_info("Weakening...");
+                self.weaken_lemmas.weaken(&cti);
+
+                true
+            }
+            None => {
+                self.log_info("No initial CTI found");
+                self.log_info("Updating frame...");
+                self.update();
+
+                false
+            }
+        }
+    }
+
     /// Extend CTI traces and weaken the given lemmas accordingly,
     /// until no more states can be sampled.
-    pub fn extend(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &mut WeakenLemmaSet<O, L, B>,
-    ) {
+    pub fn extend(&mut self, fo: &FOModule, conf: &SolverConf) {
+        self.log_info("Simulating CTI traces...");
         let (width, depth) = self.extend.unwrap();
         while !self.ctis.is_empty() {
             let mut new_ctis = VecDeque::new();
-            log::debug!(
-                "[{}] Extending traces from {} CTI's...",
-                lemmas.len(),
+            self.log_debug(format!(
+                "Extending traces from {} CTI's...",
                 self.ctis.len()
-            );
+            ));
             let samples: Vec<Model> = self
                 .ctis
                 .par_iter()
                 .enumerate()
                 .flat_map_iter(|(id, state)| {
-                    log::debug!("[{}] Extending CTI trace #{id}...", lemmas.len());
+                    self.log_debug(format!("Extending CTI trace #{id}..."));
                     let samples = fo.simulate_from(conf, state, width, depth);
-                    log::debug!(
-                        "[{}] Found {} simulated samples from CTI #{id}...",
-                        lemmas.len(),
+                    self.log_debug(format!(
+                        "Found {} simulated samples from CTI #{id}...",
                         samples.len(),
-                    );
+                    ));
 
                     samples
                 })
                 .collect();
 
             let samples_len = samples.len();
-            log::debug!(
-                "[{}] Found a total of {samples_len} simulated samples from {} CTI's...",
-                lemmas.len(),
+            self.log_debug(format!(
+                "Found a total of {samples_len} simulated samples from {} CTI's...",
                 self.ctis.len(),
-            );
+            ));
             let mut idx = 0;
             while let Some(i) = (idx..samples.len())
                 .into_par_iter()
-                .find_first(|i| lemmas.unsat(&samples[*i]))
+                .find_first(|i| self.weaken_lemmas.unsat(&samples[*i]))
             {
-                assert!(lemmas.weaken(&samples[i]));
-                log::debug!("[{}] Weakened ({} / {samples_len}).", lemmas.len(), i + 1);
+                assert!(self.weaken_lemmas.weaken(&samples[i]));
+                self.log_debug(format!("Weakened ({} / {samples_len}).", i + 1));
                 new_ctis.push_back(samples[i].clone());
                 idx = i + 1;
             }
 
             self.ctis = new_ctis;
         }
+
+        self.log_info("Updating frame...");
+        self.update();
     }
 
-    /// Get an post-state of the frontier which violates one of the given lemmas.
-    pub fn trans_cex(
-        &mut self,
-        fo: &FOModule,
-        conf: &SolverConf,
-        lemmas: &WeakenLemmaSet<O, L, B>,
-    ) -> Option<Model> {
-        let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) =
-            self.lemmas.to_terms_ids().into_iter().unzip();
+    /// Get an post-state of the frame which violates one of the frame's lemmas.
+    fn trans_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
+        let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
-        let new_cores: Mutex<Vec<(Arc<QuantifierPrefix>, O, HashSet<usize>)>> = Mutex::new(vec![]);
         let solver_pids = SolverPids::new();
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
         let total_unsat = Mutex::new(0_usize);
+        let blocked_lock = RwLock::new((
+            &mut self.blocked,
+            &mut self.blocked_to_core,
+            &mut self.core_to_blocked,
+        ));
 
         let start_time = Instant::now();
-        let res = lemmas
+        let res = self
+            .weaken_lemmas
             .as_vec()
             .into_par_iter()
-            .filter(|(prefix, body)| !self.blocked.subsumes(prefix, body))
+            .filter(|(prefix, body)| {
+                let blocked_read = blocked_lock.read().unwrap();
+                !blocked_read.0.subsumes(prefix, body)
+            })
             .find_map_any(|(prefix, body)| {
-                let term = prefix.quantify(self.lemmas.lemma_qf.base_to_term(&body.to_base()));
+                let term = prefix.quantify(self.lemmas.body_to_term(body));
                 match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&solver_pids)) {
                     TransCexResult::CTI(_, model) => {
                         solver_pids.cancel();
@@ -963,12 +1095,19 @@ where
                             *total_unsat_lock += 1;
                         }
 
-                        let mut new_cores_vec = new_cores.lock().unwrap();
-                        new_cores_vec.push((
-                            prefix,
-                            body.clone(),
-                            crate::hashmap::set_from_std(core),
-                        ));
+                        {
+                            let mut blocked_write = blocked_lock.write().unwrap();
+                            let core = core.into_iter().map(|i| pre_ids[i]).collect();
+                            let blocked_id = blocked_write.0.insert(prefix, body.clone());
+                            for i in &core {
+                                if let Some(hs) = blocked_write.2.get_mut(i) {
+                                    hs.insert(blocked_id);
+                                } else {
+                                    blocked_write.2.insert(*i, HashSet::from_iter([blocked_id]));
+                                }
+                            }
+                            blocked_write.1.insert(blocked_id, core);
+                        }
                     }
                     TransCexResult::Cancelled => (),
                     TransCexResult::Unknown => *unknown.lock().unwrap() = true,
@@ -989,20 +1128,6 @@ where
             total_unsat.into_inner().unwrap(),
         );
 
-        for (prefix, body, core) in new_cores.into_inner().unwrap() {
-            let core = core.into_iter().map(|i| pre_ids[i]).collect();
-            let blocked_id = self.blocked.insert(prefix, body);
-            for i in &core {
-                if let Some(hs) = self.core_to_blocked.get_mut(i) {
-                    hs.insert(blocked_id);
-                } else {
-                    self.core_to_blocked
-                        .insert(*i, HashSet::from_iter([blocked_id]));
-                }
-            }
-            self.blocked_to_core.insert(blocked_id, core);
-        }
-
         if self.extend.is_some() {
             self.ctis.extend(res.iter().cloned());
         }
@@ -1010,15 +1135,63 @@ where
         res
     }
 
+    /// Perform a transition cycle, which attempts to sample a transition from the frame
+    /// whose post-state violates the frame, and weaken it. Return whether such a counterexample was found.
+    pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        self.log_info("Finding CTI...");
+        match self.trans_cex(fo, conf) {
+            Some(cti) => {
+                self.log_info("CTI found, type=transition");
+                self.log_info("Weakening...");
+                self.weaken_lemmas.weaken(&cti);
+                self.log_info("Updating frame...");
+                self.update();
+
+                true
+            }
+            None => {
+                self.log_info("No transition CTI found");
+
+                false
+            }
+        }
+    }
+
+    /// Return whether the current frame inductively implies the safety assertions
+    /// of the given module.
+    pub fn is_safe(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+        if self.safety_core.is_some() {
+            return true;
+        }
+
+        let (ids, terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
+        match fo.trans_safe_cex(conf, &terms) {
+            TransCexResult::CTI(_, _) => false,
+            TransCexResult::UnsatCore(core) => {
+                self.safety_core = Some(core.into_iter().map(|i| ids[i]).collect());
+                true
+            }
+            _ => panic!("safety check failed"),
+        }
+    }
+
     fn remove_lemma(&mut self, id: &usize) {
-        // Remove the lemma from the frontier.
+        // Remove the lemma from the frame.
         self.lemmas.remove(id);
+        // Nullify the safey core if it includes this lemma.
+        if self
+            .safety_core
+            .as_ref()
+            .is_some_and(|core| core.contains(id))
+        {
+            self.safety_core = None;
+        }
         // Remove blocking cores that contain the replaced lemma.
         if let Some(unblocked) = self.core_to_blocked.remove(id) {
             for lemma in &unblocked {
                 // Signal that the lemma isn't blocked anymore.
                 self.blocked.remove(lemma);
-                // For any other frontier element in the core, signal that it doesn't block the lemma anymore.
+                // For any other frame lemma in the core, signal that it doesn't block the previously blocked lemma anymore.
                 for in_core in &self.blocked_to_core.remove(lemma).unwrap() {
                     if in_core != id {
                         let blocked_by_in_core = self.core_to_blocked.get_mut(in_core).unwrap();
@@ -1032,311 +1205,51 @@ where
         }
     }
 
-    /// Advance the fontier using the new lemmas.
+    /// Update the frame. That is, remove each lemma in `self.lemmas` which isn't in the weakened lemmas,
+    /// and add all weakenings of it (lemmas subsumed by it) to the frame. However, to keep the frame minimized,
+    /// do not add lemmas that are subsumed by existing, unweakened lemmas.
     ///
-    /// Advancing a lemma involves replacing it with the new lemmas uniquely subsumed by it.
-    /// If there are none, the lemma is dropped.
-    ///
-    /// If `gradual_advance` is enabled, we first do these "dropping" replacements.
-    /// We consider the frontier "advanced" if some lemma participating in an UNSAT-core
-    /// has been weakened (or dropped.) If no advancement has been achieved in the dropping stage,
-    /// and `grow` is enabled, we advance using the lemma with the fewest unique subsumed lemmas
-    /// which participates in some UNSAT-core.
-    ///
-    /// If `gradual_advance` is disabled, we perform all possible weakenenings.
-    ///
-    /// Return whether such an advancement was possible.
-    pub fn advance(&mut self, new_lemmas: &WeakenLemmaSet<O, L, B>, grow: bool) -> bool {
-        let mut advanced = false;
-
-        // If there are no lemmas in the frontier, it cannot be advanced.
+    /// Return whether the update caused any change in the frame.
+    fn update(&mut self) -> bool {
+        // If there are no lemmas in the frame, it cannot be advanced.
         if self.lemmas.is_empty() {
-            return advanced;
+            return false;
         }
 
-        // Find all lemmas in the frontier (parents) which have been weakened in the new lemmas.
-        // These are precisely the lemmas in the fontier which are not part of the new lemmas.
+        // Find all lemmas in the frame (parents) which have been weakened in the new lemmas.
+        // These are precisely the lemmas in the frame which are not part of the new lemmas.
         let weakened_parents: HashSet<usize> = self
             .lemmas
-            .to_prefixes
-            .keys()
-            .filter(|&id| {
-                !new_lemmas.contains(&self.lemmas.to_prefixes[id], &self.lemmas.to_bodies[id])
+            .as_iter()
+            .filter_map(|(prefix, body, id)| {
+                if !self.weaken_lemmas.contains(&prefix, body) {
+                    Some(id)
+                } else {
+                    None
+                }
             })
-            .cloned()
             .collect();
 
-        if !self.gradual_advance {
-            advanced = !weakened_parents.is_empty();
-            for id in &weakened_parents {
-                self.remove_lemma(id)
-            }
-            for (prefix, body) in new_lemmas.as_iter() {
+        let advanced = !weakened_parents.is_empty();
+        for id in &weakened_parents {
+            self.remove_lemma(id)
+        }
+
+        let new_lemmas = Mutex::new(self.lemmas.clone_empty());
+        self.weaken_lemmas
+            .as_vec()
+            .into_par_iter()
+            .for_each(|(prefix, body)| {
                 if !self.lemmas.subsumes(prefix.as_ref(), body) {
-                    self.lemmas.insert(prefix, body.clone());
+                    let mut new_lemmas_lock = new_lemmas.lock().unwrap();
+                    new_lemmas_lock.insert_minimized(prefix, body.clone());
                 }
-            }
-            return advanced;
-        }
+            });
 
-        let new_lemmas_vec = new_lemmas.as_vec();
-
-        // Compute the mapping from children to parents.
-        let mut to_parents: HashMap<usize, HashSet<usize>> = new_lemmas_vec
-            .iter()
-            .enumerate()
-            .map(|(i, (prefix, body))| {
-                (
-                    i,
-                    self.lemmas
-                        .get_subsuming(prefix, body)
-                        .intersection(&weakened_parents)
-                        .cloned()
-                        .collect(),
-                )
-            })
-            .collect();
-
-        // Compute the mapping from parents to their weakenings (children).
-        let mut to_children: HashMap<usize, HashSet<usize>> = weakened_parents
-            .into_iter()
-            .map(|p| (p, HashSet::default()))
-            .collect();
-        for (child, parents) in &to_parents {
-            for parent in parents {
-                to_children.get_mut(parent).unwrap().insert(*child);
-            }
-        }
-
-        // Given a children and parents mapping, compute the number of unique children of each parent.
-        let to_unique_children =
-            |to_children: &HashMap<usize, HashSet<usize>>,
-             to_parents: &HashMap<usize, HashSet<usize>>| {
-                to_children
-                    .iter()
-                    .map(|(parent, children)| {
-                        (
-                            *parent,
-                            children
-                                .iter()
-                                .copied()
-                                .filter(|ch| to_parents[ch].len() == 1)
-                                .collect_vec(),
-                        )
-                    })
-                    .collect_vec()
-            };
-        let remove_parent = |to_children: &mut HashMap<usize, HashSet<usize>>,
-                             to_parents: &mut HashMap<usize, HashSet<usize>>,
-                             parent: &usize| {
-            for ch in &to_children.remove(parent).unwrap() {
-                let parents = to_parents.get_mut(ch).unwrap();
-                parents.remove(parent);
-                if parents.is_empty() {
-                    assert!(to_parents.remove(ch).unwrap().is_empty());
-                }
-            }
-        };
-
-        while let Some((id, _)) = to_unique_children(&to_children, &to_parents)
-            .into_iter()
-            .find(|(_, ch)| ch.is_empty())
-        {
-            advanced = advanced || self.core_to_blocked.contains_key(&id);
-            self.remove_lemma(&id);
-            remove_parent(&mut to_children, &mut to_parents, &id);
-        }
-
-        if !advanced && grow {
-            let min = to_unique_children(&to_children, &to_parents)
-                .into_iter()
-                .filter(|(p, _)| self.core_to_blocked.contains_key(p))
-                .map(|(p, children)| {
-                    let mut minimized = self.lemmas.clone_empty();
-                    for ch_idx in children {
-                        minimized.insert_minimized(
-                            new_lemmas_vec[ch_idx].0.clone(),
-                            new_lemmas_vec[ch_idx].1.clone(),
-                        );
-                    }
-
-                    (p, minimized.as_vec())
-                })
-                .min_by_key(|(p, children)| {
-                    (
-                        children
-                            .iter()
-                            .map(|(prefix, _)| prefix.existentials())
-                            .sum::<usize>(),
-                        children.len(),
-                        *p,
-                    )
-                });
-            if let Some((id, children)) = min {
-                advanced = true;
-                self.remove_lemma(&id);
-                for (prefix, body) in children {
-                    self.lemmas.insert_minimized(prefix, body);
-                }
-            }
+        for (prefix, body, _) in new_lemmas.into_inner().unwrap().as_iter() {
+            self.lemmas.insert(prefix, body.clone());
         }
 
         advanced
-    }
-}
-
-/// An [`IndividualLemmaSearch`] manages the search for individually inductive lemmas.
-pub struct IndividualLemmaSearch<O, L, B>
-where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
-{
-    /// The set of lemmas that might still need to be weakened.
-    pub weaken_set: WeakenLemmaSet<O, L, B>,
-    // The set of lemmas already cover initial states.
-    pub initial: LemmaSet<O, L, B>,
-    /// The set of inductive lemmas found so far.
-    pub inductive: LemmaSet<O, L, B>,
-    /// Whether to extend CTI traces, and how much.
-    pub extend: Option<(usize, usize)>,
-    /// A set of CTI's to extend.
-    pub ctis: VecDeque<Model>,
-}
-
-impl<O, L, B> IndividualLemmaSearch<O, L, B>
-where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
-{
-    /// Get the length of the frontier.
-    pub fn len(&self) -> (usize, usize) {
-        (self.weaken_set.len(), self.inductive.len())
-    }
-
-    pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
-        let new_initial: Mutex<Vec<_>> = Mutex::new(vec![]);
-        log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.as_vec();
-        log::info!("Finding CTI...");
-        let cti = weakest
-            .into_par_iter()
-            .filter(|(prefix, body)| !self.initial.subsumes(prefix, body))
-            .find_map_any(|(prefix, body)| {
-                let term = prefix.quantify(self.initial.lemma_qf.base_to_term(&body.to_base()));
-                if let Some(model) = fo.init_cex(conf, &term) {
-                    return Some(model);
-                } else {
-                    let mut new_initial_vec = new_initial.lock().unwrap();
-                    new_initial_vec.push((prefix, body));
-
-                    None
-                }
-            });
-
-        log::info!("Saving initially implied lemmas...");
-        for (prefix, body) in new_initial.into_inner().unwrap() {
-            self.initial.insert_minimized(prefix, body.clone());
-        }
-
-        if let Some(model) = cti {
-            log::info!("Weakening...");
-            self.weaken_set.weaken(&model);
-            if self.extend.is_some() {
-                self.ctis.push_back(model);
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Extend CTI traces and weaken the given lemmas accordingly,
-    /// until no more states can be sampled.
-    pub fn extend(&mut self, fo: &FOModule, conf: &SolverConf) {
-        let (width, depth) = self.extend.unwrap();
-
-        while let Some(state) = self.ctis.pop_front() {
-            let mut levels = vec![vec![(0, state)]];
-            log::info!(
-                "[{}] Extending CTI trace... (remaining CTI's = {})",
-                self.weaken_set.len(),
-                self.ctis.len()
-            );
-            for i in 0..depth {
-                let mut new_level = vec![];
-                for (j, state) in &levels[i] {
-                    new_level.extend(
-                        fo.simulate_from(conf, state, width, 1)
-                            .into_iter()
-                            .map(|model| (*j, model)),
-                    );
-                }
-                levels.push(new_level);
-            }
-            log::info!(
-                "[{}] Weakening with {} samples...",
-                self.weaken_set.len(),
-                levels[1..].iter().map(|l| l.len()).sum::<usize>()
-            );
-            for i in 1..=depth {
-                for (j, poststate) in &levels[i] {
-                    if self.weaken_set.weaken_cti(&levels[i - 1][*j].1, poststate) {
-                        log::info!("[{}] Weakened.", self.weaken_set.len());
-                        self.ctis.push_back(poststate.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
-        let new_inductive: Mutex<Vec<_>> = Mutex::new(vec![]);
-        let solver_pids = SolverPids::new();
-        let unknown = Mutex::new(false);
-        log::info!("Getting weakest lemmas...");
-        let weakest = self.weaken_set.as_vec();
-        log::info!("Finding CTI...");
-        let cti = weakest
-            .into_par_iter()
-            .filter(|(prefix, body)| !self.inductive.subsumes(prefix, body))
-            .find_map_any(|(prefix, body)| {
-                let term = [prefix.quantify(self.inductive.lemma_qf.base_to_term(&body.to_base()))];
-                match fo.trans_cex(conf, &term, &term[0], false, false, Some(&solver_pids)) {
-                    TransCexResult::CTI(pre, post) => {
-                        solver_pids.cancel();
-                        return Some((pre, post));
-                    }
-                    TransCexResult::UnsatCore(_) => {
-                        let mut new_inductive_vec = new_inductive.lock().unwrap();
-                        new_inductive_vec.push((prefix, body));
-                    }
-                    TransCexResult::Cancelled => (),
-                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
-                }
-
-                None
-            });
-
-        if cti.is_none() && unknown.into_inner().unwrap() {
-            panic!("SMT queries got 'unknown' and no SAT results.")
-        }
-
-        log::info!("Saving inductive lemmas...");
-        for (prefix, body) in new_inductive.into_inner().unwrap() {
-            self.inductive.insert_minimized(prefix, body.clone());
-        }
-
-        if let Some((prestate, poststate)) = cti {
-            log::info!("Weakening...");
-            self.weaken_set.weaken_cti(&prestate, &poststate);
-            if self.extend.is_some() {
-                self.ctis.push_back(poststate);
-            }
-            true
-        } else {
-            false
-        }
     }
 }

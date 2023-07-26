@@ -19,10 +19,10 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
-use fly::syntax::Signature;
+use fly::syntax::{Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
-use inference::fixpoint::{fixpoint_multi_qf_body, fixpoint_single_qf_body};
+use inference::fixpoint::{self, qalpha_by_qf_body};
 use inference::houdini;
 use inference::quant::QuantifierConfig;
 use inference::updr::Updr;
@@ -81,25 +81,51 @@ struct VerifyArgs {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierConfigArgs {
+    #[arg(long)]
+    /// Use a custom prefix, given either by the sort ordering (via `--sort`) or by exact quantifiers (via `--quantifier`).
+    /// Otherwise, use the sort ordering found in the loaded module
+    custom_quant: bool,
+
     #[arg(short, long)]
-    /// Quantifier in the form `<quantifier: F/E/*> <sort> <var1> <var2> ...`.
+    /// Sorts in the order they should appear in the quantifier prefix
+    sort: Vec<String>,
+
+    #[arg(short, long)]
+    /// Quantifiers in the form `<quantifier: F/E/*> <sort> <var1> <var2> ...`
     quantifier: Vec<String>,
 }
 
 impl QuantifierConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
-        let mut quantifiers = vec![];
-        let mut sorts = vec![];
-        let mut counts = vec![];
-        for quantifier_spec in &self.quantifier {
-            let r = parse_quantifier(sig, quantifier_spec);
-            match r {
-                Ok((q, sort, count)) => {
-                    quantifiers.push(q);
-                    sorts.push(sig.sort_idx(&sort));
-                    counts.push(count);
+        let mut quantifiers;
+        let mut sorts: Vec<usize>;
+        let mut counts: Vec<usize>;
+        if !self.custom_quant {
+            sorts = (0..sig.sorts.len()).collect();
+            quantifiers = vec![None; sorts.len()];
+            counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
+        } else if !self.sort.is_empty() {
+            sorts = self
+                .sort
+                .iter()
+                .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
+                .collect();
+            quantifiers = vec![None; sorts.len()];
+            counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
+        } else {
+            quantifiers = vec![];
+            sorts = vec![];
+            counts = vec![];
+            for quantifier_spec in &self.quantifier {
+                let r = parse_quantifier(sig, quantifier_spec);
+                match r {
+                    Ok((q, sort, count)) => {
+                        quantifiers.push(q);
+                        sorts.push(sig.sort_idx(&sort));
+                        counts.push(count);
+                    }
+                    Err(err) => panic!("{err}"),
                 }
-                Err(err) => panic!("{err}"),
             }
         }
         QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
@@ -112,41 +138,54 @@ struct InferenceConfigArgs {
     q_cfg_args: QuantifierConfigArgs,
 
     #[arg(long)]
-    qf_body: String,
+    /// Defines the type of quantifier-free body (cnf/pdnf/pdnf-naive)
+    qf_body: Option<String>,
 
     #[arg(long)]
+    /// Do not search gradually for the quantified serach space needed to find an invariant,
+    /// and instead begin with the maximal domain matching the specification.
+    no_search: bool,
+
+    #[arg(long)]
+    /// Defines the maximal size of the quantifier prefix
     max_size: Option<usize>,
 
     #[arg(long)]
+    /// Defines the maximal number of existential quantifiers
     max_exist: Option<usize>,
 
     #[arg(long)]
+    /// For a quantifier-free body in CNF, determines the maximal number of clauses
     clauses: Option<usize>,
 
     #[arg(long)]
+    /// For a quantifier-free body in CNF, determines the maximal size of each clause
     clause_size: Option<usize>,
 
     #[arg(long)]
+    /// For a quantifier-free body in DNF, determines the maximal number of cubes
     cubes: Option<usize>,
 
     #[arg(long)]
+    /// For a quantifier-free body in DNF, determines the maximal size of each cube
     cube_size: Option<usize>,
 
     #[arg(long)]
+    /// For a quantifier-free body which supports unit clauses/cubes, like pDNF,
+    /// this determines the maximal size of non-unit clauses/cubes
     non_unit: Option<usize>,
 
     #[arg(long)]
+    /// The maximal nesting depth of terms in the vocabulary (unbounded if not provided)
     nesting: Option<usize>,
 
     #[arg(long, action)]
+    /// Do not include equality terms in the vocabulary
     no_include_eq: bool,
 
-    #[arg(long, action)]
-    search: bool,
-
     #[arg(long)]
-    /// Try to decompose the transition relation disjunctively
-    disj: bool,
+    /// Do not try to decompose the transition relation disjunctively
+    no_disj: bool,
 
     #[arg(long)]
     /// Perform SMT queries gradually
@@ -157,38 +196,47 @@ struct InferenceConfigArgs {
     minimal_smt: bool,
 
     #[arg(long)]
-    /// Advance the prestate frontier gradually
-    gradual_advance: bool,
-
-    #[arg(long)]
-    /// Try to find individually inductive lemmas
-    indiv: bool,
-
-    #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
     extend_width: Option<usize>,
 
     #[arg(long)]
     /// Try to extend model traces before looking for CEX in the frame
     extend_depth: Option<usize>,
+
+    #[arg(long)]
+    /// Launch no new runs after safety has been proven
+    until_safe: bool,
+
+    #[arg(long)]
+    /// Abort a run once it is evident that safety cannot be proven
+    abort_unsafe: bool,
+
+    #[arg(long)]
+    /// Grow the domain of quantified lemmas by this factor each iteration (default: 5)
+    growth_factor: Option<usize>,
 }
 
 impl InferenceConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
-        let qf_body = if self.qf_body.to_lowercase() == *"cnf" {
-            QfBody::CNF
-        } else if self.qf_body.to_lowercase() == *"pdnf" {
-            QfBody::PDnf
-        } else if self.qf_body.to_lowercase() == *"pdnf-naive" {
-            QfBody::PDnfNaive
-        } else {
-            panic!("Invalid choice of quantifier-free body!")
+        let qf_body = match &self.qf_body {
+            None => fixpoint::defaults::QF_BODY,
+            Some(qf_body_str) => {
+                if qf_body_str.to_lowercase() == *"cnf" {
+                    QfBody::CNF
+                } else if qf_body_str.to_lowercase() == *"pdnf" {
+                    QfBody::PDnf
+                } else if qf_body_str.to_lowercase() == *"pdnf-naive" {
+                    QfBody::PDnfNaive
+                } else {
+                    panic!("Invalid choice of quantifier-free body!")
+                }
+            }
         };
 
-        InferenceConfig {
+        let mut cfg = InferenceConfig {
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
-            max_size: self.max_size,
+            max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
             max_existentials: self.max_exist,
             clauses: self.clauses,
             clause_size: self.clause_size,
@@ -197,14 +245,26 @@ impl InferenceConfigArgs {
             non_unit: self.non_unit,
             nesting: self.nesting,
             include_eq: !self.no_include_eq,
-            disj: self.disj,
+            disj: !self.no_disj,
             gradual_smt: self.gradual_smt || self.minimal_smt,
             minimal_smt: self.minimal_smt,
-            gradual_advance: self.gradual_advance,
-            indiv: self.indiv,
             extend_width: self.extend_width,
             extend_depth: self.extend_depth,
+            no_search: self.no_search,
+            until_safe: self.until_safe,
+            abort_unsafe: self.abort_unsafe,
+            growth_factor: self.growth_factor,
+        };
+
+        if self.qf_body.is_none() {
+            cfg.clauses = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSES);
+            cfg.clause_size = cfg.clause_size.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
+            cfg.cubes = cfg.cubes.or(fixpoint::defaults::MAX_CUBES);
+            cfg.cube_size = cfg.cube_size.or(fixpoint::defaults::MAX_CUBE_SIZE);
+            cfg.non_unit = cfg.non_unit.or(fixpoint::defaults::MAX_NON_UNIT);
         }
+
+        cfg
     }
 }
 
@@ -539,16 +599,7 @@ impl App {
                 let conf = args.get_solver_conf();
                 m.inline_defs();
                 let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
-                if qargs.infer_cfg.search {
-                    fixpoint_multi_qf_body(infer_cfg, &conf, &m)
-                } else {
-                    let fixpoint = fixpoint_single_qf_body(infer_cfg, &conf, &m);
-                    if args.no_print_invariant {
-                        fixpoint.test_report();
-                    } else {
-                        fixpoint.report();
-                    }
-                }
+                qalpha_by_qf_body(infer_cfg, &conf, &m, !args.no_print_invariant);
                 if args.time {
                     timing::report();
                 }

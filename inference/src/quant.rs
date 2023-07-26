@@ -3,6 +3,8 @@
 
 //! Manage quantifiers used in inference.
 
+use std::cmp::Ordering;
+
 use crate::hashmap::HashSet;
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
@@ -12,10 +14,6 @@ use std::sync::Arc;
 use crate::basics::InferenceConfig;
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
-
-pub fn count_exists(qs: &[Quantifier]) -> usize {
-    qs.iter().filter(|q| **q == Quantifier::Exists).count()
-}
 
 /// Generate the variable names for this [`QuantifierSequence`]. The names are grouped
 /// and ordered based on their position in the sequence.
@@ -96,15 +94,31 @@ impl<Q: Clone> QuantifierSequence<Q> {
         self.quantifiers.len()
     }
 
-    /// Whether the sequence is empty
+    /// Return whether the sequence is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Restrict the sequence to variables in the given ID set.
+    pub fn restrict(&self, ids: HashSet<String>) -> Self {
+        Self {
+            signature: self.signature.clone(),
+            quantifiers: self.quantifiers.clone(),
+            sorts: self.sorts.clone(),
+            names: self
+                .names
+                .iter()
+                .map(|n| n.iter().filter(|id| ids.contains(*id)).cloned().collect())
+                .collect(),
+        }
+    }
+
+    /// Return the number of quantified variables.
     pub fn num_vars(&self) -> usize {
         self.names.iter().map(|n| n.len()).sum()
     }
 
+    /// Return the names of all quantified variables in this sequence.
     pub fn all_vars(&self) -> HashSet<String> {
         self.names.iter().flat_map(|n| n.iter().cloned()).collect()
     }
@@ -176,8 +190,8 @@ impl QuantifierConfig {
     pub fn all_prefixes(&self, infer_cfg: &InferenceConfig) -> Vec<QuantifierPrefix> {
         let mut res = vec![];
 
-        for e in 0..=infer_cfg.max_existentials.unwrap_or(self.len()) {
-            for s in 0..=infer_cfg.max_size.unwrap_or(self.num_vars()) {
+        for e in 0..=infer_cfg.max_existentials.unwrap_or(self.num_vars()) {
+            for s in 0..=infer_cfg.max_size {
                 res.append(&mut self.exact_prefixes(e, e, s));
             }
         }
@@ -220,10 +234,6 @@ impl QuantifierConfig {
                         Some(q) => vec![*q],
                     })
                     .multi_cartesian_product_fixed()
-                    .filter(|qs| {
-                        let e = count_exists(qs);
-                        e >= min_existentials && e <= max_existentials
-                    })
                     .map(|quantifiers| QuantifierPrefix {
                         signature: self.signature.clone(),
                         quantifiers,
@@ -234,6 +244,10 @@ impl QuantifierConfig {
                             .enumerate()
                             .map(|(i, n)| n[..dist[i]].to_vec())
                             .collect_vec(),
+                    })
+                    .filter(|prefix| {
+                        let e = prefix.existentials();
+                        e >= min_existentials && e <= max_existentials
                     })
             })
             .collect_vec()
@@ -304,14 +318,19 @@ impl QuantifierPrefix {
     }
 
     /// Check whether one [`QuantifierPrefix`] subsumes another. A prefix Q1 is said to subsume Q2
-    /// if Q2 can be gotten from Q1 by only flipping universal quantifiers to existential ones.
+    /// if Q2 can be gotten from Q1 by only flipping universal quantifiers to existential ones
+    /// and dropping quantified variables.
+    ///
+    /// This subsumption behaves in the following way with the [`Ord`] defined for [`QuantifierPrefix`]:
+    /// If Q1 subsumes Q2, then Q1 <= Q2.
     pub fn subsumes(&self, other: &Self) -> bool {
         assert_eq!(self.len(), other.len());
+
         (0..self.len()).all(|i| {
-            self.names[i].is_empty()
-                || other.names[i].is_empty()
-                || self.quantifiers[i] == Quantifier::Forall
-                || other.quantifiers[i] == Quantifier::Exists
+            other.names.is_empty()
+                || (self.names[i].len() >= other.names[i].len()
+                    && (self.quantifiers[i] == Quantifier::Forall
+                        || other.quantifiers[i] == Quantifier::Exists))
         })
     }
 
@@ -325,7 +344,12 @@ impl QuantifierPrefix {
     }
 
     pub fn existentials(&self) -> usize {
-        count_exists(&self.quantifiers)
+        (0..self.len())
+            .map(|i| match self.quantifiers[i] {
+                Quantifier::Exists => self.names[i].len(),
+                Quantifier::Forall => 0,
+            })
+            .sum()
     }
 
     pub fn non_universal_vars(&self) -> HashSet<String> {
@@ -357,6 +381,42 @@ impl Debug for QuantifierPrefix {
         }
 
         write!(f, "{}", parts.iter().join(". "))
+    }
+}
+
+impl PartialOrd for QuantifierPrefix {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        assert_eq!(self.len(), other.len());
+        assert_eq!(self.sorts, other.sorts);
+
+        for i in 0..self.len() {
+            match (self.names[i].is_empty(), other.names[i].is_empty()) {
+                (true, true) => continue,
+                (true, false) => return Some(Ordering::Greater),
+                (false, true) => return Some(Ordering::Less),
+                (false, false) => (),
+            }
+
+            match (self.quantifiers[i], other.quantifiers[i]) {
+                (Quantifier::Forall, Quantifier::Exists) => return Some(Ordering::Less),
+                (Quantifier::Exists, Quantifier::Forall) => return Some(Ordering::Greater),
+                _ => (),
+            }
+
+            match self.names[i].len().cmp(&other.names[i].len()) {
+                Ordering::Greater => return Some(Ordering::Less),
+                Ordering::Less => return Some(Ordering::Greater),
+                _ => (),
+            }
+        }
+
+        Some(Ordering::Equal)
+    }
+}
+
+impl Ord for QuantifierPrefix {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 
