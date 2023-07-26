@@ -86,7 +86,7 @@ pub enum SortError {
 /// The parser represents missing sort annotations in the input AST as
 /// `Sort::Uninterpreted("")`. `sort_check_and_infer` guarantees that, after it returns, no
 /// sort annotation is `Sort::Uninterpreted("")` anywhere in the given fly module. In other
-/// words, it guarantees that [module_has_all_sort_annotations] returns true.
+/// words, it guarantees that [has_all_sort_annotations_module] returns true.
 ///
 /// If sort checking detects an error (see [SortError]), it will attempt to
 /// provide a [Span] to locate this error in the source code. The AST has
@@ -102,8 +102,8 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
 
     let mut context = Context {
         sorts: &sorts,
-        names: im::HashMap::new(),
-        vars: &mut UnificationTable::new(),
+        bound_names: im::HashMap::new(),
+        unification_table: &mut UnificationTable::new(),
     };
 
     // The sort inference algorithm proceeds in two phases.
@@ -133,7 +133,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
                 context.check_sort_exists(arg)?;
             }
             context.check_sort_exists(&rel.sort)?;
-            context.add_name(
+            context.add_name_internal(
                 rel.name.clone(),
                 NamedSort::Known(rel.args.clone(), rel.sort.clone()),
                 ShadowingConstraint::Disallow,
@@ -143,9 +143,9 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
         for def in &mut module.defs {
             {
                 let mut context = context.new_inner_scope();
-                context.add_binders(&mut def.binders)?;
+                context.add_binders_for_inference(&mut def.binders)?;
                 context.check_sort_exists(&def.ret_sort)?;
-                let ret = context.sort_of_term(&mut def.body)?;
+                let ret = context.collect_sort_constraints_term(&mut def.body)?;
                 context.unify_var_value(&def.ret_sort, &ret)?;
             }
 
@@ -155,7 +155,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
                 .map(|binder| binder.sort.clone())
                 .collect();
 
-            context.add_name(
+            context.add_name_internal(
                 def.name.clone(),
                 NamedSort::Known(args, def.ret_sort.clone()),
                 ShadowingConstraint::Disallow,
@@ -169,7 +169,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     // helper that wraps any errors
     let term_is_bool = |context: &mut Context, term: &mut Term, span: Option<Span>| {
         context
-            .sort_of_term(term)
+            .collect_sort_constraints_term(term)
             .and_then(|sort| context.unify_var_value(&Sort::Bool, &sort))
             .map_err(|e| (e, span))
     };
@@ -195,7 +195,9 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
 
     // helper that wraps any errors
     let fix_sorts = |context: &mut Context, term: &mut Term, span: Option<Span>| {
-        context.fix_sorts_in_term(term).map_err(|e| (e, span))
+        context
+            .annotate_solved_sorts_term(term)
+            .map_err(|e| (e, span))
     };
 
     for def in &mut module.defs {
@@ -217,14 +219,14 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     // Done with second pass.
 
     // Double check that we didn't miss any bound variables in the first pass.
-    assert!(module_has_all_sort_annotations(module));
+    assert!(has_all_sort_annotations_module(module));
 
     Ok(())
 }
 
 /// Return whether every quantified variable in every term in the given fly
 /// module has a (non-empty) sort annotation.
-pub fn module_has_all_sort_annotations(module: &Module) -> bool {
+pub fn has_all_sort_annotations_module(module: &Module) -> bool {
     // This function should be kept in sync with the parser. Currently the
     // parser only generates Sort::Uninterpreted("") on quantified variables, so
     // that is the only place we need to check. If future changes to the parser
@@ -234,29 +236,29 @@ pub fn module_has_all_sort_annotations(module: &Module) -> bool {
     module
         .defs
         .iter()
-        .all(|def| term_has_all_sort_annotations(&def.body))
+        .all(|def| has_all_sort_annotations_term(&def.body))
         && module.statements.iter().all(|statement| match statement {
-            ThmStmt::Assume(term) => term_has_all_sort_annotations(term),
+            ThmStmt::Assume(term) => has_all_sort_annotations_term(term),
             ThmStmt::Assert(proof) => {
                 proof
                     .invariants
                     .iter()
-                    .all(|inv| term_has_all_sort_annotations(&inv.x))
-                    && term_has_all_sort_annotations(&proof.assert.x)
+                    .all(|inv| has_all_sort_annotations_term(&inv.x))
+                    && has_all_sort_annotations_term(&proof.assert.x)
             }
         })
 }
 
 /// Return whether every quantified variable in this term has a (non-empty) sort
 /// annotation.
-pub fn term_has_all_sort_annotations(term: &Term) -> bool {
+pub fn has_all_sort_annotations_term(term: &Term) -> bool {
     match term {
         Term::Literal(_) | Term::Id(_) => true,
-        Term::App(_f, _p, xs) => xs.iter().all(term_has_all_sort_annotations),
+        Term::App(_f, _p, xs) => xs.iter().all(has_all_sort_annotations_term),
         Term::UnaryOp(
             UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
             x,
-        ) => term_has_all_sort_annotations(x),
+        ) => has_all_sort_annotations_term(x),
         Term::BinOp(
             BinOp::Equals
             | BinOp::NotEquals
@@ -266,12 +268,12 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
             | BinOp::Since,
             x,
             y,
-        ) => term_has_all_sort_annotations(x) && term_has_all_sort_annotations(y),
-        Term::NAryOp(NOp::And | NOp::Or, xs) => xs.iter().all(term_has_all_sort_annotations),
+        ) => has_all_sort_annotations_term(x) && has_all_sort_annotations_term(y),
+        Term::NAryOp(NOp::And | NOp::Or, xs) => xs.iter().all(has_all_sort_annotations_term),
         Term::Ite { cond, then, else_ } => {
-            term_has_all_sort_annotations(cond)
-                && term_has_all_sort_annotations(then)
-                && term_has_all_sort_annotations(else_)
+            has_all_sort_annotations_term(cond)
+                && has_all_sort_annotations_term(then)
+                && has_all_sort_annotations_term(else_)
         }
         Term::Quantified {
             quantifier: Quantifier::Forall | Quantifier::Exists,
@@ -279,7 +281,7 @@ pub fn term_has_all_sort_annotations(term: &Term) -> bool {
             body,
         } => {
             binders.iter().all(|binder| binder.sort != Sort::unknown())
-                && term_has_all_sort_annotations(body)
+                && has_all_sort_annotations_term(body)
         }
     }
 }
@@ -338,8 +340,8 @@ enum ShadowingConstraint {
 #[derive(Debug)]
 struct Context<'a> {
     sorts: &'a HashSet<String>,
-    names: im::HashMap<String, NamedSort>,
-    vars: &'a mut UnificationTable<InPlace<SortVar>>,
+    bound_names: im::HashMap<String, NamedSort>,
+    unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
 }
 
 impl Context<'_> {
@@ -347,8 +349,8 @@ impl Context<'_> {
     fn new_inner_scope(&mut self) -> Context {
         Context {
             sorts: self.sorts,
-            names: self.names.clone(),
-            vars: self.vars,
+            bound_names: self.bound_names.clone(),
+            unification_table: self.unification_table,
         }
     }
 
@@ -385,13 +387,13 @@ impl Context<'_> {
     }
 
     // adds `(name, sort)` to `context`, potentially giving an error if name already exists
-    fn add_name(
+    fn add_name_internal(
         &mut self,
         name: String,
         sort: NamedSort,
         shadowing_constraint: ShadowingConstraint,
     ) -> Result<(), SortError> {
-        match self.names.insert(name.clone(), sort) {
+        match self.bound_names.insert(name.clone(), sort) {
             Some(_) if shadowing_constraint == ShadowingConstraint::Disallow => {
                 Err(SortError::RedeclaredName(name))
             }
@@ -408,7 +410,7 @@ impl Context<'_> {
     // are represented by integers, and the string "var 55" is used to represent, eg, the
     // unification variable numbered 55. since this string has a space in it, it is impossible
     // for it to be confused with a user sort annotation.
-    fn add_binders(&mut self, binders: &mut [Binder]) -> Result<(), SortError> {
+    fn add_binders_for_inference(&mut self, binders: &mut [Binder]) -> Result<(), SortError> {
         let mut names = HashSet::new();
         for binder in binders {
             // First check that the name is not repeated *within* this slice.
@@ -417,7 +419,7 @@ impl Context<'_> {
             }
             self.check_sort_exists_or_empty(&binder.sort)?;
             let sort = if binder.sort == Sort::Uninterpreted("".to_owned()) {
-                let var = self.vars.new_key(OptionSort(None));
+                let var = self.unification_table.new_key(OptionSort(None));
                 binder.sort = Sort::Uninterpreted(format!("var {}", var.0));
                 NamedSort::Unknown(var)
             } else {
@@ -425,7 +427,7 @@ impl Context<'_> {
             };
             // Now add it to the context, allowing it to shadow bindings from
             // any outer scopes.
-            self.add_name(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
+            self.add_name_internal(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
         }
         Ok(())
     }
@@ -439,7 +441,7 @@ impl Context<'_> {
                 found: v.clone(),
             }),
             AbstractSort::Unknown(v) => self
-                .vars
+                .unification_table
                 .unify_var_value(*v, OptionSort(Some(value.clone()))),
         }
     }
@@ -451,28 +453,30 @@ impl Context<'_> {
             (AbstractSort::Known(a), AbstractSort::Known(b)) => {
                 Err(SortError::UnificationFail(a.clone(), b.clone()))
             }
-            (AbstractSort::Unknown(i), AbstractSort::Unknown(j)) => self.vars.unify_var_var(*i, *j),
-            (AbstractSort::Known(a), AbstractSort::Unknown(i))
-            | (AbstractSort::Unknown(i), AbstractSort::Known(a)) => {
-                self.vars.unify_var_value(*i, OptionSort(Some(a.clone())))
+            (AbstractSort::Unknown(i), AbstractSort::Unknown(j)) => {
+                self.unification_table.unify_var_var(*i, *j)
             }
+            (AbstractSort::Known(a), AbstractSort::Unknown(i))
+            | (AbstractSort::Unknown(i), AbstractSort::Known(a)) => self
+                .unification_table
+                .unify_var_value(*i, OptionSort(Some(a.clone()))),
         }
     }
 
     // walk the term AST, fixing any binders that still have "var {id}" sorts
-    fn fix_sorts_in_term(&mut self, term: &mut Term) -> Result<(), SortError> {
+    fn annotate_solved_sorts_term(&mut self, term: &mut Term) -> Result<(), SortError> {
         match term {
             Term::Literal(_) | Term::Id(_) => Ok(()),
             Term::App(_f, _p, xs) => {
                 for x in xs {
-                    self.fix_sorts_in_term(x)?;
+                    self.annotate_solved_sorts_term(x)?;
                 }
                 Ok(())
             }
             Term::UnaryOp(
                 UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
                 x,
-            ) => self.fix_sorts_in_term(x),
+            ) => self.annotate_solved_sorts_term(x),
             Term::BinOp(
                 BinOp::Equals
                 | BinOp::NotEquals
@@ -483,20 +487,20 @@ impl Context<'_> {
                 x,
                 y,
             ) => {
-                self.fix_sorts_in_term(x)?;
-                self.fix_sorts_in_term(y)?;
+                self.annotate_solved_sorts_term(x)?;
+                self.annotate_solved_sorts_term(y)?;
                 Ok(())
             }
             Term::NAryOp(NOp::And | NOp::Or, xs) => {
                 for x in xs {
-                    self.fix_sorts_in_term(x)?;
+                    self.annotate_solved_sorts_term(x)?;
                 }
                 Ok(())
             }
             Term::Ite { cond, then, else_ } => {
-                self.fix_sorts_in_term(cond)?;
-                self.fix_sorts_in_term(then)?;
-                self.fix_sorts_in_term(else_)?;
+                self.annotate_solved_sorts_term(cond)?;
+                self.annotate_solved_sorts_term(then)?;
+                self.annotate_solved_sorts_term(else_)?;
                 Ok(())
             }
             Term::Quantified {
@@ -514,7 +518,7 @@ impl Context<'_> {
                                 let id = id.parse::<u32>().expect(
                                     "unexpected non-integer in a sort unification variable id",
                                 );
-                                let sort = self.vars.probe_value(SortVar(id));
+                                let sort = self.unification_table.probe_value(SortVar(id));
                                 match sort.0 {
                                     None => {
                                         return Err(SortError::UnsolvedSort(binder.name.clone()))
@@ -526,16 +530,19 @@ impl Context<'_> {
                         }
                     }
                 }
-                self.fix_sorts_in_term(body)
+                self.annotate_solved_sorts_term(body)
             }
         }
     }
 
     // recursively finds the sort of a term
-    fn sort_of_term(&mut self, term: &mut Term) -> Result<AbstractSort, SortError> {
+    fn collect_sort_constraints_term(
+        &mut self,
+        term: &mut Term,
+    ) -> Result<AbstractSort, SortError> {
         match term {
             Term::Literal(_) => Ok(AbstractSort::Known(Sort::Bool)),
-            Term::Id(name) => match self.names.get(name) {
+            Term::Id(name) => match self.bound_names.get(name) {
                 Some(NamedSort::Known(args, _)) if !args.is_empty() => {
                     Err(SortError::Uncalled(name.clone()))
                 }
@@ -543,7 +550,7 @@ impl Context<'_> {
                 Some(NamedSort::Unknown(var)) => Ok(AbstractSort::Unknown(*var)),
                 None => Err(SortError::UnknownVariable(name.clone())),
             },
-            Term::App(f, _p, xs) => match self.names.get(f).cloned() {
+            Term::App(f, _p, xs) => match self.bound_names.get(f).cloned() {
                 Some(NamedSort::Known(args, _)) if args.is_empty() => {
                     Err(SortError::Uncallable(f.clone()))
                 }
@@ -556,7 +563,7 @@ impl Context<'_> {
                         });
                     }
                     for (arg, x) in args.into_iter().zip(xs) {
-                        let x = self.sort_of_term(x)?;
+                        let x = self.collect_sort_constraints_term(x)?;
                         self.unify_var_value(&arg, &x)?;
                     }
                     Ok(AbstractSort::Known(ret))
@@ -568,36 +575,36 @@ impl Context<'_> {
                 UOp::Not | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous,
                 x,
             ) => {
-                let x = self.sort_of_term(x)?;
+                let x = self.collect_sort_constraints_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
                 Ok(AbstractSort::Known(Sort::Bool))
             }
-            Term::UnaryOp(UOp::Prime, x) => self.sort_of_term(x),
+            Term::UnaryOp(UOp::Prime, x) => self.collect_sort_constraints_term(x),
             Term::BinOp(BinOp::Equals | BinOp::NotEquals, x, y) => {
-                let a = self.sort_of_term(x)?;
-                let b = self.sort_of_term(y)?;
+                let a = self.collect_sort_constraints_term(x)?;
+                let b = self.collect_sort_constraints_term(y)?;
                 self.unify_var_var(&a, &b)?;
                 Ok(AbstractSort::Known(Sort::Bool))
             }
             Term::BinOp(BinOp::Implies | BinOp::Iff | BinOp::Until | BinOp::Since, x, y) => {
-                let x = self.sort_of_term(x)?;
+                let x = self.collect_sort_constraints_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
-                let y = self.sort_of_term(y)?;
+                let y = self.collect_sort_constraints_term(y)?;
                 self.unify_var_value(&Sort::Bool, &y)?;
                 Ok(AbstractSort::Known(Sort::Bool))
             }
             Term::NAryOp(NOp::And | NOp::Or, xs) => {
                 for x in xs {
-                    let sort = self.sort_of_term(x)?;
+                    let sort = self.collect_sort_constraints_term(x)?;
                     self.unify_var_value(&Sort::Bool, &sort)?;
                 }
                 Ok(AbstractSort::Known(Sort::Bool))
             }
             Term::Ite { cond, then, else_ } => {
-                let cond = self.sort_of_term(cond)?;
+                let cond = self.collect_sort_constraints_term(cond)?;
                 self.unify_var_value(&Sort::Bool, &cond)?;
-                let a = self.sort_of_term(then)?;
-                let b = self.sort_of_term(else_)?;
+                let a = self.collect_sort_constraints_term(then)?;
+                let b = self.collect_sort_constraints_term(else_)?;
                 self.unify_var_var(&a, &b)?;
                 Ok(a)
             }
@@ -607,8 +614,8 @@ impl Context<'_> {
                 body,
             } => {
                 let mut context = self.new_inner_scope();
-                context.add_binders(binders)?;
-                let body = context.sort_of_term(body)?;
+                context.add_binders_for_inference(binders)?;
+                let body = context.collect_sort_constraints_term(body)?;
                 context.unify_var_value(&Sort::Bool, &body)?;
                 Ok(AbstractSort::Known(Sort::Bool))
             }
