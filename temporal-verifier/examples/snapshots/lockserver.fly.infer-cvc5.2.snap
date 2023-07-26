@@ -5,7 +5,7 @@ expression: combined_stdout_stderr
 ---
 Number of individual domains: 23
 
-(1) Running aqlpha algorithm...
+(1) Running qalpha algorithm...
 Approximate domain size: 10^2.12 (131)
 Prefixes:
     forall node_1 --- 5 atoms --- pDNF { cubes: 3, cube_size: 0, non_unit: 0 } ~ 131
@@ -13,7 +13,7 @@ Fixpoint UNSAFE!
 Fixpoint size = 0
 Covers 0 / 9 of handwritten invariant.
 
-(2) Running aqlpha algorithm...
+(2) Running qalpha algorithm...
 Approximate domain size: 10^3.15 (1404)
 Prefixes:
     forall node_1 --- 5 atoms --- pDNF { cubes: 5, cube_size: 0, non_unit: 0 } ~ 243

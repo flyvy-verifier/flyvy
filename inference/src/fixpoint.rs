@@ -210,7 +210,7 @@ pub fn qalpha<O, L, B>(
         }
 
         println!();
-        println!("({iteration}) Running aqlpha algorithm...");
+        println!("({iteration}) Running qalpha algorithm...");
         println!(
             "Approximate domain size: 10^{:.2} ({domain_size})",
             (domain_size as f64).log10()
