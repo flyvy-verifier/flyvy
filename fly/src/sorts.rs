@@ -135,7 +135,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
             context.check_sort_exists(&rel.sort)?;
             context.add_name_internal(
                 rel.name.clone(),
-                NamedSort::Known(rel.args.clone(), rel.sort.clone()),
+                RelationOrIndividual::relation(rel),
                 ShadowingConstraint::Disallow,
             )?;
         }
@@ -149,15 +149,9 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
                 context.unify_var_value(&def.ret_sort, &ret)?;
             }
 
-            let args = def
-                .binders
-                .iter()
-                .map(|binder| binder.sort.clone())
-                .collect();
-
             context.add_name_internal(
                 def.name.clone(),
-                NamedSort::Known(args, def.ret_sort.clone()),
+                RelationOrIndividual::definition(def),
                 ShadowingConstraint::Disallow,
             )?;
         }
@@ -286,16 +280,46 @@ pub fn has_all_sort_annotations_term(term: &Term) -> bool {
     }
 }
 
-// can either hold a function sort or the index of a sort variable
-// all sorts must be known by the time `check` returns
+/// Represents the sort of a name, which can either name a relation or an individual.
+/// Relations (including functions) always take at least one argument.
+/// Individuals can additionally have "unknown" sort, which will be determined during sort inference.
 #[derive(Clone, Debug)]
-enum NamedSort {
-    Known(Vec<Sort>, Sort),
-    Unknown(SortVar),
+enum RelationOrIndividual {
+    Relation(Vec<Sort> /* always nonempty */, Sort),
+    Individual(MaybeUnknownSort),
+}
+impl RelationOrIndividual {
+    fn args_ret(args: &Vec<Sort>, ret: &Sort) -> RelationOrIndividual {
+        if args.is_empty() {
+            Self::known(ret)
+        } else {
+            Self::Relation(args.clone(), ret.clone())
+        }
+    }
+
+    fn definition(decl: &Definition) -> RelationOrIndividual {
+        Self::args_ret(
+            &decl.binders.iter().map(|b| b.sort.clone()).collect(),
+            &decl.ret_sort,
+        )
+    }
+
+    fn relation(decl: &RelationDecl) -> RelationOrIndividual {
+        Self::args_ret(&decl.args, &decl.sort)
+    }
+
+    fn known(sort: &Sort) -> RelationOrIndividual {
+        Self::Individual(MaybeUnknownSort::Known(sort.clone()))
+    }
+
+    fn unknown(sort_var: SortVar) -> RelationOrIndividual {
+        Self::Individual(MaybeUnknownSort::Unknown(sort_var))
+    }
 }
 
+/// Represents a either known sort or an unknown sort (unification variable).
 #[derive(Clone, Debug)]
-enum AbstractSort {
+enum MaybeUnknownSort {
     Known(Sort),
     Unknown(SortVar),
 }
@@ -340,7 +364,7 @@ enum ShadowingConstraint {
 #[derive(Debug)]
 struct Context<'a> {
     sorts: &'a HashSet<String>,
-    bound_names: im::HashMap<String, NamedSort>,
+    bound_names: im::HashMap<String, RelationOrIndividual>,
     unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
 }
 
@@ -390,7 +414,7 @@ impl Context<'_> {
     fn add_name_internal(
         &mut self,
         name: String,
-        sort: NamedSort,
+        sort: RelationOrIndividual,
         shadowing_constraint: ShadowingConstraint,
     ) -> Result<(), SortError> {
         match self.bound_names.insert(name.clone(), sort) {
@@ -421,9 +445,9 @@ impl Context<'_> {
             let sort = if binder.sort == Sort::Uninterpreted("".to_owned()) {
                 let var = self.unification_table.new_key(OptionSort(None));
                 binder.sort = Sort::Uninterpreted(format!("var {}", var.0));
-                NamedSort::Unknown(var)
+                RelationOrIndividual::unknown(var)
             } else {
-                NamedSort::Known(vec![], binder.sort.clone())
+                RelationOrIndividual::known(&binder.sort)
             };
             // Now add it to the context, allowing it to shadow bindings from
             // any outer scopes.
@@ -433,31 +457,35 @@ impl Context<'_> {
     }
 
     // unify a sort and a sort variable, or return an error
-    fn unify_var_value(&mut self, value: &Sort, var: &AbstractSort) -> Result<(), SortError> {
+    fn unify_var_value(&mut self, value: &Sort, var: &MaybeUnknownSort) -> Result<(), SortError> {
         match var {
-            AbstractSort::Known(v) if value == v => Ok(()),
-            AbstractSort::Known(v) => Err(SortError::ExpectedButFoundSorts {
+            MaybeUnknownSort::Known(v) if value == v => Ok(()),
+            MaybeUnknownSort::Known(v) => Err(SortError::ExpectedButFoundSorts {
                 expected: value.clone(),
                 found: v.clone(),
             }),
-            AbstractSort::Unknown(v) => self
+            MaybeUnknownSort::Unknown(v) => self
                 .unification_table
                 .unify_var_value(*v, OptionSort(Some(value.clone()))),
         }
     }
 
     // unify two sort variables, or return an error
-    fn unify_var_var(&mut self, a: &AbstractSort, b: &AbstractSort) -> Result<(), SortError> {
+    fn unify_var_var(
+        &mut self,
+        a: &MaybeUnknownSort,
+        b: &MaybeUnknownSort,
+    ) -> Result<(), SortError> {
         match (a, b) {
-            (AbstractSort::Known(a), AbstractSort::Known(b)) if a == b => Ok(()),
-            (AbstractSort::Known(a), AbstractSort::Known(b)) => {
+            (MaybeUnknownSort::Known(a), MaybeUnknownSort::Known(b)) if a == b => Ok(()),
+            (MaybeUnknownSort::Known(a), MaybeUnknownSort::Known(b)) => {
                 Err(SortError::UnificationFail(a.clone(), b.clone()))
             }
-            (AbstractSort::Unknown(i), AbstractSort::Unknown(j)) => {
+            (MaybeUnknownSort::Unknown(i), MaybeUnknownSort::Unknown(j)) => {
                 self.unification_table.unify_var_var(*i, *j)
             }
-            (AbstractSort::Known(a), AbstractSort::Unknown(i))
-            | (AbstractSort::Unknown(i), AbstractSort::Known(a)) => self
+            (MaybeUnknownSort::Known(a), MaybeUnknownSort::Unknown(i))
+            | (MaybeUnknownSort::Unknown(i), MaybeUnknownSort::Known(a)) => self
                 .unification_table
                 .unify_var_value(*i, OptionSort(Some(a.clone()))),
         }
@@ -539,22 +567,19 @@ impl Context<'_> {
     fn collect_sort_constraints_term(
         &mut self,
         term: &mut Term,
-    ) -> Result<AbstractSort, SortError> {
+    ) -> Result<MaybeUnknownSort, SortError> {
         match term {
-            Term::Literal(_) => Ok(AbstractSort::Known(Sort::Bool)),
+            Term::Literal(_) => Ok(MaybeUnknownSort::Known(Sort::Bool)),
             Term::Id(name) => match self.bound_names.get(name) {
-                Some(NamedSort::Known(args, _)) if !args.is_empty() => {
+                Some(RelationOrIndividual::Relation(_, _)) => {
                     Err(SortError::Uncalled(name.clone()))
                 }
-                Some(NamedSort::Known(_, ret)) => Ok(AbstractSort::Known(ret.clone())),
-                Some(NamedSort::Unknown(var)) => Ok(AbstractSort::Unknown(*var)),
+                Some(RelationOrIndividual::Individual(ret)) => Ok(ret.clone()),
                 None => Err(SortError::UnknownVariable(name.clone())),
             },
             Term::App(f, _p, xs) => match self.bound_names.get(f).cloned() {
-                Some(NamedSort::Known(args, _)) if args.is_empty() => {
-                    Err(SortError::Uncallable(f.clone()))
-                }
-                Some(NamedSort::Known(args, ret)) => {
+                Some(RelationOrIndividual::Individual(_)) => Err(SortError::Uncallable(f.clone())),
+                Some(RelationOrIndividual::Relation(args, ret)) => {
                     if args.len() != xs.len() {
                         return Err(SortError::ExpectedButFoundArity {
                             function_name: f.clone(),
@@ -566,9 +591,8 @@ impl Context<'_> {
                         let x = self.collect_sort_constraints_term(x)?;
                         self.unify_var_value(&arg, &x)?;
                     }
-                    Ok(AbstractSort::Known(ret))
+                    Ok(MaybeUnknownSort::Known(ret))
                 }
-                Some(NamedSort::Unknown(_)) => unreachable!("function sorts are always known"),
                 None => Err(SortError::UnknownFunction(f.clone())),
             },
             Term::UnaryOp(
@@ -577,28 +601,28 @@ impl Context<'_> {
             ) => {
                 let x = self.collect_sort_constraints_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
-                Ok(AbstractSort::Known(Sort::Bool))
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
             Term::UnaryOp(UOp::Prime, x) => self.collect_sort_constraints_term(x),
             Term::BinOp(BinOp::Equals | BinOp::NotEquals, x, y) => {
                 let a = self.collect_sort_constraints_term(x)?;
                 let b = self.collect_sort_constraints_term(y)?;
                 self.unify_var_var(&a, &b)?;
-                Ok(AbstractSort::Known(Sort::Bool))
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
             Term::BinOp(BinOp::Implies | BinOp::Iff | BinOp::Until | BinOp::Since, x, y) => {
                 let x = self.collect_sort_constraints_term(x)?;
                 self.unify_var_value(&Sort::Bool, &x)?;
                 let y = self.collect_sort_constraints_term(y)?;
                 self.unify_var_value(&Sort::Bool, &y)?;
-                Ok(AbstractSort::Known(Sort::Bool))
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
             Term::NAryOp(NOp::And | NOp::Or, xs) => {
                 for x in xs {
                     let sort = self.collect_sort_constraints_term(x)?;
                     self.unify_var_value(&Sort::Bool, &sort)?;
                 }
-                Ok(AbstractSort::Known(Sort::Bool))
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
             Term::Ite { cond, then, else_ } => {
                 let cond = self.collect_sort_constraints_term(cond)?;
@@ -617,7 +641,7 @@ impl Context<'_> {
                 context.add_binders_for_inference(binders)?;
                 let body = context.collect_sort_constraints_term(body)?;
                 context.unify_var_value(&Sort::Bool, &body)?;
-                Ok(AbstractSort::Known(Sort::Bool))
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
         }
     }
