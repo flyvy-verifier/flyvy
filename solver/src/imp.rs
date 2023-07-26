@@ -340,7 +340,7 @@ impl<B: Backend> Solver<B> {
                 Ok(true)
             }
             SatResp::Unsat => Ok(false),
-            SatResp::Unknown(msg) => panic!("could not check card {card}: {msg}"),
+            SatResp::Unknown(msg) => Err(SolverError::CouldNotMinimize(msg)),
         }
     }
 
