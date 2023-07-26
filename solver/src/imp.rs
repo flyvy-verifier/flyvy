@@ -40,6 +40,9 @@ pub trait Backend {
         indicators: &HashSet<String>,
         model: &Sexp,
     ) -> FOModel;
+
+    /// Indicates whether this solver returns minimal models when `(get-model)` is called.
+    fn returns_minimal(&self) -> bool;
 }
 
 /// An FOModel ("first-order model") gives a cardinality to each universe and an
@@ -371,6 +374,10 @@ impl<B: Backend> Solver<B> {
     /// cardinalities. Finally, it returns the model with these cardinality
     /// constraints in place.
     pub fn get_minimal_model(&mut self) -> Result<Vec<Model>, SolverError> {
+        if self.backend.returns_minimal() {
+            return self.get_model();
+        }
+
         let start = std::time::Instant::now();
         let assumptions = self.last_assumptions.take();
         // initially, assume anything used by the last check_sat call

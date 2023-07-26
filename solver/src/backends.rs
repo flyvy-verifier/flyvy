@@ -223,6 +223,14 @@ impl Backend for &GenericBackend {
             .collect();
         FOModel { universe, interp }
     }
+
+    fn returns_minimal(&self) -> bool {
+        // TODO: make sure CVC4 and CVC5 return minimal models
+        match self.solver_type {
+            SolverType::Z3 => false,
+            SolverType::Cvc4 | SolverType::Cvc5 => true,
+        }
+    }
 }
 
 #[cfg(test)]
