@@ -1074,7 +1074,12 @@ where
             })
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.body_to_term(body));
-                match fo.trans_cex(confs, &pre_terms, &term, false, false, Some(&solver_pids)) {
+                // If a lemmas is not in `self.lemmas`, there is a stronger lemma in `self.lemmas` that subsumes it,
+                // so it doesn't need to be checked.
+                let lemma_id = self.lemmas.get_id(&prefix, body)?;
+                let pre_ids: &[usize] = &[&[lemma_id], &pre_ids[..]].concat();
+                let pre_terms: &[Term] = &[&[term.clone()], &pre_terms[..]].concat();
+                match fo.trans_cex(confs, pre_terms, &term, false, false, Some(&solver_pids)) {
                     CexResult::Cex(mut models) => {
                         solver_pids.cancel();
                         {
