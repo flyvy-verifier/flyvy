@@ -217,7 +217,7 @@ struct InferenceConfigArgs {
 }
 
 impl InferenceConfigArgs {
-    fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
+    fn to_cfg(&self, sig: &Signature, fname: String) -> InferenceConfig {
         let qf_body = match &self.qf_body {
             None => fixpoint::defaults::QF_BODY,
             Some(qf_body_str) => {
@@ -234,6 +234,7 @@ impl InferenceConfigArgs {
         };
 
         let mut cfg = InferenceConfig {
+            fname,
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
@@ -580,10 +581,11 @@ impl App {
                     ..
                 },
             ) => {
-                let conf = args.get_solver_conf();
                 m.inline_defs();
-                let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
-                qalpha_by_qf_body(infer_cfg, &conf, &m, !args.no_print_invariant);
+                let infer_cfg = qargs
+                    .infer_cfg
+                    .to_cfg(&m.signature, args.infer_cmd.file().to_string());
+                qalpha_by_qf_body(infer_cfg, &m, !args.no_print_invariant);
                 if args.time {
                     timing::report();
                 }

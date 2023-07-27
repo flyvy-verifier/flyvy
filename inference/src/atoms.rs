@@ -57,7 +57,7 @@ pub struct Atoms {
 }
 
 impl Atoms {
-    pub fn new(infer_cfg: &InferenceConfig, conf: &SolverConf, fo: &FOModule) -> Self {
+    pub fn new(infer_cfg: &InferenceConfig, confs: &[&SolverConf], fo: &FOModule) -> Self {
         let univ_prefix = infer_cfg.cfg.as_universal();
         let to_term = infer_cfg
             .cfg
@@ -67,8 +67,8 @@ impl Atoms {
                 let univ_t = univ_prefix.quantify(t.clone());
                 let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
 
-                fo.implication_cex(conf, &[], &univ_t).is_some()
-                    && fo.implication_cex(conf, &[], &univ_not_t).is_some()
+                fo.implication_cex(confs, &[], &univ_t).is_cex()
+                    && fo.implication_cex(confs, &[], &univ_not_t).is_cex()
             })
             .collect_vec();
         let to_index = to_term

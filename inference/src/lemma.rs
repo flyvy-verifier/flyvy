@@ -17,7 +17,7 @@ use solver::conf::SolverConf;
 
 use crate::{
     atoms::{Literal, RestrictedAtoms},
-    basics::{FOModule, InferenceConfig, SolverPids, TransCexResult},
+    basics::{CexResult, FOModule, InferenceConfig, SolverPids},
     hashmap::{HashMap, HashSet},
     subsume::OrderSubsumption,
     weaken::{Domain, LemmaQf, LemmaSet, WeakenLemmaSet},
@@ -931,7 +931,7 @@ where
     }
 
     /// Get an initial state which violates one of the frame's lemmas.
-    fn init_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
+    fn init_cex(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> Option<Model> {
         let blocked_lock = RwLock::new((
             &mut self.blocked,
             &mut self.blocked_to_core,
@@ -948,7 +948,7 @@ where
             })
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.body_to_term(body));
-                if let Some(model) = fo.init_cex(conf, &term) {
+                if let Some(model) = fo.init_cex(confs, &term) {
                     return Some(model);
                 } else {
                     let mut blocked_write = blocked_lock.write().unwrap();
@@ -978,9 +978,9 @@ where
     /// violating the frame and weaken it. Return whether such a counterexample was found.
     ///
     /// Note: only when no initial counterexamples are found, the frame is updated.
-    pub fn init_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+    pub fn init_cycle(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> bool {
         self.log_info("Finding CTI...");
-        match self.init_cex(fo, conf) {
+        match self.init_cex(fo, confs) {
             Some(cti) => {
                 self.log_info("CTI found, type=initial");
                 self.log_info("Weakening...");
@@ -1049,7 +1049,7 @@ where
     }
 
     /// Get an post-state of the frame which violates one of the frame's lemmas.
-    fn trans_cex(&mut self, fo: &FOModule, conf: &SolverConf) -> Option<Model> {
+    fn trans_cex(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> Option<Model> {
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
         let solver_pids = SolverPids::new();
@@ -1074,8 +1074,8 @@ where
             })
             .find_map_any(|(prefix, body)| {
                 let term = prefix.quantify(self.lemmas.body_to_term(body));
-                match fo.trans_cex(conf, &pre_terms, &term, false, false, Some(&solver_pids)) {
-                    TransCexResult::CTI(_, model) => {
+                match fo.trans_cex(confs, &pre_terms, &term, false, false, Some(&solver_pids)) {
+                    CexResult::Cex(mut models) => {
                         solver_pids.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
@@ -1087,9 +1087,11 @@ where
                             let mut total_sat_lock = total_sat.lock().unwrap();
                             *total_sat_lock += 1;
                         }
-                        return Some(model);
+
+                        assert_eq!(models.len(), 2);
+                        return Some(models.pop().unwrap());
                     }
-                    TransCexResult::UnsatCore(core) => {
+                    CexResult::UnsatCore(core) => {
                         {
                             let mut total_unsat_lock = total_unsat.lock().unwrap();
                             *total_unsat_lock += 1;
@@ -1109,8 +1111,8 @@ where
                             blocked_write.1.insert(blocked_id, core);
                         }
                     }
-                    TransCexResult::Cancelled => (),
-                    TransCexResult::Unknown => *unknown.lock().unwrap() = true,
+                    CexResult::Cancelled => (),
+                    CexResult::Unknown(_) => *unknown.lock().unwrap() = true,
                 }
 
                 None
@@ -1137,9 +1139,9 @@ where
 
     /// Perform a transition cycle, which attempts to sample a transition from the frame
     /// whose post-state violates the frame, and weaken it. Return whether such a counterexample was found.
-    pub fn trans_cycle(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+    pub fn trans_cycle(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> bool {
         self.log_info("Finding CTI...");
-        match self.trans_cex(fo, conf) {
+        match self.trans_cex(fo, confs) {
             Some(cti) => {
                 self.log_info("CTI found, type=transition");
                 self.log_info("Weakening...");
@@ -1159,15 +1161,15 @@ where
 
     /// Return whether the current frame inductively implies the safety assertions
     /// of the given module.
-    pub fn is_safe(&mut self, fo: &FOModule, conf: &SolverConf) -> bool {
+    pub fn is_safe(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> bool {
         if self.safety_core.is_some() {
             return true;
         }
 
         let (ids, terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
-        match fo.trans_safe_cex(conf, &terms) {
-            TransCexResult::CTI(_, _) => false,
-            TransCexResult::UnsatCore(core) => {
+        match fo.trans_safe_cex(confs, &terms) {
+            CexResult::Cex(_) => false,
+            CexResult::UnsatCore(core) => {
                 self.safety_core = Some(core.into_iter().map(|i| ids[i]).collect());
                 true
             }

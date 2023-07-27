@@ -1,6 +1,7 @@
 // Copyright 2022-2023 VMware, Inc.
 // SPDX-License-Identifier: BSD-2-Clause
 
+use itertools;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
@@ -15,13 +16,36 @@ use fly::syntax::*;
 use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
 use smtlib::proc::{SatResp, SmtPid, SolverError};
-use solver::conf::SolverConf;
+use solver::{
+    conf::SolverConf,
+    imp::{Backend, Solver},
+};
 
-pub enum TransCexResult {
-    CTI(Model, Model),
+pub enum CexResult {
+    Cex(Vec<Model>),
     UnsatCore(HashSet<usize>),
     Cancelled,
-    Unknown,
+    Unknown(String),
+}
+
+impl CexResult {
+    /// Convert into an [`Option`], which either contains a counterexample or [`None`].
+    pub fn into_option(self) -> Option<Vec<Model>> {
+        match self {
+            CexResult::Cex(models) => Some(models),
+            CexResult::UnsatCore(_) => None,
+            _ => panic!("cex result is neither sat or unsat"),
+        }
+    }
+
+    /// Return `true` if the [`CexResult`] contains a counterexample, or `false` if it contains an UNSAT-core.
+    pub fn is_cex(&self) -> bool {
+        match self {
+            CexResult::Cex(_) => true,
+            CexResult::UnsatCore(_) => false,
+            _ => panic!("cex result is neither sat or unsat"),
+        }
+    }
 }
 
 /// Manages a subset of constraints, based on the counter-models they do not satisfy.
@@ -182,6 +206,32 @@ pub struct FOModule {
     minimal: bool,
 }
 
+fn get_minimal_model<B: Backend>(solver: &mut Solver<B>) -> CexResult {
+    match solver.get_minimal_model() {
+        Ok(states_vec) => CexResult::Cex(states_vec),
+        Err(SolverError::Killed) => CexResult::Cancelled,
+        Err(SolverError::CouldNotMinimize(reason)) => CexResult::Unknown(reason),
+        Err(e) => panic!("error in solver: {e}"),
+    }
+}
+
+fn get_unsat_core<B: Backend>(solver: &mut Solver<B>) -> CexResult {
+    match solver.get_unsat_core() {
+        Ok(solver_core) => {
+            let mut core = HashSet::new();
+            for ind in solver_core {
+                if let Term::Id(s) = ind.0 {
+                    let ind = s[6..].parse::<usize>().unwrap();
+                    core.insert(ind);
+                }
+            }
+            CexResult::UnsatCore(core)
+        }
+        Err(SolverError::Killed) => CexResult::Cancelled,
+        Err(e) => panic!("error in solver: {e}"),
+    }
+}
+
 impl FOModule {
     pub fn new(m: &Module, disj: bool, gradual: bool, minimal: bool) -> Self {
         FOModule {
@@ -209,23 +259,94 @@ impl FOModule {
         }
     }
 
-    pub fn init_cex(&self, conf: &SolverConf, t: &Term) -> Option<Model> {
-        self.implication_cex(conf, &self.module.inits, t)
+    pub fn init_cex(&self, confs: &[&SolverConf], t: &Term) -> Option<Model> {
+        self.implication_cex(confs, &self.module.inits, t)
+            .into_option()
+            .map(|mut models| {
+                assert_eq!(models.len(), 1);
+                models.pop().unwrap()
+            })
     }
 
     pub fn trans_cex(
         &self,
-        conf: &SolverConf,
+        confs: &[&SolverConf],
         hyp: &[Term],
         t: &Term,
         with_init: bool,
         with_safety: bool,
         solver_pids: Option<&SolverPids>,
-    ) -> TransCexResult {
+    ) -> CexResult {
         let transitions = self.disj_trans();
         let mut separate_cores: Vec<Option<HashSet<usize>>> = vec![None; transitions.len()];
         let mut unsat_core = HashSet::new();
 
+        let try_conf = |conf: &SolverConf, core: &mut Core, transition: &[&Term]| {
+            let mut solver = conf.solver(&self.signature, 2);
+            if solver_pids.is_some_and(|pids| !pids.add_pid(solver.pid())) {
+                return CexResult::Cancelled;
+            }
+            let mut assumptions = HashMap::new();
+
+            let mut prestate = vec![];
+            for &i in &core.participants {
+                let ind = solver.get_indicator(i.to_string().as_str());
+                assumptions.insert(ind.clone(), true);
+                prestate.push(Term::BinOp(
+                    BinOp::Iff,
+                    Box::new(ind),
+                    Box::new(hyp[i].clone()),
+                ));
+            }
+
+            if with_init {
+                let init = Term::and(self.module.inits.iter().cloned());
+                solver.assert(&Term::or([init, Term::and(prestate)]));
+            } else {
+                for p in &prestate {
+                    solver.assert(p)
+                }
+            }
+
+            for a in &self.module.axioms {
+                solver.assert(a);
+                solver.assert(&Next::new(&self.signature).prime(a));
+            }
+
+            for a in transition {
+                solver.assert(a);
+            }
+
+            if with_safety {
+                for a in &self.module.proofs {
+                    solver.assert(&a.safety.x);
+                }
+            }
+
+            if with_init {
+                let init = Term::and(self.module.inits.iter().cloned());
+                solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
+            }
+
+            solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
+
+            let resp = solver.check_sat(assumptions);
+            let cex_res = match resp {
+                Ok(SatResp::Sat) => get_minimal_model(&mut solver),
+                Ok(SatResp::Unsat) => get_unsat_core(&mut solver),
+                Err(SolverError::Killed) => CexResult::Cancelled,
+                Ok(SatResp::Unknown(reason)) | Err(SolverError::CouldNotMinimize(reason)) => {
+                    CexResult::Unknown(reason)
+                }
+                Err(e) => panic!("error in solver: {e}"),
+            };
+
+            solver.save_tee();
+
+            cex_res
+        };
+
+        let mut unknown_reasons = vec![];
         for t_idx in 0..transitions.len() {
             let mut core: Core = if self.gradual {
                 Core::new(hyp, HashSet::new(), self.minimal)
@@ -233,118 +354,32 @@ impl FOModule {
                 Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
             };
 
-            'inner: loop {
-                let mut solver = conf.solver(&self.signature, 2);
-                if solver_pids.is_some() && !solver_pids.unwrap().add_pid(solver.pid()) {
-                    return TransCexResult::Cancelled;
-                }
-                let mut assumptions = HashMap::new();
-
-                let mut prestate = vec![];
-                for &i in &core.participants {
-                    let ind = solver.get_indicator(i.to_string().as_str());
-                    assumptions.insert(ind.clone(), true);
-                    prestate.push(Term::BinOp(
-                        BinOp::Iff,
-                        Box::new(ind),
-                        Box::new(hyp[i].clone()),
-                    ));
-                }
-
-                if with_init {
-                    let init = Term::and(self.module.inits.iter().cloned());
-                    solver.assert(&Term::or([init, Term::and(prestate)]));
-                } else {
-                    for p in &prestate {
-                        solver.assert(p)
+            let mut conf_idx = 0;
+            'this_transition: while conf_idx < confs.len() {
+                match try_conf(confs[conf_idx], &mut core, &transitions[t_idx]) {
+                    CexResult::Cex(models) => {
+                        if !core.add_counter_model(models[0].clone(), Some(&unsat_core)) {
+                            log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                            return CexResult::Cex(models);
+                        }
+                    }
+                    CexResult::UnsatCore(my_core) => {
+                        unsat_core.extend(my_core.iter().copied());
+                        separate_cores[t_idx] = Some(my_core);
+                        break 'this_transition;
+                    }
+                    CexResult::Cancelled => return CexResult::Cancelled,
+                    CexResult::Unknown(reason) => {
+                        unknown_reasons.push(reason);
+                        conf_idx += 1
                     }
                 }
-
-                for a in &self.module.axioms {
-                    solver.assert(a);
-                    solver.assert(&Next::new(&self.signature).prime(a));
-                }
-
-                for a in &transitions[t_idx] {
-                    solver.assert(a);
-                }
-
-                if with_safety {
-                    for a in &self.module.proofs {
-                        solver.assert(&a.safety.x);
-                    }
-                }
-
-                if with_init {
-                    let init = Term::and(self.module.inits.iter().cloned());
-                    solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
-                }
-
-                solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
-
-                let resp = solver.check_sat(assumptions);
-                match resp {
-                    Ok(SatResp::Sat) => match solver.get_minimal_model() {
-                        Ok(states_vec) => {
-                            let mut states = states_vec.into_iter();
-                            let pre = states.next().unwrap();
-                            let post = states.next().unwrap();
-                            assert_eq!(states.next(), None);
-
-                            if !core.add_counter_model(pre.clone(), Some(&unsat_core)) {
-                                log::debug!("Found SAT with {} formulas in prestate.", core.len());
-                                solver.save_tee();
-                                return TransCexResult::CTI(pre, post);
-                            }
-                        }
-                        Err(SolverError::Killed) => {
-                            solver.save_tee();
-                            return TransCexResult::Cancelled;
-                        }
-                        Err(SolverError::CouldNotMinimize(_)) => (),
-                        Err(e) => panic!("error in solver: {e}"),
-                    },
-                    Ok(SatResp::Unsat) => match solver.get_unsat_core() {
-                        Ok(solver_core) => {
-                            assert!(separate_cores[t_idx].is_none());
-                            let mut my_core = HashSet::new();
-                            for ind in solver_core {
-                                if let Term::Id(s) = ind.0 {
-                                    let ind = s[6..].parse::<usize>().unwrap();
-                                    my_core.insert(ind);
-                                    unsat_core.insert(ind);
-                                }
-                            }
-
-                            if self.minimal {
-                                assert_eq!(my_core, core.participants);
-                            }
-
-                            separate_cores[t_idx] = Some(my_core);
-                            solver.save_tee();
-                            break 'inner;
-                        }
-                        Err(SolverError::Killed) => {
-                            solver.save_tee();
-                            return TransCexResult::Cancelled;
-                        }
-                        Err(e) => panic!("error in solver: {e}"),
-                    },
-                    Err(SolverError::Killed) => {
-                        solver.save_tee();
-                        return TransCexResult::Cancelled;
-                    }
-                    Ok(SatResp::Unknown(_)) | Err(SolverError::CouldNotMinimize(_)) => (),
-                    Err(e) => panic!("error in solver: {e}"),
-                }
-
-                solver.save_tee();
             }
         }
 
         if separate_cores.iter().any(|core| core.is_none()) {
             log::debug!("Found unknown.");
-            return TransCexResult::Unknown;
+            return CexResult::Unknown(unknown_reasons.join("\n"));
         }
 
         let core_sizes = separate_cores
@@ -356,17 +391,17 @@ impl FOModule {
             unsat_core.len(),
             core_sizes
         );
-        TransCexResult::UnsatCore(unsat_core)
+        CexResult::UnsatCore(unsat_core)
     }
 
-    pub fn implication_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
+    pub fn implication_cex(&self, confs: &[&SolverConf], hyp: &[Term], t: &Term) -> CexResult {
         let mut core: Core = if self.gradual {
             Core::new(hyp, HashSet::new(), self.minimal)
         } else {
             Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
         };
 
-        loop {
+        let try_conf = |conf: &SolverConf, core: &mut Core| -> CexResult {
             let mut solver = conf.solver(&self.signature, 1);
             for a in &self.module.axioms {
                 solver.assert(a);
@@ -377,27 +412,35 @@ impl FOModule {
             solver.assert(&Term::negate(t.clone()));
 
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
-            match resp {
-                SatResp::Sat => {
-                    let mut states = solver
-                        .get_minimal_model()
-                        .expect("solver error while minimizing");
-                    assert_eq!(states.len(), 1);
-
-                    if !core.add_counter_model(states[0].clone(), None) {
-                        solver.save_tee();
-                        return Some(states.pop().unwrap());
-                    }
-                }
-                SatResp::Unsat => {
-                    solver.save_tee();
-                    return None;
-                }
-                SatResp::Unknown(reason) => panic!("sat solver returned unknown: {reason}"),
-            }
+            let cex_res = match resp {
+                SatResp::Sat => get_minimal_model(&mut solver),
+                SatResp::Unsat => get_unsat_core(&mut solver),
+                SatResp::Unknown(reason) => CexResult::Unknown(reason),
+            };
 
             solver.save_tee();
+
+            cex_res
+        };
+
+        let mut conf_idx = 0;
+        let mut unknown_reasons = vec![];
+        while conf_idx < confs.len() {
+            match try_conf(confs[conf_idx], &mut core) {
+                CexResult::Cex(model) => {
+                    if !core.add_counter_model(model[0].clone(), None) {
+                        return CexResult::Cex(model);
+                    }
+                }
+                CexResult::Unknown(reason) => {
+                    unknown_reasons.push(reason);
+                    conf_idx += 1
+                }
+                res => return res,
+            }
         }
+
+        return CexResult::Unknown(unknown_reasons.join("\n"));
     }
 
     pub fn simulate_from(
@@ -586,16 +629,16 @@ impl FOModule {
         }
     }
 
-    pub fn trans_safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> TransCexResult {
+    pub fn trans_safe_cex(&self, confs: &[&SolverConf], hyp: &[Term]) -> CexResult {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            match self.trans_cex(conf, hyp, &s.safety.x, false, true, None) {
-                TransCexResult::UnsatCore(new_core) => core.extend(new_core),
+            match self.trans_cex(confs, hyp, &s.safety.x, false, true, None) {
+                CexResult::UnsatCore(new_core) => core.extend(new_core),
                 res => return res,
             }
         }
 
-        TransCexResult::UnsatCore(core)
+        CexResult::UnsatCore(core)
     }
 
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
@@ -616,6 +659,8 @@ pub enum QfBody {
 }
 
 pub struct InferenceConfig {
+    pub fname: String,
+
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
 

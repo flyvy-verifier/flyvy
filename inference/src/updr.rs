@@ -7,7 +7,7 @@ use im::{hashset, HashSet};
 use itertools::Itertools;
 use std::sync::Arc;
 
-use crate::basics::{CexOrCore, FOModule, TermOrModel, TransCexResult};
+use crate::basics::{CexOrCore, CexResult, FOModule, TermOrModel};
 use fly::syntax::Term::{NAryOp, Quantified, UnaryOp};
 use fly::syntax::*;
 use fly::term::cnf::term_to_cnf_clauses;
@@ -229,9 +229,14 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(&negated) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
-                    module.trans_cex(&self.solver_conf, &prev_terms, &negated, false, true, None)
-                {
+                if let CexResult::UnsatCore(_) = module.trans_cex(
+                    &[&self.solver_conf],
+                    &prev_terms,
+                    &negated,
+                    false,
+                    true,
+                    None,
+                ) {
                     self.frames[i + 1].strengthen(negated.clone());
                 } else {
                     break 'push_frames;
@@ -428,8 +433,8 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(term) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
-                    module.trans_cex(&self.solver_conf, &prev_terms, term, false, true, None)
+                if let CexResult::UnsatCore(_) =
+                    module.trans_cex(&[&self.solver_conf], &prev_terms, term, false, true, None)
                 {
                     self.frames[i + 1].strengthen(term.clone());
                 }
