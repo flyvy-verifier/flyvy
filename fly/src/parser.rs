@@ -176,7 +176,7 @@ grammar parser() for str {
 
       rule spanned<T>(e: rule<T>) -> Spanned<T>
       = start:position!() x:e() end:position!()
-        { Spanned {x, span: Span{start,end} } }
+        { Spanned {x, span: Some(Span{start,end}) } }
 
      // wrap a rule with tracing support, gated under the trace feature
      rule traced<T>(e: rule<T>) -> T =

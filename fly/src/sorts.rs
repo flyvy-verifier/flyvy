@@ -179,9 +179,9 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             ThmStmt::Assume(term) => term_is_bool(&mut context, term, None)?,
             ThmStmt::Assert(proof) => {
                 for invariant in &mut proof.invariants {
-                    term_is_bool(&mut context, &mut invariant.x, Some(invariant.span))?
+                    term_is_bool(&mut context, &mut invariant.x, invariant.span)?
                 }
-                term_is_bool(&mut context, &mut proof.assert.x, Some(proof.assert.span))?
+                term_is_bool(&mut context, &mut proof.assert.x, proof.assert.span)?
             }
         }
     }
@@ -207,9 +207,9 @@ pub fn sort_check_and_infer(module: &mut Module) -> Result<(), (SortError, Optio
             ThmStmt::Assume(term) => fix_sorts(&mut context, term, None)?,
             ThmStmt::Assert(proof) => {
                 for invariant in &mut proof.invariants {
-                    fix_sorts(&mut context, &mut invariant.x, Some(invariant.span))?
+                    fix_sorts(&mut context, &mut invariant.x, invariant.span)?
                 }
-                fix_sorts(&mut context, &mut proof.assert.x, Some(proof.assert.span))?
+                fix_sorts(&mut context, &mut proof.assert.x, proof.assert.span)?
             }
         }
     }

@@ -741,7 +741,7 @@ pub struct Span {
 #[derive(PartialEq, Eq, Clone, Debug, Serialize)]
 pub struct Spanned<T> {
     pub x: T,
-    pub span: Span,
+    pub span: Option<Span>,
 }
 
 /// A Proof is an asserted boolean Term and a list of invariants to prove that

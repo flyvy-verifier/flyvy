@@ -72,7 +72,7 @@ mod tests {
         // we'll assume proof_inv (all the invariants) in the pre state and try
         // to prove Next::prime(inv) in the post state for each proof invariant
         // separately
-        let proof_inv = Term::and(pf.invariants.iter().map(|inv| inv.as_term().clone()));
+        let proof_inv = Term::and(pf.invariants.iter().map(|inv| &inv.x));
         let task = Task::new();
         // rayon provides .par_iter(), which performs the invariant checks in
         // parallel; then we gather up a Vec of all the results due to the
@@ -101,7 +101,7 @@ mod tests {
                 solver.assert(&inv_assert.assumed_inv);
                 solver.assert(&Next::new(signature).prime(&inv_assert.assumed_inv));
                 solver.assert(&proof_inv);
-                solver.assert(&Term::negate(Next::new(signature).prime(inv.as_term())));
+                solver.assert(&Term::negate(Next::new(signature).prime(&inv.x)));
                 let resp = solver.check_sat(HashMap::new());
                 // if this check fails, don't start new checks
                 if matches!(resp, Ok(SatResp::Unsat) | Err(_)) {

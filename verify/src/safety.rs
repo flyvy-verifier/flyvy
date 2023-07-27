@@ -5,9 +5,11 @@
 
 use thiserror::Error;
 
-use fly::syntax::*;
-use fly::term::{fo::FirstOrder, prime::Next};
-use fly::transitions::{MaybeSpannedTerm, Proof};
+use fly::{
+    syntax::*,
+    term::{fo::FirstOrder, prime::Next},
+    transitions::Proof,
+};
 
 /// A temporal property expressed as an invariant problem.
 #[derive(Debug, Clone)]
@@ -22,7 +24,7 @@ pub struct InvariantAssertion {
     /// The invariant given in the module
     pub inv: Spanned<Term>,
     /// The other invariants in the same proof as `inv`
-    pub proof_invs: Vec<MaybeSpannedTerm>,
+    pub proof_invs: Vec<Spanned<Term>>,
 }
 
 /// An error that occured while constructing an invariant assertion
@@ -55,15 +57,12 @@ impl InvariantAssertion {
         })
     }
 
-    fn invariants(&self) -> Vec<MaybeSpannedTerm> {
-        vec![MaybeSpannedTerm::Spanned(self.inv.clone())]
-            .into_iter()
-            .chain(self.proof_invs.iter().cloned())
-            .collect()
+    fn invariants(&self) -> impl Iterator<Item = &Spanned<Term>> {
+        [&self.inv].into_iter().chain(self.proof_invs.iter())
     }
 
     fn inductive_invariant(&self) -> Term {
-        Term::and(self.invariants().into_iter().map(|inv| inv.to_term()))
+        Term::and(self.invariants().map(|inv| &inv.x))
     }
 
     /// Convert this invariant to a first order term.
@@ -86,12 +85,11 @@ impl InvariantAssertion {
             self.inductive_invariant(),
         ]);
         self.invariants()
-            .into_iter()
             .map(|inv| {
-                log::info!("checking inductiveness of {}", inv.as_term());
-                let rhs = Next::new(&self.sig).prime(inv.as_term());
+                log::info!("checking inductiveness of {}", inv.x);
+                let rhs = Next::new(&self.sig).prime(&inv.x);
                 let consection = FirstOrder::new(Term::implies(lhs.clone(), rhs));
-                (inv.span().copied(), consection)
+                (inv.span, consection)
             })
             .collect()
     }
