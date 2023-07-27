@@ -229,14 +229,9 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(&negated) {
                     continue;
                 }
-                if let CexResult::UnsatCore(_) = module.trans_cex(
-                    &[&self.solver_conf],
-                    &prev_terms,
-                    &negated,
-                    false,
-                    true,
-                    None,
-                ) {
+                if let CexResult::UnsatCore(_) =
+                    module.trans_cex(&[&self.solver_conf], &prev_terms, &negated, true, None)
+                {
                     self.frames[i + 1].strengthen(negated.clone());
                 } else {
                     break 'push_frames;
@@ -434,7 +429,7 @@ impl Updr {
                     continue;
                 }
                 if let CexResult::UnsatCore(_) =
-                    module.trans_cex(&[&self.solver_conf], &prev_terms, term, false, true, None)
+                    module.trans_cex(&[&self.solver_conf], &prev_terms, term, true, None)
                 {
                     self.frames[i + 1].strengthen(term.clone());
                 }

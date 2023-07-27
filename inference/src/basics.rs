@@ -273,7 +273,6 @@ impl FOModule {
         confs: &[&SolverConf],
         hyp: &[Term],
         t: &Term,
-        with_init: bool,
         with_safety: bool,
         solver_pids: Option<&SolverPids>,
     ) -> CexResult {
@@ -299,13 +298,8 @@ impl FOModule {
                 ));
             }
 
-            if with_init {
-                let init = Term::and(self.module.inits.iter().cloned());
-                solver.assert(&Term::or([init, Term::and(prestate)]));
-            } else {
-                for p in &prestate {
-                    solver.assert(p)
-                }
+            for p in &prestate {
+                solver.assert(p)
             }
 
             for a in &self.module.axioms {
@@ -321,11 +315,6 @@ impl FOModule {
                 for a in &self.module.proofs {
                     solver.assert(&a.safety.x);
                 }
-            }
-
-            if with_init {
-                let init = Term::and(self.module.inits.iter().cloned());
-                solver.assert(&Term::negate(Next::new(&self.signature).prime(&init)));
             }
 
             solver.assert(&Term::negate(Next::new(&self.signature).prime(t)));
@@ -632,7 +621,7 @@ impl FOModule {
     pub fn trans_safe_cex(&self, confs: &[&SolverConf], hyp: &[Term]) -> CexResult {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            match self.trans_cex(confs, hyp, &s.safety.x, false, true, None) {
+            match self.trans_cex(confs, hyp, &s.safety.x, true, None) {
                 CexResult::UnsatCore(new_core) => core.extend(new_core),
                 res => return res,
             }
