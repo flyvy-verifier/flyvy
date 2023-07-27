@@ -4,7 +4,7 @@
 //! Contains error types for verification.
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use fly::semantics::Model;
+use fly::semantics::{models_to_string, Model};
 use fly::syntax::Span;
 use serde::Serialize;
 
@@ -53,12 +53,7 @@ impl AssertionFailure {
             .with_message(msg)
             .with_notes(vec![match &self.error {
                 QueryError::Sat(models) => {
-                    let mut message = "counter example:".to_string();
-                    for (i, model) in models.iter().enumerate() {
-                        message.push_str(&format!("\nstate {i}:\n"));
-                        message.push_str(&model.fmt());
-                    }
-                    message
+                    format!("counter example:\n{}", models_to_string(models))
                 }
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
             }]);

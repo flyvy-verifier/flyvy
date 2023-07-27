@@ -19,6 +19,7 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
+use fly::semantics::models_to_string;
 use fly::syntax::{Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
@@ -630,11 +631,10 @@ impl App {
                     bounded.print_timing.unwrap_or(true),
                 ) {
                     Ok(bounded::set::CheckerAnswer::Counterexample(models)) => {
-                        println!("found counterexample:");
-                        for (i, model) in models.iter().enumerate() {
-                            println!("state {i}:");
-                            println!("{}", back_convert_model(model).fmt());
-                        }
+                        println!(
+                            "found counterexample:\n{}",
+                            models_to_string(models.iter().map(back_convert_model))
+                        )
                     }
                     Ok(bounded::set::CheckerAnswer::Unknown) => {
                         println!(
@@ -664,11 +664,10 @@ impl App {
                 let univ = bounded.get_universe(&m.signature);
                 match bounded::sat::check(&m, &univ, depth, bounded.print_timing.unwrap_or(true)) {
                     Ok(bounded::sat::CheckerAnswer::Counterexample(models)) => {
-                        println!("found counterexample:");
-                        for (i, model) in models.iter().enumerate() {
-                            println!("state {i}:");
-                            println!("{}", back_convert_model(model).fmt());
-                        }
+                        println!(
+                            "found counterexample:\n{}",
+                            models_to_string(models.iter().map(back_convert_model))
+                        )
                     }
                     Ok(bounded::sat::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {depth} for given sort bounds")
@@ -691,11 +690,10 @@ impl App {
                     bounded.print_timing.unwrap_or(true),
                 ) {
                     Ok(bounded::bdd::CheckerAnswer::Counterexample(models)) => {
-                        println!("found counterexample:");
-                        for (i, model) in models.iter().enumerate() {
-                            println!("state {i}:");
-                            println!("{}", back_convert_model(model).fmt());
-                        }
+                        println!(
+                            "found counterexample:\n{}",
+                            models_to_string(models.iter().map(back_convert_model))
+                        )
                     }
                     Ok(bounded::bdd::CheckerAnswer::Unknown) => {
                         println!(
@@ -728,11 +726,7 @@ impl App {
                     bounded.print_timing.unwrap_or(true),
                 ) {
                     Ok(bounded::smt::CheckerAnswer::Counterexample(models)) => {
-                        println!("found counterexample:");
-                        for (i, model) in models.iter().enumerate() {
-                            println!("state {i}:");
-                            println!("{}", model.fmt());
-                        }
+                        println!("found counterexample:\n{}", models_to_string(models))
                     }
                     Ok(bounded::smt::CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {depth} for given sort bounds")

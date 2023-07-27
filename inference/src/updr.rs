@@ -179,10 +179,10 @@ impl Updr {
                         num_steps_to_bad: steps_from_cex,
                     };
                     if let TermOrModel::Model(m) = bstate.term_or_model.clone() {
-                        println!("managed to reach {}", m.fmt());
+                        println!("managed to reach {m}");
                     }
                     if let TermOrModel::Term(t) = bstate.term_or_model.clone() {
-                        println!("managed to reach {}", &t);
+                        println!("managed to reach {t}");
                     }
                     self.backwards_reachable_states.push(bstate);
                     trace.push((trans.clone(), TermOrModel::Model(pred.clone())));
