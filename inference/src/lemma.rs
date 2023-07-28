@@ -1052,7 +1052,7 @@ where
     fn trans_cex(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> Option<Model> {
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
-        let solver_pids = SolverPids::new();
+        let solver_pids = Arc::new(SolverPids::new());
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
@@ -1079,9 +1079,8 @@ where
                 let lemma_id = self.lemmas.get_id(&prefix, body)?;
                 let pre_ids: &[usize] = &[&[lemma_id], &pre_ids[..]].concat();
                 let pre_terms: &[Term] = &[&[term.clone()], &pre_terms[..]].concat();
-                match fo.trans_cex(confs, pre_terms, &term, false, Some(&solver_pids)) {
+                match fo.trans_cex(confs, pre_terms, &term, false, Some(solver_pids.clone())) {
                     CexResult::Cex(mut models) => {
-                        solver_pids.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
                             if first_sat_lock.is_none() {
@@ -1116,7 +1115,7 @@ where
                             blocked_write.1.insert(blocked_id, core);
                         }
                     }
-                    CexResult::Cancelled => (),
+                    CexResult::Canceled => (),
                     CexResult::Unknown(_) => *unknown.lock().unwrap() = true,
                 }
 

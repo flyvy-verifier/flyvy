@@ -6,7 +6,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use crate::quant::QuantifierConfig;
@@ -24,7 +24,7 @@ use solver::{
 pub enum CexResult {
     Cex(Vec<Model>),
     UnsatCore(HashSet<usize>),
-    Cancelled,
+    Canceled,
     Unknown(String),
 }
 
@@ -39,6 +39,7 @@ impl CexResult {
     }
 
     /// Return `true` if the [`CexResult`] contains a counterexample, or `false` if it contains an UNSAT-core.
+    /// If the query is either `Canceled` or `Unknown`, this panics.
     pub fn is_cex(&self) -> bool {
         match self {
             CexResult::Cex(_) => true,
@@ -70,24 +71,15 @@ impl<'a> Core<'a> {
         }
     }
 
-    fn add_counter_model(
-        &mut self,
-        counter_model: Model,
-        check_first: Option<&HashSet<usize>>,
-    ) -> bool {
+    fn add_counter_model(&mut self, counter_model: Model) -> bool {
         // We assume that the new counter-model satisfies all previous formulas.
         for &p_idx in &self.participants {
             assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
         }
 
-        let new_participant = check_first
-            .unwrap_or(&HashSet::new())
-            .iter()
-            .cloned()
-            .chain(0..self.formulas.len())
-            .find(|i| {
-                !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
-            });
+        let new_participant = (0..self.formulas.len()).find(|i| {
+            !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
+        });
 
         match new_participant {
             Some(p_idx) => {
@@ -154,6 +146,12 @@ impl<'a> Core<'a> {
 /// [`SmtPid`]'s of the solvers it contains.
 pub struct SolverPids(Mutex<(bool, Vec<SmtPid>)>);
 
+impl Default for SolverPids {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SolverPids {
     /// Create a new empty [`SolverPids`].
     pub fn new() -> Self {
@@ -209,7 +207,7 @@ pub struct FOModule {
 fn get_minimal_model<B: Backend>(solver: &mut Solver<B>) -> CexResult {
     match solver.get_minimal_model() {
         Ok(states_vec) => CexResult::Cex(states_vec),
-        Err(SolverError::Killed) => CexResult::Cancelled,
+        Err(SolverError::Killed) => CexResult::Canceled,
         Err(SolverError::CouldNotMinimize(reason)) => CexResult::Unknown(reason),
         Err(e) => panic!("error in solver: {e}"),
     }
@@ -227,7 +225,7 @@ fn get_unsat_core<B: Backend>(solver: &mut Solver<B>) -> CexResult {
             }
             CexResult::UnsatCore(core)
         }
-        Err(SolverError::Killed) => CexResult::Cancelled,
+        Err(SolverError::Killed) => CexResult::Canceled,
         Err(e) => panic!("error in solver: {e}"),
     }
 }
@@ -274,16 +272,15 @@ impl FOModule {
         hyp: &[Term],
         t: &Term,
         with_safety: bool,
-        solver_pids: Option<&SolverPids>,
+        solver_pids: Option<Arc<SolverPids>>,
     ) -> CexResult {
         let transitions = self.disj_trans();
-        let mut separate_cores: Vec<Option<HashSet<usize>>> = vec![None; transitions.len()];
-        let mut unsat_core = HashSet::new();
+        let pids = solver_pids.unwrap_or_default();
 
         let try_conf = |conf: &SolverConf, core: &mut Core, transition: &[&Term]| {
             let mut solver = conf.solver(&self.signature, 2);
-            if solver_pids.is_some_and(|pids| !pids.add_pid(solver.pid())) {
-                return CexResult::Cancelled;
+            if !pids.add_pid(solver.pid()) {
+                return CexResult::Canceled;
             }
             let mut assumptions = HashMap::new();
 
@@ -323,7 +320,7 @@ impl FOModule {
             let cex_res = match resp {
                 Ok(SatResp::Sat) => get_minimal_model(&mut solver),
                 Ok(SatResp::Unsat) => get_unsat_core(&mut solver),
-                Err(SolverError::Killed) => CexResult::Cancelled,
+                Err(SolverError::Killed) => CexResult::Canceled,
                 Ok(SatResp::Unknown(reason)) | Err(SolverError::CouldNotMinimize(reason)) => {
                     CexResult::Unknown(reason)
                 }
@@ -335,46 +332,80 @@ impl FOModule {
             cex_res
         };
 
-        let mut unknown_reasons = vec![];
-        for t_idx in 0..transitions.len() {
-            let mut core: Core = if self.gradual {
-                Core::new(hyp, HashSet::new(), self.minimal)
-            } else {
-                Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
-            };
+        let mut cex_results: Vec<CexResult> = (0..transitions.len())
+            .into_par_iter()
+            .map(|t_idx| {
+                let mut core: Core = if self.gradual {
+                    Core::new(hyp, HashSet::new(), self.minimal)
+                } else {
+                    Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+                };
 
-            let mut conf_idx = 0;
-            'this_transition: while conf_idx < confs.len() {
-                match try_conf(confs[conf_idx], &mut core, &transitions[t_idx]) {
-                    CexResult::Cex(models) => {
-                        if !core.add_counter_model(models[0].clone(), Some(&unsat_core)) {
-                            log::debug!("Found SAT with {} formulas in prestate.", core.len());
-                            return CexResult::Cex(models);
+                let mut conf_idx = 0;
+                let mut unknown_reasons = vec![];
+                while conf_idx < confs.len() {
+                    match try_conf(confs[conf_idx], &mut core, &transitions[t_idx]) {
+                        CexResult::Cex(models) => {
+                            if !core.add_counter_model(models[0].clone()) {
+                                pids.cancel();
+                                log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                                return CexResult::Cex(models);
+                            }
                         }
-                    }
-                    CexResult::UnsatCore(my_core) => {
-                        unsat_core.extend(my_core.iter().copied());
-                        separate_cores[t_idx] = Some(my_core);
-                        break 'this_transition;
-                    }
-                    CexResult::Cancelled => return CexResult::Cancelled,
-                    CexResult::Unknown(reason) => {
-                        unknown_reasons.push(reason);
-                        conf_idx += 1
+                        CexResult::Unknown(reason) => {
+                            unknown_reasons.push(reason);
+                            conf_idx += 1
+                        }
+                        cex_res => return cex_res,
                     }
                 }
-            }
+
+                CexResult::Unknown(unknown_reasons.join("\n"))
+            })
+            .collect();
+
+        // Check whether any counterexample has been found
+        if let Some(i) =
+            (0..cex_results.len()).find(|i| matches!(cex_results[*i], CexResult::Cex(_)))
+        {
+            return cex_results.remove(i);
         }
 
-        if separate_cores.iter().any(|core| core.is_none()) {
-            log::debug!("Found unknown.");
-            return CexResult::Unknown(unknown_reasons.join("\n"));
-        }
-
-        let core_sizes = separate_cores
+        // Check whether any query has been canceled
+        if cex_results
             .iter()
-            .map(|core| core.as_ref().unwrap().len())
+            .any(|res| matches!(res, CexResult::Canceled))
+        {
+            return CexResult::Canceled;
+        }
+
+        // Check whether any query has returned 'unknown'
+        if cex_results
+            .iter()
+            .any(|res| matches!(res, CexResult::Unknown(_)))
+        {
+            log::debug!("Found unknown.");
+            return CexResult::Unknown(
+                cex_results
+                    .into_iter()
+                    .filter_map(|res| match res {
+                        CexResult::Unknown(reason) => Some(reason),
+                        _ => None,
+                    })
+                    .join("\n"),
+            );
+        }
+
+        // Otherwise, all results must be UNSAT-cores
+        let separate_cores = cex_results
+            .into_iter()
+            .map(|res| match res {
+                CexResult::UnsatCore(core) => core,
+                _ => unreachable!(),
+            })
             .collect_vec();
+        let core_sizes = separate_cores.iter().map(|core| core.len()).collect_vec();
+        let unsat_core: HashSet<usize> = separate_cores.into_iter().flatten().collect();
         log::debug!(
             "Found UNSAT with {} formulas in core (by transition: {:?})",
             unsat_core.len(),
@@ -417,7 +448,7 @@ impl FOModule {
         while conf_idx < confs.len() {
             match try_conf(confs[conf_idx], &mut core) {
                 CexResult::Cex(model) => {
-                    if !core.add_counter_model(model[0].clone(), None) {
+                    if !core.add_counter_model(model[0].clone()) {
                         return CexResult::Cex(model);
                     }
                 }
