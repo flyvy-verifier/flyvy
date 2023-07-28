@@ -74,4 +74,14 @@ impl SolverConf {
         backend.seed(seed);
         SolverConf { backend, tee }
     }
+
+    /// Get the solver type.
+    pub fn get_solver_type(&self) -> SolverType {
+        self.backend.get_solver_type()
+    }
+
+    /// Get the solver timeout.
+    pub fn get_timeout_ms(&self) -> Option<usize> {
+        self.backend.get_timeout_ms()
+    }
 }

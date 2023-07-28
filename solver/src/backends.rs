@@ -69,6 +69,16 @@ impl GenericBackend {
         self.opts.seed = seed;
         return self;
     }
+
+    /// Get the solver type.
+    pub fn get_solver_type(&self) -> SolverType {
+        self.solver_type
+    }
+
+    /// Get the solver timeout.
+    pub fn get_timeout_ms(&self) -> Option<usize> {
+        self.opts.timeout_ms
+    }
 }
 
 fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {

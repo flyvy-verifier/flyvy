@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use crate::quant::QuantifierConfig;
@@ -276,6 +277,15 @@ impl FOModule {
     ) -> CexResult {
         let transitions = self.disj_trans();
         let pids = solver_pids.unwrap_or_default();
+        let start_time = Instant::now();
+
+        let display = |conf: &SolverConf| -> String {
+            format!(
+                "{:?}(timeout={})",
+                conf.get_solver_type(),
+                conf.get_timeout_ms().unwrap_or(0) as f32 / 1000_f32
+            )
+        };
 
         let try_conf = |conf: &SolverConf, core: &mut Core, transition: &[&Term]| {
             let mut solver = conf.solver(&self.signature, 2);
@@ -348,11 +358,21 @@ impl FOModule {
                         CexResult::Cex(models) => {
                             if !core.add_counter_model(models[0].clone()) {
                                 pids.cancel();
-                                log::debug!("Found SAT with {} formulas in prestate.", core.len());
+                                log::debug!(
+                                    "{:>8}ms. Found SAT with {} formulas in prestate using {}",
+                                    start_time.elapsed().as_millis(),
+                                    core.len(),
+                                    display(confs[conf_idx])
+                                );
                                 return CexResult::Cex(models);
                             }
                         }
                         CexResult::Unknown(reason) => {
+                            log::debug!(
+                                "{:>8}ms. {} returned unknown: {reason}",
+                                start_time.elapsed().as_millis(),
+                                display(confs[conf_idx])
+                            );
                             unknown_reasons.push(reason);
                             conf_idx += 1
                         }
@@ -384,7 +404,7 @@ impl FOModule {
             .iter()
             .any(|res| matches!(res, CexResult::Unknown(_)))
         {
-            log::debug!("Found unknown.");
+            log::debug!("{:>8}ms. Found unknown", start_time.elapsed().as_millis());
             return CexResult::Unknown(
                 cex_results
                     .into_iter()
@@ -407,7 +427,8 @@ impl FOModule {
         let core_sizes = separate_cores.iter().map(|core| core.len()).collect_vec();
         let unsat_core: HashSet<usize> = separate_cores.into_iter().flatten().collect();
         log::debug!(
-            "Found UNSAT with {} formulas in core (by transition: {:?})",
+            "{:>8}ms. Found UNSAT with {} formulas in core (by transition: {:?})",
+            start_time.elapsed().as_millis(),
             unsat_core.len(),
             core_sizes
         );
