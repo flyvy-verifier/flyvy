@@ -17,6 +17,8 @@ use crate::{
 };
 use solver::conf::SolverConf;
 
+use rayon::prelude::*;
+
 /// An [`Atom`] is referred to via a certain index.
 pub type Atom = usize;
 /// A [`Literal`] represents an atom, either positive or negated.
@@ -59,10 +61,10 @@ pub struct Atoms {
 impl Atoms {
     pub fn new(infer_cfg: &InferenceConfig, confs: &[&SolverConf], fo: &FOModule) -> Self {
         let univ_prefix = infer_cfg.cfg.as_universal();
-        let to_term = infer_cfg
+        let to_term: Vec<Term> = infer_cfg
             .cfg
             .atoms(infer_cfg.nesting, infer_cfg.include_eq)
-            .into_iter()
+            .into_par_iter()
             .filter(|t| {
                 let univ_t = univ_prefix.quantify(t.clone());
                 let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
@@ -70,7 +72,7 @@ impl Atoms {
                 fo.implication_cex(confs, &[], &univ_t).is_cex()
                     && fo.implication_cex(confs, &[], &univ_not_t).is_cex()
             })
-            .collect_vec();
+            .collect();
         let to_index = to_term
             .iter()
             .enumerate()

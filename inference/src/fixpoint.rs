@@ -139,6 +139,7 @@ where
         infer_cfg.gradual_smt,
         infer_cfg.minimal_smt,
     );
+    log::debug!("Computing atoms...");
     let atoms = Arc::new(Atoms::new(&infer_cfg, &confs, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let infer_cfg = Arc::new(infer_cfg);
@@ -157,6 +158,7 @@ where
             .sum()
     };
 
+    log::debug!("Computing predicate domains...");
     if infer_cfg.no_search {
         domains = VecDeque::new();
         active_domains = infer_cfg
