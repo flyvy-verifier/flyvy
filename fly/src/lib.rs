@@ -8,6 +8,7 @@
 #![allow(clippy::large_enum_variant)]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::useless_format)]
 #![deny(clippy::uninlined_format_args)]
 // documentation-related lints (only checked when running rustdoc)
 #![warn(missing_docs)]

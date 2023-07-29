@@ -3,14 +3,10 @@
 
 //! Model the semantics of flyvy functions under finite universes.
 
-use std::fmt::Write;
-use std::iter::zip;
-
+use crate::{ouritertools::OurItertools, syntax::*};
 use itertools::Itertools;
 use serde::Serialize;
-
-use crate::ouritertools::OurItertools;
-use crate::syntax::*;
+use std::borrow::Borrow;
 
 use BinOp::*;
 use NOp::*;
@@ -45,7 +41,7 @@ impl Interpretation {
     pub fn get(&self, args: &[Element]) -> Element {
         assert_eq!(self.shape.len() - 1, args.len());
         let mut index: usize = 0;
-        for (a, s) in zip(args, &self.shape) {
+        for (a, s) in args.iter().zip(&self.shape) {
             assert!(a < s);
             index = index * s + a;
         }
@@ -126,54 +122,6 @@ impl Model {
         };
         model.wf();
         model
-    }
-
-    fn fmt_element(sort: &Sort, element: Element) -> String {
-        match sort {
-            Sort::Bool => {
-                if element == 0 {
-                    "false".to_string()
-                } else {
-                    "true".to_string()
-                }
-            }
-            Sort::Uninterpreted(s) => format!("@{s}_{element}"),
-        }
-    }
-
-    fn fmt_rel(&self, decl: &RelationDecl, interp: &Interpretation) -> String {
-        let mut lines = vec![];
-        let arg_shape = &interp.shape[..interp.shape.len() - 1];
-        let args_list = arg_shape
-            .iter()
-            .map(|&card| (0..card).collect::<Vec<Element>>())
-            .multi_cartesian_product_fixed()
-            .collect::<Vec<_>>();
-        for args in args_list {
-            let name = &decl.name;
-            let args_s = zip(&decl.args, args.iter())
-                .map(|(typ, &idx)| Self::fmt_element(typ, idx))
-                .collect::<Vec<_>>();
-            let args_s = if args_s.is_empty() {
-                "".to_string()
-            } else {
-                format!("({})", args_s.join(","))
-            };
-            let ret_s = Self::fmt_element(&decl.sort, interp.get(&args));
-            lines.push(format!("{name}{args_s} = {ret_s}"));
-        }
-        lines.join("\n")
-    }
-
-    /// Print a model in a format suitable for display to the user.
-    // ODED: I think we should also print the universe here
-    pub fn fmt(&self) -> String {
-        let mut w = String::new();
-        for (rel, interp) in zip(&self.signature.relations, &self.interp) {
-            let rel_s = self.fmt_rel(rel, interp);
-            _ = writeln!(&mut w, "{rel_s}");
-        }
-        w
     }
 
     /// Evaluate a term to a model element.
@@ -279,7 +227,7 @@ impl Model {
                     .map(|elements| {
                         // extend assignment with all variables bound to these `elements`
                         let mut assignment = assignment.clone();
-                        for (name, element) in zip(&names, elements) {
+                        for (name, element) in names.iter().zip(elements) {
                             assignment.insert(name.to_string(), element);
                         }
                         self.eval_assign(body, assignment) == 1
@@ -405,6 +353,67 @@ impl Model {
             body: Box::new(Term::NAryOp(NOp::And, terms.pop().unwrap())),
         }
     }
+}
+
+impl std::fmt::Display for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn fmt_rel(decl: &RelationDecl, interp: &Interpretation) -> String {
+            fn fmt_element(sort: &Sort, element: Element) -> String {
+                match sort {
+                    Sort::Bool => match element {
+                        0 => "false".to_string(),
+                        1 => "true".to_string(),
+                        _ => unreachable!(),
+                    },
+                    Sort::Uninterpreted(s) => format!("@{s}_{element}"),
+                }
+            }
+
+            let mut lines = vec![];
+            let args_list = interp.shape[..interp.shape.len() - 1]
+                .iter()
+                .map(|&card| (0..card).collect::<Vec<Element>>())
+                .multi_cartesian_product_fixed()
+                .collect::<Vec<_>>();
+            for args in args_list {
+                let name = &decl.name;
+                let args_s = decl
+                    .args
+                    .iter()
+                    .zip(&args)
+                    .map(|(typ, &idx)| fmt_element(typ, idx))
+                    .collect::<Vec<_>>();
+                let args_s = if args_s.is_empty() {
+                    format!("")
+                } else {
+                    format!("({})", args_s.join(","))
+                };
+                let ret_s = fmt_element(&decl.sort, interp.get(&args));
+                lines.push(format!("{name}{args_s} = {ret_s}"));
+            }
+            lines.join("\n")
+        }
+
+        assert_eq!(self.signature.relations.len(), self.interp.len());
+        for (rel, interp) in self.signature.relations.iter().zip(&self.interp) {
+            writeln!(f, "{}", fmt_rel(rel, interp))?;
+        }
+        Ok(())
+    }
+}
+
+/// Print a list of models in a format suitable for display to the user.
+// ODED: I think we should also print the universe here
+pub fn models_to_string<I>(models: I) -> String
+where
+    I: IntoIterator,
+    I::Item: Borrow<Model>,
+{
+    models
+        .into_iter()
+        .enumerate()
+        .map(|(i, model)| format!("state {i}:\n{}", model.borrow()))
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -585,7 +594,7 @@ mod tests {
 
         model.wf();
 
-        println!("model is:\n{}\n", model.fmt());
+        println!("model is:\n{model}\n");
 
         let f = Literal(false);
         let t = Literal(true);
