@@ -80,7 +80,7 @@ pub enum SortError {
     Uncallable(String),
 
     /// Sort inference finished without gaining enough information to figure out
-    /// the sort of the given variable.
+    /// the sort of the given variable or term.
     #[error("could not solve for the sort of {0}")]
     UnsolvedSort(String),
 }
@@ -90,26 +90,6 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     let mut table = UnificationTable::new();
     let mut context = Context::new(&module.signature, &mut table).map_err(|e| (e, None))?;
 
-    // The sort inference algorithm proceeds in two phases.
-    //
-    // First, we walk the entire AST and do normal "type checking" checks.
-    // During this pass, if we encounter a bound variable without a sort
-    // annotation, we allocate a unification variable for it. The unification
-    // variable is recorded in the unification table (self.vars) and the bound
-    // variable in the AST is labeled with a string that uniquely identifies its
-    // corresponding variable. Other checks elsewhere in the AST (possibly above
-    // the node!) should resolve the unification variable to a concrete sort.
-    // This concrete sort gets stored in the unification table, but the AST
-    // still has the unification variable recorded as the sort of the variable.
-    //
-    // Second, we walk the AST again, looking for bound variables with
-    // unification variables. We assert that the variable was successfully
-    // resolved to a concrete sort (if not, report an error to the user that a
-    // type annotation is required), and then replace the unification variable
-    // with the concrete sort.
-
-    // Here begins the first pass.
-
     // using immediately invoked closure to tag errors with None spans
     (|| {
         for def in &mut module.defs {
@@ -117,8 +97,8 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
                 let mut context = context.new_inner_scope();
                 context.add_binders_for_inference(&mut def.binders)?;
                 context.check_sort_exists(&def.ret_sort)?;
-                let ret = context.collect_sort_constraints_term(&mut def.body)?;
-                context.unify_var_value(&def.ret_sort, &ret)?;
+                let ret = context.sort_check_term(&mut def.body)?;
+                context.unify_var_value(&def.ret_sort, &MaybeUnknownSort::Known(ret))?;
             }
 
             context.add_name_internal(
@@ -135,8 +115,8 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     // helper that wraps any errors
     let term_is_bool = |context: &mut Context, term: &mut Term, span: Option<Span>| {
         context
-            .collect_sort_constraints_term(term)
-            .and_then(|sort| context.unify_var_value(&Sort::Bool, &sort))
+            .sort_check_term(term)
+            .and_then(|sort| context.unify_var_value(&Sort::Bool, &MaybeUnknownSort::Known(sort)))
             .map_err(|e| (e, span))
     };
 
@@ -151,38 +131,6 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
             }
         }
     }
-
-    // Done with first pass.
-
-    // At this point, bound variables without sort annotations have "var {id}"
-    // as their sort annotation. Second pass fixes this.
-
-    // Here begins the second pass.
-
-    // helper that wraps any errors
-    let fix_sorts = |context: &mut Context, term: &mut Term, span: Option<Span>| {
-        context
-            .annotate_solved_sorts_term(term)
-            .map_err(|e| (e, span))
-    };
-
-    for def in &mut module.defs {
-        fix_sorts(&mut context, &mut def.body, None)?
-    }
-
-    for statement in &mut module.statements {
-        match statement {
-            ThmStmt::Assume(term) => fix_sorts(&mut context, term, None)?,
-            ThmStmt::Assert(proof) => {
-                for invariant in &mut proof.invariants {
-                    fix_sorts(&mut context, &mut invariant.x, invariant.span)?
-                }
-                fix_sorts(&mut context, &mut proof.assert.x, proof.assert.span)?
-            }
-        }
-    }
-
-    // Done with second pass.
 
     // Double check that we didn't miss any bound variables in the first pass.
     assert!(has_all_sort_annotations_module(module));
@@ -506,7 +454,9 @@ impl Context<'_> {
         }
     }
 
-    // walk the term AST, fixing any binders that still have "var {id}" sorts
+    // "Phase 2".
+    //
+    // Walk the term AST, replacing any binders that still have "var {id}" sorts with their solution
     fn annotate_solved_sorts_term(&mut self, term: &mut Term) -> Result<(), SortError> {
         match term {
             Term::Literal(_) | Term::Id(_) => Ok(()),
@@ -578,7 +528,10 @@ impl Context<'_> {
         }
     }
 
-    // recursively finds the sort of a term
+    // "Phase 1"
+    //
+    // Recursively find the sort of a term while allocating unification variables for unknown sorts
+    // and collecting unification constraints.
     fn collect_sort_constraints_term(
         &mut self,
         term: &mut Term,
@@ -659,5 +612,59 @@ impl Context<'_> {
                 Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
         }
+    }
+
+    /// Sort check the term in the current context, inferring any unannotated bound variable sorts,
+    /// and return the sort of the term.
+    pub fn sort_check_term(&mut self, term: &mut Term) -> Result<Sort, SortError> {
+        // The sort inference algorithm proceeds in two phases.
+        //
+        // First, we walk the entire AST and do normal "type checking" checks.
+        // During this pass, if we encounter a bound variable without a sort
+        // annotation, we allocate a unification variable for it. The unification
+        // variable is recorded in the unification table (self.bound_names) and the bound
+        // variable in the AST is labeled with a string that uniquely identifies its
+        // corresponding variable. Other checks elsewhere in the AST (possibly above
+        // the node!) should resolve the unification variable to a concrete sort.
+        // This concrete sort gets stored in the unification table, but the AST
+        // still has the unification variable recorded as the sort of the variable.
+        //
+        // Second, we walk the AST again, looking for bound variables with
+        // unification variables. We assert that the variable was successfully
+        // resolved to a concrete sort (if not, report an error to the user that a
+        // type annotation is required), and then replace the unification variable
+        // with the concrete sort.
+
+        // Phase 1
+        let sort = self.collect_sort_constraints_term(term)?;
+
+        // Next check if we have enough information to fully determine the sort of term.
+        // If not, error. If so, proceed to phase 2.
+        match self.get_maybe_unknown_sort(&sort) {
+            Some(sort) => {
+                // At this point, bound variables without sort annotations have "var {id}"
+                // as their sort annotation. Second pass fixes this.
+
+                // Phase 2
+                self.annotate_solved_sorts_term(term)?;
+                assert!(has_all_sort_annotations_term(term));
+                Ok(sort)
+            }
+            None => Err(SortError::UnsolvedSort(
+                "the term given to get_term_sort".to_owned(),
+            )),
+        }
+    }
+
+    fn get_maybe_unknown_sort(&mut self, abstract_sort: &MaybeUnknownSort) -> Option<Sort> {
+        match abstract_sort {
+            MaybeUnknownSort::Known(sort) => Some(sort.clone()),
+            MaybeUnknownSort::Unknown(sort_var) => self.get_sort_var(*sort_var),
+        }
+    }
+
+    /// Look up the current value of a unification variable
+    fn get_sort_var(&mut self, sort_var: SortVar) -> Option<Sort> {
+        self.unification_table.probe_value(sort_var).0
     }
 }
