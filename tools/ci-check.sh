@@ -70,22 +70,25 @@ end_group() {
 
 if [ "$fast" != true ]; then
   start_group "cargo build"
+  params=(--tests)
   if [ "$ci" = true ]; then
-    cargo build --tests --verbose
+    cargo build --verbose "${params[@]}"
   else
-    cargo build --tests --quiet
+    cargo build --quiet "${params[@]}"
   fi
   end_group
 fi
 
 if [ "$fast" != true ]; then
   start_group "cargo test"
+  params1=(--lib --bins --tests --examples -- --include-ignored)
+  params2=(--benches --)
   if [ "$ci" = true ]; then
-    cargo test --lib --bins --tests --examples --verbose -- --nocapture --include-ignored
-    cargo test --benches --verbose -- --nocapture
+    cargo test --verbose "${params1[@]}" --nocapture
+    cargo test --verbose "${params2[@]}" --nocapture
   else
-    cargo test --lib --bins --tests --examples --quiet -- --include-ignored
-    cargo test --benches --quiet
+    cargo test --quiet "${params1[@]}"
+    cargo test --quiet "${params2[@]}"
   fi
   end_group
 fi
@@ -111,18 +114,20 @@ else
 fi
 
 start_group "cargo clippy"
+params=(--tests -- --no-deps -D clippy::all)
 if [ "$ci" = true ]; then
-  cargo clippy --tests -- --no-deps -D clippy::all
+  cargo clippy "${params[@]}"
 else
-  cargo clippy --quiet --tests -- --no-deps -D clippy::all
+  cargo clippy --quiet "${params[@]}"
 fi
 end_group
 
 start_group "cargo doc"
+params=(--document-private-items --no-deps)
 if [ "$ci" = true ]; then
-  cargo doc --document-private-items --no-deps
+  cargo doc "${params[@]}"
 else
-  cargo doc --quiet --document-private-items --no-deps
+  cargo doc --quiet "${params[@]}"
 fi
 end_group
 
