@@ -427,14 +427,17 @@ impl Context<'_> {
         &mut self,
         name: String,
         sort: RelationOrIndividual,
-        shadowing_constraint: ShadowingConstraint,
+        shadow: ShadowingConstraint,
     ) -> Result<(), SortError> {
-        match self.bound_names.insert(name.clone(), sort) {
-            Some(_) if shadowing_constraint == ShadowingConstraint::Disallow => {
-                Err(SortError::RedeclaredName(name))
+        match shadow {
+            ShadowingConstraint::Disallow if self.bound_names.contains_key(&name) => {
+                return Err(SortError::RedeclaredName(name))
             }
-            _ => Ok(()),
+            _ => (),
         }
+
+        self.bound_names.insert(name, sort);
+        Ok(())
     }
 
     // doesn't allow `binders` to shadow each other, but does allow them to
