@@ -564,6 +564,11 @@ impl Signature {
         }
     }
 
+    /// Check if `name` is the name of an uninterpreted sort in the signature
+    pub fn contains_sort(&self, name: &str) -> bool {
+        self.sorts.iter().any(|s| s == name)
+    }
+
     /// Get the declaration for a given name.
     ///
     /// Removes trailing primes from name and gives the underlying relation.

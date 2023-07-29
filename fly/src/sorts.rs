@@ -3,6 +3,8 @@
 
 //! Infer and check sorts.
 //!
+//! Throughout this file we use "sort checking" and "sort inference" interchangeably.
+//!
 //! The main entry point is [sort_check_module].
 //!
 //! The parser represents missing sort annotations as `Sort::Uninterpreted("")`.
@@ -10,6 +12,20 @@
 //! with proper sort annotations. Sort inference is combined with sort checking,
 //! so another main purpose of this module is to make sure the given fly program
 //! is well sorted.
+//!
+//! Note that sort inference is a *mutable* operation on the AST! Sort inference will
+//! write its results back into the AST so that future passes can easily find
+//! the type of a bound variable.
+//!
+//! Sort inference allows the user to leave off the sort annotation of most
+//! quantified variables. Internally, it uses unification to discover the
+//! missing sorts. The sorts on arguments to definitions are required to be
+//! given explicitly. (This last requirement is enforced by the parser.)
+//!
+//! If sort checking detects an error (see [SortError]), it will attempt to
+//! provide a [Span] to locate this error in the source code. The AST has
+//! limited span information, so some errors will be returned without location
+//! information (the span will be `None` in that case).
 
 use crate::syntax::*;
 use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
@@ -69,42 +85,10 @@ pub enum SortError {
     UnsolvedSort(String),
 }
 
-/// Checks that the given fly module is well sorted, inferring sort annotations
-/// on bound variables as needed.
-///
-/// This is the main entry point to the sort checker/inferencer.
-///
-/// Note that this is a *mutable* operation on the AST! Sort inference will
-/// write its results back into the AST so that future passes can easily find
-/// the type of a bound variable.
-///
-/// Sort inference allows the user to leave off the sort annotation of most
-/// quantified variables. Internally, it uses unification to discover the
-/// missing sorts. The sorts on arguments to definitions are required to be
-/// given explicitly. (This last requirement is enforced by the parser.)
-///
-/// The parser represents missing sort annotations in the input AST as
-/// `Sort::Uninterpreted("")`. `sort_check_and_infer` guarantees that, after it returns, no
-/// sort annotation is `Sort::Uninterpreted("")` anywhere in the given fly module. In other
-/// words, it guarantees that [has_all_sort_annotations_module] returns true.
-///
-/// If sort checking detects an error (see [SortError]), it will attempt to
-/// provide a [Span] to locate this error in the source code. The AST has
-/// limited span information, so some errors will be returned without location
-/// information (the span will be `None` in that case).
+/// Sort check a module, including inferring sorts for bound variables.
 pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
-    let mut sorts = HashSet::new();
-    for sort in &module.signature.sorts {
-        if !sorts.insert(sort.clone()) {
-            return Err((SortError::RedeclaredSort(sort.clone()), None));
-        }
-    }
-
-    let mut context = Context {
-        sorts: &sorts,
-        bound_names: im::HashMap::new(),
-        unification_table: &mut UnificationTable::new(),
-    };
+    let mut table = UnificationTable::new();
+    let mut context = Context::new(&module.signature, &mut table).map_err(|e| (e, None))?;
 
     // The sort inference algorithm proceeds in two phases.
     //
@@ -128,18 +112,6 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
 
     // using immediately invoked closure to tag errors with None spans
     (|| {
-        for rel in &module.signature.relations {
-            for arg in &rel.args {
-                context.check_sort_exists(arg)?;
-            }
-            context.check_sort_exists(&rel.sort)?;
-            context.add_name_internal(
-                rel.name.clone(),
-                RelationOrIndividual::relation(rel),
-                ShadowingConstraint::Disallow,
-            )?;
-        }
-
         for def in &mut module.defs {
             {
                 let mut context = context.new_inner_scope();
@@ -363,16 +335,56 @@ enum ShadowingConstraint {
 
 #[derive(Debug)]
 struct Context<'a> {
-    sorts: &'a HashSet<String>,
+    signature: &'a Signature,
     bound_names: im::HashMap<String, RelationOrIndividual>,
     unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
 }
 
 impl Context<'_> {
+    /// Create a new context from a signature. Initially the names bound by the context are exactly
+    /// the relations in the signature.
+    ///
+    /// This function also checks that the signature is well formed in the sense that all the sorts
+    fn new<'a>(
+        signature: &'a Signature,
+        unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
+    ) -> Result<Context<'a>, SortError> {
+        let mut sorts = HashSet::new();
+        for sort in &signature.sorts {
+            // This assert is guaranteed to pass by the parser, but we double check it here for the
+            // programmatic API. It is important that there are no sort names of the form "vec 17",
+            // because we sneakily use those strings to represent unification variables during
+            // inference.
+            assert!(!sort.contains(' '));
+
+            if !sorts.insert(sort.clone()) {
+                return Err(SortError::RedeclaredSort(sort.clone()));
+            }
+        }
+        let mut context = Context {
+            signature,
+            bound_names: im::HashMap::new(),
+            unification_table,
+        };
+        for rel in &signature.relations {
+            for arg in &rel.args {
+                context.check_sort_exists(arg)?;
+            }
+            context.check_sort_exists(&rel.sort)?;
+            context.add_name_internal(
+                rel.name.clone(),
+                RelationOrIndividual::relation(rel),
+                ShadowingConstraint::Disallow,
+            )?;
+        }
+
+        Ok(context)
+    }
+
     // we don't want to clone the references, just the name map
     fn new_inner_scope(&mut self) -> Context {
         Context {
-            sorts: self.sorts,
+            signature: self.signature,
             bound_names: self.bound_names.clone(),
             unification_table: self.unification_table,
         }
@@ -390,7 +402,7 @@ impl Context<'_> {
             Sort::Bool => Ok(()),
             Sort::Uninterpreted(a) if a.is_empty() && empty_allowed => Ok(()),
             Sort::Uninterpreted(a) => {
-                if !self.sorts.contains(a) {
+                if !self.signature.contains_sort(a) {
                     Err(SortError::UnknownSort(a.clone()))
                 } else {
                     Ok(())
