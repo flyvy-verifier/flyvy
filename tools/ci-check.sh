@@ -82,7 +82,7 @@ fi
 if [ "$fast" != true ]; then
   start_group "cargo test"
   params1=(--lib --bins --tests --examples -- --include-ignored)
-  params2=(--benches)
+  params2=(--benches --)
   if [ "$ci" = true ]; then
     cargo test --verbose "${params1[@]}" --nocapture
     cargo test --verbose "${params2[@]}" --nocapture
