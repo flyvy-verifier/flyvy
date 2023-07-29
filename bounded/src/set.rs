@@ -66,7 +66,7 @@ pub fn check(
                                     .chain([2])
                                     .collect();
                                 Interpretation::new(&shape, |elements| {
-                                    state.0[indices[&(r.name.as_str(), elements.to_vec())]] as usize
+                                    state.0[indices[&(r.name.as_str(), elements.to_vec())]] as Element
                                 })
                             })
                             .collect(),
@@ -125,7 +125,7 @@ impl PartialEq for BoundedState {
 
 /// A map from (relation name, arguments) pairs to their index in the [BoundedState] bit vector.
 #[derive(Debug, PartialEq)]
-struct Indices<'a>(HashMap<(&'a str, Vec<usize>), usize>);
+struct Indices<'a>(HashMap<(&'a str, Vec<Element>), usize>);
 
 impl Indices<'_> {
     /// Compute an index for the given signature and universe bounds
@@ -138,7 +138,7 @@ impl Indices<'_> {
                     .args
                     .iter()
                     .map(|sort| cardinality(universe, sort))
-                    .map(|card| (0..card).collect::<Vec<usize>>())
+                    .map(|card| (0..card).collect::<Vec<Element>>())
                     .multi_cartesian_product_fixed()
                     .map(|element| (relation.name.as_str(), element))
                     .collect::<Vec<_>>()
@@ -154,9 +154,9 @@ impl Indices<'_> {
     }
 }
 
-impl<'a> std::ops::Index<&(&'a str, Vec<usize>)> for Indices<'a> {
+impl<'a> std::ops::Index<&(&'a str, Vec<Element>)> for Indices<'a> {
     type Output = usize;
-    fn index(&self, key: &(&'a str, Vec<usize>)) -> &usize {
+    fn index(&self, key: &(&'a str, Vec<Element>)) -> &usize {
         &self.0[key]
     }
 }
@@ -773,17 +773,17 @@ pub enum Ast {
 
     // guards
     /// An inclusion test
-    Includes(String, Vec<usize>), // r(x)
+    Includes(String, Vec<Element>), // r(x)
     /// An exclusion test
-    Excludes(String, Vec<usize>), // !r(x)
+    Excludes(String, Vec<Element>), // !r(x)
 
     // updates
     /// An insertion
-    Insert(String, Vec<usize>), // r'(x)
+    Insert(String, Vec<Element>), // r'(x)
     /// A removal
-    Remove(String, Vec<usize>), // !r'(x)
+    Remove(String, Vec<Element>), // !r'(x)
     /// A no-op (used for verifying that the module constrains all elements)
-    NoOp(String, Vec<usize>), // r'(x) = r(x)
+    NoOp(String, Vec<Element>), // r'(x) = r(x)
                               // r'(x) != r(x) could exist but isn't supported
 }
 
@@ -991,7 +991,7 @@ fn iff(x: Ast, y: Ast) -> Result<Ast, TranslationError> {
 fn term_to_ast(
     term: &Term,
     universe: &UniverseBounds,
-    assignments: &HashMap<String, usize>,
+    assignments: &HashMap<String, Element>,
 ) -> Result<Ast, TranslationError> {
     let ast = |term| term_to_ast(term, universe, assignments);
     let element = |term| term_to_element(term, universe, assignments);
@@ -1044,7 +1044,7 @@ fn term_to_ast(
             // evaluate on all combinations of values for quantified sorts
             let set = shape
                 .iter()
-                .map(|&card| (0..card).collect::<Vec<usize>>())
+                .map(|&card| (0..card).collect::<Vec<Element>>())
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     // extend context with all variables bound to these `elements`
@@ -1071,12 +1071,12 @@ fn term_to_ast(
 fn term_to_element(
     term: &Term,
     universe: &UniverseBounds,
-    assignments: &HashMap<String, usize>,
-) -> Result<usize, TranslationError> {
+    assignments: &HashMap<String, Element>,
+) -> Result<Element, TranslationError> {
     let ast = |term| term_to_ast(term, universe, assignments);
     let element = |term| term_to_element(term, universe, assignments);
 
-    let element: usize = match term {
+    let element: Element = match term {
         Term::Literal(_)
         | Term::UnaryOp(UOp::Not, ..)
         | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
@@ -1140,27 +1140,27 @@ fn distribute_conjunction(term: Ast) -> Ast {
 mod tests {
     use super::*;
 
-    fn includes(set: &str, element: Vec<usize>, indices: &Indices) -> Guard {
+    fn includes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: true,
         }
     }
-    fn excludes(set: &str, element: Vec<usize>, indices: &Indices) -> Guard {
+    fn excludes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: false,
         }
     }
-    fn insert(set: &str, element: Vec<usize>, indices: &Indices) -> Update {
+    fn insert(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: true,
         }
     }
-    fn remove(set: &str, element: Vec<usize>, indices: &Indices) -> Update {
+    fn remove(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: false,
         }
     }
