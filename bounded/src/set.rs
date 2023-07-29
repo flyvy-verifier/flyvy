@@ -66,7 +66,8 @@ pub fn check(
                                     .chain([2])
                                     .collect();
                                 Interpretation::new(&shape, |elements| {
-                                    state.0[indices[&(r.name.as_str(), elements.to_vec())]] as Element
+                                    state.0[indices[&(r.name.as_str(), elements.to_vec())]]
+                                        as Element
                                 })
                             })
                             .collect(),
@@ -784,7 +785,7 @@ pub enum Ast {
     Remove(String, Vec<Element>), // !r'(x)
     /// A no-op (used for verifying that the module constrains all elements)
     NoOp(String, Vec<Element>), // r'(x) = r(x)
-                              // r'(x) != r(x) could exist but isn't supported
+                                // r'(x) != r(x) could exist but isn't supported
 }
 
 impl Ast {
