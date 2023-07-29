@@ -6,6 +6,7 @@
 use crate::{ouritertools::OurItertools, syntax::*};
 use itertools::Itertools;
 use serde::Serialize;
+use std::borrow::Borrow;
 
 use BinOp::*;
 use NOp::*;
@@ -383,7 +384,7 @@ impl std::fmt::Display for Model {
                     .map(|(typ, &idx)| fmt_element(typ, idx))
                     .collect::<Vec<_>>();
                 let args_s = if args_s.is_empty() {
-                    "".to_string()
+                    format!("")
                 } else {
                     format!("({})", args_s.join(","))
                 };
@@ -401,7 +402,6 @@ impl std::fmt::Display for Model {
     }
 }
 
-use std::borrow::Borrow;
 /// Print a list of models in a format suitable for display to the user.
 // ODED: I think we should also print the universe here
 pub fn models_to_string<I>(models: I) -> String
