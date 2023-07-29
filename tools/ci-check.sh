@@ -27,16 +27,22 @@ error() {
 }
 
 usage() {
-  echo "$0 [--ci]"
-  echo "--ci adds verbosity and some commands for GitHub actions"
+  echo "$0 [--ci] [--fast]"
+  echo "  --ci    add verbosity and some commands for GitHub actions"
+  echo "  --fast  run fast checks (skips building and testig)"
 }
 
-ci=false
+ci=""
+fast=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
   --ci)
     shift
     ci=true
+    ;;
+  --fast)
+    shift
+    fast=true
     ;;
   -h | -help | --help)
     usage
@@ -62,23 +68,27 @@ end_group() {
   fi
 }
 
-start_group "cargo build"
-if [ "$ci" = true ]; then
-  cargo build --tests --verbose
-else
-  cargo build --tests --quiet
+if [ "$fast" != true ]; then
+  start_group "cargo build"
+  if [ "$ci" = true ]; then
+    cargo build --tests --verbose
+  else
+    cargo build --tests --quiet
+  fi
+  end_group
 fi
-end_group
 
-start_group "cargo test"
-if [ "$ci" = true ]; then
-  cargo test --lib --bins --tests --examples --verbose -- --nocapture --include-ignored
-  cargo test --benches --verbose -- --nocapture
-else
-  cargo test --lib --bins --tests --examples --quiet -- --include-ignored
-  cargo test --benches --quiet
+if [ "$fast" != true ]; then
+  start_group "cargo test"
+  if [ "$ci" = true ]; then
+    cargo test --lib --bins --tests --examples --verbose -- --nocapture --include-ignored
+    cargo test --benches --verbose -- --nocapture
+  else
+    cargo test --lib --bins --tests --examples --quiet -- --include-ignored
+    cargo test --benches --quiet
+  fi
+  end_group
 fi
-end_group
 
 info "cargo fmt --check"
 if [ "$ci" = true ]; then
