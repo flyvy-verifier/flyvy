@@ -34,7 +34,7 @@ pub enum QueryError {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AssertionFailure {
     /// The location of the error
-    pub loc: Span,
+    pub loc: Option<Span>,
     /// The reason for the error
     pub reason: FailureType,
     /// The symptom of the error
@@ -49,9 +49,8 @@ impl AssertionFailure {
             FailureType::NotInductive => "invariant is not inductive",
             FailureType::Unsupported => "unsupported assertion",
         };
-        Diagnostic::error()
+        let out = Diagnostic::error()
             .with_message(msg)
-            .with_labels(vec![Label::primary(file_id, self.loc.start..self.loc.end)])
             .with_notes(vec![match &self.error {
                 QueryError::Sat(models) => {
                     let mut message = "counter example:".to_string();
@@ -62,7 +61,12 @@ impl AssertionFailure {
                     message
                 }
                 QueryError::Unknown(err) => format!("smt solver returned unknown: {err}"),
-            }])
+            }]);
+        if let Some(loc) = self.loc {
+            out.with_labels(vec![Label::primary(file_id, loc.start..loc.end)])
+        } else {
+            out
+        }
     }
 }
 

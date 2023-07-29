@@ -44,7 +44,7 @@ impl Houdini {
     fn new(conf: SolverConf, sig: &Signature, assert: InvariantAssertion) -> Self {
         let mut invs = vec![assert.inv.x.clone()];
         // TODO: support customization of initial candidate invariants
-        invs.extend(assert.proof_invs.iter().map(|inv| inv.as_term().clone()));
+        invs.extend(assert.proof_invs.iter().map(|inv| inv.x.clone()));
         log::info!("Running Houdini, candidate invariants are:");
         for p in &invs {
             log::info!("    {p}")

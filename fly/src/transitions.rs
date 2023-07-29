@@ -23,52 +23,12 @@ pub struct DestructuredModule {
 /// Contains the parts of assertions in the module.
 /// Checking an Assert means checking safety & invariants.
 // This is different than the Proof in syntax.rs because safety has always been
-// unwrapped from an Always, and are allowed to omit spans of invariants
+// unwrapped from an Always
 pub struct Proof {
     /// The safety property to check
     pub safety: Spanned<Term>,
     /// The invariants that we want to verify prove the safety property
-    pub invariants: Vec<MaybeSpannedTerm>,
-}
-
-/// A term that may or may not be spanned
-#[derive(Clone, Debug)]
-pub enum MaybeSpannedTerm {
-    /// An unspanned term, generated froim code
-    Term(Term),
-    /// A spanned term, from a .fly file
-    Spanned(Spanned<Term>),
-}
-
-impl MaybeSpannedTerm {
-    /// Get the term itself
-    pub fn to_term(self) -> Term {
-        match self {
-            MaybeSpannedTerm::Term(term) => term,
-            MaybeSpannedTerm::Spanned(Spanned { x, .. }) => x,
-        }
-    }
-    /// Get a reference to the term itself
-    pub fn as_term(&self) -> &Term {
-        match self {
-            MaybeSpannedTerm::Term(term) => term,
-            MaybeSpannedTerm::Spanned(Spanned { x, .. }) => x,
-        }
-    }
-    /// Get a mutable reference to the term itself
-    pub fn as_term_mut(&mut self) -> &mut Term {
-        match self {
-            MaybeSpannedTerm::Term(term) => term,
-            MaybeSpannedTerm::Spanned(Spanned { x, .. }) => x,
-        }
-    }
-    /// Get the span if it exists
-    pub fn span(&self) -> Option<&Span> {
-        match self {
-            MaybeSpannedTerm::Term(..) => None,
-            MaybeSpannedTerm::Spanned(Spanned { span, .. }) => Some(span),
-        }
-    }
+    pub invariants: Vec<Spanned<Term>>,
 }
 
 /// An error during transition system extraction
@@ -136,7 +96,7 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
         for invariant in &assert.invariants {
             match &invariant.x {
                 term if FirstOrder::unrolling(term) == Some(0) => {
-                    invariants.push(MaybeSpannedTerm::Spanned(invariant.clone()))
+                    invariants.push(invariant.clone())
                 }
                 term => return Err(ExtractionError::AnyFuture(term.clone())),
             }
@@ -151,7 +111,7 @@ pub fn extract(module: &Module) -> Result<DestructuredModule, ExtractionError> {
     for proof in &mut proofs {
         proof.safety.x = next.normalize(&proof.safety.x);
         for invariant in &mut proof.invariants {
-            *invariant.as_term_mut() = next.normalize(invariant.as_term());
+            invariant.x = next.normalize(&invariant.x);
         }
     }
 

@@ -72,7 +72,7 @@ pub fn verify_destructured_module(
                     solver.save_tee();
                     if let Err(cex) = res {
                         Some(AssertionFailure {
-                            loc: span.unwrap_or(assert.inv.span),
+                            loc: span.or(assert.inv.span),
                             reason: FailureType::NotInductive,
                             error: cex,
                         })
