@@ -357,17 +357,23 @@ impl BoundedArgs {
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
+    /// Verify all assertions using user-provided invariants.
     Verify(VerifyArgs),
+    /// Verify assertions by inferring invariants with UPDR.
     UpdrVerify(VerifyArgs),
+    /// Infer invariants using other invariant inference algorithms.
     Infer(InferArgs),
+    /// Parse and re-print a fly file (for debugging)
     Print {
         /// File name for a .fly file
         file: String,
     },
+    /// Parse a fly file, inline definitions, and print (for debugging)
     Inline {
         /// File name for a .fly file
         file: String,
     },
+    /// Apply bounded model checking to each assertion using a set of states.
     SetCheck {
         #[command(flatten)]
         bounded: BoundedArgs,
@@ -375,7 +381,10 @@ enum Command {
         #[arg(long)]
         compress_traces: bool,
     },
+    /// Apply bounded model checking to each assertion using a SAT solver.
     SatCheck(BoundedArgs),
+    /// Apply bounded model checking to each assertion using binary decision
+    /// diagrams (BDDs).
     BddCheck {
         #[command(flatten)]
         bounded: BoundedArgs,
@@ -383,6 +392,7 @@ enum Command {
         #[arg(long)]
         reversed: bool,
     },
+    /// Apply bounded model checking to each assertion using an SMT solver.
     SmtCheck {
         #[command(flatten)]
         bounded: BoundedArgs, // universe bounds are unused
