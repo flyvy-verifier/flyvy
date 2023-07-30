@@ -66,9 +66,8 @@ pub fn check(
                                     .chain([2])
                                     .collect();
                                 Interpretation::new(&shape, |elements| {
-                                    state.0[indices
-                                        [&(r.name.as_str(), Elements::new(elements.to_vec()))]]
-                                        as usize
+                                    state.0[indices[&(r.name.as_str(), elements.to_vec())]]
+                                        as Element
                                 })
                             })
                             .collect(),
@@ -90,60 +89,8 @@ macro_rules! btreeset {
     }};
 }
 
-/// Compile-time upper bound on the arity of a relation
-const ELEMENT_LEN: usize = 15; // should be 1 less than a multiple of 8 for alignment reasons
-const _: () = assert!(ELEMENT_LEN <= u8::MAX as usize); // ELEMENT_LEN must fit in a u8
-
 /// Compile-time upper bound on the bounded universe size. The bounded
 const STATE_LEN: usize = 128; // should be a multiple of 64 for alignment reasons
-
-/// A tuple of universe elements, as would be passed as arguments to a relation.
-/// Uses a fixed size array to avoid allocating a Vec.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Elements {
-    len: u8,
-    data: [u8; ELEMENT_LEN],
-}
-impl Elements {
-    /// Creates a new Elements tuple from the given vector.
-    /// Each item in the given vector must fit in a u8, or this function will panic.
-    pub fn new(vec: Vec<usize>) -> Elements {
-        let len = vec.len();
-        if len > ELEMENT_LEN {
-            panic!("raise ELEMENT_LEN to be at least {len}");
-        }
-        let mut out = Elements {
-            len: len as u8,
-            data: [0; ELEMENT_LEN],
-        };
-        for (i, x) in vec.into_iter().enumerate() {
-            if let Ok(xu8) = x.try_into() {
-                out.data[i] = xu8;
-            } else {
-                panic!("vec[{i}] = {x} size was too large (must be less than 256)");
-            }
-        }
-        out
-    }
-}
-impl std::fmt::Debug for Elements {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "[")?;
-        if self.len > 0 {
-            write!(f, "{:?}", self.data[0])?;
-            for x in &self.data[1..self.len as usize] {
-                write!(f, ", {x:?}")?;
-            }
-        }
-        write!(f, "]")
-    }
-}
-#[allow(unused_macros)]
-macro_rules! element {
-    ($($v:expr),* $(,)?) => {{
-        Elements::new(vec![$($v,)*])
-    }};
-}
 
 /// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the
@@ -177,9 +124,9 @@ impl PartialEq for BoundedState {
     }
 }
 
-/// A map from (relation name, Elements) pairs to their index in the [BoundedState] bit vector.
+/// A map from (relation name, arguments) pairs to their index in the [BoundedState] bit vector.
 #[derive(Debug, PartialEq)]
-struct Indices<'a>(HashMap<(&'a str, Elements), usize>);
+struct Indices<'a>(HashMap<(&'a str, Vec<Element>), usize>);
 
 impl Indices<'_> {
     /// Compute an index for the given signature and universe bounds
@@ -192,9 +139,9 @@ impl Indices<'_> {
                     .args
                     .iter()
                     .map(|sort| cardinality(universe, sort))
-                    .map(|card| (0..card).collect::<Vec<usize>>())
+                    .map(|card| (0..card).collect::<Vec<Element>>())
                     .multi_cartesian_product_fixed()
-                    .map(|element| (relation.name.as_str(), Elements::new(element)))
+                    .map(|element| (relation.name.as_str(), element))
                     .collect::<Vec<_>>()
             })
             .enumerate()
@@ -208,9 +155,9 @@ impl Indices<'_> {
     }
 }
 
-impl<'a> std::ops::Index<&(&'a str, Elements)> for Indices<'a> {
+impl<'a> std::ops::Index<&(&'a str, Vec<Element>)> for Indices<'a> {
     type Output = usize;
-    fn index(&self, key: &(&'a str, Elements)) -> &usize {
+    fn index(&self, key: &(&'a str, Vec<Element>)) -> &usize {
         &self.0[key]
     }
 }
@@ -827,18 +774,18 @@ pub enum Ast {
 
     // guards
     /// An inclusion test
-    Includes(String, Elements), // r(x)
+    Includes(String, Vec<Element>), // r(x)
     /// An exclusion test
-    Excludes(String, Elements), // !r(x)
+    Excludes(String, Vec<Element>), // !r(x)
 
     // updates
     /// An insertion
-    Insert(String, Elements), // r'(x)
+    Insert(String, Vec<Element>), // r'(x)
     /// A removal
-    Remove(String, Elements), // !r'(x)
+    Remove(String, Vec<Element>), // !r'(x)
     /// A no-op (used for verifying that the module constrains all elements)
-    NoOp(String, Elements), // r'(x) = r(x)
-                            // r'(x) != r(x) could exist but isn't supported
+    NoOp(String, Vec<Element>), // r'(x) = r(x)
+                                // r'(x) != r(x) could exist but isn't supported
 }
 
 impl Ast {
@@ -913,12 +860,12 @@ fn and(terms: BTreeSet<Ast>) -> Ast {
     let mut terms = btreeset![];
     for term in &old {
         if let Ast::Insert(set, element) = term.clone() {
-            if old.contains(&Ast::Includes(set.clone(), element)) {
+            if old.contains(&Ast::Includes(set.clone(), element.clone())) {
                 terms.insert(Ast::NoOp(set, element));
                 continue;
             }
         } else if let Ast::Remove(set, element) = term.clone() {
-            if old.contains(&Ast::Excludes(set.clone(), element)) {
+            if old.contains(&Ast::Excludes(set.clone(), element.clone())) {
                 terms.insert(Ast::NoOp(set, element));
                 continue;
             }
@@ -1045,7 +992,7 @@ fn iff(x: Ast, y: Ast) -> Result<Ast, TranslationError> {
 fn term_to_ast(
     term: &Term,
     universe: &UniverseBounds,
-    assignments: &HashMap<String, usize>,
+    assignments: &HashMap<String, Element>,
 ) -> Result<Ast, TranslationError> {
     let ast = |term| term_to_ast(term, universe, assignments);
     let element = |term| term_to_element(term, universe, assignments);
@@ -1060,11 +1007,11 @@ fn term_to_ast(
         },
         Term::App(name, 0, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::Includes(name.clone(), Elements::new(args))
+            Ast::Includes(name.clone(), args)
         }
         Term::App(name, 1, args) => {
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Ast::Insert(name.clone(), Elements::new(args))
+            Ast::Insert(name.clone(), args)
         }
         Term::UnaryOp(UOp::Not, term) => not(ast(term)?)?,
         Term::BinOp(BinOp::Iff, a, b) => iff(ast(a)?, ast(b)?)?,
@@ -1098,7 +1045,7 @@ fn term_to_ast(
             // evaluate on all combinations of values for quantified sorts
             let set = shape
                 .iter()
-                .map(|&card| (0..card).collect::<Vec<usize>>())
+                .map(|&card| (0..card).collect::<Vec<Element>>())
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     // extend context with all variables bound to these `elements`
@@ -1125,12 +1072,12 @@ fn term_to_ast(
 fn term_to_element(
     term: &Term,
     universe: &UniverseBounds,
-    assignments: &HashMap<String, usize>,
-) -> Result<usize, TranslationError> {
+    assignments: &HashMap<String, Element>,
+) -> Result<Element, TranslationError> {
     let ast = |term| term_to_ast(term, universe, assignments);
     let element = |term| term_to_element(term, universe, assignments);
 
-    let element: usize = match term {
+    let element: Element = match term {
         Term::Literal(_)
         | Term::UnaryOp(UOp::Not, ..)
         | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
@@ -1194,27 +1141,27 @@ fn distribute_conjunction(term: Ast) -> Ast {
 mod tests {
     use super::*;
 
-    fn includes(set: &str, element: Elements, indices: &Indices) -> Guard {
+    fn includes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: true,
         }
     }
-    fn excludes(set: &str, element: Elements, indices: &Indices) -> Guard {
+    fn excludes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: false,
         }
     }
-    fn insert(set: &str, element: Elements, indices: &Indices) -> Update {
+    fn insert(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: true,
         }
     }
-    fn remove(set: &str, element: Elements, indices: &Indices) -> Update {
+    fn remove(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: indices[&(set, element)],
+            index: indices[&(set, elements)],
             value: false,
         }
     }
@@ -1360,8 +1307,8 @@ mod tests {
         let mut trs = vec![];
         // (forall N:node. ((lock_msg(N))') <-> lock_msg(N) | N = n)
         trs.extend(vec![
-            Transition::new(vec![], vec![insert("lock_msg", element![0], &indices)]),
-            Transition::new(vec![], vec![insert("lock_msg", element![1], &indices)]),
+            Transition::new(vec![], vec![insert("lock_msg", vec![0], &indices)]),
+            Transition::new(vec![], vec![insert("lock_msg", vec![1], &indices)]),
         ]);
         // (forall N:node. server_holds_lock & lock_msg(n) &
         //     !((server_holds_lock)') &
@@ -1370,24 +1317,24 @@ mod tests {
         trs.extend(vec![
             Transition::new(
                 vec![
-                    includes("lock_msg", element![1], &indices),
-                    includes("server_holds_lock", element![], &indices),
+                    includes("lock_msg", vec![1], &indices),
+                    includes("server_holds_lock", vec![], &indices),
                 ],
                 vec![
-                    insert("grant_msg", element![1], &indices),
-                    remove("lock_msg", element![1], &indices),
-                    remove("server_holds_lock", element![], &indices),
+                    insert("grant_msg", vec![1], &indices),
+                    remove("lock_msg", vec![1], &indices),
+                    remove("server_holds_lock", vec![], &indices),
                 ],
             ),
             Transition::new(
                 vec![
-                    includes("lock_msg", element![0], &indices),
-                    includes("server_holds_lock", element![], &indices),
+                    includes("lock_msg", vec![0], &indices),
+                    includes("server_holds_lock", vec![], &indices),
                 ],
                 vec![
-                    insert("grant_msg", element![0], &indices),
-                    remove("lock_msg", element![0], &indices),
-                    remove("server_holds_lock", element![], &indices),
+                    insert("grant_msg", vec![0], &indices),
+                    remove("lock_msg", vec![0], &indices),
+                    remove("server_holds_lock", vec![], &indices),
                 ],
             ),
         ]);
@@ -1396,17 +1343,17 @@ mod tests {
         //     (((holds_lock(N))') <-> holds_lock(N) | N = n)) &
         trs.extend(vec![
             Transition::new(
-                vec![includes("grant_msg", element![0], &indices)],
+                vec![includes("grant_msg", vec![0], &indices)],
                 vec![
-                    insert("holds_lock", element![0], &indices),
-                    remove("grant_msg", element![0], &indices),
+                    insert("holds_lock", vec![0], &indices),
+                    remove("grant_msg", vec![0], &indices),
                 ],
             ),
             Transition::new(
-                vec![includes("grant_msg", element![1], &indices)],
+                vec![includes("grant_msg", vec![1], &indices)],
                 vec![
-                    insert("holds_lock", element![1], &indices),
-                    remove("grant_msg", element![1], &indices),
+                    insert("holds_lock", vec![1], &indices),
+                    remove("grant_msg", vec![1], &indices),
                 ],
             ),
         ]);
@@ -1415,17 +1362,17 @@ mod tests {
         //     (((unlock_msg(N))') <-> unlock_msg(N) | N = n)) &
         trs.extend(vec![
             Transition::new(
-                vec![includes("holds_lock", element![0], &indices)],
+                vec![includes("holds_lock", vec![0], &indices)],
                 vec![
-                    insert("unlock_msg", element![0], &indices),
-                    remove("holds_lock", element![0], &indices),
+                    insert("unlock_msg", vec![0], &indices),
+                    remove("holds_lock", vec![0], &indices),
                 ],
             ),
             Transition::new(
-                vec![includes("holds_lock", element![1], &indices)],
+                vec![includes("holds_lock", vec![1], &indices)],
                 vec![
-                    insert("unlock_msg", element![1], &indices),
-                    remove("holds_lock", element![1], &indices),
+                    insert("unlock_msg", vec![1], &indices),
+                    remove("holds_lock", vec![1], &indices),
                 ],
             ),
         ]);
@@ -1434,17 +1381,17 @@ mod tests {
         //     ((server_holds_lock)'))
         trs.extend(vec![
             Transition::new(
-                vec![includes("unlock_msg", element![0], &indices)],
+                vec![includes("unlock_msg", vec![0], &indices)],
                 vec![
-                    insert("server_holds_lock", element![], &indices),
-                    remove("unlock_msg", element![0], &indices),
+                    insert("server_holds_lock", vec![], &indices),
+                    remove("unlock_msg", vec![0], &indices),
                 ],
             ),
             Transition::new(
-                vec![includes("unlock_msg", element![1], &indices)],
+                vec![includes("unlock_msg", vec![1], &indices)],
                 vec![
-                    insert("server_holds_lock", element![], &indices),
-                    remove("unlock_msg", element![1], &indices),
+                    insert("server_holds_lock", vec![], &indices),
+                    remove("unlock_msg", vec![1], &indices),
                 ],
             ),
         ]);
@@ -1453,8 +1400,8 @@ mod tests {
             inits: vec![state([0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
             safes: vec![
-                vec![excludes("holds_lock", element![0], &indices)],
-                vec![excludes("holds_lock", element![1], &indices)],
+                vec![excludes("holds_lock", vec![0], &indices)],
+                vec![excludes("holds_lock", vec![1], &indices)],
             ],
         };
 
