@@ -18,12 +18,21 @@ cargo run -- verify temporal-verifier/examples/lockserver.fly
 
 cargo run -- infer qalpha temporal-verifier/examples/lockserver.fly --max-exist 0 --until-safe
 
+# invariant inference with qalpha
+# note: this example takes several minutes to run
 env RUST_LOG=info cargo run --release -- \
   infer qalpha temporal-verifier/examples/consensus_epr.fly --time \
   --custom-quant --sort quorum --sort node --sort value \
   --max-exist 1 --abort-unsafe --until-safe --minimal-smt \
   --extend-depth 1 --extend-width 10
-# note: this last example takes several minutes to run
+
+# bounded model checking
+cargo run -r -- set-check temporal-verifier/examples/consensus.fly \
+  --bound node=2 --bound value=2 --bound quorum=2
+
+## bounded model checking using a sat solver
+cargo run -r -- sat-check temporal-verifier/examples/consensus.fly \
+  --bound node=2 --bound value=2 --bound quorum=2 --depth=15
 ```
 
 ### Prerequisites
