@@ -9,6 +9,28 @@ use fly::{ouritertools::OurItertools, semantics::*, sorts::*, syntax::*, transit
 use std::collections::{BTreeSet, VecDeque};
 use thiserror::Error;
 
+// We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
+// and the bounded model checker is essentially a hashing microbenchmark :)
+use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+/// Map from uninterpreted sort names to sizes
+// Here is the one place we use a std HashMap. It's not a performance problem because it's not used
+// in the inner loop of the model checker, and it provides a more ergonomic public api to this module.
+type UniverseBounds = std::collections::HashMap<String, usize>;
+
+fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
+    match sort {
+        Sort::Bool => 2,
+        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
+    }
+}
+
+macro_rules! btreeset {
+    ($($v:expr),* $(,)?) => {{
+        BTreeSet::from([$($v,)*])
+    }};
+}
+
 /// The result of a successful run of the bounded model checker
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {
@@ -18,6 +40,33 @@ pub enum CheckerAnswer {
     Unknown,
     /// The checker found that the set of states stopped changing
     Convergence,
+}
+
+#[allow(missing_docs)]
+#[derive(Error, Debug, PartialEq)]
+pub enum TranslationError {
+    #[error("sort checking error: {0}")]
+    SortError(SortError),
+    #[error("sort {0} not found in universe {1:#?}")]
+    UnknownSort(String, UniverseBounds),
+    #[error("{0}")]
+    ExtractionError(ExtractionError),
+    #[error("unknown identifier {0}")]
+    UnknownId(String),
+    #[error("could not translate to propositional logic {0}")]
+    CouldNotTranslateToAst(Term),
+    #[error("could not translate to element {0}")]
+    CouldNotTranslateToElement(Term),
+    #[error("we don't support negating no-ops, but found {0:?}")]
+    NegatedNoOp(Ast),
+    #[error("expected guard, found: {0:#?}")]
+    ExpectedGuard(Ast),
+    #[error("expected update, found: {0:#?}")]
+    ExpectedUpdate(Ast),
+    #[error("expected guard or update, found: {0:#?}")]
+    ExpectedGuardOrUpdate(Ast),
+    #[error("one of the generated updates updated the immutable relation {0}")]
+    UpdateViolatedImmutability(String),
 }
 
 /// Combined entry point to both translate and search the module.
@@ -79,51 +128,6 @@ pub fn check(
     }
 }
 
-// We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
-// and the bounded model checker is essentially a hashing microbenchmark :)
-use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-
-macro_rules! btreeset {
-    ($($v:expr),* $(,)?) => {{
-        BTreeSet::from([$($v,)*])
-    }};
-}
-
-/// Compile-time upper bound on the bounded universe size. The bounded
-const STATE_LEN: usize = 128; // should be a multiple of 64 for alignment reasons
-
-/// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
-/// bounded universe. We represent states concretely as a bitvector, where each bit represents the
-/// presence of a tuple in a relation. The order of the bits is determined by [Indices].
-#[derive(Clone, Debug, Eq, PartialOrd, Ord)]
-pub struct BoundedState(BitArr!(for STATE_LEN));
-
-impl std::hash::Hash for BoundedState {
-    // Override the hash for bitvec::BitArray to use a slice of words rather than bit-by-bit.
-    fn hash<H>(&self, h: &mut H)
-    where
-        H: std::hash::Hasher,
-    {
-        usize::hash_slice(self.0.as_raw_slice(), h)
-    }
-}
-
-impl PartialEq for BoundedState {
-    // Override eq for bitvec::BitArray to use a slice of words rather than bit-by-bit.
-    fn eq(&self, other: &BoundedState) -> bool {
-        let xs = self.0.as_raw_slice();
-        let ys = other.0.as_raw_slice();
-        let mut i = 0;
-        while i < xs.len() {
-            if xs[i] != ys[i] {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
-}
-
 /// A map from (relation name, arguments) pairs to their index in the [BoundedState] bit vector.
 #[derive(Debug, PartialEq)]
 struct Indices<'a>(HashMap<(&'a str, Vec<Element>), usize>);
@@ -159,6 +163,41 @@ impl<'a> std::ops::Index<&(&'a str, Vec<Element>)> for Indices<'a> {
     type Output = usize;
     fn index(&self, key: &(&'a str, Vec<Element>)) -> &usize {
         &self.0[key]
+    }
+}
+
+/// Compile-time upper bound on the bounded universe size. The bounded
+const STATE_LEN: usize = 128; // should be a multiple of 64 for alignment reasons
+
+/// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
+/// bounded universe. We represent states concretely as a bitvector, where each bit represents the
+/// presence of a tuple in a relation. The order of the bits is determined by [Indices].
+#[derive(Clone, Debug, Eq, PartialOrd, Ord)]
+pub struct BoundedState(BitArr!(for STATE_LEN));
+
+impl std::hash::Hash for BoundedState {
+    // Override the hash for bitvec::BitArray to use a slice of words rather than bit-by-bit.
+    fn hash<H>(&self, h: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        usize::hash_slice(self.0.as_raw_slice(), h)
+    }
+}
+
+impl PartialEq for BoundedState {
+    // Override eq for bitvec::BitArray to use a slice of words rather than bit-by-bit.
+    fn eq(&self, other: &BoundedState) -> bool {
+        let xs = self.0.as_raw_slice();
+        let ys = other.0.as_raw_slice();
+        let mut i = 0;
+        while i < xs.len() {
+            if xs[i] != ys[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 }
 
@@ -216,289 +255,6 @@ pub struct Update {
     /// True for insertion, false for removal
     value: bool,
 }
-
-/// A set of transitions indexed by their guards, i.e., a map from guards to transitions. We use a
-/// set trie data structure that allows efficiently answering the question "give me all the
-/// transitions whose guard sets are *subsets* of the given set". During model checking, this allows
-/// efficiently retrieving the set of enabled transitions in a given state without searching through
-/// all transitions.
-#[derive(Clone, Debug)]
-struct Transitions<'a> {
-    data: Vec<&'a Transition>,
-    children: HashMap<&'a Guard, Transitions<'a>>,
-}
-
-impl<'a> Transitions<'a> {
-    /// Construct an empty set of transitions
-    fn new() -> Transitions<'a> {
-        Transitions {
-            data: Vec::new(),
-            children: HashMap::default(),
-        }
-    }
-
-    /// Insert the given transition into the set
-    fn insert(&mut self, value: &'a Transition) {
-        self.insert_from_iter(value.guards.iter(), value)
-    }
-
-    // Recursive helper function to insert an iterator of guards into the trie
-    fn insert_from_iter(
-        &mut self,
-        mut set: impl Iterator<Item = &'a Guard>,
-        value: &'a Transition,
-    ) {
-        match set.next() {
-            None => {
-                self.data.push(value);
-            }
-            Some(key) => self
-                .children
-                .entry(key)
-                .or_insert_with(Transitions::new)
-                .insert_from_iter(set, value),
-        }
-    }
-
-    /// Get all the transitions whose guards are a subset of the given set.
-    fn get_subsets(&self, set: &BoundedState) -> Vec<&'a Transition> {
-        let mut out = vec![];
-        self.get_subsets_into_vec(set, &mut out);
-        out
-    }
-
-    // Destination passing style helper to recursively collect all the transitions whose guards are
-    // a subset of the given set.
-    fn get_subsets_into_vec(&self, set: &BoundedState, out: &mut Vec<&'a Transition>) {
-        out.extend(self.data.iter().cloned());
-        for (key, child) in &self.children {
-            if set.0[key.index] == key.value {
-                child.get_subsets_into_vec(set, out);
-            }
-        }
-    }
-}
-
-impl<'a> FromIterator<&'a Transition> for Transitions<'a> {
-    fn from_iter<I: IntoIterator<Item = &'a Transition>>(iter: I) -> Self {
-        let mut ans = Transitions::new();
-        for tr in iter {
-            ans.insert(tr);
-        }
-        ans
-    }
-}
-
-/// Whether to compress traces by keeping only the last state
-#[derive(Clone, Copy)]
-pub enum TraceCompression {
-    /// Compress traces
-    Yes,
-    /// Don't compress traces
-    No,
-}
-
-impl From<bool> for TraceCompression {
-    fn from(b: bool) -> TraceCompression {
-        if b {
-            TraceCompression::Yes
-        } else {
-            TraceCompression::No
-        }
-    }
-}
-
-/// A sequence of states that may or may not be compressed. Here, a "compressed" trace is just its
-/// last state together with its depth. (The depth of a trace is the number of transitions it
-/// contains, or one less than the number of states it contains.)
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Trace {
-    /// Uncompressed trace, which keeps all states
-    Trace(Vec<BoundedState>),
-    /// Compressed trace, keeping only the last state and its depth
-    CompressedTrace(BoundedState, usize),
-}
-
-impl Trace {
-    /// Construct a singleton trace. Note that the decision of whether to compress or not is made at
-    /// construction time. If the trace is constructed as compressed (`TraceCompression::Yes`), then
-    /// future calls to `push` on this trace will only increment the depth and replace the (one)
-    /// state.
-    fn new(state: BoundedState, compression: TraceCompression) -> Trace {
-        match compression {
-            TraceCompression::Yes => Trace::CompressedTrace(state, 0),
-            TraceCompression::No => Trace::Trace(vec![state]),
-        }
-    }
-
-    /// The depth of this trace, which is the number of transitions it represents.
-    fn depth(&self) -> usize {
-        match self {
-            Trace::CompressedTrace(_, n) => *n,
-            Trace::Trace(v) => v.len() - 1,
-        }
-    }
-
-    /// The last state of a trace. Since all traces are constructed to be nonempty, this never fails.
-    fn last(&self) -> &BoundedState {
-        match self {
-            Trace::CompressedTrace(s, _) => s,
-
-            // unwrap is safe here since there's no way to construct an empty trace
-            Trace::Trace(v) => v.last().unwrap(),
-        }
-    }
-
-    /// Extend the trace with one new state on the end. Note that if `self` is a compressed trace,
-    /// then only the last state is tracked, so `push` will lose the information about the previous
-    /// state.
-    fn push(&mut self, state: BoundedState) {
-        match self {
-            Trace::CompressedTrace(s, n) => {
-                *s = state;
-                *n += 1;
-            }
-            Trace::Trace(v) => {
-                v.push(state);
-            }
-        }
-    }
-}
-
-/// The bounded model checker will either find a counterexample or say "no bugs found"
-#[derive(Debug, PartialEq)]
-pub enum InterpreterResult {
-    /// The checker found a counterexample, here it is
-    Counterexample(Trace),
-    /// The checker could not find any counterexamples
-    Unknown,
-    /// The checker found that the set of states stopped changing
-    Convergence,
-}
-
-/// Explore reachable states of a BoundedProgram up to (and including) the given max_depth using
-/// breadth-first search.
-///
-/// Note that max_depth refers to the number of transitions, not the number of states,
-/// so if max_depth is Some(3), it means there will be 3 transitions (so 4 states).
-/// If max_depth is None, it means "no upper bound". The program will run until its
-/// state space is exhausted or the process is killed.
-fn interpret(
-    program: &BoundedProgram,
-    max_depth: Option<usize>,
-    compress_traces: TraceCompression,
-    print_timing: bool,
-) -> InterpreterResult {
-    // States we have seen so far.
-    let mut seen: HashSet<BoundedState> = program.inits.iter().cloned().collect();
-
-    // The BFS queue, i.e., states on the frontier that need to be explored.
-    // The queue is always a subset of seen.
-    let mut queue: VecDeque<Trace> = program
-        .inits
-        .iter()
-        .cloned()
-        .map(|state| Trace::new(state, compress_traces))
-        .collect();
-
-    let transitions: Transitions = program.trs.iter().collect();
-
-    let mut current_depth = 0;
-    let start_time = std::time::Instant::now();
-    println!(
-        "starting search from depth 0. there are {} initial states in the queue.",
-        queue.len()
-    );
-
-    while let Some(trace) = queue.pop_front() {
-        let depth = trace.depth();
-        if depth > current_depth {
-            current_depth += 1;
-            if print_timing {
-                print!("({:0.1}s since start) ", start_time.elapsed().as_secs_f64());
-            }
-            println!(
-                "considering new depth: {current_depth}. \
-                 queue length is {}. seen {} unique states.",
-                queue.len(),
-                seen.len()
-            );
-        }
-
-        let state = trace.last();
-        if !program.safes.iter().any(|guards| {
-            guards
-                .iter()
-                .all(|guard| state.0[guard.index] == guard.value)
-        }) {
-            return InterpreterResult::Counterexample(trace);
-        }
-
-        if max_depth.map(|md| depth < md).unwrap_or(true) {
-            let trs = transitions.get_subsets(state);
-
-            for tr in trs {
-                let mut next = state.clone();
-                tr.updates
-                    .iter()
-                    .for_each(|update| next.0.set(update.index, update.value));
-                if !seen.contains(&next) {
-                    seen.insert(next.clone());
-                    if seen.len() % 1_000_000 == 0 {
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        println!(
-                            "progress report: ({elapsed:0.1}s since start) considering depth {current_depth}. \
-                             queue length is {}. visited {} states.",
-                            queue.len(),
-                            seen.len()
-                        );
-                    }
-                    let mut trace = trace.clone();
-                    trace.push(next);
-                    queue.push_back(trace);
-                }
-            }
-        }
-    }
-
-    if max_depth.map(|md| current_depth < md).unwrap_or(true) {
-        InterpreterResult::Convergence
-    } else {
-        InterpreterResult::Unknown
-    }
-}
-
-#[allow(missing_docs)]
-#[derive(Error, Debug, PartialEq)]
-pub enum TranslationError {
-    #[error("sort checking error: {0}")]
-    SortError(SortError),
-    #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, UniverseBounds),
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    #[error("unknown identifier {0}")]
-    UnknownId(String),
-    #[error("could not translate to propositional logic {0}")]
-    CouldNotTranslateToAst(Term),
-    #[error("could not translate to element {0}")]
-    CouldNotTranslateToElement(Term),
-    #[error("we don't support negating no-ops, but found {0:?}")]
-    NegatedNoOp(Ast),
-    #[error("expected guard, found: {0:#?}")]
-    ExpectedGuard(Ast),
-    #[error("expected update, found: {0:#?}")]
-    ExpectedUpdate(Ast),
-    #[error("expected guard or update, found: {0:#?}")]
-    ExpectedGuardOrUpdate(Ast),
-    #[error("one of the generated updates updated the immutable relation {0}")]
-    UpdateViolatedImmutability(String),
-}
-
-/// Map from uninterpreted sort names to sizes
-// Here is the one place we use a std HashMap. It's not a performance problem because it's not used
-// in the inner loop of the model checker, and it provides a more ergonomic public api to this module.
-type UniverseBounds = std::collections::HashMap<String, usize>;
 
 /// Translate a flyvy module into a BoundedProgram, given the bounds on the sort sizes.
 /// Universe should contain the sizes of all the sorts in module.signature.sorts.
@@ -752,13 +508,6 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
             body: Box::new(nullary_id_to_app(*body, relations)),
         },
         term => term,
-    }
-}
-
-fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
-    match sort {
-        Sort::Bool => 2,
-        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
     }
 }
 
@@ -1134,6 +883,257 @@ fn distribute_conjunction(term: Ast) -> Ast {
             or(terms.into_iter().map(distribute_conjunction).collect())
         }
         _ => term,
+    }
+}
+
+/// Whether to compress traces by keeping only the last state
+#[derive(Clone, Copy)]
+pub enum TraceCompression {
+    /// Compress traces
+    Yes,
+    /// Don't compress traces
+    No,
+}
+
+impl From<bool> for TraceCompression {
+    fn from(b: bool) -> TraceCompression {
+        if b {
+            TraceCompression::Yes
+        } else {
+            TraceCompression::No
+        }
+    }
+}
+
+/// A sequence of states that may or may not be compressed. Here, a "compressed" trace is just its
+/// last state together with its depth. (The depth of a trace is the number of transitions it
+/// contains, or one less than the number of states it contains.)
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Trace {
+    /// Uncompressed trace, which keeps all states
+    Trace(Vec<BoundedState>),
+    /// Compressed trace, keeping only the last state and its depth
+    CompressedTrace(BoundedState, usize),
+}
+
+impl Trace {
+    /// Construct a singleton trace. Note that the decision of whether to compress or not is made at
+    /// construction time. If the trace is constructed as compressed (`TraceCompression::Yes`), then
+    /// future calls to `push` on this trace will only increment the depth and replace the (one)
+    /// state.
+    fn new(state: BoundedState, compression: TraceCompression) -> Trace {
+        match compression {
+            TraceCompression::Yes => Trace::CompressedTrace(state, 0),
+            TraceCompression::No => Trace::Trace(vec![state]),
+        }
+    }
+
+    /// The depth of this trace, which is the number of transitions it represents.
+    fn depth(&self) -> usize {
+        match self {
+            Trace::CompressedTrace(_, n) => *n,
+            Trace::Trace(v) => v.len() - 1,
+        }
+    }
+
+    /// The last state of a trace. Since all traces are constructed to be nonempty, this never fails.
+    fn last(&self) -> &BoundedState {
+        match self {
+            Trace::CompressedTrace(s, _) => s,
+
+            // unwrap is safe here since there's no way to construct an empty trace
+            Trace::Trace(v) => v.last().unwrap(),
+        }
+    }
+
+    /// Extend the trace with one new state on the end. Note that if `self` is a compressed trace,
+    /// then only the last state is tracked, so `push` will lose the information about the previous
+    /// state.
+    fn push(&mut self, state: BoundedState) {
+        match self {
+            Trace::CompressedTrace(s, n) => {
+                *s = state;
+                *n += 1;
+            }
+            Trace::Trace(v) => {
+                v.push(state);
+            }
+        }
+    }
+}
+
+/// The bounded model checker will either find a counterexample or say "no bugs found"
+#[derive(Debug, PartialEq)]
+pub enum InterpreterResult {
+    /// The checker found a counterexample, here it is
+    Counterexample(Trace),
+    /// The checker could not find any counterexamples
+    Unknown,
+    /// The checker found that the set of states stopped changing
+    Convergence,
+}
+
+/// Explore reachable states of a BoundedProgram up to (and including) the given max_depth using
+/// breadth-first search.
+///
+/// Note that max_depth refers to the number of transitions, not the number of states,
+/// so if max_depth is Some(3), it means there will be 3 transitions (so 4 states).
+/// If max_depth is None, it means "no upper bound". The program will run until its
+/// state space is exhausted or the process is killed.
+fn interpret(
+    program: &BoundedProgram,
+    max_depth: Option<usize>,
+    compress_traces: TraceCompression,
+    print_timing: bool,
+) -> InterpreterResult {
+    // States we have seen so far.
+    let mut seen: HashSet<BoundedState> = program.inits.iter().cloned().collect();
+
+    // The BFS queue, i.e., states on the frontier that need to be explored.
+    // The queue is always a subset of seen.
+    let mut queue: VecDeque<Trace> = program
+        .inits
+        .iter()
+        .cloned()
+        .map(|state| Trace::new(state, compress_traces))
+        .collect();
+
+    let transitions: Transitions = program.trs.iter().collect();
+
+    let mut current_depth = 0;
+    let start_time = std::time::Instant::now();
+    println!(
+        "starting search from depth 0. there are {} initial states in the queue.",
+        queue.len()
+    );
+
+    while let Some(trace) = queue.pop_front() {
+        let depth = trace.depth();
+        if depth > current_depth {
+            current_depth += 1;
+            if print_timing {
+                print!("({:0.1}s since start) ", start_time.elapsed().as_secs_f64());
+            }
+            println!(
+                "considering new depth: {current_depth}. \
+                 queue length is {}. seen {} unique states.",
+                queue.len(),
+                seen.len()
+            );
+        }
+
+        let state = trace.last();
+        if !program.safes.iter().any(|guards| {
+            guards
+                .iter()
+                .all(|guard| state.0[guard.index] == guard.value)
+        }) {
+            return InterpreterResult::Counterexample(trace);
+        }
+
+        if max_depth.map(|md| depth < md).unwrap_or(true) {
+            let trs = transitions.get_subsets(state);
+
+            for tr in trs {
+                let mut next = state.clone();
+                tr.updates
+                    .iter()
+                    .for_each(|update| next.0.set(update.index, update.value));
+                if !seen.contains(&next) {
+                    seen.insert(next.clone());
+                    if seen.len() % 1_000_000 == 0 {
+                        let elapsed = start_time.elapsed().as_secs_f64();
+                        println!(
+                            "progress report: ({elapsed:0.1}s since start) considering depth {current_depth}. \
+                             queue length is {}. visited {} states.",
+                            queue.len(),
+                            seen.len()
+                        );
+                    }
+                    let mut trace = trace.clone();
+                    trace.push(next);
+                    queue.push_back(trace);
+                }
+            }
+        }
+    }
+
+    if max_depth.map(|md| current_depth < md).unwrap_or(true) {
+        InterpreterResult::Convergence
+    } else {
+        InterpreterResult::Unknown
+    }
+}
+
+/// A set of transitions indexed by their guards, i.e., a map from guards to transitions. We use a
+/// set trie data structure that allows efficiently answering the question "give me all the
+/// transitions whose guard sets are *subsets* of the given set". During model checking, this allows
+/// efficiently retrieving the set of enabled transitions in a given state without searching through
+/// all transitions.
+#[derive(Clone, Debug)]
+struct Transitions<'a> {
+    data: Vec<&'a Transition>,
+    children: HashMap<&'a Guard, Transitions<'a>>,
+}
+
+impl<'a> Transitions<'a> {
+    /// Construct an empty set of transitions
+    fn new() -> Transitions<'a> {
+        Transitions {
+            data: Vec::new(),
+            children: HashMap::default(),
+        }
+    }
+
+    /// Insert the given transition into the set
+    fn insert(&mut self, value: &'a Transition) {
+        self.insert_from_iter(value.guards.iter(), value)
+    }
+
+    // Recursive helper function to insert an iterator of guards into the trie
+    fn insert_from_iter(
+        &mut self,
+        mut set: impl Iterator<Item = &'a Guard>,
+        value: &'a Transition,
+    ) {
+        match set.next() {
+            None => {
+                self.data.push(value);
+            }
+            Some(key) => self
+                .children
+                .entry(key)
+                .or_insert_with(Transitions::new)
+                .insert_from_iter(set, value),
+        }
+    }
+
+    /// Get all the transitions whose guards are a subset of the given set.
+    fn get_subsets(&self, set: &BoundedState) -> Vec<&'a Transition> {
+        let mut out = vec![];
+        self.get_subsets_into_vec(set, &mut out);
+        out
+    }
+
+    // Destination passing style helper to recursively collect all the transitions whose guards are
+    // a subset of the given set.
+    fn get_subsets_into_vec(&self, set: &BoundedState, out: &mut Vec<&'a Transition>) {
+        out.extend(self.data.iter().cloned());
+        for (key, child) in &self.children {
+            if set.0[key.index] == key.value {
+                child.get_subsets_into_vec(set, out);
+            }
+        }
+    }
+}
+
+impl<'a> FromIterator<&'a Transition> for Transitions<'a> {
+    fn from_iter<I: IntoIterator<Item = &'a Transition>>(iter: I) -> Self {
+        let mut ans = Transitions::new();
+        for tr in iter {
+            ans.insert(tr);
+        }
+        ans
     }
 }
 
