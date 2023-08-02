@@ -1213,43 +1213,13 @@ impl<'a> Transitions<'a> {
 struct IsoStateSet {
     set: HashSet<BoundedState>,
     max_index: usize,
-    orderings: Vec<Orderings>,
-}
-
-/// A map, where the index is dst and the value is src, of copies from x[src] to y[dst].
-type Ordering = Vec<usize>;
-/// A branch of a trie of orderings
-struct Orderings {
-    src: usize,
-    children: Vec<Orderings>,
+    orderings: Vec<Vec<(usize, usize)>>,
 }
 
 impl IsoStateSet {
     fn new(context: &Context) -> IsoStateSet {
-        fn from_ordering(ordering: &[usize]) -> Vec<Orderings> {
-            match &ordering {
-                [] => vec![],
-                [first, rest @ ..] => vec![Orderings {
-                    src: *first,
-                    children: from_ordering(rest).into_iter().collect(),
-                }],
-            }
-        }
-        fn add_ordering(ordering: &[usize], orderings: &mut Vec<Orderings>) {
-            if ordering.is_empty() || orderings.is_empty() {
-                assert!(
-                    ordering.is_empty() && orderings.is_empty(),
-                    "orderings had different lengths"
-                )
-            }
-            match orderings.iter_mut().find(|o| o.src == ordering[0]) {
-                Some(o) => add_ordering(&ordering[1..], &mut o.children),
-                None => orderings.extend(from_ordering(ordering)),
-            }
-        }
-
         let sorts: Vec<_> = context.universe.keys().sorted().collect();
-        let mut iter = sorts
+        let orderings = sorts
             .iter()
             .map(|sort| context.universe[sort.as_str()])
             // the permutations are maps from old to new element values
@@ -1281,16 +1251,10 @@ impl IsoStateSet {
                         // look up the index to precompute the dst
                         (context.indices[&(relation.name.as_str(), new_elements)], *i)
                     })
-                    .sorted()
-                    .map(|(_, v)| v)
+                    .filter(|(src, dst)| src != dst)
                     .collect()
-            });
-
-        let first: Ordering = iter.next().unwrap();
-        let mut orderings = from_ordering(&first);
-        for ordering in iter {
-            add_ordering(&ordering, orderings.as_mut());
-        }
+            })
+            .collect();
 
         IsoStateSet {
             set: Default::default(),
@@ -1308,31 +1272,18 @@ impl IsoStateSet {
     }
 
     fn insert(&mut self, x: &BoundedState) -> bool {
-        self.set.insert(self.canonicalize(x))
-    }
-
-    fn canonicalize(&self, x: &BoundedState) -> BoundedState {
-        let mut orderings: Vec<&Orderings> = self.orderings.iter().collect();
-        let mut y = BoundedState::ZERO;
-        for i in 0..=self.max_index {
-            if i == self.max_index {
-                assert!(orderings.iter().all(|o| o.children.is_empty()));
+        if self.set.contains(x) {
+            false
+        } else {
+            for ordering in &self.orderings {
+                let mut y = x.clone();
+                for (src, dst) in ordering {
+                    y.set(*dst, x.get(*src));
+                }
+                self.set.insert(y);
             }
-
-            let mut subset: Vec<_> = orderings
-                .iter()
-                .filter(|o| !x.get(o.src))
-                .copied()
-                .collect();
-
-            if subset.is_empty() {
-                y.set(i, true);
-                subset = orderings;
-            }
-
-            orderings = subset.into_iter().flat_map(|o| &o.children).collect();
+            true
         }
-        y
     }
 }
 
