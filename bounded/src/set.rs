@@ -4,6 +4,7 @@
 //! A bounded model checker for flyvy programs. Use `translate` to turn a flyvy `Module`
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
+use bitvec::prelude::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
@@ -157,38 +158,39 @@ impl Context<'_> {
 
 /// Compile-time upper bound on the bounded universe size.
 const STATE_LEN: usize = 128;
-type StateData = u8;
-const STATE_DATA_BITS: usize = std::mem::size_of::<StateData>() * 8;
 
 /// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the
 /// presence of a tuple in a relation. The order of the bits is determined by [Context].
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd)]
-struct BoundedState([StateData; STATE_LEN / STATE_DATA_BITS]);
+#[derive(Clone, Copy, Eq, PartialOrd)]
+struct BoundedState(BitArr!(for STATE_LEN));
+
+// Go word by word instead of bit by bit.
+impl std::hash::Hash for BoundedState {
+    fn hash<H>(&self, h: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        self.0.as_raw_slice().hash(h)
+    }
+}
+impl PartialEq for BoundedState {
+    fn eq(&self, other: &BoundedState) -> bool {
+        self.0.as_raw_slice().eq(other.0.as_raw_slice())
+    }
+}
 
 impl BoundedState {
-    const ZERO: BoundedState = BoundedState([0; STATE_LEN / STATE_DATA_BITS]);
+    const ZERO: BoundedState = BoundedState(BitArray::ZERO);
 
     fn get(&self, index: usize) -> bool {
         assert!(index < STATE_LEN, "STATE_LEN is too small");
-        let idx = index / STATE_DATA_BITS;
-        // `STATE_DATA_BITS - 1 - ` fixes ordering
-        let bit = STATE_DATA_BITS - 1 - (index % STATE_DATA_BITS);
-
-        ((self.0[idx] >> bit) & 1) != 0
+        self.0[index]
     }
 
     fn set(&mut self, index: usize, value: bool) {
         assert!(index < STATE_LEN, "STATE_LEN is too small");
-        let idx = index / STATE_DATA_BITS;
-        // `STATE_DATA_BITS - 1 - ` fixes ordering
-        let bit = STATE_DATA_BITS - 1 - (index % STATE_DATA_BITS);
-
-        if value {
-            self.0[idx] |= 1 << bit;
-        } else {
-            self.0[idx] &= !(1 << bit);
-        }
+        self.0.set(index, value);
     }
 }
 
@@ -1344,12 +1346,6 @@ mod tests {
         assert!(s.get(1));
         assert!(!s.get(2));
         assert!(!s.get(3));
-
-        let mut a = BoundedState::ZERO;
-        let mut b = BoundedState::ZERO;
-        a.0[1] = 1; // [0, 1, 0, 0, ...]
-        b.0[0] = 1; // [1, 0, 0, 0, ...]
-        assert!(a < b);
 
         assert!(state([0]) < state([1]));
         assert!(state([0, 1, 0, 1]) < state([1, 0, 1, 0]));
