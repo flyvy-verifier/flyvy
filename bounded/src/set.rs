@@ -72,7 +72,7 @@ pub fn check(
     print_timing: bool,
 ) -> Result<CheckerAnswer, TranslationError> {
     let (program, context) = translate(module, universe, print_timing)?;
-    match interpret(&program, depth, compress_traces, print_timing) {
+    match interpret(&program, depth, compress_traces, print_timing, &context) {
         InterpreterResult::Unknown => Ok(CheckerAnswer::Unknown),
         InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
         InterpreterResult::Counterexample(trace) => {
@@ -1067,17 +1067,19 @@ fn interpret(
     max_depth: Option<usize>,
     compress_traces: TraceCompression,
     print_timing: bool,
+    context: &Context,
 ) -> InterpreterResult {
     // States we have seen so far.
-    let mut seen: HashSet<BoundedState> = program.inits.iter().cloned().collect();
+    let mut seen = IsoStateSet::new(context);
+    for init in &program.inits {
+        seen.insert(init);
+    }
 
     // The BFS queue, i.e., states on the frontier that need to be explored.
     // The queue is always a subset of seen.
-    let mut queue: VecDeque<Trace> = program
-        .inits
-        .iter()
-        .cloned()
-        .map(|state| Trace::new(state, compress_traces))
+    let mut queue: VecDeque<Trace> = seen
+        .states()
+        .map(|state| Trace::new(*state, compress_traces))
         .collect();
 
     let mut transitions = Transitions::new();
@@ -1120,8 +1122,7 @@ fn interpret(
                 tr.updates
                     .iter()
                     .for_each(|update| next.set(update.index, update.formula.evaluate(state)));
-                if !seen.contains(&next) {
-                    seen.insert(next);
+                if seen.insert(&next) {
                     if seen.len() % 1_000_000 == 0 {
                         let elapsed = start_time.elapsed().as_secs_f64();
                         println!(
@@ -1205,6 +1206,133 @@ impl<'a> Transitions<'a> {
                 child.get_subsets_into_vec(set, out);
             }
         }
+    }
+}
+
+/// Can answer the question "have I seen a state that is isomorphic to this one before"?
+struct IsoStateSet {
+    set: HashSet<BoundedState>,
+    max_index: usize,
+    orderings: Vec<Orderings>,
+}
+
+/// A map, where the index is dst and the value is src, of copies from x[src] to y[dst].
+type Ordering = Vec<usize>;
+/// A branch of a trie of orderings
+struct Orderings {
+    src: usize,
+    children: Vec<Orderings>,
+}
+
+impl IsoStateSet {
+    fn new(context: &Context) -> IsoStateSet {
+        fn from_ordering(ordering: &[usize]) -> Vec<Orderings> {
+            match &ordering {
+                [] => vec![],
+                [first, rest @ ..] => vec![Orderings {
+                    src: *first,
+                    children: from_ordering(rest).into_iter().collect(),
+                }],
+            }
+        }
+        fn add_ordering(ordering: &[usize], orderings: &mut Vec<Orderings>) {
+            if ordering.is_empty() || orderings.is_empty() {
+                assert!(
+                    ordering.is_empty() && orderings.is_empty(),
+                    "orderings had different lengths"
+                )
+            }
+            match orderings.iter_mut().find(|o| o.src == ordering[0]) {
+                Some(o) => add_ordering(&ordering[1..], &mut o.children),
+                None => orderings.extend(from_ordering(ordering)),
+            }
+        }
+
+        let sorts: Vec<_> = context.universe.keys().sorted().collect();
+        let mut iter = sorts
+            .iter()
+            .map(|sort| context.universe[sort.as_str()])
+            // the permutations are maps from old to new element values
+            .map(|size| (0..size).permutations(size))
+            // get all combinations of different ways to permute values
+            .multi_cartesian_product_fixed()
+            // reattach sort names onto each ordering
+            .map(|ordering| {
+                assert_eq!(sorts.len(), ordering.len());
+                sorts.iter().map(|s| s.as_str()).zip(ordering).collect()
+            })
+            // convert permutations to copy instructions
+            .map(|permutation: HashMap<&str, Vec<usize>>| {
+                context
+                    .indices
+                    .iter()
+                    .map(|((name, elements), i)| {
+                        let relation = context.signature.relation_decl(name);
+                        assert_eq!(relation.args.len(), elements.len());
+                        // map each old element to a new element
+                        let mut new_elements = elements.clone();
+                        for i in 0..new_elements.len() {
+                            let x = elements[i];
+                            new_elements[i] = match &relation.args[i] {
+                                Sort::Uninterpreted(s) => permutation[s.as_str()][x],
+                                Sort::Bool => x,
+                            };
+                        }
+                        // look up the index to precompute the dst
+                        (context.indices[&(relation.name.as_str(), new_elements)], *i)
+                    })
+                    .sorted()
+                    .map(|(_, v)| v)
+                    .collect()
+            });
+
+        let first: Ordering = iter.next().unwrap();
+        let mut orderings = from_ordering(&first);
+        for ordering in iter {
+            add_ordering(&ordering, orderings.as_mut());
+        }
+
+        IsoStateSet {
+            set: Default::default(),
+            max_index: *context.indices.values().max().unwrap(),
+            orderings,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn states(&self) -> impl Iterator<Item = &BoundedState> {
+        self.set.iter()
+    }
+
+    fn insert(&mut self, x: &BoundedState) -> bool {
+        self.set.insert(self.canonicalize(x))
+    }
+
+    fn canonicalize(&self, x: &BoundedState) -> BoundedState {
+        let mut orderings: Vec<&Orderings> = self.orderings.iter().collect();
+        let mut y = BoundedState::ZERO;
+        for i in 0..=self.max_index {
+            if i == self.max_index {
+                assert!(orderings.iter().all(|o| o.children.is_empty()));
+            }
+
+            let mut subset: Vec<_> = orderings
+                .iter()
+                .filter(|o| !x.get(o.src))
+                .copied()
+                .collect();
+
+            if subset.is_empty() {
+                y.set(i, true);
+                subset = orderings;
+            }
+
+            orderings = subset.into_iter().flat_map(|o| &o.children).collect();
+        }
+        y
     }
 }
 
@@ -1292,6 +1420,18 @@ mod tests {
 
     #[test]
     fn checker_set_basic() {
+        let signature = Signature {
+            sorts: vec![],
+            relations: vec![RelationDecl {
+                args: vec![],
+                sort: Sort::Bool,
+                name: "r".to_string(),
+                mutable: true,
+            }],
+        };
+        let universe = std::collections::HashMap::new();
+        let context = Context::new(&signature, &universe);
+
         let program = BoundedProgram {
             inits: vec![state([0])],
             trs: vec![
@@ -1309,8 +1449,8 @@ mod tests {
                 value: false,
             }),
         };
-        let result0 = interpret(&program, Some(0), TraceCompression::No, false);
-        let result1 = interpret(&program, Some(1), TraceCompression::No, false);
+        let result0 = interpret(&program, Some(0), TraceCompression::No, false, &context);
+        let result1 = interpret(&program, Some(1), TraceCompression::No, false, &context);
         assert_eq!(result0, InterpreterResult::Unknown);
         let mut expected1 = Trace::new(state([0]), TraceCompression::No);
         expected1.push(state([1]));
@@ -1319,6 +1459,38 @@ mod tests {
 
     #[test]
     fn checker_set_cycle() {
+        let signature = Signature {
+            sorts: vec![],
+            relations: vec![
+                RelationDecl {
+                    args: vec![],
+                    sort: Sort::Bool,
+                    name: "0".to_string(),
+                    mutable: true,
+                },
+                RelationDecl {
+                    args: vec![],
+                    sort: Sort::Bool,
+                    name: "1".to_string(),
+                    mutable: true,
+                },
+                RelationDecl {
+                    args: vec![],
+                    sort: Sort::Bool,
+                    name: "2".to_string(),
+                    mutable: true,
+                },
+                RelationDecl {
+                    args: vec![],
+                    sort: Sort::Bool,
+                    name: "3".to_string(),
+                    mutable: true,
+                },
+            ],
+        };
+        let universe = std::collections::HashMap::new();
+        let context = Context::new(&signature, &universe);
+
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
             trs: vec![
@@ -1392,11 +1564,11 @@ mod tests {
                 value: false,
             }),
         };
-        let result1 = interpret(&program, Some(0), TraceCompression::No, false);
-        let result2 = interpret(&program, Some(1), TraceCompression::No, false);
-        let result3 = interpret(&program, Some(2), TraceCompression::No, false);
-        let result4 = interpret(&program, Some(3), TraceCompression::No, false);
-        let result5 = interpret(&program, Some(4), TraceCompression::No, false);
+        let result1 = interpret(&program, Some(0), TraceCompression::No, false, &context);
+        let result2 = interpret(&program, Some(1), TraceCompression::No, false, &context);
+        let result3 = interpret(&program, Some(2), TraceCompression::No, false, &context);
+        let result4 = interpret(&program, Some(3), TraceCompression::No, false, &context);
+        let result5 = interpret(&program, Some(4), TraceCompression::No, false, &context);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1507,7 +1679,7 @@ mod tests {
             target.trs.iter().sorted().collect::<Vec<_>>(),
         );
 
-        let output = interpret(&target, None, TraceCompression::No, false);
+        let output = interpret(&target, None, TraceCompression::No, false, &context);
         assert_eq!(output, InterpreterResult::Convergence);
 
         Ok(())
@@ -1520,16 +1692,16 @@ mod tests {
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let (target, _) = translate(&m, &universe, false)?;
+        let (target, context) = translate(&m, &universe, false)?;
 
-        let bug = interpret(&target, Some(12), TraceCompression::No, false);
+        let bug = interpret(&target, Some(12), TraceCompression::No, false, &context);
         if let InterpreterResult::Counterexample(trace) = &bug {
             assert_eq!(trace.depth(), 12);
         } else {
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, Some(11), TraceCompression::No, false);
+        let too_short = interpret(&target, Some(11), TraceCompression::No, false, &context);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
@@ -1581,5 +1753,105 @@ assume always forall a:x. ((g'(a) <-> f(a)) & (f'(a) <-> f(a)))
         let (target, _) = translate(&m, &universe, false)?;
         assert_eq!(1, target.trs.len());
         Ok(())
+    }
+
+    #[test]
+    fn checker_set_isostateset_correctness() {
+        let source = "
+sort s
+immutable f(s): bool
+        ";
+        let m = fly::parser::parse(source).unwrap();
+        let universe = std::collections::HashMap::from([("s".to_string(), 2)]);
+        let context = Context::new(&m.signature, &universe);
+        let mut set = IsoStateSet::new(&context);
+
+        assert!(set.insert(&state([0, 0])));
+        assert!(!set.insert(&state([0, 0])));
+        assert!(set.insert(&state([0, 1])));
+        assert!(!set.insert(&state([1, 0])));
+        assert!(set.insert(&state([1, 1])));
+
+        let source = "
+sort a
+sort b
+immutable f(a, b): bool
+        ";
+        let m = fly::parser::parse(source).unwrap();
+        let universe =
+            std::collections::HashMap::from([("a".to_string(), 3), ("b".to_string(), 3)]);
+        let context = Context::new(&m.signature, &universe);
+        let mut set = IsoStateSet::new(&context);
+
+        // b: 0 -> 2, 2 -> 1, 1 -> 0
+        assert!(set.insert(&state([1, 1, 1, 0, 0, 1, 0, 1, 1])));
+        assert!(!set.insert(&state([1, 1, 1, 0, 1, 0, 1, 1, 0])));
+
+        let source = "
+sort s
+sort t
+immutable f(s, t, s): bool
+        ";
+        let m = fly::parser::parse(source).unwrap();
+        let universe =
+            std::collections::HashMap::from([("s".to_string(), 3), ("t".to_string(), 2)]);
+        let context = Context::new(&m.signature, &universe);
+        let mut set = IsoStateSet::new(&context);
+        let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
+            let mut out = BoundedState::ZERO;
+            for (x, y, z) in vec {
+                out.set(context.indices[&("f", vec![x, y, z])], true);
+            }
+            out
+        };
+
+        assert!(set.insert(&state(vec![(0, 0, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 1)])));
+        assert!(!set.insert(&state(vec![(2, 0, 2)])));
+        assert!(!set.insert(&state(vec![(0, 1, 0)])));
+        assert!(!set.insert(&state(vec![(1, 1, 1)])));
+        assert!(!set.insert(&state(vec![(2, 1, 2)])));
+
+        assert!(set.insert(&state(vec![(1, 0, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 0)])));
+        assert!(!set.insert(&state(vec![(2, 0, 0)])));
+        assert!(!set.insert(&state(vec![(1, 1, 0)])));
+        assert!(!set.insert(&state(vec![(0, 1, 1)])));
+
+        assert!(set.insert(&state(vec![(0, 0, 0), (0, 1, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 1), (1, 1, 1)])));
+        assert!(set.insert(&state(vec![(0, 0, 1), (0, 1, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 0), (1, 1, 1)])));
+        assert!(!set.insert(&state(vec![(0, 1, 1), (0, 0, 0)])));
+
+        let source = "
+sort s
+immutable f(s, bool, s): bool
+        ";
+        let m = fly::parser::parse(source).unwrap();
+        let universe = std::collections::HashMap::from([("s".to_string(), 3)]);
+        let context = Context::new(&m.signature, &universe);
+        let mut set = IsoStateSet::new(&context);
+        let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
+            let mut out = BoundedState::ZERO;
+            for (x, y, z) in vec {
+                out.set(context.indices[&("f", vec![x, y, z])], true);
+            }
+            out
+        };
+
+        assert!(set.insert(&state(vec![(0, 0, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 1)])));
+        assert!(!set.insert(&state(vec![(2, 0, 2)])));
+        assert!(set.insert(&state(vec![(0, 1, 0)])));
+        assert!(!set.insert(&state(vec![(1, 1, 1)])));
+        assert!(!set.insert(&state(vec![(2, 1, 2)])));
+
+        assert!(set.insert(&state(vec![(1, 0, 0)])));
+        assert!(!set.insert(&state(vec![(1, 0, 0)])));
+        assert!(!set.insert(&state(vec![(2, 0, 0)])));
+
+        assert!(set.insert(&state(vec![(1, 1, 0)])));
+        assert!(!set.insert(&state(vec![(0, 1, 1)])));
     }
 }
