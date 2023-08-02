@@ -1079,8 +1079,9 @@ fn interpret(
 
     // The BFS queue, i.e., states on the frontier that need to be explored.
     // The queue is always a subset of seen.
-    let mut queue: VecDeque<Trace> = seen
-        .states()
+    let mut queue: VecDeque<Trace> = program
+        .inits
+        .iter()
         .map(|state| Trace::new(*state, compress_traces))
         .collect();
 
@@ -1107,7 +1108,7 @@ fn interpret(
                 "considering new depth: {current_depth}. \
                  queue length is {}. seen {} unique states.",
                 queue.len(),
-                seen.len()
+                seen.set.len()
             );
         }
 
@@ -1252,14 +1253,6 @@ impl IsoStateSet {
             set: HashSet::default(),
             orderings,
         }
-    }
-
-    fn len(&self) -> usize {
-        self.set.len()
-    }
-
-    fn states(&self) -> impl Iterator<Item = &BoundedState> {
-        self.set.iter()
     }
 
     fn insert(&mut self, x: &BoundedState) -> bool {
