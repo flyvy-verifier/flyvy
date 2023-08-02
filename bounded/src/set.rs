@@ -1123,15 +1123,6 @@ fn interpret(
                     .iter()
                     .for_each(|update| next.set(update.index, update.formula.evaluate(state)));
                 if seen.insert(&next) {
-                    if seen.len() % 1_000_000 == 0 {
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        println!(
-                            "progress report: ({elapsed:0.1}s since start) considering depth {current_depth}. \
-                             queue length is {}. visited {} states.",
-                            queue.len(),
-                            seen.len()
-                        );
-                    }
                     let mut trace = trace.clone();
                     trace.push(next);
                     queue.push_back(trace);
