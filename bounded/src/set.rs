@@ -1212,7 +1212,6 @@ impl<'a> Transitions<'a> {
 /// Can answer the question "have I seen a state that is isomorphic to this one before"?
 struct IsoStateSet {
     set: HashSet<BoundedState>,
-    max_index: usize,
     orderings: Vec<Vec<(usize, usize)>>,
 }
 
@@ -1257,8 +1256,7 @@ impl IsoStateSet {
             .collect();
 
         IsoStateSet {
-            set: Default::default(),
-            max_index: *context.indices.values().max().unwrap(),
+            set: HashSet::default(),
             orderings,
         }
     }
@@ -1276,7 +1274,7 @@ impl IsoStateSet {
             false
         } else {
             for ordering in &self.orderings {
-                let mut y = x.clone();
+                let mut y = *x;
                 for (src, dst) in ordering {
                     y.set(*dst, x.get(*src));
                 }
