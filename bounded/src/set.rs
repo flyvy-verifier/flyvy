@@ -326,6 +326,10 @@ fn translate<'a>(
     }
     // enumerate cube
     let mut inits = vec![init];
+    println!(
+        "enumerating {} initial states",
+        2_usize.pow((context.indices.len() - constrained.len()) as u32)
+    );
     for index in 0..context.indices.len() {
         if !constrained.contains(&index) {
             let mut with_unconstrained = inits.clone();
@@ -360,35 +364,49 @@ fn translate<'a>(
     let trs: Vec<_> = trs
         .into_iter()
         .filter(|tr| tr.slow_guard != Formula::always_false())
-        .flat_map(|tr| {
+        .map(|tr| {
             // get cube
             let mut constrained: HashSet<usize> = HashSet::default();
             for &Update { index, .. } in &tr.updates {
                 constrained.insert(index);
             }
-            // enumerate cube
-            let mut trs = vec![tr];
+            let mut unconstrained = vec![];
             for ((name, _), index) in &context.indices {
                 let mut relations = module.signature.relations.iter();
                 if !constrained.contains(index)
                     && relations.find(|r| &r.name == name).unwrap().mutable
                 {
-                    let mut with_unconstrained = trs.clone();
-                    for i in 0..trs.len() {
-                        if !trs[i].guards.iter().any(|g| g.index == *index && g.value) {
-                            with_unconstrained[i].updates.push(Update {
-                                index: *index,
-                                formula: Formula::always_true(),
-                            });
-                        }
-                        if !trs[i].guards.iter().any(|g| g.index == *index && !g.value) {
-                            trs[i].updates.push(Update {
-                                index: *index,
-                                formula: Formula::always_false(),
-                            });
-                        }
-                    }
-                    trs.append(&mut with_unconstrained);
+                    unconstrained.push(index);
+                }
+            }
+            (tr, unconstrained)
+        })
+        .collect();
+    println!(
+        "enumerating {} transitions",
+        trs.iter()
+            .map(|(_, unconstrained)| 2_usize.pow(unconstrained.len() as u32))
+            .sum::<usize>()
+    );
+    let trs: Vec<_> = trs
+        .into_iter()
+        .flat_map(|(tr, unconstrained)| {
+            // enumerate cube
+            let mut trs = vec![tr];
+            for index in unconstrained {
+                let len = trs.len();
+                for i in 0..len {
+                    let mut with_unconstrained = trs[i].clone();
+                    with_unconstrained.updates.push(Update {
+                        index: *index,
+                        formula: Formula::always_true(),
+                    });
+                    trs.push(with_unconstrained);
+
+                    trs[i].updates.push(Update {
+                        index: *index,
+                        formula: Formula::always_false(),
+                    });
                 }
             }
             // filter out no-ops
@@ -399,6 +417,16 @@ fn translate<'a>(
                             index: update.index,
                             value: true,
                         })
+                        && !(update.formula == Formula::always_true()
+                            && tr.guards.contains(&Guard {
+                                index: update.index,
+                                value: true,
+                            }))
+                        && !(update.formula == Formula::always_false()
+                            && tr.guards.contains(&Guard {
+                                index: update.index,
+                                value: false,
+                            }))
                 });
             }
             trs
