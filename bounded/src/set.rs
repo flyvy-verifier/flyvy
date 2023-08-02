@@ -1242,7 +1242,7 @@ impl IsoStateSet {
                             };
                         }
                         // look up the index to precompute the dst
-                        (context.indices[&(relation.name.as_str(), new_elements)], *i)
+                        (*i, context.indices[&(relation.name.as_str(), new_elements)])
                     })
                     .filter(|(src, dst)| src != dst)
                     .collect()
