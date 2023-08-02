@@ -4,6 +4,8 @@ description: "--name=2 -- set-check --bound 'node=3' --print-timing false tests/
 expression: combined_stdout_stderr
 ---
 starting translation...
+enumerating 1 initial states
+enumerating 15 transitions
 starting search from depth 0. there are 1 initial states in the queue.
 considering new depth: 1. queue length is 2. seen 4 unique states.
 considering new depth: 2. queue length is 5. seen 10 unique states.
