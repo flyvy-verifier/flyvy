@@ -519,14 +519,19 @@ impl Formula {
     }
 
     fn and(terms: impl IntoIterator<Item = Formula>) -> Formula {
-        let terms: HashSet<_> = terms.into_iter().flat_map(Formula::get_and).collect();
+        let mut terms: Vec<_> = terms
+            .into_iter()
+            .flat_map(Formula::get_and)
+            .sorted()
+            .collect();
+        terms.dedup();
+
         if terms.iter().any(|term| *term == Formula::always_false()) {
-            return Formula::always_false();
-        }
-        if terms.len() == 1 {
-            terms.into_iter().next().unwrap()
+            Formula::always_false()
+        } else if terms.len() == 1 {
+            terms.pop().unwrap()
         } else {
-            Formula::And(terms.into_iter().sorted().collect())
+            Formula::And(terms)
         }
     }
 
@@ -538,14 +543,19 @@ impl Formula {
     }
 
     fn or(terms: impl IntoIterator<Item = Formula>) -> Formula {
-        let terms: HashSet<_> = terms.into_iter().flat_map(Formula::get_or).collect();
+        let mut terms: Vec<_> = terms
+            .into_iter()
+            .flat_map(Formula::get_or)
+            .sorted()
+            .collect();
+        terms.dedup();
+
         if terms.iter().any(|term| *term == Formula::always_true()) {
-            return Formula::always_true();
-        }
-        if terms.len() == 1 {
-            terms.into_iter().next().unwrap()
+            Formula::always_true()
+        } else if terms.len() == 1 {
+            terms.pop().unwrap()
         } else {
-            Formula::Or(terms.into_iter().sorted().collect())
+            Formula::Or(terms)
         }
     }
 
@@ -568,16 +578,16 @@ impl Formula {
     }
 
     fn iff(self, other: Formula) -> Formula {
-        Formula::or(vec![
-            Formula::and(vec![self.clone(), other.clone()]),
-            Formula::and(vec![self.not(), other.not()]),
+        Formula::or([
+            Formula::and([self.clone(), other.clone()]),
+            Formula::and([self.not(), other.not()]),
         ])
     }
 
     fn ite(self, t: Formula, f: Formula) -> Formula {
-        Formula::or(vec![
-            Formula::and(vec![self.clone(), t]),
-            Formula::and(vec![self.not(), f]),
+        Formula::or([
+            Formula::and([self.clone(), t]),
+            Formula::and([self.not(), f]),
         ])
     }
 
