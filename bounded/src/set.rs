@@ -76,51 +76,49 @@ pub fn check(
         InterpreterResult::Unknown => Ok(CheckerAnswer::Unknown),
         InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
         InterpreterResult::Counterexample(trace) => {
-            let u = module.signature.sorts.iter().map(|s| universe[s]).collect();
-            let states = match compress_traces {
+            let models: Vec<Model> = match compress_traces {
                 TraceCompression::Yes => {
                     let (state, depth) = match trace {
                         Trace::Trace(..) => unreachable!(),
                         Trace::CompressedTrace(state, depth) => (state, depth),
                     };
                     println!("counterexample is at depth {depth}, not 0");
-                    vec![state]
+                    vec![state_to_model(&state, &context)]
                 }
                 TraceCompression::No => match trace {
-                    Trace::Trace(states) => states,
+                    Trace::Trace(states) => states
+                        .iter()
+                        .map(|state| state_to_model(state, &context))
+                        .collect(),
                     Trace::CompressedTrace(..) => unreachable!(),
                 },
             };
-            let models = states
-                .into_iter()
-                .map(|state| {
-                    Model::new(
-                        &module.signature,
-                        &u,
-                        module
-                            .signature
-                            .relations
-                            .iter()
-                            .map(|r| {
-                                let shape = r
-                                    .args
-                                    .iter()
-                                    .map(|s| cardinality(universe, s))
-                                    .chain([2])
-                                    .collect();
-                                Interpretation::new(&shape, |elements| {
-                                    state
-                                        .get(context.indices[&(r.name.as_str(), elements.to_vec())])
-                                        as Element
-                                })
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
             Ok(CheckerAnswer::Counterexample(models))
         }
     }
+}
+
+fn state_to_model(state: &BoundedState, c: &Context) -> Model {
+    let u = c.signature.sorts.iter().map(|s| c.universe[s]).collect();
+    Model::new(
+        c.signature,
+        &u,
+        c.signature
+            .relations
+            .iter()
+            .map(|r| {
+                let shape = r
+                    .args
+                    .iter()
+                    .map(|s| cardinality(c.universe, s))
+                    .chain([2])
+                    .collect();
+                Interpretation::new(&shape, |elements| {
+                    state.get(c.indices[&(r.name.as_str(), elements.to_vec())]) as Element
+                })
+            })
+            .collect(),
+    )
 }
 
 /// A map from (name, arguments) pairs to their index in the [BoundedState] bit vector.
@@ -224,9 +222,15 @@ struct BoundedProgram {
 }
 
 /// A Transition is a deterministic partial function on states expressed as a guarded update.
-/// If the (and of the) guard(s) is true, then the transition is enabled and can step to the updated
-/// state.
-/// If the (and of the) guard(s) is false, then the transition is not enabled.
+///
+/// The guard is represented as the conjunction of a cube (the `guards` field, where every
+/// Guard is an assertion on one literal) and a formula (the `slow_guard` field). This is done
+/// because we can match on the cube effeciently using the [`Transitions`] data structure, but not every
+/// guard can be represented as a cube, so we also must add the `slow_guard` to do filtering
+/// in these cases.
+///
+/// If the guard is true, then the transition is enabled and can step to the updated state.
+/// If the guard is false, then the transition is not enabled.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Transition {
     guards: Vec<Guard>,
@@ -258,25 +262,51 @@ struct Update {
 }
 
 impl Transition {
+    // This function constructs a Transition that comes from taking all of the
+    // input transitions at the same time. If any of the input transitions would
+    // not be run for a given state, the new transition will not be run for that state.
     fn from_conjunction(trs: impl IntoIterator<Item = Transition>) -> Transition {
-        let mut guards: HashSet<_> = HashSet::default();
-        let mut updates: HashSet<_> = HashSet::default();
+        let mut guards: Vec<_> = vec![];
+        let mut updates: Vec<_> = vec![];
         let mut slow_guard = Formula::always_true();
         for tr in trs {
             guards.extend(tr.guards);
             updates.extend(tr.updates);
             slow_guard = Formula::and([slow_guard, tr.slow_guard]);
         }
+
+        guards.sort();
+        guards.dedup();
+        for g in &guards {
+            for h in &guards {
+                if g != h && g.index == h.index {
+                    panic!("found two parallel guards that conflict\n{g:?}\n{h:?}")
+                }
+            }
+        }
+        updates.sort();
+        updates.dedup();
+        for u in &updates {
+            for v in &updates {
+                if u != v && u.index == v.index {
+                    panic!("found two parallel updates that conflict\n{u:?}\n{v:?}")
+                }
+            }
+        }
+
         Transition {
-            guards: guards.into_iter().sorted().collect(),
-            updates: updates.into_iter().sorted().collect(),
+            guards,
+            updates,
             slow_guard,
         }
     }
 }
 
-/// Translate a flyvy module into a BoundedProgram, given the bounds on the sort sizes.
-/// Universe should contain the sizes of all the sorts in module.signature.sorts.
+/// Translate a flyvy module into a `BoundedProgram`, given the bounds on the sort sizes.
+/// The universe should contain the sizes of all the sorts in module.signature.sorts.
+/// This function returns both the desired `BoundedProgram` and a `Context` object. The
+/// `Context` can be used to translate the indices from the program back into a relation
+/// name and the argument values.
 /// The module is assumed to have already been typechecked.
 /// The translator ignores proof blocks.
 fn translate<'a>(
@@ -346,11 +376,13 @@ fn translate<'a>(
         .filter(|init| axiom.evaluate(init))
         .collect();
 
+    assert!(
+        d.mutable_axioms(&module.signature.relations)
+            .next()
+            .is_none(),
+        "currently, the set checker does not support axioms that mention mutable relations"
+    );
     // compute imperative transitions
-    assert!(d
-        .mutable_axioms(&module.signature.relations)
-        .next()
-        .is_none());
     let trs = match d.transitions.len() {
         0 => vec![],
         1 => traverse_disjunction(
@@ -495,13 +527,16 @@ fn translate<'a>(
                 }
             }
         }
-        assert!(tr.slow_guard != Formula::always_false());
+        assert!(
+            tr.slow_guard != Formula::always_false(),
+            "found an update that had an always-false slow guard"
+        );
     }
 
     Ok((BoundedProgram { inits, trs, safe }, context))
 }
 
-/// A first-order, single-vocabulary propositional formula.
+/// A propositional formula over `Guard`s.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Formula {
     And(Vec<Formula>),
@@ -646,6 +681,10 @@ fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
     }
 }
 
+// this function implements the following procedure:
+// - recursively walk through the term until you get to a term that doesn't represent a disjunction
+// - call func on it
+// - collect all of the results of calls to func into a vector and return it
 fn traverse_disjunction<T>(
     term: &Term,
     context: &Context,
@@ -687,6 +726,10 @@ fn traverse_disjunction<T>(
     Ok(vec)
 }
 
+// Converts a Term to exactly one Transition (we aren't doing DNF, so this function cannot
+// return multiple transitions). It will fail if given a disjunction where one of the
+// branches contains a primed variable. (It can handle single-vocabulary disjunctions by
+// translating them into `slow_guard`s.) This is the "inner function" for `traverse_disjunction`.
 fn term_to_transition(
     term: &Term,
     context: &Context,
@@ -808,6 +851,8 @@ fn term_to_transition(
     Ok(transition)
 }
 
+// This function translates a Term to a single-vocabulary propositional formula.
+// It will fail if the term has temporal operators.
 fn term_to_formula(
     term: &Term,
     context: &Context,
@@ -885,6 +930,9 @@ fn term_to_formula(
     Ok(formula)
 }
 
+// This function tries to translate a Term to a constant element of a sort
+// (either boolean or uninterpreted). It will fail if the term includes temporal
+// operators, or if the value cannot be determined through quantifier enumeration.
 fn term_to_element(
     term: &Term,
     context: &Context,
