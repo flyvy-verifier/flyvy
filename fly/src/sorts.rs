@@ -88,7 +88,7 @@ pub enum SortError {
 /// Sort check a module, including inferring sorts for bound variables.
 pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
     let mut table = UnificationTable::new();
-    let mut context = Context::new(&module.signature, &mut table).map_err(|e| (e, None))?;
+    let mut context = Scope::new(&module.signature, &mut table).map_err(|e| (e, None))?;
 
     // using immediately invoked closure to tag errors with None spans
     (|| {
@@ -113,7 +113,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     .map_err(|e| (e, None))?;
 
     // helper that wraps any errors
-    let term_is_bool = |context: &mut Context, term: &mut Term, span: Option<Span>| {
+    let term_is_bool = |context: &mut Scope, term: &mut Term, span: Option<Span>| {
         context
             .sort_check_term(term)
             .and_then(|sort| context.unify_var_value(&Sort::Bool, &MaybeUnknownSort::Known(sort)))
@@ -282,13 +282,13 @@ enum ShadowingConstraint {
 }
 
 #[derive(Debug)]
-struct Context<'a> {
+struct Scope<'a> {
     signature: &'a Signature,
     bound_names: im::HashMap<String, RelationOrIndividual>,
     unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
 }
 
-impl Context<'_> {
+impl Scope<'_> {
     /// Create a new context from a signature. Initially the names bound by the context are exactly
     /// the relations in the signature.
     ///
@@ -296,7 +296,7 @@ impl Context<'_> {
     fn new<'a>(
         signature: &'a Signature,
         unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
-    ) -> Result<Context<'a>, SortError> {
+    ) -> Result<Scope<'a>, SortError> {
         let mut sorts = HashSet::new();
         for sort in &signature.sorts {
             // This assert is guaranteed to pass by the parser, but we double check it here for the
@@ -309,7 +309,7 @@ impl Context<'_> {
                 return Err(SortError::RedeclaredSort(sort.clone()));
             }
         }
-        let mut context = Context {
+        let mut context = Scope {
             signature,
             bound_names: im::HashMap::new(),
             unification_table,
@@ -330,8 +330,8 @@ impl Context<'_> {
     }
 
     // we don't want to clone the references, just the name map
-    fn new_inner_scope(&mut self) -> Context {
-        Context {
+    fn new_inner_scope(&mut self) -> Scope {
+        Scope {
             signature: self.signature,
             bound_names: self.bound_names.clone(),
             unification_table: self.unification_table,
