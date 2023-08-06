@@ -10,11 +10,13 @@ use solver::{conf::SolverConf, SatResp};
 use std::collections::HashMap;
 use thiserror::Error;
 
-#[allow(missing_docs)]
+/// The result of an unsuccessful attempt to run the SMT checker.
 #[derive(Error, Debug)]
 pub enum CheckerError {
+    /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
+    /// See [`SolveError`]
     #[error("{0}")]
     SolverError(String),
 }
