@@ -3,6 +3,7 @@
 
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
+use crate::quantenum::*;
 use biodivine_lib_bdd::*;
 use boolean_expression::BooleanExpression;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
@@ -204,13 +205,6 @@ impl Context<'_> {
         )
     }
 
-    fn mk_bool(&self, value: bool) -> Bdd {
-        match value {
-            true => self.bdds.mk_true(),
-            false => self.bdds.mk_false(),
-        }
-    }
-
     fn mk_and(&self, bdds: impl IntoIterator<Item = Bdd>) -> Bdd {
         bdds.into_iter()
             .fold(self.bdds.mk_true(), |acc, term| acc.and(&term))
@@ -239,10 +233,8 @@ pub enum CheckerError {
     UnknownSort(String, Universe),
     #[error("{0}")]
     ExtractionError(ExtractionError),
-    #[error("could not translate to bdd {0}")]
-    CouldNotTranslateToBdd(Term),
-    #[error("could not translate to element {0}")]
-    CouldNotTranslateToElement(Term),
+    #[error("{0}")]
+    EnumerationError(EnumerationError),
 }
 
 /// Map from uninterpreted sort names to sizes
@@ -314,10 +306,23 @@ fn check_internal<'a>(
 
     let context = Context::new(&module.signature, universe);
 
-    let translate = |term| {
-        let term = nullary_id_to_app(term, &module.signature.relations);
-        let term = fly::term::prime::Next::new(&module.signature).normalize(&term);
-        term_to_bdd(&term, &context, &HashMap::new())
+    let translate = |term| {    
+        fn enumerated_to_bdd(term: Enumerated, context: &Context) -> Bdd {
+            let go = |term| enumerated_to_bdd(term, context);
+            match term {
+                Enumerated::And(xs) => context.mk_and(xs.into_iter().map(go)),
+                Enumerated::Or(xs) => context.mk_or(xs.into_iter().map(go)),
+                Enumerated::Not(x) => go(*x).not(),
+                Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
+                Enumerated::App(name, 0, args) => context.get(&name, &args, false),
+                Enumerated::App(name, 1, args) => context.get(&name, &args, true),
+                Enumerated::App(..) => unreachable!(),
+            }
+        }
+
+        let term = enumerate_quantifiers(&term, &module.signature, universe, 1)
+            .map_err(CheckerError::EnumerationError)?;
+        Ok(enumerated_to_bdd(term, &context))
     };
 
     println!("starting translation...");
@@ -418,153 +423,6 @@ fn check_internal<'a>(
     }
 
     Ok(CheckerAnswer::Unknown)
-}
-
-fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
-    match term {
-        Term::Id(id) if relations.iter().any(|r| r.name == id) => Term::App(id, 0, vec![]),
-        Term::App(name, primes, args) => Term::App(
-            name,
-            primes,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::UnaryOp(op, term) => Term::UnaryOp(op, Box::new(nullary_id_to_app(*term, relations))),
-        Term::BinOp(op, a, b) => Term::BinOp(
-            op,
-            Box::new(nullary_id_to_app(*a, relations)),
-            Box::new(nullary_id_to_app(*b, relations)),
-        ),
-        Term::NAryOp(op, args) => Term::NAryOp(
-            op,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::Ite { cond, then, else_ } => Term::Ite {
-            cond: Box::new(nullary_id_to_app(*cond, relations)),
-            then: Box::new(nullary_id_to_app(*then, relations)),
-            else_: Box::new(nullary_id_to_app(*else_, relations)),
-        },
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => Term::Quantified {
-            quantifier,
-            binders,
-            body: Box::new(nullary_id_to_app(*body, relations)),
-        },
-        term => term,
-    }
-}
-
-fn term_to_bdd(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, usize>,
-) -> Result<Bdd, CheckerError> {
-    let bdd = |term| term_to_bdd(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let bdd: Bdd = match term {
-        Term::Literal(value) => context.mk_bool(*value),
-        Term::Id(id) => match assignments.get(id) {
-            Some(0) => context.mk_bool(false),
-            Some(1) => context.mk_bool(true),
-            _ => return Err(CheckerError::CouldNotTranslateToBdd(term.clone())),
-        },
-        Term::App(relation, primes, args) => context.get(
-            relation,
-            &args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
-            *primes == 1,
-        ),
-        Term::UnaryOp(UOp::Not, term) => bdd(term)?.not(),
-        Term::BinOp(BinOp::Iff, a, b) => bdd(a)?.iff(&bdd(b)?),
-        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) => context.mk_bool(a == b),
-            _ => bdd(a)?.iff(&bdd(b)?),
-        },
-        Term::BinOp(BinOp::NotEquals, a, b) => {
-            bdd(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
-        }
-        Term::BinOp(BinOp::Implies, a, b) => bdd(a)?.imp(&bdd(b)?),
-        Term::NAryOp(NOp::And, terms) => {
-            context.mk_and(terms.iter().map(bdd).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::NAryOp(NOp::Or, terms) => {
-            context.mk_or(terms.iter().map(bdd).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::Ite { cond, then, else_ } => {
-            Bdd::if_then_else(&bdd(cond)?, &bdd(then)?, &bdd(else_)?)
-        }
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => {
-            let shape: Vec<usize> = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .collect();
-            let names: Vec<&String> = binders.iter().map(|b| &b.name).collect();
-            let bodies = shape
-                .iter()
-                .map(|&card| (0..card).collect::<Vec<usize>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    for (name, element) in names.iter().zip_eq(elements) {
-                        new_assignments.insert(name.to_string(), element);
-                    }
-                    term_to_bdd(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match quantifier {
-                Quantifier::Forall => context.mk_and(bodies),
-                Quantifier::Exists => context.mk_or(bodies),
-            }
-        }
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
-            return Err(CheckerError::CouldNotTranslateToBdd(term.clone()))
-        }
-    };
-    Ok(bdd)
-}
-
-fn term_to_element(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, usize>,
-) -> Result<usize, CheckerError> {
-    let bdd = |term| term_to_bdd(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let element: usize = match term {
-        Term::Literal(_)
-        | Term::UnaryOp(UOp::Not, ..)
-        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
-        | Term::NAryOp(NOp::And | NOp::Or, ..)
-        | Term::Quantified { .. } => match bdd(term)? {
-            bdd if bdd.is_true() => 1,
-            bdd if bdd.is_false() => 0,
-            _ => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
-        },
-        Term::Id(id) => assignments[id],
-        Term::Ite { cond, then, else_ } => match element(cond)? {
-            1 => element(then)?,
-            0 => element(else_)?,
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
-    };
-    Ok(element)
 }
 
 /// Convert a `BDD` back into a `Term`.
