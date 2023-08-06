@@ -43,7 +43,12 @@ pub enum CheckerError {
     /// The transition system extraction found more than one transition relation
     #[error("the set checker currently only handles a single transition relation")]
     MultipleTrs,
-    /// [`Formula`]s are single-vocabulary
+    /// `Formula`s are single-vocabulary
     #[error("a transition contained a disjunction that contained a prime")]
     PrimeInFormula,
+
+    // smt.rs
+    /// See solver::SolveError
+    #[error("{0}")]
+    SolverError(String),
 }

@@ -736,12 +736,13 @@ impl App {
                     depth,
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(bounded::smt::CheckerAnswer::Counterexample(models)) => {
+                    Ok(CheckerAnswer::Counterexample(models)) => {
                         println!("found counterexample:\n{}", models_to_string(models))
                     }
-                    Ok(bounded::smt::CheckerAnswer::Unknown) => {
+                    Ok(CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {depth} for given sort bounds")
                     }
+                    Ok(CheckerAnswer::Convergence(())) => unreachable!(),
                     Err(error) => eprintln!("{error}"),
                 }
             }
