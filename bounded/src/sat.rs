@@ -390,7 +390,7 @@ fn term_to_ast(
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
-                    for (name, element) in names.iter().zip(elements) {
+                    for (name, element) in names.iter().zip_eq(elements) {
                         new_assignments.insert(name.to_string(), element);
                     }
                     term_to_ast(body, context, &new_assignments)

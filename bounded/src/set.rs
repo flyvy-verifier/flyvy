@@ -714,8 +714,7 @@ fn traverse_disjunction<T>(
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
+                    for (binder, element) in binders.iter().zip_eq(elements) {
                         new_assignments.insert(binder.name.to_string(), element);
                     }
                     traverse_disjunction(body, context, &new_assignments, func)
@@ -761,8 +760,7 @@ fn term_to_transition(
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
+                    for (binder, element) in binders.iter().zip_eq(elements) {
                         new_assignments.insert(binder.name.to_string(), element);
                     }
                     term_to_transition(body, context, &new_assignments)
@@ -912,8 +910,7 @@ fn term_to_formula(
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
+                    for (binder, element) in binders.iter().zip_eq(elements) {
                         new_assignments.insert(binder.name.to_string(), element);
                     }
                     term_to_formula(body, context, &new_assignments)

@@ -6,6 +6,7 @@
 use biodivine_lib_bdd::*;
 use boolean_expression::BooleanExpression;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
+use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -503,7 +504,6 @@ fn term_to_bdd(
             binders,
             body,
         } => {
-            assert!(!binders.is_empty());
             let shape: Vec<usize> = binders
                 .iter()
                 .map(|b| cardinality(context.universe, &b.sort))
@@ -515,7 +515,7 @@ fn term_to_bdd(
                 .multi_cartesian_product_fixed()
                 .map(|elements| {
                     let mut new_assignments = assignments.clone();
-                    for (name, element) in names.iter().zip(elements) {
+                    for (name, element) in names.iter().zip_eq(elements) {
                         new_assignments.insert(name.to_string(), element);
                     }
                     term_to_bdd(body, context, &new_assignments)
@@ -610,7 +610,7 @@ pub fn bdd_to_term<'a>(
                 .unwrap()
                 .args
                 .iter()
-                .zip(elements)
+                .zip_eq(elements)
                 .map(|(sort, element)| match sort {
                     Sort::Uninterpreted(sort) => {
                         Term::Id(bindings[&(sort.as_str(), *element)].clone())
