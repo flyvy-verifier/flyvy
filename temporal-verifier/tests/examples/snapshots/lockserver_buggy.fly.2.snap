@@ -7,18 +7,18 @@ starting translation...
 enumerating 1 initial states
 enumerating 15 transitions
 starting search from depth 0. there are 1 initial states in the queue.
-considering new depth: 1. queue length is 2. seen 4 unique states.
-considering new depth: 2. queue length is 5. seen 10 unique states.
-considering new depth: 3. queue length is 12. seen 23 unique states.
-considering new depth: 4. queue length is 20. seen 44 unique states.
-considering new depth: 5. queue length is 23. seen 68 unique states.
-considering new depth: 6. queue length is 20. seen 89 unique states.
-considering new depth: 7. queue length is 20. seen 110 unique states.
-considering new depth: 8. queue length is 47. seen 158 unique states.
-considering new depth: 9. queue length is 92. seen 251 unique states.
-considering new depth: 10. queue length is 110. seen 362 unique states.
-considering new depth: 11. queue length is 125. seen 488 unique states.
-considering new depth: 12. queue length is 200. seen 689 unique states.
+considering new depth: 1. queue length is 1. seen 4 unique states.
+considering new depth: 2. queue length is 2. seen 10 unique states.
+considering new depth: 3. queue length is 4. seen 23 unique states.
+considering new depth: 4. queue length is 5. seen 44 unique states.
+considering new depth: 5. queue length is 6. seen 68 unique states.
+considering new depth: 6. queue length is 5. seen 89 unique states.
+considering new depth: 7. queue length is 5. seen 110 unique states.
+considering new depth: 8. queue length is 10. seen 158 unique states.
+considering new depth: 9. queue length is 18. seen 251 unique states.
+considering new depth: 10. queue length is 22. seen 362 unique states.
+considering new depth: 11. queue length is 25. seen 488 unique states.
+considering new depth: 12. queue length is 38. seen 689 unique states.
 found counterexample:
 state 0:
 lock_msg(@node_0) = false

@@ -1107,7 +1107,7 @@ fn interpret(
             println!(
                 "considering new depth: {current_depth}. \
                  queue length is {}. seen {} unique states.",
-                queue.len(),
+                queue.len() + 1, // include current state
                 seen.set.len()
             );
         }
