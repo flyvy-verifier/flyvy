@@ -5,118 +5,10 @@
 //!
 //! [cadical]: https://fmv.jku.at/cadical/
 
-use crate::quantenum::*;
+use crate::{indices::*, quantenum::*};
 use cadical::Solver;
-use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
-use itertools::Itertools;
-use std::collections::HashMap;
+use fly::{semantics::*, syntax::*, transitions::*};
 use thiserror::Error;
-
-/// Holds an ordering of all variables, as well as other context
-struct Context<'a> {
-    signature: &'a Signature,
-    universe: &'a UniverseBounds,
-    indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
-    mutables: usize,
-    vars: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Variable(usize);
-
-impl Context<'_> {
-    fn new<'a>(
-        signature: &'a Signature,
-        universe: &'a UniverseBounds,
-        depth: usize,
-    ) -> Context<'a> {
-        let (mutable, immutable): (Vec<_>, Vec<_>) = signature
-            .relations
-            .iter()
-            .partition(|relation| relation.mutable);
-        let elements = |relation: &&'a RelationDecl| {
-            relation
-                .args
-                .iter()
-                .map(|sort| cardinality(universe, sort))
-                .map(|card| (0..card).collect::<Vec<usize>>())
-                .multi_cartesian_product_fixed()
-                .map(|element| (relation.name.as_str(), element))
-                .collect::<Vec<_>>()
-        };
-
-        let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
-
-        let mut mutables = 0;
-        for (i, (r, e)) in mutable.iter().flat_map(elements).enumerate() {
-            mutables += 1;
-            indices.entry(r).or_default().insert(e, (i, true));
-        }
-        let mut immutables = 0;
-        for (i, (r, e)) in immutable.iter().flat_map(elements).enumerate() {
-            immutables += 1;
-            indices
-                .entry(r)
-                .or_default()
-                .insert(e, (mutables * (depth + 1) + i, false));
-        }
-
-        Context {
-            signature,
-            universe,
-            indices,
-            mutables,
-            vars: mutables * (depth + 1) + immutables,
-        }
-    }
-
-    fn get_var(&self, relation: &str, elements: &[usize], primes: usize) -> Variable {
-        let (mut i, mutable) = self.indices[relation][elements];
-        if mutable {
-            i += primes * self.mutables;
-        }
-        Variable(i)
-    }
-
-    fn new_var(&mut self) -> Variable {
-        self.vars += 1;
-        Variable(self.vars - 1)
-    }
-
-    fn convert_counterexample(&self, solver: Solver, depth: usize) -> Vec<Model> {
-        let universe = self
-            .signature
-            .sorts
-            .iter()
-            .map(|s| self.universe[s])
-            .collect();
-        (0..=depth)
-            .map(|primes| {
-                Model::new(
-                    self.signature,
-                    &universe,
-                    self.signature
-                        .relations
-                        .iter()
-                        .map(|r| {
-                            let shape = r
-                                .args
-                                .iter()
-                                .map(|s| cardinality(self.universe, s))
-                                .chain([2])
-                                .collect();
-                            Interpretation::new(&shape, |elements| {
-                                solver
-                                    .value(self.get_var(&r.name, elements, primes).0 as i32 + 1)
-                                    .unwrap_or(false) as usize
-                            })
-                        })
-                        .collect(),
-                )
-            })
-            .collect()
-    }
-}
 
 /// The result of an unsuccessful attempt to run the SAT checker.
 #[derive(Error, Debug)]
@@ -178,7 +70,7 @@ pub fn check(
         .cloned();
     let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
-    let mut context = Context::new(&module.signature, universe, depth);
+    let mut indices = Indices::new(&module.signature, universe, depth);
 
     let translate = |term| {
         fn enumerated_to_ast(term: Enumerated) -> Ast {
@@ -187,7 +79,7 @@ pub fn check(
                 Enumerated::Or(xs) => Ast::Or(xs.into_iter().map(enumerated_to_ast).collect()),
                 Enumerated::Not(x) => Ast::Not(Box::new(enumerated_to_ast(*x))),
                 Enumerated::Eq(x, y) => Ast::iff(enumerated_to_ast(*x), enumerated_to_ast(*y)),
-                Enumerated::App(name, primes, args) => Ast::Var(name, args, primes),
+                Enumerated::App(name, primes, args) => Ast::Var(name, primes, args),
             }
         }
 
@@ -209,7 +101,7 @@ pub fn check(
     }
     program.push(not_safe.prime(depth));
 
-    let cnf = tseytin(&Ast::And(program), &mut context);
+    let cnf = tseytin(&Ast::And(program), &mut indices);
 
     if print_timing {
         println!(
@@ -228,14 +120,13 @@ pub fn check(
             .map(|l| (l.var as i32 + 1) * if l.pos { 1 } else { -1 });
         solver.add_clause(cadical_clause);
     }
-    assert_eq!(solver.max_variable(), context.vars as i32);
 
     let answer = match solver.solve() {
         None => Err(CheckerError::SolverFailed),
         Some(false) => Ok(CheckerAnswer::Unknown),
-        Some(true) => Ok(CheckerAnswer::Counterexample(
-            context.convert_counterexample(solver, depth),
-        )),
+        Some(true) => Ok(CheckerAnswer::Counterexample(solver_to_models(
+            &solver, &indices,
+        ))),
     };
 
     if print_timing {
@@ -247,7 +138,7 @@ pub fn check(
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
-    Var(String, Vec<usize>, usize),
+    Var(String, usize, Vec<usize>),
     And(Vec<Ast>),
     Or(Vec<Ast>),
     Not(Box<Ast>),
@@ -263,7 +154,7 @@ impl Ast {
 
     fn prime(self, depth: usize) -> Ast {
         match self {
-            Ast::Var(relation, elements, primes) => Ast::Var(relation, elements, primes + depth),
+            Ast::Var(relation, primes, elements) => Ast::Var(relation, primes + depth, elements),
             Ast::And(vec) => Ast::And(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
             Ast::Or(vec) => Ast::Or(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
             Ast::Not(ast) => Ast::Not(Box::new(ast.prime(depth))),
@@ -280,22 +171,22 @@ type Clause = Vec<Literal>;
 type Cnf = Vec<Clause>;
 
 impl Literal {
-    fn t(Variable(var): Variable) -> Literal {
+    fn t(var: usize) -> Literal {
         Literal { var, pos: true }
     }
-    fn f(Variable(var): Variable) -> Literal {
+    fn f(var: usize) -> Literal {
         Literal { var, pos: false }
     }
 }
 
-fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
-    fn inner(ast: &Ast, context: &mut Context, out: &mut Cnf) -> Variable {
-        let mut go = |ast| inner(ast, context, out);
+fn tseytin(ast: &Ast, indices: &mut Indices) -> Cnf {
+    fn inner(ast: &Ast, indices: &mut Indices, out: &mut Cnf) -> usize {
+        let mut go = |ast| inner(ast, indices, out);
         match ast {
-            Ast::Var(relation, elements, primes) => context.get_var(relation, elements, *primes),
+            Ast::Var(relation, primes, elements) => indices.get(relation, *primes, elements),
             Ast::And(vec) => {
                 let olds: Vec<_> = vec.iter().map(go).collect();
-                let new = context.new_var();
+                let new = indices.var();
                 for old in &olds {
                     out.push(vec![Literal::t(*old), Literal::f(new)]);
                 }
@@ -306,7 +197,7 @@ fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
             }
             Ast::Or(vec) => {
                 let olds: Vec<_> = vec.iter().map(go).collect();
-                let new = context.new_var();
+                let new = indices.var();
                 for old in &olds {
                     out.push(vec![Literal::f(*old), Literal::t(new)]);
                 }
@@ -317,7 +208,7 @@ fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
             }
             Ast::Not(ast) => {
                 let old = go(ast);
-                let new = context.new_var();
+                let new = indices.var();
                 out.push(vec![Literal::t(old), Literal::t(new)]);
                 out.push(vec![Literal::f(old), Literal::f(new)]);
                 new
@@ -326,34 +217,51 @@ fn tseytin(ast: &Ast, context: &mut Context) -> Cnf {
     }
 
     let mut out = vec![];
-    let var = inner(ast, context, &mut out);
+    let var = inner(ast, indices, &mut out);
     out.push(vec![Literal::t(var)]);
     out
 }
 
-#[allow(dead_code)]
-fn dimacs(cnf: &Cnf, context: &Context) -> String {
-    let mut out = format!("p cnf {} {}\n", context.vars, cnf.len());
-    out.push_str(
-        &cnf.iter()
-            .map(|clause| {
-                clause
+fn solver_to_models(solver: &Solver, indices: &Indices) -> Vec<Model> {
+    let u = indices
+        .signature
+        .sorts
+        .iter()
+        .map(|s| indices.universe[s])
+        .collect();
+    (0..=indices.num_mutable_copies)
+        .map(|primes| {
+            Model::new(
+                indices.signature,
+                &u,
+                indices
+                    .signature
+                    .relations
                     .iter()
-                    .map(|literal| match literal {
-                        Literal { var, pos: true } => format!("{}", var + 1),
-                        Literal { var, pos: false } => format!("-{}", var + 1),
+                    .map(|r| {
+                        let shape = r
+                            .args
+                            .iter()
+                            .map(|s| cardinality(indices.universe, s))
+                            .chain([2])
+                            .collect();
+                        Interpretation::new(&shape, |elements| {
+                            solver
+                                .value(indices.get(&r.name, primes, elements) as i32 + 1)
+                                .unwrap_or(false) as usize
+                        })
                     })
-                    .join(" ")
-            })
-            .join("\n"),
-    );
-    out
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use fly::sorts::sort_check_module;
+    use std::collections::HashMap;
 
     #[test]
     fn checker_sat_basic() -> Result<(), CheckerError> {

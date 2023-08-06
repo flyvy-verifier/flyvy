@@ -14,8 +14,10 @@
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-pub mod bdd;
+pub mod indices;
 pub mod quantenum;
+
+pub mod bdd;
 pub mod sat;
 pub mod set;
 pub mod smt;
