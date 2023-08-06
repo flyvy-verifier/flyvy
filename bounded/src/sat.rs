@@ -5,8 +5,9 @@
 //!
 //! [cadical]: https://fmv.jku.at/cadical/
 
+use crate::quantenum::*;
 use cadical::Solver;
-use fly::{ouritertools::OurItertools, semantics::*, sorts::*, syntax::*, transitions::*};
+use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -113,21 +114,19 @@ impl Context<'_> {
     }
 }
 
-#[allow(missing_docs)]
+/// The result of an unsuccessful attempt to run the SAT checker.
 #[derive(Error, Debug)]
 pub enum CheckerError {
-    #[error("sort checking error: {0}")]
-    SortError(SortError),
+    /// A sort existed in a term but not in the universe
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, Universe),
+    /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
-
-    #[error("could not translate to propositional logic {0}")]
-    CouldNotTranslateToAst(Term),
-    #[error("could not translate to element {0}")]
-    CouldNotTranslateToElement(Term),
-
+    /// See [`EnumerationError`]
+    #[error("{0}")]
+    EnumerationError(EnumerationError),
+    /// The SAT solver failed
     #[error("solver failed, likely a timeout")]
     SolverFailed,
 }
@@ -188,9 +187,19 @@ pub fn check(
     let mut context = Context::new(&module.signature, universe, depth);
 
     let translate = |term| {
-        let term = nullary_id_to_app(term, &module.signature.relations);
-        let term = fly::term::prime::Next::new(&module.signature).normalize(&term);
-        term_to_ast(&term, &context, &HashMap::new())
+        fn enumerated_to_ast(term: Enumerated) -> Ast {
+            match term {
+                Enumerated::And(xs) => Ast::And(xs.into_iter().map(enumerated_to_ast).collect()),
+                Enumerated::Or(xs) => Ast::Or(xs.into_iter().map(enumerated_to_ast).collect()),
+                Enumerated::Not(x) => Ast::Not(Box::new(enumerated_to_ast(*x))),
+                Enumerated::Eq(x, y) => Ast::iff(enumerated_to_ast(*x), enumerated_to_ast(*y)),
+                Enumerated::App(name, primes, args) => Ast::Var(name, args, primes),
+            }
+        }
+
+        let term = enumerate_quantifiers(&term, &module.signature, universe, depth.max(1))
+            .map_err(CheckerError::EnumerationError)?;
+        Ok(enumerated_to_ast(term))
     };
 
     println!("starting translation...");
@@ -242,47 +251,6 @@ pub fn check(
     answer
 }
 
-fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
-    match term {
-        Term::Literal(b) => Term::Literal(b),
-        Term::Id(id) if relations.iter().any(|r| r.name == id) => Term::App(id, 0, vec![]),
-        Term::Id(id) => Term::Id(id),
-        Term::App(name, primes, args) => Term::App(
-            name,
-            primes,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::UnaryOp(op, term) => Term::UnaryOp(op, Box::new(nullary_id_to_app(*term, relations))),
-        Term::BinOp(op, a, b) => Term::BinOp(
-            op,
-            Box::new(nullary_id_to_app(*a, relations)),
-            Box::new(nullary_id_to_app(*b, relations)),
-        ),
-        Term::NAryOp(op, args) => Term::NAryOp(
-            op,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::Ite { cond, then, else_ } => Term::Ite {
-            cond: Box::new(nullary_id_to_app(*cond, relations)),
-            then: Box::new(nullary_id_to_app(*then, relations)),
-            else_: Box::new(nullary_id_to_app(*else_, relations)),
-        },
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => Term::Quantified {
-            quantifier,
-            binders,
-            body: Box::new(nullary_id_to_app(*body, relations)),
-        },
-    }
-}
-
 // true is empty And; false is empty Or
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
@@ -300,25 +268,6 @@ impl Ast {
         ])
     }
 
-    fn truth(&self) -> Option<bool> {
-        match self {
-            Ast::Var { .. } => None,
-            Ast::And(vec) => vec
-                .iter()
-                .try_fold(true, |acc, ast| match (acc, ast.truth()) {
-                    (false, _) | (_, Some(false)) => Some(false),
-                    (true, x) => x,
-                }),
-            Ast::Or(vec) => vec
-                .iter()
-                .try_fold(false, |acc, ast| match (acc, ast.truth()) {
-                    (true, _) | (_, Some(true)) => Some(true),
-                    (false, x) => x,
-                }),
-            Ast::Not(ast) => ast.truth().map(|b| !b),
-        }
-    }
-
     fn prime(self, depth: usize) -> Ast {
         match self {
             Ast::Var(relation, elements, primes) => Ast::Var(relation, elements, primes + depth),
@@ -327,119 +276,6 @@ impl Ast {
             Ast::Not(ast) => Ast::Not(Box::new(ast.prime(depth))),
         }
     }
-}
-
-fn term_to_ast(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, usize>,
-) -> Result<Ast, CheckerError> {
-    let ast = |term| term_to_ast(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let ast: Ast = match term {
-        Term::Literal(true) => Ast::And(vec![]),
-        Term::Literal(false) => Ast::Or(vec![]),
-        Term::Id(id) => match assignments.get(id) {
-            Some(0) => Ast::Or(vec![]),
-            Some(1) => Ast::And(vec![]),
-            _ => return Err(CheckerError::CouldNotTranslateToAst(term.clone())),
-        },
-        Term::App(relation, primes, args) => Ast::Var(
-            relation.to_string(),
-            args.iter().map(element).collect::<Result<Vec<_>, _>>()?,
-            *primes,
-        ),
-        Term::UnaryOp(UOp::Not, term) => Ast::Not(Box::new(ast(term)?)),
-        Term::BinOp(BinOp::Iff, a, b) => Ast::iff(ast(a)?, ast(b)?),
-        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) if a == b => Ast::And(vec![]),
-            (Ok(a), Ok(b)) if a != b => Ast::Or(vec![]),
-            _ => Ast::iff(ast(a)?, ast(b)?),
-        },
-        Term::BinOp(BinOp::NotEquals, a, b) => Ast::Not(Box::new(ast(&Term::BinOp(
-            BinOp::Equals,
-            a.clone(),
-            b.clone(),
-        ))?)),
-        Term::BinOp(BinOp::Implies, a, b) => Ast::Or(vec![Ast::Not(Box::new(ast(a)?)), ast(b)?]),
-        Term::NAryOp(NOp::And, terms) => {
-            Ast::And(terms.iter().map(ast).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::NAryOp(NOp::Or, terms) => {
-            Ast::Or(terms.iter().map(ast).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::Ite { cond, then, else_ } => Ast::Or(vec![
-            Ast::And(vec![ast(cond)?, ast(then)?]),
-            Ast::And(vec![Ast::Not(Box::new(ast(cond)?)), ast(else_)?]),
-        ]),
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => {
-            assert!(!binders.is_empty());
-            let shape: Vec<usize> = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .collect();
-            let names: Vec<&String> = binders.iter().map(|b| &b.name).collect();
-            let bodies = shape
-                .iter()
-                .map(|&card| (0..card).collect::<Vec<usize>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    for (name, element) in names.iter().zip_eq(elements) {
-                        new_assignments.insert(name.to_string(), element);
-                    }
-                    term_to_ast(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match quantifier {
-                Quantifier::Forall => Ast::And(bodies),
-                Quantifier::Exists => Ast::Or(bodies),
-            }
-        }
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
-            return Err(CheckerError::CouldNotTranslateToAst(term.clone()))
-        }
-    };
-    Ok(ast)
-}
-
-fn term_to_element(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, usize>,
-) -> Result<usize, CheckerError> {
-    let ast = |term| term_to_ast(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let element: usize = match term {
-        Term::Literal(_)
-        | Term::UnaryOp(UOp::Not, ..)
-        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
-        | Term::NAryOp(NOp::And | NOp::Or, ..)
-        | Term::Quantified { .. } => match ast(term)?.truth() {
-            Some(true) => 1,
-            Some(false) => 0,
-            None => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
-        },
-        Term::Id(id) => assignments[id],
-        Term::Ite { cond, then, else_ } => match element(cond)? {
-            1 => element(then)?,
-            0 => element(else_)?,
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(CheckerError::CouldNotTranslateToElement(term.clone())),
-    };
-    Ok(element)
 }
 
 #[derive(Clone, Debug, PartialEq)]

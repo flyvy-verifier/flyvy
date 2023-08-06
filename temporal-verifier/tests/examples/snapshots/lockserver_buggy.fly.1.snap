@@ -38,7 +38,7 @@ server_holds_lock = true
 
 state 2:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = false
+lock_msg(@node_1) = true
 lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
@@ -53,8 +53,8 @@ server_holds_lock = true
 
 state 3:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = false
-lock_msg(@node_2) = false
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
@@ -68,8 +68,8 @@ server_holds_lock = true
 
 state 4:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = false
-lock_msg(@node_2) = false
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
@@ -84,7 +84,7 @@ server_holds_lock = true
 state 5:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
-lock_msg(@node_2) = false
+lock_msg(@node_2) = true
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
@@ -99,7 +99,7 @@ server_holds_lock = true
 state 6:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
-lock_msg(@node_2) = false
+lock_msg(@node_2) = true
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
@@ -113,10 +113,10 @@ server_holds_lock = true
 
 state 7:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = false
-lock_msg(@node_2) = false
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
 grant_msg(@node_0) = false
-grant_msg(@node_1) = true
+grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
 unlock_msg(@node_1) = false
@@ -124,69 +124,9 @@ unlock_msg(@node_2) = false
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
 holds_lock(@node_2) = false
-server_holds_lock = false
+server_holds_lock = true
 
 state 8:
-lock_msg(@node_0) = true
-lock_msg(@node_1) = false
-lock_msg(@node_2) = false
-grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = false
-unlock_msg(@node_0) = false
-unlock_msg(@node_1) = false
-unlock_msg(@node_2) = false
-holds_lock(@node_0) = false
-holds_lock(@node_1) = true
-holds_lock(@node_2) = false
-server_holds_lock = false
-
-state 9:
-lock_msg(@node_0) = true
-lock_msg(@node_1) = false
-lock_msg(@node_2) = false
-grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = false
-unlock_msg(@node_0) = false
-unlock_msg(@node_1) = false
-unlock_msg(@node_2) = false
-holds_lock(@node_0) = false
-holds_lock(@node_1) = true
-holds_lock(@node_2) = false
-server_holds_lock = false
-
-state 10:
-lock_msg(@node_0) = true
-lock_msg(@node_1) = true
-lock_msg(@node_2) = false
-grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = false
-unlock_msg(@node_0) = false
-unlock_msg(@node_1) = false
-unlock_msg(@node_2) = false
-holds_lock(@node_0) = false
-holds_lock(@node_1) = true
-holds_lock(@node_2) = false
-server_holds_lock = false
-
-state 11:
-lock_msg(@node_0) = true
-lock_msg(@node_1) = true
-lock_msg(@node_2) = false
-grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = false
-unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
-holds_lock(@node_0) = false
-holds_lock(@node_1) = false
-holds_lock(@node_2) = false
-server_holds_lock = false
-
-state 12:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
 lock_msg(@node_2) = true
@@ -194,7 +134,67 @@ grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
+
+state 9:
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
+
+state 10:
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
+
+state 11:
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = true
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = false
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = false
+holds_lock(@node_0) = false
+holds_lock(@node_1) = false
+holds_lock(@node_2) = false
+server_holds_lock = true
+
+state 12:
+lock_msg(@node_0) = true
+lock_msg(@node_1) = true
+lock_msg(@node_2) = false
+grant_msg(@node_0) = false
+grant_msg(@node_1) = false
+grant_msg(@node_2) = true
+unlock_msg(@node_0) = false
+unlock_msg(@node_1) = false
 unlock_msg(@node_2) = false
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
@@ -204,43 +204,43 @@ server_holds_lock = false
 state 13:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
-lock_msg(@node_2) = true
+lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
+unlock_msg(@node_1) = false
 unlock_msg(@node_2) = false
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
-holds_lock(@node_2) = false
-server_holds_lock = true
+holds_lock(@node_2) = true
+server_holds_lock = false
 
 state 14:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
-lock_msg(@node_2) = true
+lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
 holds_lock(@node_2) = false
-server_holds_lock = true
+server_holds_lock = false
 
 state 15:
 lock_msg(@node_0) = true
 lock_msg(@node_1) = true
-lock_msg(@node_2) = true
+lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
 holds_lock(@node_2) = false
@@ -248,14 +248,14 @@ server_holds_lock = true
 
 state 16:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = true
+lock_msg(@node_1) = false
 lock_msg(@node_2) = false
 grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = true
+grant_msg(@node_1) = true
+grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
 holds_lock(@node_2) = false
@@ -263,14 +263,14 @@ server_holds_lock = false
 
 state 17:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = true
+lock_msg(@node_1) = false
 lock_msg(@node_2) = false
 grant_msg(@node_0) = false
-grant_msg(@node_1) = false
-grant_msg(@node_2) = true
+grant_msg(@node_1) = true
+grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
 holds_lock(@node_1) = false
 holds_lock(@node_2) = false
@@ -278,47 +278,47 @@ server_holds_lock = true
 
 state 18:
 lock_msg(@node_0) = true
-lock_msg(@node_1) = true
+lock_msg(@node_1) = false
 lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
-holds_lock(@node_1) = false
-holds_lock(@node_2) = true
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
 server_holds_lock = true
 
 state 19:
 lock_msg(@node_0) = false
-lock_msg(@node_1) = true
+lock_msg(@node_1) = false
 lock_msg(@node_2) = false
 grant_msg(@node_0) = true
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = false
-holds_lock(@node_1) = false
-holds_lock(@node_2) = true
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
 server_holds_lock = false
 
 state 20:
 lock_msg(@node_0) = false
-lock_msg(@node_1) = true
+lock_msg(@node_1) = false
 lock_msg(@node_2) = false
 grant_msg(@node_0) = false
 grant_msg(@node_1) = false
 grant_msg(@node_2) = false
 unlock_msg(@node_0) = false
-unlock_msg(@node_1) = true
-unlock_msg(@node_2) = false
+unlock_msg(@node_1) = false
+unlock_msg(@node_2) = true
 holds_lock(@node_0) = true
-holds_lock(@node_1) = false
-holds_lock(@node_2) = true
+holds_lock(@node_1) = true
+holds_lock(@node_2) = false
 server_holds_lock = false
 
 

@@ -226,13 +226,16 @@ pub enum CheckerAnswer<'a> {
     Convergence(Bdd, Context<'a>),
 }
 
-#[allow(missing_docs)]
+/// The result of an unsuccessful attempt to run the BDD checker.
 #[derive(Error, Debug)]
 pub enum CheckerError {
+    /// A sort existed in a term but not in the universe
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, Universe),
+    /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
+    /// See [`EnumerationError`]
     #[error("{0}")]
     EnumerationError(EnumerationError),
 }
@@ -306,7 +309,7 @@ fn check_internal<'a>(
 
     let context = Context::new(&module.signature, universe);
 
-    let translate = |term| {    
+    let translate = |term| {
         fn enumerated_to_bdd(term: Enumerated, context: &Context) -> Bdd {
             let go = |term| enumerated_to_bdd(term, context);
             match term {
