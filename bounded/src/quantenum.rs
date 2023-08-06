@@ -37,7 +37,7 @@ pub fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
 }
 
 /// The result of a failed quantifier enumeration attempt.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum EnumerationError {
     /// Temporal operators are not supported by Enumerated
     #[error("found temporal operators in {0}")]
@@ -97,14 +97,17 @@ fn nullary_id_to_app(term: &Term, rs: &[RelationDecl]) -> Term {
 }
 
 impl Enumerated {
+    /// Constructs the term that represents `true`.
     fn always_true() -> Enumerated {
         Enumerated::And(vec![])
     }
 
+    /// Constructs the term that represents `false`.
     fn always_false() -> Enumerated {
         Enumerated::Or(vec![])
     }
 
+    /// Constructs a conjunction, doing minor simplifications.
     fn and(terms: impl IntoIterator<Item = Enumerated>) -> Enumerated {
         let mut terms: Vec<_> = terms
             .into_iter()
@@ -122,6 +125,7 @@ impl Enumerated {
         }
     }
 
+    /// Constructs a disjunction, doing minor simplifications.
     fn or(terms: impl IntoIterator<Item = Enumerated>) -> Enumerated {
         let mut terms: Vec<_> = terms
             .into_iter()
@@ -139,14 +143,26 @@ impl Enumerated {
         }
     }
 
-    fn get_and(self) -> Vec<Enumerated> {
+    /// Constructs a negation, doing minor simplifications.
+    fn not(self) -> Enumerated {
+        match self {
+            Enumerated::And(terms) => Enumerated::or(terms.into_iter().map(Enumerated::not)),
+            Enumerated::Or(terms) => Enumerated::and(terms.into_iter().map(Enumerated::not)),
+            Enumerated::Not(term) => *term,
+            _ => Enumerated::Not(Box::new(self)),
+        }
+    }
+
+    /// Returns the inside of an `And`, or a single-element vector otherwise.
+    pub fn get_and(self) -> Vec<Enumerated> {
         match self {
             Enumerated::And(terms) => terms,
             term => vec![term],
         }
     }
 
-    fn get_or(self) -> Vec<Enumerated> {
+    /// Returns the inside of an `Or`, or a single-element vector otherwise.
+    pub fn get_or(self) -> Vec<Enumerated> {
         match self {
             Enumerated::Or(terms) => terms,
             term => vec![term],
@@ -188,20 +204,20 @@ fn term_to_enumerated(
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
             Enumerated::App(name.clone(), *primes, args)
         }
-        Term::UnaryOp(UOp::Not, term) => Enumerated::Not(Box::new(go(term)?)),
+        Term::UnaryOp(UOp::Not, term) => go(term)?.not(),
         Term::BinOp(BinOp::Equals | BinOp::Iff, a, b) => match (element(a), element(b)) {
             (Ok(a), Ok(b)) if a == b => Enumerated::always_true(),
             (Ok(a), Ok(b)) if a != b => Enumerated::always_false(),
             _ => Enumerated::Eq(Box::new(go(a)?), Box::new(go(b)?)),
         },
-        Term::BinOp(BinOp::NotEquals, a, b) => Enumerated::Not(Box::new(go(&Term::BinOp(
-            BinOp::Equals,
-            a.clone(),
-            b.clone(),
-        ))?)),
-        Term::BinOp(BinOp::Implies, a, b) => {
-            Enumerated::or(vec![Enumerated::Not(Box::new(go(a)?)), go(b)?])
+        Term::BinOp(BinOp::NotEquals, a, b) => {
+            go(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
         }
+        Term::BinOp(BinOp::Implies, a, b) => match element(a) {
+            Ok(a) if a == 1 => go(b)?,
+            Ok(a) if a == 0 => Enumerated::always_true(),
+            _ => Enumerated::or(vec![go(a)?.not(), go(b)?]),
+        },
         Term::NAryOp(NOp::And, terms) => {
             Enumerated::and(terms.iter().map(go).collect::<Result<Vec<_>, _>>()?)
         }
@@ -210,7 +226,7 @@ fn term_to_enumerated(
         }
         Term::Ite { cond, then, else_ } => Enumerated::or([
             Enumerated::and([go(cond)?, go(then)?]),
-            Enumerated::and([Enumerated::Not(Box::new(go(cond)?)), go(else_)?]),
+            Enumerated::and([go(cond)?.not(), go(else_)?]),
         ]),
         Term::Quantified {
             quantifier,

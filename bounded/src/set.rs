@@ -5,6 +5,7 @@
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
 use bitvec::prelude::*;
+use crate::quantenum::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
@@ -39,29 +40,26 @@ pub enum CheckerAnswer {
 }
 
 /// The result of an unsuccessful attempt to translate the input module.
-#[derive(Error, Debug, PartialEq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum TranslationError {
-    /// The module contained a sort that wasn't in the universe
+    /// A sort existed in a term but not in the universe
     #[error("sort {0} not found in universe {1:#?}")]
     UnknownSort(String, UniverseBounds),
-    /// The transition system extraction failed
+    /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
+    /// See [`EnumerationError`]
+    #[error("{0}")]
+    EnumerationError(EnumerationError),
     /// The translated formula was not a conjunction
     #[error("the set checker currently only handles initial conditions that are a conjunction")]
     InitNotConj,
     /// The transition system extraction found more than one transition relation
     #[error("the set checker currently only handles a single transition relation")]
     MultipleTrs,
-    /// The term could not be translated to an imperative transition
-    #[error("could not translate to transition {0}")]
-    CouldNotTranslateToTransition(Term),
-    /// The term could not be translated to a formula
-    #[error("could not translate to propositional logic {0}")]
-    CouldNotTranslateToFormula(Term),
-    /// The term could not be translated to an element of a sort
-    #[error("could not translate to element {0}")]
-    CouldNotTranslateToElement(Term),
+    /// [`Formula`]s are single-vocabulary
+    #[error("a transition contained a disjunction that contained a prime")]
+    PrimeInFormula,
 }
 
 /// Combined entry point to both translate and search the module.
@@ -342,7 +340,11 @@ fn translate<'a>(
 
     let d = extract(module).map_err(TranslationError::ExtractionError)?;
 
-    let formula = |term| term_to_formula(&normalize(term, &context), &context, &HashMap::default());
+    let formula = |term| {
+        let term = enumerate_quantifiers(&term, &module.signature, universe, 0)
+            .map_err(TranslationError::EnumerationError)?;
+        enumerated_to_formula(term, &context)
+    };
 
     // get cube
     let mut init = BoundedState::ZERO;
@@ -385,17 +387,17 @@ fn translate<'a>(
         "currently, the set checker does not support axioms that mention mutable relations"
     );
     // compute imperative transitions
-    let trs = match d.transitions.len() {
-        0 => vec![],
-        1 => traverse_disjunction(
-            &normalize(d.transitions[0].clone(), &context),
-            &context,
-            &HashMap::default(),
-            &|term, assignments| term_to_transition(term, &context, assignments),
-        )?,
+    let trs = match d.transitions.as_slice() {
+        [] => vec![],
+        [tr] => enumerate_quantifiers(tr, &module.signature, universe, 1)
+            .map_err(TranslationError::EnumerationError)?
+            .get_or()
+            .into_iter()
+            .map(|term| enumerated_to_transition(term, &context))
+            .collect::<Result<Vec<_>, _>>()?,
         _ => return Err(TranslationError::MultipleTrs),
     };
-    let trs: Vec<_> = trs
+    let trs: Vec<(Transition, _)> = trs
         .into_iter()
         .filter(|tr| tr.slow_guard != Formula::always_false())
         .map(|tr| {
@@ -621,13 +623,6 @@ impl Formula {
         ])
     }
 
-    fn ite(self, t: Formula, f: Formula) -> Formula {
-        Formula::or([
-            Formula::and([self.clone(), t]),
-            Formula::and([self.not(), f]),
-        ])
-    }
-
     fn evaluate(&self, state: &BoundedState) -> bool {
         match self {
             Formula::And(terms) => terms.iter().all(|term| term.evaluate(state)),
@@ -637,192 +632,45 @@ impl Formula {
     }
 }
 
-fn normalize(term: Term, context: &Context) -> Term {
-    let term = nullary_id_to_app(term, &context.signature.relations);
-    let term = fly::term::prime::Next::new(context.signature).normalize(&term);
-    term
-}
-
-fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
-    match term {
-        Term::Id(id) if relations.iter().any(|r| r.name == id) => Term::App(id, 0, vec![]),
-        Term::App(name, primes, args) => Term::App(
-            name,
-            primes,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::UnaryOp(op, term) => Term::UnaryOp(op, Box::new(nullary_id_to_app(*term, relations))),
-        Term::BinOp(op, a, b) => Term::BinOp(
-            op,
-            Box::new(nullary_id_to_app(*a, relations)),
-            Box::new(nullary_id_to_app(*b, relations)),
-        ),
-        Term::NAryOp(op, args) => Term::NAryOp(
-            op,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::Ite { cond, then, else_ } => Term::Ite {
-            cond: Box::new(nullary_id_to_app(*cond, relations)),
-            then: Box::new(nullary_id_to_app(*then, relations)),
-            else_: Box::new(nullary_id_to_app(*else_, relations)),
-        },
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => Term::Quantified {
-            quantifier,
-            binders,
-            body: Box::new(nullary_id_to_app(*body, relations)),
-        },
-        term => term,
-    }
-}
-
-// this function implements the following procedure:
-// - recursively walk through the term until you get to a term that doesn't represent a disjunction
-// - call func on it
-// - collect all of the results of calls to func into a vector and return it
-fn traverse_disjunction<T>(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-    func: &impl Fn(&Term, &HashMap<String, Element>) -> Result<T, TranslationError>,
-) -> Result<Vec<T>, TranslationError> {
-    let traverse = |term| traverse_disjunction(term, context, assignments, func);
-    let vec: Vec<T> = match term {
-        Term::NAryOp(NOp::Or, terms) => {
-            let vecs = terms
-                .iter()
-                .map(traverse)
-                .collect::<Result<Vec<Vec<T>>, _>>()?;
-            vecs.into_iter().flatten().collect()
-        }
-        Term::Quantified {
-            quantifier: Quantifier::Exists,
-            binders,
-            body,
-        } => {
-            let vecs = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    for (binder, element) in binders.iter().zip_eq(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
-                    }
-                    traverse_disjunction(body, context, &new_assignments, func)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            vecs.into_iter().flatten().collect()
-        }
-        term => vec![func(term, assignments)?],
-    };
-    Ok(vec)
-}
-
 // Converts a Term to exactly one Transition (we aren't doing DNF, so this function cannot
 // return multiple transitions). It will fail if given a disjunction where one of the
 // branches contains a primed variable. (It can handle single-vocabulary disjunctions by
-// translating them into `slow_guard`s.) This is the "inner function" for `traverse_disjunction`.
-fn term_to_transition(
-    term: &Term,
+// translating them into `slow_guard`s.)
+fn enumerated_to_transition(
+    term: Enumerated,
     context: &Context,
-    assignments: &HashMap<String, Element>,
 ) -> Result<Transition, TranslationError> {
-    let transition = |term| term_to_transition(term, context, assignments);
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
+    let go = |term| enumerated_to_transition(term, context);
+    let formula = |term| enumerated_to_formula(term, context);
 
-    let transition: Transition = match term {
-        Term::NAryOp(NOp::And, terms) => {
-            let trs = terms
-                .iter()
-                .map(transition)
-                .collect::<Result<Vec<_>, _>>()?;
-            Transition::from_conjunction(trs)
+    let transition = match term {
+        Enumerated::And(xs) => {
+            Transition::from_conjunction(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?)
         }
-        Term::Quantified {
-            quantifier: Quantifier::Forall,
-            binders,
-            body,
-        } => {
-            let trs = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    for (binder, element) in binders.iter().zip_eq(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
+        Enumerated::Not(ref x) => {
+            let mut tr = go(*x.clone())?;
+            match (tr.guards.as_mut_slice(), tr.updates.as_mut_slice()) {
+                ([guard], []) if tr.slow_guard == Formula::always_true() => {
+                    guard.value = !guard.value
+                }
+                ([], [update]) if tr.slow_guard == Formula::always_true() => {
+                    update.formula = update.formula.clone().not()
+                }
+                ([], []) => tr.slow_guard = tr.slow_guard.not(),
+                _ => {
+                    tr = Transition {
+                        guards: vec![],
+                        updates: vec![],
+                        slow_guard: formula(term)?,
                     }
-                    term_to_transition(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Transition::from_conjunction(trs)
-        }
-        Term::Literal(true) => Transition {
-            guards: vec![],
-            updates: vec![],
-            slow_guard: Formula::always_true(),
-        },
-        Term::App(_, 0, _) => match formula(term)? {
-            Formula::Guard(guard) => Transition {
-                guards: vec![guard],
-                updates: vec![],
-                slow_guard: Formula::always_true(),
-            },
-            _ => unreachable!(),
-        },
-        Term::App(name, 1, args) => match formula(&Term::App(name.clone(), 0, args.clone()))? {
-            Formula::Guard(Guard { index, value }) => Transition {
-                guards: vec![],
-                updates: vec![Update {
-                    index,
-                    formula: match value {
-                        true => Formula::always_true(),
-                        false => Formula::always_false(),
-                    },
-                }],
-                slow_guard: Formula::always_true(),
-            },
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Not, body) => {
-            let mut tr = transition(body)?;
-            if tr.guards.len() == 1
-                && tr.updates.is_empty()
-                && tr.slow_guard == Formula::always_true()
-            {
-                tr.guards[0].value = !tr.guards[0].value;
-            } else if tr.guards.is_empty()
-                && tr.updates.len() == 1
-                && tr.slow_guard == Formula::always_true()
-            {
-                tr.updates[0].formula = tr.updates[0].formula.clone().not();
-            } else if tr.guards.is_empty() && tr.updates.is_empty() {
-                tr.slow_guard = tr.slow_guard.not();
-            } else {
-                return Err(TranslationError::CouldNotTranslateToTransition(
-                    term.clone(),
-                ));
+                }
             }
             tr
         }
-        Term::BinOp(BinOp::Iff | BinOp::Equals, left, right)
-            if matches!(**left, Term::App(_, 1, _)) =>
-        {
-            if let Term::App(name, 1, args) = &**left {
-                let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
+        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, 1, _)) => {
+            if let Enumerated::App(name, 1, args) = *x {
                 let index = context.indices[&(name.as_str(), args)];
-                let formula = formula(right)?;
+                let formula = formula(*y)?;
                 Transition {
                     guards: vec![],
                     updates: vec![Update { index, formula }],
@@ -832,139 +680,55 @@ fn term_to_transition(
                 unreachable!()
             }
         }
-        Term::BinOp(BinOp::NotEquals, left, right) => transition(&Term::UnaryOp(
-            UOp::Not,
-            Box::new(Term::equals(&**left, &**right)),
-        ))?,
-        Term::BinOp(BinOp::Implies, left, right) if element(left) == Ok(1) => transition(right)?,
-        Term::BinOp(BinOp::Implies, left, _) if element(left) == Ok(0) => Transition {
+        Enumerated::App(name, 1, args) => Transition {
             guards: vec![],
-            updates: vec![],
+            updates: vec![Update {
+                index: context.indices[&(name.as_str(), args)],
+                formula: Formula::always_true(),
+            }],
             slow_guard: Formula::always_true(),
         },
-        term => Transition {
-            guards: vec![],
-            updates: vec![],
-            slow_guard: formula(term)?,
-        },
+        term => {
+            let terms = formula(term)?.get_and();
+            if terms.iter().all(|term| matches!(term, Formula::Guard(_))) {
+                Transition {
+                    guards: terms
+                        .into_iter()
+                        .map(|term| match term {
+                            Formula::Guard(guard) => guard,
+                            _ => unreachable!(),
+                        })
+                        .collect(),
+                    updates: vec![],
+                    slow_guard: Formula::always_true(),
+                }
+            } else {
+                Transition {
+                    guards: vec![],
+                    updates: vec![],
+                    slow_guard: Formula::and(terms),
+                }
+            }
+        }
     };
     Ok(transition)
 }
 
-// This function translates a Term to a single-vocabulary propositional formula.
-// It will fail if the term has temporal operators.
-fn term_to_formula(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-) -> Result<Formula, TranslationError> {
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
+fn enumerated_to_formula(term: Enumerated, context: &Context) -> Result<Formula, TranslationError> {
+    let go = |term| enumerated_to_formula(term, context);
 
-    let formula: Formula = match term {
-        Term::Literal(true) => Formula::always_true(),
-        Term::Literal(false) => Formula::always_false(),
-        Term::Id(id) => match assignments.get(id) {
-            Some(1) => Formula::always_true(),
-            Some(0) => Formula::always_false(),
-            _ => {
-                return Err(TranslationError::CouldNotTranslateToTransition(
-                    term.clone(),
-                ))
-            }
-        },
-        Term::App(name, 0, args) => {
-            let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Formula::Guard(Guard {
-                index: context.indices[&(name.as_str(), args)],
-                value: true,
-            })
-        }
-        Term::UnaryOp(UOp::Not, term) => formula(term)?.not(),
-        Term::BinOp(BinOp::Iff, a, b) => formula(a)?.iff(formula(b)?),
-        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) if a == b => Formula::always_true(),
-            (Ok(a), Ok(b)) if a != b => Formula::always_false(),
-            _ => formula(a)?.iff(formula(b)?),
-        },
-        Term::BinOp(BinOp::NotEquals, a, b) => {
-            formula(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
-        }
-        Term::BinOp(BinOp::Implies, a, b) => Formula::or(vec![formula(a)?.not(), formula(b)?]),
-        Term::NAryOp(NOp::And, terms) => {
-            Formula::and(terms.iter().map(formula).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::NAryOp(NOp::Or, terms) => {
-            Formula::or(terms.iter().map(formula).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::Ite { cond, then, else_ } => formula(cond)?.ite(formula(then)?, formula(else_)?),
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => {
-            let terms = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    for (binder, element) in binders.iter().zip_eq(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
-                    }
-                    term_to_formula(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match quantifier {
-                Quantifier::Forall => Formula::and(terms),
-                Quantifier::Exists => Formula::or(terms),
-            }
-        }
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToFormula(term.clone())),
+    let formula = match term {
+        Enumerated::And(xs) => Formula::and(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
+        Enumerated::Or(xs) => Formula::or(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
+        Enumerated::Not(x) => go(*x)?.not(),
+        Enumerated::Eq(x, y) => go(*x)?.iff(go(*y)?),
+        Enumerated::App(name, 0, args) => Formula::Guard(Guard {
+            index: context.indices[&(name.as_str(), args)],
+            value: true,
+        }),
+        Enumerated::App(..) => return Err(TranslationError::PrimeInFormula),
     };
     Ok(formula)
-}
-
-// This function tries to translate a Term to a constant element of a sort
-// (either boolean or uninterpreted). It will fail if the term includes temporal
-// operators, or if the value cannot be determined through quantifier enumeration.
-fn term_to_element(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-) -> Result<Element, TranslationError> {
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let element: Element = match term {
-        Term::Literal(_)
-        | Term::UnaryOp(UOp::Not, ..)
-        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
-        | Term::NAryOp(NOp::And | NOp::Or, ..)
-        | Term::Quantified { .. } => match formula(term)? {
-            formula if formula == Formula::always_true() => 1,
-            formula if formula == Formula::always_false() => 0,
-            _ => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
-        },
-        Term::Id(id) => match assignments.get(id) {
-            Some(x) => *x,
-            None => panic!("no assignment found for {id}"),
-        },
-        Term::Ite { cond, then, else_ } => match element(cond)? {
-            1 => element(then)?,
-            0 => element(else_)?,
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
-    };
-    Ok(element)
 }
 
 /// Whether to compress traces by keeping only the last state
