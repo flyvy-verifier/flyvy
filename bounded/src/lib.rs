@@ -15,6 +15,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod bdd;
+pub mod quantenum;
 pub mod sat;
 pub mod set;
 pub mod smt;
