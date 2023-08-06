@@ -70,7 +70,7 @@ pub fn check(
         .cloned();
     let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
-    let mut indices = Indices::new(&module.signature, universe, depth);
+    let mut indices = Indices::new(&module.signature, universe, depth + 1);
 
     let translate = |term| {
         fn enumerated_to_ast(term: Enumerated) -> Ast {
@@ -83,7 +83,7 @@ pub fn check(
             }
         }
 
-        let term = enumerate_quantifiers(&term, &module.signature, universe, depth.max(1))
+        let term = enumerate_quantifiers(&term, &module.signature, universe, 1)
             .map_err(CheckerError::EnumerationError)?;
         Ok(enumerated_to_ast(term))
     };
@@ -229,7 +229,7 @@ fn solver_to_models(solver: &Solver, indices: &Indices) -> Vec<Model> {
         .iter()
         .map(|s| indices.universe[s])
         .collect();
-    (0..=indices.num_mutable_copies)
+    (0..indices.num_mutable_copies)
         .map(|primes| {
             Model::new(
                 indices.signature,

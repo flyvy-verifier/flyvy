@@ -22,9 +22,12 @@ pub struct Indices<'a> {
     pub universe: &'a UniverseBounds,
     /// The number of copies of mutable relations that this object holds
     pub num_mutable_copies: usize,
+    /// The number of indices in one copy of the mutable relations
+    pub num_mutables: usize,
+    /// The total number of indices that are tracked
+    pub num_vars: usize,
+    /// The map that this object is wrapping
     indices: HashMap<&'a str, HashMap<Vec<Element>, (usize, bool)>>,
-    num_mutables: usize,
-    num_vars: usize,
 }
 
 impl Indices<'_> {
@@ -52,19 +55,18 @@ impl Indices<'_> {
 
         let mut indices: HashMap<_, HashMap<_, _>> = HashMap::new();
 
-        // immutables mutables extras
-        let mut num_immutables = 0;
-        for (i, (r, e)) in immutable.iter().flat_map(elements).enumerate() {
-            num_immutables += 1;
-            indices.entry(r).or_default().insert(e, (i, false));
-        }
         let mut num_mutables = 0;
         for (i, (r, e)) in mutable.iter().flat_map(elements).enumerate() {
             num_mutables += 1;
+            indices.entry(r).or_default().insert(e, (i, true));
+        }
+        let mut num_immutables = 0;
+        for (i, (r, e)) in immutable.iter().flat_map(elements).enumerate() {
+            num_immutables += 1;
             indices
                 .entry(r)
                 .or_default()
-                .insert(e, (i + num_immutables, true));
+                .insert(e, (num_mutables * num_mutable_copies + i, false));
         }
 
         Indices {
@@ -73,13 +75,13 @@ impl Indices<'_> {
             indices,
             num_mutable_copies,
             num_mutables,
-            num_vars: num_immutables + num_mutables * (num_mutable_copies + 1),
+            num_vars: num_mutables * num_mutable_copies + num_immutables,
         }
     }
 
     /// Get an index from the information contained in a `Term::App`.
     pub fn get(&self, relation: &str, primes: usize, elements: &[usize]) -> usize {
-        assert!(primes <= self.num_mutable_copies);
+        assert!(primes < self.num_mutable_copies);
         let (mut i, mutable) = self.indices[relation][elements];
         if mutable {
             i += primes * self.num_mutables;
@@ -91,5 +93,10 @@ impl Indices<'_> {
     pub fn var(&mut self) -> usize {
         self.num_vars += 1;
         self.num_vars - 1
+    }
+
+    /// Returns an iterator over one copy of the mutable and immutable indices
+    pub fn iter(&self) -> impl Iterator<Item = (&&str, &HashMap<Vec<Element>, (usize, bool)>)> {
+        self.indices.iter()
     }
 }
