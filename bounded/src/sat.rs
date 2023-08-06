@@ -15,7 +15,7 @@ use thiserror::Error;
 /// Holds an ordering of all variables, as well as other context
 struct Context<'a> {
     signature: &'a Signature,
-    universe: &'a Universe,
+    universe: &'a UniverseBounds,
     indices: HashMap<&'a str, HashMap<Vec<usize>, (usize, bool)>>,
     mutables: usize,
     vars: usize,
@@ -25,7 +25,11 @@ struct Context<'a> {
 struct Variable(usize);
 
 impl Context<'_> {
-    fn new<'a>(signature: &'a Signature, universe: &'a Universe, depth: usize) -> Context<'a> {
+    fn new<'a>(
+        signature: &'a Signature,
+        universe: &'a UniverseBounds,
+        depth: usize,
+    ) -> Context<'a> {
         let (mutable, immutable): (Vec<_>, Vec<_>) = signature
             .relations
             .iter()
@@ -119,7 +123,7 @@ impl Context<'_> {
 pub enum CheckerError {
     /// A sort existed in a term but not in the universe
     #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, Universe),
+    UnknownSort(String, UniverseBounds),
     /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
@@ -129,16 +133,6 @@ pub enum CheckerError {
     /// The SAT solver failed
     #[error("solver failed, likely a timeout")]
     SolverFailed,
-}
-
-/// Map from uninterpreted sort names to sizes
-type Universe = HashMap<String, usize>;
-
-fn cardinality(universe: &Universe, sort: &Sort) -> usize {
-    match sort {
-        Sort::Bool => 2,
-        Sort::Uninterpreted(id) => universe[id],
-    }
 }
 
 /// The result of a successful run of the bounded model checker
@@ -155,7 +149,7 @@ pub enum CheckerAnswer {
 /// The checker ignores proof blocks.
 pub fn check(
     module: &Module,
-    universe: &Universe,
+    universe: &UniverseBounds,
     depth: usize,
     print_timing: bool,
 ) -> Result<CheckerAnswer, CheckerError> {
@@ -251,7 +245,6 @@ pub fn check(
     answer
 }
 
-// true is empty And; false is empty Or
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
     Var(String, Vec<usize>, usize),

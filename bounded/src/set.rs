@@ -16,18 +16,6 @@ use thiserror::Error;
 // and the bounded model checker is essentially a hashing microbenchmark :)
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-/// Map from uninterpreted sort names to their sizes.
-// Here is the one place we use a std HashMap. It's not a performance problem because it's not used
-// in the inner loop of the model checker, and it provides a more ergonomic public api to this module.
-type UniverseBounds = std::collections::HashMap<String, usize>;
-
-fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
-    match sort {
-        Sort::Bool => 2,
-        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
-    }
-}
-
 /// The result of a successful run of the bounded model checker
 #[derive(Debug, PartialEq)]
 pub enum CheckerAnswer {

@@ -16,7 +16,7 @@ pub struct Context<'a> {
     /// The signature that was used to construct `indices`
     pub signature: &'a Signature,
     /// The universe bounds that were used to construct `indices`
-    pub universe: &'a Universe,
+    pub universe: &'a UniverseBounds,
 
     /// Number of two-state variables
     pub mutables: usize,
@@ -30,7 +30,7 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    fn new<'a>(signature: &'a Signature, universe: &'a Universe) -> Context<'a> {
+    fn new<'a>(signature: &'a Signature, universe: &'a UniverseBounds) -> Context<'a> {
         let (mutable, immutable): (Vec<_>, Vec<_>) = signature
             .relations
             .iter()
@@ -231,7 +231,7 @@ pub enum CheckerAnswer<'a> {
 pub enum CheckerError {
     /// A sort existed in a term but not in the universe
     #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, Universe),
+    UnknownSort(String, UniverseBounds),
     /// See [`ExtractionError`]
     #[error("{0}")]
     ExtractionError(ExtractionError),
@@ -240,23 +240,13 @@ pub enum CheckerError {
     EnumerationError(EnumerationError),
 }
 
-/// Map from uninterpreted sort names to sizes
-type Universe = HashMap<String, usize>;
-
-fn cardinality(universe: &Universe, sort: &Sort) -> usize {
-    match sort {
-        Sort::Bool => 2,
-        Sort::Uninterpreted(id) => universe[id],
-    }
-}
-
 /// Check a given Module out to some depth.
 /// This assumes that the module has been typechecked.
 /// Passing `None` for depth means to run until a counterexample is found.
 /// The checker ignores proof blocks.
 pub fn check<'a>(
     module: &'a Module,
-    universe: &'a Universe,
+    universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
 ) -> Result<CheckerAnswer<'a>, CheckerError> {
@@ -268,7 +258,7 @@ pub fn check<'a>(
 /// It also returns a negated Bdd if it returns Convergence.
 pub fn check_reversed<'a>(
     module: &'a Module,
-    universe: &'a Universe,
+    universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
 ) -> Result<CheckerAnswer<'a>, CheckerError> {
@@ -277,7 +267,7 @@ pub fn check_reversed<'a>(
 
 fn check_internal<'a>(
     module: &'a Module,
-    universe: &'a Universe,
+    universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
     reversed: bool,
