@@ -3,37 +3,12 @@
 
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
-use crate::{indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quantenum::*};
 use biodivine_lib_bdd::*;
 use boolean_expression::BooleanExpression;
 use fly::{semantics::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::HashMap;
-use thiserror::Error;
-
-/// The result of a successful run of the bounded model checker
-pub enum CheckerAnswer<'a> {
-    /// The checker found a counterexample
-    Counterexample(Vec<Model>),
-    /// The checker did not find a counterexample
-    Unknown,
-    /// The checker found that the set of states stopped changing
-    Convergence(Bdd, BddIndices<'a>),
-}
-
-/// The result of an unsuccessful attempt to run the BDD checker.
-#[derive(Error, Debug)]
-pub enum CheckerError {
-    /// A sort existed in a term but not in the universe
-    #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, UniverseBounds),
-    /// See [`ExtractionError`]
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    /// See [`EnumerationError`]
-    #[error("{0}")]
-    EnumerationError(EnumerationError),
-}
 
 /// Check a given Module out to some depth.
 /// This assumes that the module has been typechecked.
@@ -44,7 +19,7 @@ pub fn check<'a>(
     universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<'a>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, false)
 }
 
@@ -56,7 +31,7 @@ pub fn check_reversed<'a>(
     universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<'a>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, true)
 }
 
@@ -66,7 +41,7 @@ fn check_internal<'a>(
     depth: Option<usize>,
     print_timing: bool,
     reversed: bool,
-) -> Result<CheckerAnswer<'a>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -198,7 +173,7 @@ fn check_internal<'a>(
         }
 
         if reachable == new_reachable {
-            return Ok(CheckerAnswer::Convergence(reachable, indices));
+            return Ok(CheckerAnswer::Convergence((reachable, indices)));
         } else {
             reachable = new_reachable;
         }

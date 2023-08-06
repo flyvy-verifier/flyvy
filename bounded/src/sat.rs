@@ -5,36 +5,9 @@
 //!
 //! [cadical]: https://fmv.jku.at/cadical/
 
-use crate::{indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quantenum::*};
 use cadical::Solver;
 use fly::{semantics::*, syntax::*, transitions::*};
-use thiserror::Error;
-
-/// The result of an unsuccessful attempt to run the SAT checker.
-#[derive(Error, Debug)]
-pub enum CheckerError {
-    /// A sort existed in a term but not in the universe
-    #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, UniverseBounds),
-    /// See [`ExtractionError`]
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    /// See [`EnumerationError`]
-    #[error("{0}")]
-    EnumerationError(EnumerationError),
-    /// The SAT solver failed
-    #[error("solver failed, likely a timeout")]
-    SolverFailed,
-}
-
-/// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
-    /// The checker found a counterexample
-    Counterexample(Vec<Model>),
-    /// The checker did not find a counterexample
-    Unknown,
-}
 
 /// Check a given Module out to some depth.
 /// This function assumes that the module has been typechecked.
@@ -44,7 +17,7 @@ pub fn check(
     universe: &UniverseBounds,
     depth: usize,
     print_timing: bool,
-) -> Result<CheckerAnswer, CheckerError> {
+) -> Result<CheckerAnswer<()>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -122,7 +95,7 @@ pub fn check(
     }
 
     let answer = match solver.solve() {
-        None => Err(CheckerError::SolverFailed),
+        None => Err(CheckerError::SatSolverFailed),
         Some(false) => Ok(CheckerAnswer::Unknown),
         Some(true) => Ok(CheckerAnswer::Counterexample(solver_to_models(
             &solver, &indices,

@@ -4,52 +4,16 @@
 //! A bounded model checker for flyvy programs. Use `translate` to turn a flyvy `Module`
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
-
 use bitvec::prelude::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
-use crate::{indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quantenum::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
-use thiserror::Error;
 
 // We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
 // and the bounded model checker is essentially a hashing microbenchmark :)
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-
-/// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
-    /// The checker found a counterexample
-    Counterexample(Vec<Model>),
-    /// The checker did not find a counterexample
-    Unknown,
-    /// The checker found that the set of states stopped changing
-    Convergence,
-}
-
-/// The result of an unsuccessful attempt to translate the input module.
-#[derive(Debug, Error, PartialEq)]
-pub enum TranslationError {
-    /// A sort existed in a term but not in the universe
-    #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, UniverseBounds),
-    /// See [`ExtractionError`]
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    /// See [`EnumerationError`]
-    #[error("{0}")]
-    EnumerationError(EnumerationError),
-    /// The translated formula was not a conjunction
-    #[error("the set checker currently only handles initial conditions that are a conjunction")]
-    InitNotConj,
-    /// The transition system extraction found more than one transition relation
-    #[error("the set checker currently only handles a single transition relation")]
-    MultipleTrs,
-    /// [`Formula`]s are single-vocabulary
-    #[error("a transition contained a disjunction that contained a prime")]
-    PrimeInFormula,
-}
 
 /// Combined entry point to both translate and search the module.
 pub fn check(
@@ -58,11 +22,11 @@ pub fn check(
     depth: Option<usize>,
     compress_traces: TraceCompression,
     print_timing: bool,
-) -> Result<CheckerAnswer, TranslationError> {
+) -> Result<CheckerAnswer<()>, CheckerError> {
     let (program, indices) = translate(module, universe, print_timing)?;
     match interpret(&program, depth, compress_traces, print_timing, &indices) {
         InterpreterResult::Unknown => Ok(CheckerAnswer::Unknown),
-        InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
+        InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence(())),
         InterpreterResult::Counterexample(trace) => {
             let models: Vec<Model> = match compress_traces {
                 TraceCompression::Yes => {
@@ -268,7 +232,7 @@ fn translate<'a>(
     module: &'a Module,
     universe: &'a UniverseBounds,
     print_timing: bool,
-) -> Result<(BoundedProgram, Indices<'a>), TranslationError> {
+) -> Result<(BoundedProgram, Indices<'a>), CheckerError> {
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             panic!("non-bool relations in checker (use Module::convert_non_bool_relations)")
@@ -279,10 +243,7 @@ fn translate<'a>(
 
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
-            return Err(TranslationError::UnknownSort(
-                sort.clone(),
-                universe.clone(),
-            ));
+            return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
         }
     }
 
@@ -293,11 +254,11 @@ fn translate<'a>(
     println!("starting translation...");
     let timer = std::time::Instant::now();
 
-    let d = extract(module).map_err(TranslationError::ExtractionError)?;
+    let d = extract(module).map_err(CheckerError::ExtractionError)?;
 
     let formula = |term| {
         let term = enumerate_quantifiers(&term, &module.signature, universe)
-            .map_err(TranslationError::EnumerationError)?;
+            .map_err(CheckerError::EnumerationError)?;
         enumerated_to_formula(term, &indices)
     };
 
@@ -310,7 +271,7 @@ fn translate<'a>(
             init.set(index, value);
             constrained.insert(index);
         } else {
-            return Err(TranslationError::InitNotConj);
+            return Err(CheckerError::InitNotConj);
         }
     }
     // enumerate cube
@@ -345,12 +306,12 @@ fn translate<'a>(
     let trs = match d.transitions.as_slice() {
         [] => vec![],
         [tr] => enumerate_quantifiers(tr, &module.signature, universe)
-            .map_err(TranslationError::EnumerationError)?
+            .map_err(CheckerError::EnumerationError)?
             .get_or()
             .into_iter()
             .map(|term| enumerated_to_transition(term, &indices))
             .collect::<Result<Vec<_>, _>>()?,
-        _ => return Err(TranslationError::MultipleTrs),
+        _ => return Err(CheckerError::MultipleTrs),
     };
     let trs: Vec<(Transition, _)> = trs
         .into_iter()
@@ -594,7 +555,7 @@ impl Formula {
 fn enumerated_to_transition(
     term: Enumerated,
     indices: &Indices,
-) -> Result<Transition, TranslationError> {
+) -> Result<Transition, CheckerError> {
     let go = |term| enumerated_to_transition(term, indices);
     let formula = |term| enumerated_to_formula(term, indices);
 
@@ -669,7 +630,7 @@ fn enumerated_to_transition(
     Ok(transition)
 }
 
-fn enumerated_to_formula(term: Enumerated, indices: &Indices) -> Result<Formula, TranslationError> {
+fn enumerated_to_formula(term: Enumerated, indices: &Indices) -> Result<Formula, CheckerError> {
     let go = |term| enumerated_to_formula(term, indices);
 
     let formula = match term {
@@ -681,7 +642,7 @@ fn enumerated_to_formula(term: Enumerated, indices: &Indices) -> Result<Formula,
             index: indices.get(&name, 0, &args),
             value: true,
         }),
-        Enumerated::App(_, true, _) => return Err(TranslationError::PrimeInFormula),
+        Enumerated::App(_, true, _) => return Err(CheckerError::PrimeInFormula),
     };
     Ok(formula)
 }
@@ -1072,7 +1033,7 @@ mod tests {
             }],
         };
         let universe = std::collections::HashMap::new();
-        let indices = Indices::new(&signature, &universe);
+        let indices = Indices::new(&signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([0])],
@@ -1131,7 +1092,7 @@ mod tests {
             ],
         };
         let universe = std::collections::HashMap::new();
-        let indices = Indices::new(&signature, &universe);
+        let indices = Indices::new(&signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
@@ -1227,7 +1188,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_set_lockserver_translation() -> Result<(), TranslationError> {
+    fn checker_set_lockserver_translation() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
@@ -1328,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_set_lockserver_buggy() -> Result<(), TranslationError> {
+    fn checker_set_lockserver_buggy() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
@@ -1350,7 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_set_consensus() -> Result<(), TranslationError> {
+    fn checker_set_consensus() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
@@ -1374,13 +1335,13 @@ mod tests {
         sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
-            Ok(CheckerAnswer::Convergence),
+            Ok(CheckerAnswer::Convergence(())),
             check(&module, &universe, Some(10), true.into(), false)
         );
     }
 
     #[test]
-    fn checker_set_copy_relation_size() -> Result<(), TranslationError> {
+    fn checker_set_copy_relation_size() -> Result<(), CheckerError> {
         let source = "
 sort x
 mutable f(x): bool
@@ -1405,7 +1366,7 @@ immutable f(s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 2)]);
-        let indices = Indices::new(&m.signature, &universe);
+        let indices = Indices::new(&m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
 
         assert!(set.insert(&state([0, 0])));
@@ -1422,7 +1383,7 @@ immutable f(a, b): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("a".to_string(), 3), ("b".to_string(), 3)]);
-        let indices = Indices::new(&m.signature, &universe);
+        let indices = Indices::new(&m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
 
         // b: 0 -> 2, 2 -> 1, 1 -> 0
@@ -1437,12 +1398,12 @@ immutable f(s, t, s): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("s".to_string(), 3), ("t".to_string(), 2)]);
-        let indices = Indices::new(&m.signature, &universe);
+        let indices = Indices::new(&m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;
             for (x, y, z) in vec {
-                out.set(indices.indices[&("f", vec![x, y, z])], true);
+                out.set(indices.get("f", 0, &[x, y, z]), true);
             }
             out
         };
@@ -1472,12 +1433,12 @@ immutable f(s, bool, s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 3)]);
-        let indices = Indices::new(&m.signature, &universe);
+        let indices = Indices::new(&m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;
             for (x, y, z) in vec {
-                out.set(indices.indices[&("f", vec![x, y, z])], true);
+                out.set(indices.get("f", 0, &[x, y, z]), true);
             }
             out
         };

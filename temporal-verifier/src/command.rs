@@ -3,15 +3,9 @@
 
 //! The temporal-verifier binary's command-line interface.
 
-use codespan_reporting::diagnostic::{Diagnostic, Label};
-use path_slash::PathExt;
-use std::collections::HashMap;
-use std::fs::create_dir_all;
-use std::path::Path;
-use std::sync::Arc;
-use std::{fs, path::PathBuf, process};
-
+use bounded::checker::CheckerAnswer;
 use clap::Args;
+use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::{
     files::SimpleFile,
     term::{
@@ -27,9 +21,15 @@ use inference::fixpoint::{self, qalpha_by_qf_body};
 use inference::houdini;
 use inference::quant::QuantifierConfig;
 use inference::updr::Updr;
+use path_slash::PathExt;
 use solver::backends::{self, GenericBackend};
 use solver::conf::SolverConf;
 use solver::{log_dir, solver_path};
+use std::collections::HashMap;
+use std::fs::create_dir_all;
+use std::path::Path;
+use std::sync::Arc;
+use std::{fs, path::PathBuf, process};
 use verify::module::verify_module;
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -640,13 +640,13 @@ impl App {
                     compress_traces.into(),
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(bounded::set::CheckerAnswer::Counterexample(models)) => {
+                    Ok(CheckerAnswer::Counterexample(models)) => {
                         println!(
                             "found counterexample:\n{}",
                             models_to_string(models.iter().map(back_convert_model))
                         )
                     }
-                    Ok(bounded::set::CheckerAnswer::Unknown) => {
+                    Ok(CheckerAnswer::Unknown) => {
                         println!(
                             "answer: safe up to {} for given sort bounds",
                             bounded
@@ -655,7 +655,7 @@ impl App {
                                 .unwrap_or("any depth".to_string())
                         );
                     }
-                    Ok(bounded::set::CheckerAnswer::Convergence) => {
+                    Ok(CheckerAnswer::Convergence(())) => {
                         println!("answer: safe forever with given sort bounds")
                     }
                     Err(error) => eprintln!("{error}"),
@@ -673,15 +673,16 @@ impl App {
                 };
                 let univ = bounded.get_universe(&m.signature);
                 match bounded::sat::check(&m, &univ, depth, bounded.print_timing.unwrap_or(true)) {
-                    Ok(bounded::sat::CheckerAnswer::Counterexample(models)) => {
+                    Ok(CheckerAnswer::Counterexample(models)) => {
                         println!(
                             "found counterexample:\n{}",
                             models_to_string(models.iter().map(back_convert_model))
                         )
                     }
-                    Ok(bounded::sat::CheckerAnswer::Unknown) => {
+                    Ok(CheckerAnswer::Unknown) => {
                         println!("answer: safe up to depth {depth} for given sort bounds")
                     }
+                    Ok(CheckerAnswer::Convergence(())) => unreachable!(),
                     Err(error) => eprintln!("{error}"),
                 }
             }
@@ -699,13 +700,13 @@ impl App {
                     bounded.depth,
                     bounded.print_timing.unwrap_or(true),
                 ) {
-                    Ok(bounded::bdd::CheckerAnswer::Counterexample(models)) => {
+                    Ok(CheckerAnswer::Counterexample(models)) => {
                         println!(
                             "found counterexample:\n{}",
                             models_to_string(models.iter().map(back_convert_model))
                         )
                     }
-                    Ok(bounded::bdd::CheckerAnswer::Unknown) => {
+                    Ok(CheckerAnswer::Unknown) => {
                         println!(
                             "answer: safe up to {} for given sort bounds",
                             bounded
@@ -714,7 +715,7 @@ impl App {
                                 .unwrap_or("any depth".to_string())
                         );
                     }
-                    Ok(bounded::bdd::CheckerAnswer::Convergence(..)) => {
+                    Ok(CheckerAnswer::Convergence(..)) => {
                         println!("answer: safe forever with given sort bounds")
                     }
                     Err(error) => eprintln!("{error}"),
