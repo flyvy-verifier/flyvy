@@ -329,7 +329,7 @@ fn translate<'a>(
     let d = extract(module).map_err(TranslationError::ExtractionError)?;
 
     let formula = |term| {
-        let term = enumerate_quantifiers(&term, &module.signature, universe, 0)
+        let term = enumerate_quantifiers(&term, &module.signature, universe)
             .map_err(TranslationError::EnumerationError)?;
         enumerated_to_formula(term, &context)
     };
@@ -377,7 +377,7 @@ fn translate<'a>(
     // compute imperative transitions
     let trs = match d.transitions.as_slice() {
         [] => vec![],
-        [tr] => enumerate_quantifiers(tr, &module.signature, universe, 1)
+        [tr] => enumerate_quantifiers(tr, &module.signature, universe)
             .map_err(TranslationError::EnumerationError)?
             .get_or()
             .into_iter()
@@ -655,8 +655,8 @@ fn enumerated_to_transition(
             }
             tr
         }
-        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, 1, _)) => {
-            if let Enumerated::App(name, 1, args) = *x {
+        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, true, _)) => {
+            if let Enumerated::App(name, true, args) = *x {
                 let index = context.indices[&(name.as_str(), args)];
                 let formula = formula(*y)?;
                 Transition {
@@ -668,7 +668,7 @@ fn enumerated_to_transition(
                 unreachable!()
             }
         }
-        Enumerated::App(name, 1, args) => Transition {
+        Enumerated::App(name, true, args) => Transition {
             guards: vec![],
             updates: vec![Update {
                 index: context.indices[&(name.as_str(), args)],
@@ -710,11 +710,11 @@ fn enumerated_to_formula(term: Enumerated, context: &Context) -> Result<Formula,
         Enumerated::Or(xs) => Formula::or(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
         Enumerated::Not(x) => go(*x)?.not(),
         Enumerated::Eq(x, y) => go(*x)?.iff(go(*y)?),
-        Enumerated::App(name, 0, args) => Formula::Guard(Guard {
+        Enumerated::App(name, false, args) => Formula::Guard(Guard {
             index: context.indices[&(name.as_str(), args)],
             value: true,
         }),
-        Enumerated::App(..) => return Err(TranslationError::PrimeInFormula),
+        Enumerated::App(_, true, _) => return Err(TranslationError::PrimeInFormula),
     };
     Ok(formula)
 }

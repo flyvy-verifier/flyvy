@@ -20,7 +20,7 @@ pub enum Enumerated {
     /// Equality.
     Eq(Box<Enumerated>, Box<Enumerated>),
     /// Variable.
-    App(String, usize, Vec<Element>),
+    App(String, bool, Vec<Element>),
 }
 
 /// Map from uninterpreted sort names to their sizes.
@@ -42,7 +42,7 @@ pub enum EnumerationError {
     /// Temporal operators are not supported by Enumerated
     #[error("found temporal operators in {0}")]
     TemporalOperator(Term),
-    /// The maximum number of primes is bounded by an argument
+    /// Having more than 1 prime is not supported by Enumerated
     #[error("too many primes in {0}")]
     TooManyPrimes(Term),
     /// An identifier that was never bound exists
@@ -59,11 +59,10 @@ pub fn enumerate_quantifiers(
     term: &Term,
     signature: &Signature,
     universe: &UniverseBounds,
-    max_primes: usize,
 ) -> Result<Enumerated, EnumerationError> {
     let term = nullary_id_to_app(term, &signature.relations);
     let term = fly::term::prime::Next::new(signature).normalize(&term);
-    term_to_enumerated(&term, universe, max_primes, &HashMap::default())
+    term_to_enumerated(&term, universe, &HashMap::default())
 }
 
 fn nullary_id_to_app(term: &Term, rs: &[RelationDecl]) -> Term {
@@ -173,16 +172,15 @@ impl Enumerated {
 fn term_to_enumerated(
     term: &Term,
     universe: &UniverseBounds,
-    max_primes: usize,
     assignments: &HashMap<String, Element>,
 ) -> Result<Enumerated, EnumerationError> {
-    let go = |term| term_to_enumerated(term, universe, max_primes, assignments);
+    let go = |term| term_to_enumerated(term, universe, assignments);
     let element = |term: &Term| match term {
         Term::Id(id) => match assignments.get(id) {
             Some(x) => Ok(*x),
             None => Err(EnumerationError::UnknownId(term.clone())),
         },
-        term => match term_to_enumerated(term, universe, max_primes, assignments) {
+        term => match term_to_enumerated(term, universe, assignments) {
             Ok(formula) if formula == Enumerated::always_true() => Ok(1),
             Ok(formula) if formula == Enumerated::always_false() => Ok(0),
             _ => Err(EnumerationError::NotAnElement(term.clone())),
@@ -198,11 +196,11 @@ fn term_to_enumerated(
             _ => unreachable!(),
         },
         Term::App(name, primes, args) => {
-            if *primes > max_primes {
+            if *primes > 1 {
                 return Err(EnumerationError::TooManyPrimes(term.clone()));
             }
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Enumerated::App(name.clone(), *primes, args)
+            Enumerated::App(name.clone(), *primes == 1, args)
         }
         Term::UnaryOp(UOp::Not, term) => go(term)?.not(),
         Term::BinOp(BinOp::Equals | BinOp::Iff, a, b) => match (element(a), element(b)) {
@@ -243,7 +241,7 @@ fn term_to_enumerated(
                     for (binder, element) in binders.iter().zip_eq(elements) {
                         new_assignments.insert(binder.name.clone(), element);
                     }
-                    term_to_enumerated(body, universe, max_primes, &new_assignments)
+                    term_to_enumerated(body, universe, &new_assignments)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             match quantifier {

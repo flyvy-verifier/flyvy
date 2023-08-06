@@ -79,11 +79,11 @@ pub fn check(
                 Enumerated::Or(xs) => Ast::Or(xs.into_iter().map(enumerated_to_ast).collect()),
                 Enumerated::Not(x) => Ast::Not(Box::new(enumerated_to_ast(*x))),
                 Enumerated::Eq(x, y) => Ast::iff(enumerated_to_ast(*x), enumerated_to_ast(*y)),
-                Enumerated::App(name, primes, args) => Ast::Var(name, primes, args),
+                Enumerated::App(name, primes, args) => Ast::Var(name, primes as usize, args),
             }
         }
 
-        let term = enumerate_quantifiers(&term, &module.signature, universe, 1)
+        let term = enumerate_quantifiers(&term, &module.signature, universe)
             .map_err(CheckerError::EnumerationError)?;
         Ok(enumerated_to_ast(term))
     };

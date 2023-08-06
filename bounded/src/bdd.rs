@@ -102,11 +102,11 @@ fn check_internal<'a>(
                 Enumerated::Or(xs) => indices.mk_or(xs.into_iter().map(go)),
                 Enumerated::Not(x) => go(*x).not(),
                 Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
-                Enumerated::App(name, primes, args) => indices.get(&name, primes, &args),
+                Enumerated::App(name, primes, args) => indices.get(&name, primes as usize, &args),
             }
         }
 
-        let term = enumerate_quantifiers(&term, &module.signature, universe, 1)
+        let term = enumerate_quantifiers(&term, &module.signature, universe)
             .map_err(CheckerError::EnumerationError)?;
         Ok(enumerated_to_bdd(term, &indices))
     };
