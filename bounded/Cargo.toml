@@ -10,6 +10,5 @@ solver = { path = "../solver" }
 itertools = "0.10.5"
 thiserror = "1.0.40"
 biodivine-lib-bdd = "0.5.1"
-bitvec = "1.0.1"
 cadical = "0.1.14"
 fxhash = "0.2.1"

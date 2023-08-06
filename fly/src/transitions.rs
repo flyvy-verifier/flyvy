@@ -133,21 +133,21 @@ impl DestructuredModule {
     ) -> impl Iterator<Item = &Term> + 'a {
         self.axioms
             .iter()
-            .filter(|term| !contains_only_immutables(term, relations))
+            .filter(|term| contains_mutable_relations(term, relations))
     }
 }
 
-fn contains_only_immutables(term: &Term, relations: &[RelationDecl]) -> bool {
-    let is_immutable = |name: &str| relations.iter().any(|r| r.name == name && !r.mutable);
-    let go = |term| contains_only_immutables(term, relations);
+fn contains_mutable_relations(term: &Term, relations: &[RelationDecl]) -> bool {
+    let is_mutable = |name: &str| relations.iter().any(|r| r.name == name && r.mutable);
+    let go = |term| contains_mutable_relations(term, relations);
     match term {
-        Term::Literal(_) => true,
-        Term::Id(name) => is_immutable(name),
-        Term::App(name, _, xs) => is_immutable(name) && xs.iter().all(go),
+        Term::Literal(_) => false,
+        Term::Id(name) => is_mutable(name),
+        Term::App(name, _, xs) => is_mutable(name) || xs.iter().any(go),
         Term::UnaryOp(_, x) => go(x),
-        Term::BinOp(_, x, y) => go(x) && go(y),
-        Term::NAryOp(_, xs) => xs.iter().all(go),
-        Term::Ite { cond, then, else_ } => go(cond) && go(then) && go(else_),
+        Term::BinOp(_, x, y) => go(x) || go(y),
+        Term::NAryOp(_, xs) => xs.iter().any(go),
+        Term::Ite { cond, then, else_ } => go(cond) || go(then) || go(else_),
         Term::Quantified { body, .. } => go(body),
     }
 }
