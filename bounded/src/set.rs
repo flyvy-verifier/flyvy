@@ -223,7 +223,7 @@ impl Transition {
 
 /// Translate a flyvy module into a `BoundedProgram`, given the bounds on the sort sizes.
 /// The universe should contain the sizes of all the sorts in module.signature.sorts.
-/// This function returns both the desired `BoundedProgram` and a `Indices` object. The
+/// This function returns both the desired `BoundedProgram` and an `Indices` object. The
 /// `Indices` can be used to translate the indices from the program back into a relation
 /// name and the argument values.
 /// The module is assumed to have already been typechecked.
