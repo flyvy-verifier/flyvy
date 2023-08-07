@@ -1106,7 +1106,7 @@ fn interpret(
                 "considering new depth: {current_depth}. \
                  queue length is {}. seen {} unique states.",
                 queue.len() + 1, // include current state
-                seen.set.len()
+                seen.len()
             );
         }
 
@@ -1202,71 +1202,239 @@ impl<'a> Transitions<'a> {
 }
 
 /// Can answer the question "have I seen a state that is isomorphic to this one before"?
-struct IsoStateSet {
-    set: HashSet<BoundedState>,
-    orderings: Vec<Vec<(usize, usize)>>,
+struct IsoStateSet<'a> {
+    context: &'a Context<'a>,
+    data: HashMap<Fingerprint, Vec<(BoundedState, Partition)>>,
 }
 
-impl IsoStateSet {
-    fn new(context: &Context) -> IsoStateSet {
-        let sorts: Vec<_> = context.universe.keys().sorted().collect();
-        let orderings = sorts
-            .iter()
-            .map(|sort| context.universe[sort.as_str()])
-            // the permutations are maps from old to new element values
-            .map(|size| (0..size).permutations(size))
-            // get all combinations of different ways to permute values
-            .multi_cartesian_product_fixed()
-            // reattach sort names onto each ordering
-            .map(|ordering| {
-                assert_eq!(sorts.len(), ordering.len());
-                sorts.iter().map(|s| s.as_str()).zip(ordering).collect()
-            })
-            // convert permutations to copy instructions
-            .map(|permutation: HashMap<&str, Vec<usize>>| {
-                context
-                    .indices
-                    .iter()
-                    .map(|((name, elements), i)| {
-                        let relation = context.signature.relation_decl(name);
-                        assert_eq!(relation.args.len(), elements.len());
-                        // map each old element to a new element
-                        let mut new_elements = elements.clone();
-                        for i in 0..new_elements.len() {
-                            let x = elements[i];
-                            new_elements[i] = match &relation.args[i] {
-                                Sort::Uninterpreted(s) => permutation[s.as_str()][x],
-                                Sort::Bool => x,
-                            };
-                        }
-                        // look up the index to precompute the dst
-                        (*i, context.indices[&(relation.name.as_str(), new_elements)])
-                    })
-                    .filter(|(src, dst)| src != dst)
-                    .collect()
-            })
-            .collect();
-
+impl<'a> IsoStateSet<'a> {
+    fn new(context: &'a Context) -> IsoStateSet<'a> {
         IsoStateSet {
-            set: HashSet::default(),
-            orderings,
+            context,
+            data: Default::default(),
         }
     }
 
+    fn len(&self) -> usize {
+        self.data.values().map(Vec::len).sum()
+    }
+
+    // true if insertion was successful
+    // false if element was already present
     fn insert(&mut self, x: &BoundedState) -> bool {
-        if self.set.contains(x) {
-            false
-        } else {
-            for ordering in &self.orderings {
-                let mut y = *x;
-                for (src, dst) in ordering {
-                    y.set(*dst, x.get(*src));
-                }
-                self.set.insert(y);
+        let (fingerprint, xp) = self.fingerprint(x);
+        if let Some(vec) = self.data.get_mut(&fingerprint) {
+            if vec
+                .iter()
+                .any(|(y, yp)| is_isomorphic(self.context, x, &xp, y, yp))
+            {
+                false
+            } else {
+                vec.push((*x, xp));
+                true
             }
+        } else {
+            self.data.insert(fingerprint.clone(), vec![(*x, xp)]);
             true
         }
     }
+
+    fn fingerprint(&self, state: &BoundedState) -> (Fingerprint, Partition) {
+        let mut previous: HashMap<(&str, usize), usize> = self
+            .context
+            .signature
+            .sorts
+            .iter()
+            .enumerate()
+            .flat_map(|(i, s)| (0..self.context.universe[s]).map(move |e| ((s.as_str(), e), i)))
+            .collect();
+
+        for _ in 0..self.context.universe.values().sum() {
+            use std::collections::BTreeMap;
+            let mut current: HashMap<(&str, usize), BTreeMap<(&str, usize, Vec<Label>), usize>> =
+                previous.keys().map(|k| (*k, Default::default())).collect();
+
+            for ((name, elements), index) in &self.context.indices {
+                if state.get(*index) {
+                    let relation = self.context.signature.relation_decl(name);
+
+                    let labels: Vec<_> = (0..elements.len())
+                        .map(|i| match (&relation.args[i], elements[i]) {
+                            (Sort::Bool, 0) => Label::False,
+                            (Sort::Bool, 1) => Label::True,
+                            (Sort::Bool, _) => unreachable!(),
+                            (Sort::Uninterpreted(s), e) => Label::Other(previous[&(s.as_str(), e)]),
+                        })
+                        .collect();
+
+                    for (i, element) in elements.iter().enumerate() {
+                        if let Sort::Uninterpreted(s) = &relation.args[i] {
+                            *current
+                                .get_mut(&(s, *element))
+                                .unwrap()
+                                .entry((*name, i, labels.clone()))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+
+            let values_to_indices: HashMap<_, usize> = current
+                .values()
+                .cloned()
+                .sorted()
+                .unique()
+                .enumerate()
+                .map(|(i, x)| (x, i))
+                .collect();
+
+            previous = current
+                .into_iter()
+                .map(|(k, v)| (k, values_to_indices[&v]))
+                .collect();
+        }
+
+        let fingerprint: Vec<_> = previous
+            .iter()
+            .map(|((k, _), v)| (k.to_string(), *v))
+            .sorted()
+            .collect();
+
+        let mut classes: HashMap<&str, HashMap<usize, Vec<usize>>> = Default::default();
+        for ((s, e), l) in &previous {
+            classes
+                .entry(s)
+                .or_default()
+                .entry(*l)
+                .or_default()
+                .push(*e);
+        }
+
+        let partition: HashMap<_, Vec<_>> = classes
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    v.into_iter().sorted().map(|(_, v)| v).collect(),
+                )
+            })
+            .collect();
+
+        (fingerprint, partition)
+    }
+}
+
+type Fingerprint = Vec<(String, usize)>;
+type Partition = HashMap<String, Vec<Vec<usize>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Label {
+    True,
+    False,
+    Other(usize),
+}
+
+fn is_isomorphic(
+    context: &Context,
+    x: &BoundedState,
+    px: &Partition,
+    y: &BoundedState,
+    py: &Partition,
+) -> bool {
+    if x == y {
+        return true;
+    }
+
+    assert_eq!(px.len(), py.len());
+
+    let permutations: Vec<Vec<Vec<usize>>> = px
+        .iter()
+        .sorted()
+        .zip(py.iter().sorted())
+        // the permutations are maps from old to new element values
+        .map(|((sx, vx), (sy, vy))| {
+            assert_eq!(sx, sy);
+            vx.iter()
+                .cloned()
+                .map(|v| {
+                    let l = v.len();
+                    v.into_iter().permutations(l)
+                })
+                .multi_cartesian_product_fixed()
+                .map(|permutation| {
+                    let mut func = vec![0; context.universe[sx]];
+                    assert_eq!(
+                        permutation.iter().map(|v| v.len()).sum::<usize>(),
+                        vy.iter().map(|v| v.len()).sum::<usize>()
+                    );
+                    assert_eq!(permutation.len(), vy.len());
+                    permutation
+                        .iter()
+                        .flatten()
+                        .zip(vy.iter().flatten())
+                        .for_each(|(ax, ay)| func[*ax] = *ay);
+                    func
+                })
+                .collect()
+        })
+        .collect();
+
+    let orderings: Vec<Vec<(usize, usize)>> = permutations
+        .into_iter()
+        // get all combinations of different ways to permute values
+        .multi_cartesian_product_fixed()
+        // reattach sort names onto each ordering
+        .map(|ordering| {
+            assert_eq!(context.signature.sorts.len(), ordering.len());
+            context
+                .signature
+                .sorts
+                .iter()
+                .map(|s| s.as_str())
+                .zip(ordering)
+                .collect()
+        })
+        // convert permutations to copy instructions
+        .map(|permutation: HashMap<&str, Vec<usize>>| {
+            context
+                .indices
+                .iter()
+                .map(|((name, elements), i)| {
+                    let relation = context.signature.relation_decl(name);
+                    assert_eq!(relation.args.len(), elements.len());
+                    // map each old element to a new element
+                    let mut new_elements = elements.clone();
+                    for i in 0..new_elements.len() {
+                        let x = elements[i];
+                        new_elements[i] = match &relation.args[i] {
+                            Sort::Uninterpreted(s) => permutation[s.as_str()][x],
+                            Sort::Bool => x,
+                        };
+                    }
+                    // look up the index to precompute the dst index
+                    (*i, context.indices[&(relation.name.as_str(), new_elements)])
+                })
+                .filter(|(i, j)| i != j)
+                .collect()
+        })
+        .collect();
+
+    'outer: for ordering in &orderings {
+        let mut new_state = *x;
+        for (src, dst) in ordering {
+            let x_bit = x.get(*src);
+            let y_bit = y.get(*dst);
+            if x_bit != y_bit {
+                continue 'outer;
+            }
+            new_state.set(*dst, x_bit);
+        }
+        if new_state == *y {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
