@@ -19,7 +19,7 @@ pub fn check<'a>(
     universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, false)
 }
 
@@ -31,7 +31,7 @@ pub fn check_reversed<'a>(
     universe: &'a UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, true)
 }
 
@@ -41,7 +41,7 @@ fn check_internal<'a>(
     depth: Option<usize>,
     print_timing: bool,
     reversed: bool,
-) -> Result<CheckerAnswer<(Bdd, BddIndices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -67,17 +67,19 @@ fn check_internal<'a>(
         .cloned();
     let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
-    let indices = BddIndices::new(&module.signature, universe);
+    let indices = Indices::new(&module.signature, universe, 2);
 
     let translate = |term| {
-        fn enumerated_to_bdd(term: Enumerated, indices: &BddIndices) -> Bdd {
+        fn enumerated_to_bdd(term: Enumerated, indices: &Indices) -> Bdd {
             let go = |term| enumerated_to_bdd(term, indices);
             match term {
-                Enumerated::And(xs) => indices.mk_and(xs.into_iter().map(go)),
-                Enumerated::Or(xs) => indices.mk_or(xs.into_iter().map(go)),
+                Enumerated::And(xs) => indices.bdd_and(xs.into_iter().map(go)),
+                Enumerated::Or(xs) => indices.bdd_or(xs.into_iter().map(go)),
                 Enumerated::Not(x) => go(*x).not(),
                 Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
-                Enumerated::App(name, primes, args) => indices.get(&name, primes as usize, &args),
+                Enumerated::App(name, primes, args) => {
+                    indices.bdd_var(&name, primes as usize, &args)
+                }
             }
         }
 
@@ -108,26 +110,26 @@ fn check_internal<'a>(
         Bdd,
         Bdd,
         Bdd,
-        Box<dyn Fn(&mut Bdd, &BddIndices)>,
+        Box<dyn Fn(&mut Bdd, &Indices)>,
     ) = match reversed {
         false => (
             vec![init.clone()],
             init.clone(),
             init,
             not_safe,
-            Box::new(|current: &mut Bdd, indices: &BddIndices| {
-                let unprimed = 0..indices.indices.num_mutables;
+            Box::new(|current: &mut Bdd, indices: &Indices| {
+                let unprimed = 0..indices.num_mutables;
                 *current = Bdd::binary_op_with_exists(
                     current,
                     &tr,
                     op_function::and,
-                    &indices.vars[unprimed.clone()],
+                    &indices.bdd_variables[unprimed.clone()],
                 );
                 for i in unprimed {
                     unsafe {
                         current.rename_variable(
-                            indices.vars[i + indices.indices.num_mutables],
-                            indices.vars[i],
+                            indices.bdd_variables[i + indices.num_mutables],
+                            indices.bdd_variables[i],
                         );
                     }
                 }
@@ -138,13 +140,13 @@ fn check_internal<'a>(
             not_safe.clone(),
             not_safe,
             init,
-            Box::new(|current: &mut Bdd, indices: &BddIndices| {
-                let primed = indices.indices.num_mutables..indices.indices.num_mutables * 2;
+            Box::new(|current: &mut Bdd, indices: &Indices| {
+                let primed = indices.num_mutables..indices.num_mutables * 2;
                 for i in primed.clone().rev() {
                     unsafe {
                         current.rename_variable(
-                            indices.vars[i - indices.indices.num_mutables],
-                            indices.vars[i],
+                            indices.bdd_variables[i - indices.num_mutables],
+                            indices.bdd_variables[i],
                         );
                     }
                 }
@@ -152,7 +154,7 @@ fn check_internal<'a>(
                     current,
                     &tr,
                     op_function::and,
-                    &indices.vars[primed],
+                    &indices.bdd_variables[primed],
                 );
             }),
         ),
@@ -160,7 +162,7 @@ fn check_internal<'a>(
 
     // Do the search
     if let Some(valuation) = current.and(&not_safe).sat_witness() {
-        let models = indices.trace_to_models(&valuation, &trace, &tr, reversed);
+        let models = trace_to_models(&indices, &valuation, &trace, &tr, reversed);
         return Ok(CheckerAnswer::Counterexample(models));
     }
     let mut i = 0;
@@ -180,7 +182,7 @@ fn check_internal<'a>(
 
         trace.push(current.clone());
         if let Some(valuation) = current.and(&not_safe).sat_witness() {
-            let models = indices.trace_to_models(&valuation, &trace, &tr, reversed);
+            let models = trace_to_models(&indices, &valuation, &trace, &tr, reversed);
             return Ok(CheckerAnswer::Counterexample(models));
         }
 
@@ -190,173 +192,150 @@ fn check_internal<'a>(
     Ok(CheckerAnswer::Unknown)
 }
 
-/// A wrapper around an `Indices` object that also holds objects used to create BDDs.
-pub struct BddIndices<'a> {
-    /// The wrapped `Indices` object
-    indices: Indices<'a>,
-    /// Data used by the BDD library to build new BDDs
-    bdds: BddVariableSet,
-    /// Map from indices to BddVariable objects
-    vars: Vec<BddVariable>,
+fn trace_to_models(
+    indices: &Indices,
+    valuation: &BddValuation,
+    trace: &[Bdd],
+    tr: &Bdd,
+    reversed: bool,
+) -> Vec<Model> {
+    let mutables = indices.num_mutables;
+    let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
+    valuations.resize(trace.len(), None);
+
+    // Choose which way to search
+    let (start, stop, incr, next): (
+        usize,
+        usize,
+        Box<dyn Fn(usize) -> usize>,
+        Box<dyn Fn(usize, &mut Vec<Option<BddValuation>>) -> Bdd>,
+    ) = match reversed {
+        false => (
+            trace.len() - 1,
+            0,
+            Box::new(|i| i - 1),
+            Box::new(|i, valuations| {
+                let unprimed = trace[i - 1].clone();
+
+                let primed = indices.bdd_and(indices.iter().flat_map(|(relation, map)| {
+                    map.iter().map(|(elements, (v, _))| {
+                        let var = indices.bdd_var(relation, 1, elements);
+                        if valuations[i]
+                            .as_ref()
+                            .unwrap()
+                            .value(indices.bdd_variables[*v])
+                        {
+                            var
+                        } else {
+                            var.not()
+                        }
+                    })
+                }));
+
+                indices
+                    .bdd_and([unprimed, tr.clone(), primed])
+                    .exists(&indices.bdd_variables[mutables..mutables * 2])
+            }),
+        ),
+        true => (
+            0,
+            trace.len() - 1,
+            Box::new(|i| i + 1),
+            Box::new(|i, valuations| {
+                let unprimed = indices.bdd_and(indices.iter().flat_map(|(relation, map)| {
+                    map.iter().map(|(elements, (v, _))| {
+                        let var = indices.bdd_var(relation, 0, elements);
+                        if valuations[i]
+                            .as_ref()
+                            .unwrap()
+                            .value(indices.bdd_variables[*v])
+                        {
+                            var
+                        } else {
+                            var.not()
+                        }
+                    })
+                }));
+
+                // traces is backwards relative to valuations
+                let mut primed = trace[trace.len() - 1 - (i + 1)].clone();
+                for j in (0..mutables).rev() {
+                    unsafe {
+                        primed.rename_variable(
+                            indices.bdd_variables[j],
+                            indices.bdd_variables[j + mutables],
+                        );
+                    }
+                }
+
+                let mut out = indices
+                    .bdd_and([unprimed, tr.clone(), primed])
+                    .exists(&indices.bdd_variables[0..mutables]);
+                // but valuations expects the primed variables in the unprimed slots
+                for j in 0..mutables {
+                    unsafe {
+                        out.rename_variable(
+                            indices.bdd_variables[j + mutables],
+                            indices.bdd_variables[j],
+                        );
+                    }
+                }
+                out
+            }),
+        ),
+    };
+
+    // Do the search
+    valuations[start] = Some(valuation.clone());
+    let mut i = start;
+    while i != stop {
+        let bdd = next(i, &mut valuations);
+        i = incr(i);
+        valuations[i] = Some(bdd.sat_witness().unwrap());
+    }
+
+    // Convert valuations to models
+    valuations
+        .into_iter()
+        .map(|valuation| valuation_to_model(valuation.unwrap(), indices))
+        .collect()
 }
 
-impl BddIndices<'_> {
-    fn new<'a>(signature: &'a Signature, universe: &'a UniverseBounds) -> BddIndices<'a> {
-        let indices = Indices::new(signature, universe, 2);
-        let bdds = BddVariableSet::new_anonymous(indices.num_vars.try_into().unwrap());
-        let vars = bdds.variables();
-        BddIndices {
-            indices,
-            bdds,
-            vars,
-        }
-    }
-
-    fn get(&self, relation: &str, primes: usize, elements: &[usize]) -> Bdd {
-        self.bdds
-            .mk_var(self.vars[self.indices.get(relation, primes, elements)])
-    }
-
-    fn trace_to_models(
-        &self,
-        valuation: &BddValuation,
-        trace: &[Bdd],
-        tr: &Bdd,
-        reversed: bool,
-    ) -> Vec<Model> {
-        let mutables = self.indices.num_mutables;
-        let mut valuations: Vec<Option<BddValuation>> = Vec::with_capacity(trace.len());
-        valuations.resize(trace.len(), None);
-
-        // Choose which way to search
-        let (start, stop, incr, next): (
-            usize,
-            usize,
-            Box<dyn Fn(usize) -> usize>,
-            Box<dyn Fn(usize, &mut Vec<Option<BddValuation>>) -> Bdd>,
-        ) = match reversed {
-            false => (
-                trace.len() - 1,
-                0,
-                Box::new(|i| i - 1),
-                Box::new(|i, valuations| {
-                    let unprimed = trace[i - 1].clone();
-
-                    let primed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
-                        map.iter().map(|(elements, (v, _))| {
-                            let var = self.get(relation, 1, elements);
-                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
-                                var
-                            } else {
-                                var.not()
-                            }
-                        })
-                    }));
-
-                    self.mk_and([unprimed, tr.clone(), primed])
-                        .exists(&self.vars[mutables..mutables * 2])
-                }),
-            ),
-            true => (
-                0,
-                trace.len() - 1,
-                Box::new(|i| i + 1),
-                Box::new(|i, valuations| {
-                    let unprimed = self.mk_and(self.indices.iter().flat_map(|(relation, map)| {
-                        map.iter().map(|(elements, (v, _))| {
-                            let var = self.get(relation, 0, elements);
-                            if valuations[i].as_ref().unwrap().value(self.vars[*v]) {
-                                var
-                            } else {
-                                var.not()
-                            }
-                        })
-                    }));
-
-                    // traces is backwards relative to valuations
-                    let mut primed = trace[trace.len() - 1 - (i + 1)].clone();
-                    for j in (0..mutables).rev() {
-                        unsafe {
-                            primed.rename_variable(self.vars[j], self.vars[j + mutables]);
-                        }
-                    }
-
-                    let mut out = self
-                        .mk_and([unprimed, tr.clone(), primed])
-                        .exists(&self.vars[0..mutables]);
-                    // but valuations expects the primed variables in the unprimed slots
-                    for j in 0..mutables {
-                        unsafe {
-                            out.rename_variable(self.vars[j + mutables], self.vars[j]);
-                        }
-                    }
-                    out
-                }),
-            ),
-        };
-
-        // Do the search
-        valuations[start] = Some(valuation.clone());
-        let mut i = start;
-        while i != stop {
-            let bdd = next(i, &mut valuations);
-            i = incr(i);
-            valuations[i] = Some(bdd.sat_witness().unwrap());
-        }
-
-        // Convert valuations to models
-        valuations
-            .into_iter()
-            .map(|valuation| self.valuation_to_model(valuation.unwrap()))
-            .collect()
-    }
-
-    fn valuation_to_model(&self, valuation: BddValuation) -> Model {
-        let universe = self
-            .indices
+fn valuation_to_model(valuation: BddValuation, indices: &Indices) -> Model {
+    let universe = indices
+        .signature
+        .sorts
+        .iter()
+        .map(|s| indices.universe[s])
+        .collect();
+    Model::new(
+        indices.signature,
+        &universe,
+        indices
             .signature
-            .sorts
+            .relations
             .iter()
-            .map(|s| self.indices.universe[s])
-            .collect();
-        Model::new(
-            self.indices.signature,
-            &universe,
-            self.indices
-                .signature
-                .relations
-                .iter()
-                .map(|r| {
-                    let shape = r
-                        .args
-                        .iter()
-                        .map(|s| cardinality(self.indices.universe, s))
-                        .chain([2])
-                        .collect();
-                    Interpretation::new(&shape, |elements| {
-                        valuation.value(self.vars[self.indices.get(&r.name, 0, elements)]) as usize
-                    })
+            .map(|r| {
+                let shape = r
+                    .args
+                    .iter()
+                    .map(|s| cardinality(indices.universe, s))
+                    .chain([2])
+                    .collect();
+                Interpretation::new(&shape, |elements| {
+                    valuation.value(indices.bdd_variables[indices.get(&r.name, 0, elements)])
+                        as usize
                 })
-                .collect(),
-        )
-    }
-
-    fn mk_and(&self, bdds: impl IntoIterator<Item = Bdd>) -> Bdd {
-        bdds.into_iter()
-            .fold(self.bdds.mk_true(), |acc, term| acc.and(&term))
-    }
-
-    fn mk_or(&self, bdds: impl IntoIterator<Item = Bdd>) -> Bdd {
-        bdds.into_iter()
-            .fold(self.bdds.mk_false(), |acc, term| acc.or(&term))
-    }
+            })
+            .collect(),
+    )
 }
 
 /// Convert a `BDD` back into a `Term`.
 /// Returns the term and a map from (sort, element) pairs to the name of the variable.
 pub fn bdd_to_term<'a>(
     bdd: &Bdd,
-    indices: &BddIndices<'a>,
+    indices: &Indices<'a>,
 ) -> (Term, HashMap<(&'a str, usize), String>) {
     fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
         let go = |term| to_term(term, vars_to_terms);
@@ -375,7 +354,7 @@ pub fn bdd_to_term<'a>(
     // Build a map from sort elements to Term variable names
     let mut next_binding = 0;
     let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
-    for (sort, bound) in indices.indices.universe {
+    for (sort, bound) in indices.universe {
         for i in 0..*bound {
             bindings.insert((sort, i), format!("${next_binding}"));
             next_binding += 1;
@@ -384,11 +363,10 @@ pub fn bdd_to_term<'a>(
 
     // Build a map from BDD variable names to Terms
     let mut vars_to_terms: HashMap<String, Term> = HashMap::new();
-    for (relation, map) in indices.indices.iter() {
+    for (relation, map) in indices.iter() {
         for (elements, (i, _mutable)) in map {
-            let name = indices.bdds.name_of(indices.vars[*i]);
+            let name = indices.bdd_context.name_of(indices.bdd_variables[*i]);
             let args = indices
-                .indices
                 .signature
                 .relations
                 .iter()
@@ -416,7 +394,10 @@ pub fn bdd_to_term<'a>(
     }
 
     // Convert the BDD to a Term
-    let term = to_term(bdd.to_boolean_expression(&indices.bdds), &vars_to_terms);
+    let term = to_term(
+        bdd.to_boolean_expression(&indices.bdd_context),
+        &vars_to_terms,
+    );
     (term, bindings)
 }
 
