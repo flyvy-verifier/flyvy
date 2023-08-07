@@ -97,9 +97,15 @@ pub fn check(
     let answer = match solver.solve() {
         None => Err(CheckerError::SatSolverFailed),
         Some(false) => Ok(CheckerAnswer::Unknown),
-        Some(true) => Ok(CheckerAnswer::Counterexample(solver_to_models(
-            &solver, &indices,
-        ))),
+        Some(true) => Ok(CheckerAnswer::Counterexample(
+            (0..indices.num_mutable_copies)
+                .map(|primes| {
+                    indices.model(primes, |i| {
+                        solver.value(i as i32 + 1).unwrap_or(false) as Element
+                    })
+                })
+                .collect(),
+        )),
     };
 
     if print_timing {
@@ -111,7 +117,7 @@ pub fn check(
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ast {
-    Var(String, usize, Vec<usize>),
+    Var(String, usize, Vec<Element>),
     And(Vec<Ast>),
     Or(Vec<Ast>),
     Not(Box<Ast>),
@@ -193,41 +199,6 @@ fn tseytin(ast: &Ast, indices: &mut Indices) -> Cnf {
     let var = inner(ast, indices, &mut out);
     out.push(vec![Literal::t(var)]);
     out
-}
-
-fn solver_to_models(solver: &Solver, indices: &Indices) -> Vec<Model> {
-    let u = indices
-        .signature
-        .sorts
-        .iter()
-        .map(|s| indices.universe[s])
-        .collect();
-    (0..indices.num_mutable_copies)
-        .map(|primes| {
-            Model::new(
-                indices.signature,
-                &u,
-                indices
-                    .signature
-                    .relations
-                    .iter()
-                    .map(|r| {
-                        let shape = r
-                            .args
-                            .iter()
-                            .map(|s| cardinality(indices.universe, s))
-                            .chain([2])
-                            .collect();
-                        Interpretation::new(&shape, |elements| {
-                            solver
-                                .value(indices.get(&r.name, primes, elements) as i32 + 1)
-                                .unwrap_or(false) as usize
-                        })
-                    })
-                    .collect(),
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

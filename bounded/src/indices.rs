@@ -131,4 +131,30 @@ impl Indices<'_> {
         bdds.into_iter()
             .fold(self.bdd_context.mk_false(), |acc, term| acc.or(&term))
     }
+
+    /// Construct a [`Model`] given a function over its indices at some time.
+    pub fn model(&self, primes: usize, f: impl Fn(usize) -> usize) -> Model {
+        Model::new(
+            self.signature,
+            &self
+                .signature
+                .sorts
+                .iter()
+                .map(|s| self.universe[s])
+                .collect(),
+            self.signature
+                .relations
+                .iter()
+                .map(|r| {
+                    let shape = r
+                        .args
+                        .iter()
+                        .map(|s| cardinality(self.universe, s))
+                        .chain([cardinality(self.universe, &r.sort)])
+                        .collect();
+                    Interpretation::new(&shape, |xs| f(self.get(&r.name, primes, xs)))
+                })
+                .collect(),
+        )
+    }
 }

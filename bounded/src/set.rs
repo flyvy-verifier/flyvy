@@ -35,12 +35,12 @@ pub fn check(
                         Trace::CompressedTrace(state, depth) => (state, depth),
                     };
                     println!("counterexample is at depth {depth}, not 0");
-                    vec![state_to_model(&state, &indices)]
+                    vec![indices.model(0, |i| state.get(i) as Element)]
                 }
                 TraceCompression::No => match trace {
                     Trace::Trace(states) => states
                         .iter()
-                        .map(|state| state_to_model(state, &indices))
+                        .map(|state| indices.model(0, |i| state.get(i) as Element))
                         .collect(),
                     Trace::CompressedTrace(..) => unreachable!(),
                 },
@@ -48,29 +48,6 @@ pub fn check(
             Ok(CheckerAnswer::Counterexample(models))
         }
     }
-}
-
-fn state_to_model(state: &BoundedState, i: &Indices) -> Model {
-    let u = i.signature.sorts.iter().map(|s| i.universe[s]).collect();
-    Model::new(
-        i.signature,
-        &u,
-        i.signature
-            .relations
-            .iter()
-            .map(|r| {
-                let shape = r
-                    .args
-                    .iter()
-                    .map(|s| cardinality(i.universe, s))
-                    .chain([2])
-                    .collect();
-                Interpretation::new(&shape, |elements| {
-                    state.get(i.get(&r.name, 0, elements)) as Element
-                })
-            })
-            .collect(),
-    )
 }
 
 /// Compile-time upper bound on the bounded universe size.

@@ -297,38 +297,9 @@ fn trace_to_models(
     // Convert valuations to models
     valuations
         .into_iter()
-        .map(|valuation| valuation_to_model(valuation.unwrap(), indices))
+        .map(Option::unwrap)
+        .map(|valuation| indices.model(0, |i| valuation.value(indices.bdd_variables[i]) as usize))
         .collect()
-}
-
-fn valuation_to_model(valuation: BddValuation, indices: &Indices) -> Model {
-    let universe = indices
-        .signature
-        .sorts
-        .iter()
-        .map(|s| indices.universe[s])
-        .collect();
-    Model::new(
-        indices.signature,
-        &universe,
-        indices
-            .signature
-            .relations
-            .iter()
-            .map(|r| {
-                let shape = r
-                    .args
-                    .iter()
-                    .map(|s| cardinality(indices.universe, s))
-                    .chain([2])
-                    .collect();
-                Interpretation::new(&shape, |elements| {
-                    valuation.value(indices.bdd_variables[indices.get(&r.name, 0, elements)])
-                        as usize
-                })
-            })
-            .collect(),
-    )
 }
 
 /// Convert a `BDD` back into a `Term`.
