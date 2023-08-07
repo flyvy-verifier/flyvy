@@ -1073,17 +1073,15 @@ fn interpret(
 ) -> InterpreterResult {
     // States we have seen so far.
     let mut seen = IsoStateSet::new(context);
-    for init in &program.inits {
-        seen.insert(init);
-    }
-
     // The BFS queue, i.e., states on the frontier that need to be explored.
     // The queue is always a subset of seen.
-    let mut queue: VecDeque<Trace> = program
-        .inits
-        .iter()
-        .map(|state| Trace::new(*state, compress_traces))
-        .collect();
+    let mut queue: VecDeque<Trace> = VecDeque::new();
+
+    for init in &program.inits {
+        if seen.insert(init) {
+            queue.push_back(Trace::new(*init, compress_traces));
+        }
+    }
 
     let mut transitions = Transitions::new();
     for tr in &program.trs {
