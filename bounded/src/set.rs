@@ -239,38 +239,27 @@ fn translate<'a>(
         enumerated_to_formula(term, &indices)
     };
 
-    // get cube
-    let mut init = BoundedState::ZERO;
-    let mut constrained = HashSet::default();
-    let inits = formula(Term::and(&d.inits))?;
-    for constraint in inits.get_and() {
-        if let Formula::Guard(Guard { index, value }) = constraint {
-            init.set(index, value);
-            constrained.insert(index);
-        } else {
-            return Err(CheckerError::InitNotConj);
-        }
-    }
-    // enumerate cube
-    let mut inits = vec![init];
-    println!(
-        "enumerating {} initial states",
-        2_usize.pow((indices.num_vars - constrained.len()) as u32)
+    // compute initial states
+    let inits = Term::and(d.inits.iter().chain(&d.axioms));
+    let inits = indices.bdd_from_enumerated(
+        enumerate_quantifiers(&inits, &module.signature, universe)
+            .map_err(CheckerError::EnumerationError)?,
     );
-    for index in 0..indices.num_vars {
-        if !constrained.contains(&index) {
-            let mut with_unconstrained = inits.clone();
-            for init in &mut with_unconstrained {
-                init.set(index, true);
+    println!("enumerating {} initial states", inits.exact_cardinality());
+    let inits: Vec<BoundedState> = inits
+        .sat_valuations()
+        .map(|valuation| {
+            let mut init = BoundedState::ZERO;
+            for (r, rest) in indices.iter() {
+                for (xs, (i, _)) in rest {
+                    init.set(
+                        *i,
+                        valuation.value(indices.bdd_variables[indices.get(r, 0, xs)]),
+                    );
+                }
             }
-            inits.append(&mut with_unconstrained);
-        }
-    }
-    // filter by axioms
-    let axiom = formula(Term::and(&d.axioms))?;
-    let inits = inits
-        .into_iter()
-        .filter(|init| axiom.evaluate(init))
+            init
+        })
         .collect();
 
     assert!(
