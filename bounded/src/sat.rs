@@ -46,19 +46,8 @@ pub fn check(
     let mut indices = Indices::new(&module.signature, universe, depth + 1);
 
     let translate = |term| {
-        fn enumerated_to_ast(term: Enumerated) -> Ast {
-            match term {
-                Enumerated::And(xs) => Ast::And(xs.into_iter().map(enumerated_to_ast).collect()),
-                Enumerated::Or(xs) => Ast::Or(xs.into_iter().map(enumerated_to_ast).collect()),
-                Enumerated::Not(x) => Ast::Not(Box::new(enumerated_to_ast(*x))),
-                Enumerated::Eq(x, y) => Ast::iff(enumerated_to_ast(*x), enumerated_to_ast(*y)),
-                Enumerated::App(name, primes, args) => Ast::Var(name, primes as usize, args),
-            }
-        }
-
-        let term = enumerate_quantifiers(&term, &module.signature, universe)
-            .map_err(CheckerError::EnumerationError)?;
-        Ok(enumerated_to_ast(term))
+        enumerate_quantifiers(&term, &module.signature, universe)
+            .map_err(CheckerError::EnumerationError)
     };
 
     println!("starting translation...");
@@ -66,7 +55,7 @@ pub fn check(
 
     let init = translate(Term::and(inits))?;
     let tr = translate(Term::and(transitions))?;
-    let not_safe = Ast::Not(Box::new(translate(Term::and(safeties))?));
+    let not_safe = Enumerated::Not(Box::new(translate(Term::and(safeties))?));
 
     let mut program = vec![init];
     for i in 0..depth {
@@ -74,7 +63,7 @@ pub fn check(
     }
     program.push(not_safe.prime(depth));
 
-    let cnf = tseytin(&Ast::And(program), &mut indices);
+    let cnf = tseytin(&Enumerated::And(program), &mut indices);
 
     if print_timing {
         println!(
@@ -116,32 +105,6 @@ pub fn check(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Ast {
-    Var(String, usize, Vec<Element>),
-    And(Vec<Ast>),
-    Or(Vec<Ast>),
-    Not(Box<Ast>),
-}
-
-impl Ast {
-    fn iff(x: Ast, y: Ast) -> Ast {
-        Ast::Or(vec![
-            Ast::And(vec![x.clone(), y.clone()]),
-            Ast::And(vec![Ast::Not(Box::new(x)), Ast::Not(Box::new(y))]),
-        ])
-    }
-
-    fn prime(self, depth: usize) -> Ast {
-        match self {
-            Ast::Var(relation, primes, elements) => Ast::Var(relation, primes + depth, elements),
-            Ast::And(vec) => Ast::And(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
-            Ast::Or(vec) => Ast::Or(vec.into_iter().map(|ast| ast.prime(depth)).collect()),
-            Ast::Not(ast) => Ast::Not(Box::new(ast.prime(depth))),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
 struct Literal {
     var: usize,
     pos: bool,
@@ -158,13 +121,12 @@ impl Literal {
     }
 }
 
-fn tseytin(ast: &Ast, indices: &mut Indices) -> Cnf {
-    fn inner(ast: &Ast, indices: &mut Indices, out: &mut Cnf) -> usize {
-        let mut go = |ast| inner(ast, indices, out);
-        match ast {
-            Ast::Var(relation, primes, elements) => indices.get(relation, *primes, elements),
-            Ast::And(vec) => {
-                let olds: Vec<_> = vec.iter().map(go).collect();
+fn tseytin(term: &Enumerated, indices: &mut Indices) -> Cnf {
+    fn inner(term: &Enumerated, indices: &mut Indices, out: &mut Cnf) -> usize {
+        let mut go = |term| inner(term, indices, out);
+        match term {
+            Enumerated::And(terms) => {
+                let olds: Vec<_> = terms.iter().map(go).collect();
                 let new = indices.var();
                 for old in &olds {
                     out.push(vec![Literal::t(*old), Literal::f(new)]);
@@ -174,8 +136,8 @@ fn tseytin(ast: &Ast, indices: &mut Indices) -> Cnf {
                 out.push(clause);
                 new
             }
-            Ast::Or(vec) => {
-                let olds: Vec<_> = vec.iter().map(go).collect();
+            Enumerated::Or(terms) => {
+                let olds: Vec<_> = terms.iter().map(go).collect();
                 let new = indices.var();
                 for old in &olds {
                     out.push(vec![Literal::f(*old), Literal::t(new)]);
@@ -185,18 +147,29 @@ fn tseytin(ast: &Ast, indices: &mut Indices) -> Cnf {
                 out.push(clause);
                 new
             }
-            Ast::Not(ast) => {
-                let old = go(ast);
+            Enumerated::Not(term) => {
+                let old = go(term);
                 let new = indices.var();
                 out.push(vec![Literal::t(old), Literal::t(new)]);
                 out.push(vec![Literal::f(old), Literal::f(new)]);
                 new
             }
+            Enumerated::Eq(left, right) => {
+                let a = go(left);
+                let b = go(right);
+                let c = indices.var();
+                out.push(vec![Literal::f(a), Literal::f(b), Literal::t(c)]);
+                out.push(vec![Literal::f(a), Literal::t(b), Literal::f(c)]);
+                out.push(vec![Literal::t(a), Literal::f(b), Literal::f(c)]);
+                out.push(vec![Literal::t(a), Literal::t(b), Literal::t(c)]);
+                c
+            }
+            Enumerated::App(relation, primes, elements) => indices.get(relation, *primes, elements),
         }
     }
 
     let mut out = vec![];
-    let var = inner(ast, indices, &mut out);
+    let var = inner(term, indices, &mut out);
     out.push(vec![Literal::t(var)]);
     out
 }

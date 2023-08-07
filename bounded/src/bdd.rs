@@ -77,9 +77,7 @@ fn check_internal<'a>(
                 Enumerated::Or(xs) => indices.bdd_or(xs.into_iter().map(go)),
                 Enumerated::Not(x) => go(*x).not(),
                 Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
-                Enumerated::App(name, primes, args) => {
-                    indices.bdd_var(&name, primes as usize, &args)
-                }
+                Enumerated::App(name, primes, args) => indices.bdd_var(&name, primes, &args),
             }
         }
 

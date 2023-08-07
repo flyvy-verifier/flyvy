@@ -20,7 +20,7 @@ pub enum Enumerated {
     /// Equality.
     Eq(Box<Enumerated>, Box<Enumerated>),
     /// Variable.
-    App(String, bool, Vec<Element>),
+    App(String, usize, Vec<Element>),
 }
 
 /// Map from uninterpreted sort names to their sizes.
@@ -167,6 +167,25 @@ impl Enumerated {
             term => vec![term],
         }
     }
+
+    /// Adds `depth` primes to all `App`s.
+    pub fn prime(self, depth: usize) -> Enumerated {
+        match self {
+            Enumerated::And(terms) => {
+                Enumerated::And(terms.into_iter().map(|term| term.prime(depth)).collect())
+            }
+            Enumerated::Or(terms) => {
+                Enumerated::Or(terms.into_iter().map(|term| term.prime(depth)).collect())
+            }
+            Enumerated::Not(term) => Enumerated::Not(Box::new(term.prime(depth))),
+            Enumerated::Eq(a, b) => {
+                Enumerated::Eq(Box::new(a.prime(depth)), Box::new(b.prime(depth)))
+            }
+            Enumerated::App(relation, primes, elements) => {
+                Enumerated::App(relation, primes + depth, elements)
+            }
+        }
+    }
 }
 
 fn term_to_enumerated(
@@ -200,7 +219,7 @@ fn term_to_enumerated(
                 return Err(EnumerationError::TooManyPrimes(term.clone()));
             }
             let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Enumerated::App(name.clone(), *primes == 1, args)
+            Enumerated::App(name.clone(), *primes, args)
         }
         Term::UnaryOp(UOp::Not, term) => go(term)?.not(),
         Term::BinOp(BinOp::Equals | BinOp::Iff, a, b) => match (element(a), element(b)) {

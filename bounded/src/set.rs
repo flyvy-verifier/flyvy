@@ -560,8 +560,8 @@ fn enumerated_to_transition(
             }
             tr
         }
-        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, true, _)) => {
-            if let Enumerated::App(name, true, args) = *x {
+        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, 1, _)) => {
+            if let Enumerated::App(name, 1, args) = *x {
                 let index = indices.get(&name, 0, &args);
                 let formula = formula(*y)?;
                 Transition {
@@ -573,7 +573,7 @@ fn enumerated_to_transition(
                 unreachable!()
             }
         }
-        Enumerated::App(name, true, args) => Transition {
+        Enumerated::App(name, 1, args) => Transition {
             guards: vec![],
             updates: vec![Update {
                 index: indices.get(&name, 0, &args),
@@ -615,11 +615,11 @@ fn enumerated_to_formula(term: Enumerated, indices: &Indices) -> Result<Formula,
         Enumerated::Or(xs) => Formula::or(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
         Enumerated::Not(x) => go(*x)?.not(),
         Enumerated::Eq(x, y) => go(*x)?.iff(go(*y)?),
-        Enumerated::App(name, false, args) => Formula::Guard(Guard {
+        Enumerated::App(name, 0, args) => Formula::Guard(Guard {
             index: indices.get(&name, 0, &args),
             value: true,
         }),
-        Enumerated::App(_, true, _) => return Err(CheckerError::PrimeInFormula),
+        Enumerated::App(..) => return Err(CheckerError::PrimeInFormula),
     };
     Ok(formula)
 }
