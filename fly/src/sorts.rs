@@ -454,80 +454,6 @@ impl Scope<'_> {
         }
     }
 
-    // "Phase 2".
-    //
-    // Walk the term AST, replacing any binders that still have "var {id}" sorts with their solution
-    fn annotate_solved_sorts_term(&mut self, term: &mut Term) -> Result<(), SortError> {
-        match term {
-            Term::Literal(_) | Term::Id(_) => Ok(()),
-            Term::App(_f, _p, xs) => {
-                for x in xs {
-                    self.annotate_solved_sorts_term(x)?;
-                }
-                Ok(())
-            }
-            Term::UnaryOp(
-                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
-                x,
-            ) => self.annotate_solved_sorts_term(x),
-            Term::BinOp(
-                BinOp::Equals
-                | BinOp::NotEquals
-                | BinOp::Implies
-                | BinOp::Iff
-                | BinOp::Until
-                | BinOp::Since,
-                x,
-                y,
-            ) => {
-                self.annotate_solved_sorts_term(x)?;
-                self.annotate_solved_sorts_term(y)?;
-                Ok(())
-            }
-            Term::NAryOp(NOp::And | NOp::Or, xs) => {
-                for x in xs {
-                    self.annotate_solved_sorts_term(x)?;
-                }
-                Ok(())
-            }
-            Term::Ite { cond, then, else_ } => {
-                self.annotate_solved_sorts_term(cond)?;
-                self.annotate_solved_sorts_term(then)?;
-                self.annotate_solved_sorts_term(else_)?;
-                Ok(())
-            }
-            Term::Quantified {
-                quantifier: Quantifier::Forall | Quantifier::Exists,
-                binders,
-                body,
-            } => {
-                for binder in binders {
-                    if let Sort::Uninterpreted(s) = binder.sort.clone() {
-                        let s: Vec<&str> = s.split_whitespace().collect();
-                        match s[..] {
-                            [_] => {} // user sort annotation
-                            ["var", id] => {
-                                // encodes a sort unification variable
-                                let id = id.parse::<u32>().expect(
-                                    "unexpected non-integer in a sort unification variable id",
-                                );
-                                let sort = self.unification_table.probe_value(SortVar(id));
-                                match sort.0 {
-                                    None => {
-                                        return Err(SortError::UnsolvedSort(binder.name.clone()))
-                                    }
-                                    Some(v) => binder.sort = v,
-                                }
-                            }
-                            _ => unreachable!("empty string, or contains spaces without var"),
-                        }
-                    }
-                }
-                self.annotate_solved_sorts_term(body)
-            }
-        }
-    }
-
     // "Phase 1"
     //
     // Recursively find the sort of a term while allocating unification variables for unknown sorts
@@ -610,6 +536,80 @@ impl Scope<'_> {
                 let body = context.collect_sort_constraints_term(body)?;
                 context.unify_var_value(&Sort::Bool, &body)?;
                 Ok(MaybeUnknownSort::Known(Sort::Bool))
+            }
+        }
+    }
+
+    // "Phase 2".
+    //
+    // Walk the term AST, replacing any binders that still have "var {id}" sorts with their solution
+    fn annotate_solved_sorts_term(&mut self, term: &mut Term) -> Result<(), SortError> {
+        match term {
+            Term::Literal(_) | Term::Id(_) => Ok(()),
+            Term::App(_f, _p, xs) => {
+                for x in xs {
+                    self.annotate_solved_sorts_term(x)?;
+                }
+                Ok(())
+            }
+            Term::UnaryOp(
+                UOp::Not | UOp::Always | UOp::Eventually | UOp::Prime | UOp::Next | UOp::Previous,
+                x,
+            ) => self.annotate_solved_sorts_term(x),
+            Term::BinOp(
+                BinOp::Equals
+                | BinOp::NotEquals
+                | BinOp::Implies
+                | BinOp::Iff
+                | BinOp::Until
+                | BinOp::Since,
+                x,
+                y,
+            ) => {
+                self.annotate_solved_sorts_term(x)?;
+                self.annotate_solved_sorts_term(y)?;
+                Ok(())
+            }
+            Term::NAryOp(NOp::And | NOp::Or, xs) => {
+                for x in xs {
+                    self.annotate_solved_sorts_term(x)?;
+                }
+                Ok(())
+            }
+            Term::Ite { cond, then, else_ } => {
+                self.annotate_solved_sorts_term(cond)?;
+                self.annotate_solved_sorts_term(then)?;
+                self.annotate_solved_sorts_term(else_)?;
+                Ok(())
+            }
+            Term::Quantified {
+                quantifier: Quantifier::Forall | Quantifier::Exists,
+                binders,
+                body,
+            } => {
+                for binder in binders {
+                    if let Sort::Uninterpreted(s) = binder.sort.clone() {
+                        let s: Vec<&str> = s.split_whitespace().collect();
+                        match s[..] {
+                            [_] => {} // user sort annotation
+                            ["var", id] => {
+                                // encodes a sort unification variable
+                                let id = id.parse::<u32>().expect(
+                                    "unexpected non-integer in a sort unification variable id",
+                                );
+                                let sort = self.unification_table.probe_value(SortVar(id));
+                                match sort.0 {
+                                    None => {
+                                        return Err(SortError::UnsolvedSort(binder.name.clone()))
+                                    }
+                                    Some(v) => binder.sort = v,
+                                }
+                            }
+                            _ => unreachable!("empty string, or contains spaces without var"),
+                        }
+                    }
+                }
+                self.annotate_solved_sorts_term(body)
             }
         }
     }
