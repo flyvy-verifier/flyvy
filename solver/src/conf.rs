@@ -44,7 +44,7 @@ impl SolverConf {
         backend_type: SolverType,
         smt: bool,
         fname: &String,
-        timeout: usize,
+        timeout_s: usize,
         seed: usize,
     ) -> Self {
         let solver_bin = solver_path(solver_default_bin(backend_type));
@@ -66,8 +66,8 @@ impl SolverConf {
             None
         };
         let mut backend = GenericBackend::new(backend_type, &solver_bin);
-        backend.timeout_ms(if timeout > 0 {
-            Some(timeout * 1000)
+        backend.timeout_ms(if timeout_s > 0 {
+            Some(timeout_s * 1000)
         } else {
             None
         });
@@ -76,8 +76,8 @@ impl SolverConf {
     }
 
     /// Get the solver type.
-    pub fn get_solver_type(&self) -> SolverType {
-        self.backend.get_solver_type()
+    pub fn solver_type(&self) -> SolverType {
+        self.backend.solver_type()
     }
 
     /// Get the solver timeout.

@@ -71,7 +71,7 @@ impl GenericBackend {
     }
 
     /// Get the solver type.
-    pub fn get_solver_type(&self) -> SolverType {
+    pub fn solver_type(&self) -> SolverType {
         self.solver_type
     }
 

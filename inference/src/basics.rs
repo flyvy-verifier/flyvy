@@ -283,7 +283,7 @@ impl FOModule {
         let display = |conf: &SolverConf| -> String {
             format!(
                 "{:?}(timeout={})",
-                conf.get_solver_type(),
+                conf.solver_type(),
                 conf.get_timeout_ms().unwrap_or(0) as f32 / 1000_f32
             )
         };
