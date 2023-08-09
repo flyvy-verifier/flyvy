@@ -193,7 +193,9 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
                     Some((Term::Id(f), y_primes)) if changed.iter().any(|c| c.name == *f) => {
                         **y = Term::App(f.clone(), y_primes, vec![])
                     }
-                    Some((Term::App(f, p, xs), y_primes)) if changed.iter().any(|c| c.name == *f) => {
+                    Some((Term::App(f, p, xs), y_primes))
+                        if changed.iter().any(|c| c.name == *f) =>
+                    {
                         **y = Term::App(f.clone(), p + y_primes, xs.clone())
                     }
                     _ => {
@@ -201,7 +203,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
                         fix_term(y, changed)?;
                         return Ok(());
                     }
-                }
+                },
             }
 
             if let Term::Id(id) = &**x {
