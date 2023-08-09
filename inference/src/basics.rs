@@ -78,12 +78,12 @@ impl<'a> Core<'a> {
             assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
         }
 
-        let new_participant = (0..self.formulas.len()).find(|i| {
-            !self.participants.contains(i) && counter_model.eval(&self.formulas[*i]) == 0
+        let new_participant = self.formulas.iter().enumerate().find(|(i, formula)| {
+            !self.participants.contains(i) && counter_model.eval(formula) == 0
         });
 
         match new_participant {
-            Some(p_idx) => {
+            Some((p_idx, _)) => {
                 let model_idx = self.counter_models.len();
                 self.participants.insert(p_idx);
                 self.to_participants.insert(model_idx, HashSet::new());
@@ -386,8 +386,10 @@ impl FOModule {
             .collect();
 
         // Check whether any counterexample has been found
-        if let Some(i) =
-            (0..cex_results.len()).find(|i| matches!(cex_results[*i], CexResult::Cex(_)))
+        if let Some((i, _)) = cex_results
+            .iter()
+            .enumerate()
+            .find(|(_, res)| matches!(res, CexResult::Cex(_)))
         {
             return cex_results.remove(i);
         }
