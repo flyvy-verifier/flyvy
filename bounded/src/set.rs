@@ -210,8 +210,6 @@ fn translate<'a>(
     universe: &'a UniverseBounds,
     print_timing: bool,
 ) -> Result<(BoundedProgram, Indices<'a>), CheckerError> {
-    println!("{}", fly::printer::fmt(module));
-
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             panic!("non-bool relations in checker (use Module::convert_non_bool_relations)")
@@ -292,7 +290,6 @@ fn translate<'a>(
                     }
                 }
             }
-            println!("{constrained:?} {unconstrained:?}");
             (tr, unconstrained)
         })
         .collect();
@@ -349,9 +346,18 @@ fn translate<'a>(
 
     // filter transitions using the mutable axioms
     let mutable_axioms = formula(Term::and(d.mutable_axioms(&module.signature.relations)))?;
+    let guard_indices = mutable_axioms.guard_indices();
     let mut should_keep = vec![true; trs.len()];
     for (i, should_keep) in should_keep.iter_mut().enumerate() {
-        println!("{:#?}", trs[i]);
+        // if the axiom was true in the pre-state, it will still be true in the post-state
+        if guard_indices
+            .iter()
+            .all(|index| !trs[i].updates.iter().any(|u| *index == u.index))
+        {
+            *should_keep = true;
+            continue;
+        }
+        // else, try to statically determine the post-state and evaluate it
         let guards_with_no_updates: Vec<_> = trs[i]
             .guards
             .iter()
@@ -378,7 +384,6 @@ fn translate<'a>(
                 _ => None,
             })
             .collect();
-        println!("{guards_with_no_updates:?} {true_or_false_updates:?}");
         match mutable_axioms.evaluate_partial(
             guards_with_no_updates
                 .into_iter()
@@ -583,6 +588,16 @@ impl Formula {
             map.insert(guard.index, guard.value);
         }
         evaluate_partial(self, &map)
+    }
+
+    // returns a vector of the indices in the guards in this formula
+    fn guard_indices(&self) -> Vec<usize> {
+        match self {
+            Formula::And(terms) | Formula::Or(terms) => {
+                terms.iter().flat_map(Formula::guard_indices).collect()
+            }
+            Formula::Guard(Guard { index, .. }) => vec![*index],
+        }
     }
 }
 
@@ -1373,7 +1388,7 @@ mod tests {
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_and_infer(&mut m).unwrap();
-        let _ = m.convert_non_bool_relations();
+        let _ = m.convert_non_bool_relations().unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("quorum".to_string(), 2),

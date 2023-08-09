@@ -631,7 +631,13 @@ impl App {
                 compress_traces,
             } => {
                 m.inline_defs();
-                let back_convert_model = m.convert_non_bool_relations();
+                let back_convert_model = match m.convert_non_bool_relations() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        process::exit(1)
+                    }
+                };
                 let univ = bounded.get_universe(&m.signature);
                 match bounded::set::check(
                     &m,
@@ -663,7 +669,13 @@ impl App {
             }
             Command::SatCheck(bounded) => {
                 m.inline_defs();
-                let back_convert_model = m.convert_non_bool_relations();
+                let back_convert_model = match m.convert_non_bool_relations() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        process::exit(1)
+                    }
+                };
                 let depth = match bounded.depth {
                     Some(depth) => depth,
                     None => {
@@ -688,7 +700,13 @@ impl App {
             }
             Command::BddCheck { bounded, reversed } => {
                 m.inline_defs();
-                let back_convert_model = m.convert_non_bool_relations();
+                let back_convert_model = match m.convert_non_bool_relations() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        process::exit(1)
+                    }
+                };
                 let univ = bounded.get_universe(&m.signature);
                 let check = match reversed {
                     false => bounded::bdd::check,

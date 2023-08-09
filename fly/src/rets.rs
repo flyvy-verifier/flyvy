@@ -4,11 +4,14 @@
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
 use crate::{semantics::*, syntax::*};
+use thiserror::Error;
 
 impl Module {
     /// Converts all non-boolean-returning relations to boolean-returning ones
     /// by adding an extra argument and axioms.
-    pub fn convert_non_bool_relations(&mut self) -> Box<dyn Fn(&Model) -> Model> {
+    pub fn convert_non_bool_relations(
+        &mut self,
+    ) -> Result<Box<dyn Fn(&Model) -> Model>, RetsError> {
         let old_signature = self.signature.clone();
         let changed: Vec<_> = old_signature
             .relations
@@ -81,18 +84,13 @@ impl Module {
             }
         }
 
-        let mut name = 0;
-        let mut go = |term: &mut Term| {
-            let to_quantify = fix_term(term, &changed, &mut name);
-            assert!(to_quantify.is_empty(), "{to_quantify:?}");
-        };
         for statement in &mut self.statements {
             match statement {
-                ThmStmt::Assume(term) => go(term),
+                ThmStmt::Assume(term) => fix_term(term, &changed)?,
                 ThmStmt::Assert(Proof { assert, invariants }) => {
-                    go(&mut assert.x);
+                    fix_term(&mut assert.x, &changed)?;
                     for invariant in invariants {
-                        go(&mut invariant.x);
+                        fix_term(&mut invariant.x, &changed)?;
                     }
                 }
             }
@@ -100,7 +98,7 @@ impl Module {
 
         self.statements.splice(0..0, axioms);
 
-        Box::new(move |model| {
+        Ok(Box::new(move |model| {
             Model::new(
                 &old_signature,
                 &model.universe,
@@ -133,139 +131,138 @@ impl Module {
                     })
                     .collect(),
             )
-        })
+        }))
     }
 }
 
-#[derive(Debug)]
-struct ToBeQuantified {
-    name: String,
-    sort: Sort,
-    r: String,
-    p: usize,
-    xs: Vec<Term>,
-    primes: usize,
+fn contains_changed(term: &Term, changed: &[RelationDecl]) -> bool {
+    match term {
+        Term::Literal(_) => false,
+        Term::Id(id) => changed.iter().any(|c| id == &c.name),
+        Term::App(id, ..) if changed.iter().any(|c| id == &c.name) => true,
+        Term::App(.., xs) => xs.iter().any(|x| contains_changed(x, changed)),
+        Term::NAryOp(_, xs) => xs.iter().any(|x| contains_changed(x, changed)),
+        Term::UnaryOp(_, x) => contains_changed(x, changed),
+        Term::BinOp(_, x, y) => contains_changed(x, changed) || contains_changed(y, changed),
+        Term::Ite { cond, then, else_ } => {
+            contains_changed(cond, changed)
+                || contains_changed(then, changed)
+                || contains_changed(else_, changed)
+        }
+        Term::Quantified { body, .. } => contains_changed(body, changed),
+    }
 }
 
-fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<ToBeQuantified> {
-    // wraps term with an exists quantifier
-    // is called at the first ast node that returns a boolean
-    let quantify = |term: &mut Term, to_quantify: Vec<ToBeQuantified>| {
-        if !to_quantify.is_empty() {
-            let mut binders = vec![];
-            let mut clauses = vec![term.clone()];
-            for mut tbq in to_quantify.into_iter().rev() {
-                tbq.xs.push(Term::Id(tbq.name.clone()));
-                binders.insert(
-                    0,
-                    Binder {
-                        name: tbq.name,
-                        sort: tbq.sort,
-                    },
-                );
-                let mut clause = Term::App(tbq.r, tbq.p, tbq.xs);
-                for _ in 0..tbq.primes {
-                    clause = Term::UnaryOp(UOp::Prime, Box::new(clause));
-                }
-                clauses.insert(0, clause);
-            }
-            *term = Term::exists(binders, Term::and(clauses));
-        }
-    };
-
+fn strip_primes(term: &Term) -> Option<(Term, usize)> {
     match term {
-        Term::Id(r) => {
-            let mut out = vec![];
-            if let Some(c) = changed.iter().find(|c| r == &c.name) {
-                *name += 1;
-                let name = format!("___{}", *name);
-                out.push(ToBeQuantified {
-                    name: name.clone(),
-                    sort: c.sort.clone(),
-                    r: r.to_string(),
-                    p: 0,
-                    xs: vec![],
-                    primes: 0,
-                });
-                *term = Term::Id(name);
+        Term::Id(_) | Term::App(..) => Some((term.clone(), 0)),
+        Term::UnaryOp(UOp::Prime, x) => strip_primes(x).map(|(t, i)| (t, i + 1)),
+        Term::Literal(_)
+        | Term::UnaryOp(..)
+        | Term::BinOp(..)
+        | Term::NAryOp(..)
+        | Term::Ite { .. }
+        | Term::Quantified { .. } => None,
+    }
+}
+
+/// The result of an unsuccessful attempt to run [`convert_non_bool_relations`].
+#[derive(Debug, Error)]
+pub enum RetsError {
+    /// A function was found that wasn't the direct child of an `Equals`.
+    #[error("could not remove non-boolean-returning relations from {0}")]
+    FoundOutsideEquals(Term),
+}
+
+fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> {
+    match term {
+        Term::Literal(_) => Ok(()),
+        Term::Id(_) | Term::App(..) => match contains_changed(term, changed) {
+            true => Err(RetsError::FoundOutsideEquals(term.clone())),
+            false => Ok(()),
+        },
+        Term::BinOp(BinOp::Equals, x, y) => {
+            match strip_primes(x) {
+                Some((Term::Id(f), x_primes)) if changed.iter().any(|c| c.name == *f) => {
+                    **x = Term::App(f.clone(), x_primes, vec![])
+                }
+                Some((Term::App(f, p, xs), x_primes)) if changed.iter().any(|c| c.name == *f) => {
+                    **x = Term::App(f.clone(), p + x_primes, xs.clone())
+                }
+                _ => {
+                    fix_term(x, changed)?;
+                    fix_term(y, changed)?;
+                    return Ok(());
+                }
             }
-            out
-        }
-        Term::App(r, p, xs) => {
-            let mut out = vec![];
-            for x in &mut *xs {
-                out.extend(fix_term(x, changed, name));
+
+            if let Term::Id(id) = &**y {
+                if changed.iter().any(|c| c.name == *id) {
+                    **y = Term::App(id.clone(), 0, vec![]);
+                }
             }
-            if let Some(c) = changed.iter().find(|c| r == &c.name) {
-                *name += 1;
-                let name = format!("___{}", *name);
-                out.push(ToBeQuantified {
-                    name: name.clone(),
-                    sort: c.sort.clone(),
-                    r: r.to_string(),
-                    p: *p,
-                    xs: xs.to_vec(),
-                    primes: 0,
-                });
-                *term = Term::Id(name);
-            }
-            out
+
+            let name = match &**x {
+                Term::App(name, ..) => name,
+                _ => unreachable!(),
+            };
+            let sort = changed
+                .iter()
+                .find(|c| c.name == *name)
+                .unwrap()
+                .sort
+                .clone();
+            let binder = Binder {
+                name: "___1".to_string(),
+                sort,
+            };
+
+            match &mut **x {
+                Term::App(.., xs) => xs.push(Term::Id(binder.name.clone())),
+                _ => unreachable!(),
+            };
+            match &mut **y {
+                Term::App(.., xs) => xs.push(Term::Id(binder.name.clone())),
+                Term::Id(id) => {
+                    **y = Term::equals(Term::Id(binder.name.clone()), Term::Id(id.clone()))
+                }
+                _ => todo!(),
+            };
+
+            *term = Term::forall([binder], Term::equals((**x).clone(), (**y).clone()));
+            Ok(())
         }
-        Term::UnaryOp(UOp::Always | UOp::Eventually | UOp::Not, a) => {
-            let to_quantify = fix_term(a, changed, name);
-            quantify(a, to_quantify);
-            vec![]
+        Term::BinOp(BinOp::NotEquals, x, y) => {
+            *term = Term::UnaryOp(
+                UOp::Not,
+                Box::new(Term::equals((**x).clone(), (**y).clone())),
+            );
+            fix_term(term, changed)
         }
-        Term::UnaryOp(UOp::Prime | UOp::Next, a) => fix_term(a, changed, name)
-            .into_iter()
-            .map(|tbq| ToBeQuantified {
-                primes: tbq.primes + 1,
-                ..tbq
-            })
-            .collect(),
-        Term::UnaryOp(UOp::Previous, _) => todo!(),
-        Term::BinOp(BinOp::Until | BinOp::Since | BinOp::Implies | BinOp::Iff, a, b) => {
-            let to_quantify = fix_term(a, changed, name);
-            quantify(a, to_quantify);
-            let to_quantify = fix_term(b, changed, name);
-            quantify(b, to_quantify);
-            vec![]
+        Term::UnaryOp(_, x) => fix_term(x, changed),
+        Term::BinOp(_, x, y) => {
+            fix_term(x, changed)?;
+            fix_term(y, changed)?;
+            Ok(())
         }
-        Term::BinOp(BinOp::Equals | BinOp::NotEquals, a, b) => {
-            let mut out = vec![];
-            out.extend(fix_term(a, changed, name));
-            out.extend(fix_term(b, changed, name));
-            out
-        }
-        Term::NAryOp(NOp::And | NOp::Or, terms) => {
-            for term in terms {
-                let to_quantify = fix_term(term, changed, name);
-                quantify(term, to_quantify);
-            }
-            vec![]
-        }
+        Term::NAryOp(_, xs) => xs.iter_mut().try_for_each(|x| fix_term(x, changed)),
         Term::Ite { cond, then, else_ } => {
-            let mut out = vec![];
-            out.extend(fix_term(cond, changed, name));
-            out.extend(fix_term(then, changed, name));
-            out.extend(fix_term(else_, changed, name));
-            out
+            fix_term(cond, changed)?;
+            fix_term(then, changed)?;
+            fix_term(else_, changed)?;
+            Ok(())
         }
-        Term::Quantified { body, .. } => {
-            let to_quantify = fix_term(body, changed, name);
-            quantify(body, to_quantify);
-            vec![]
-        }
-        Term::Literal(_) => vec![],
+        Term::Quantified { body, .. } => fix_term(body, changed),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser::parse, semantics::*};
+    use super::*;
+    use crate::parser::parse;
 
     #[test]
-    fn non_bool_relations_module_conversion_basic() {
+    fn non_bool_relations_module_conversion_basic() -> Result<(), RetsError> {
         let source1 = "
 sort s
 mutable f(s, bool): s
@@ -280,19 +277,21 @@ assume always forall __0:s, __1: bool. exists __2:s. f(__0, __1, __2)
 assume always forall __0:s, __1: bool, __2:s, __3:s.
     (f(__0, __1, __2) & f(__0, __1, __3)) -> (__2 = __3)
 
-assume always forall s:s. exists ___1:s. f(s, true, ___1) & ___1 = s
+assume always forall s:s. forall ___1:s. f(s, true, ___1) = (___1 = s)
         ";
 
         let mut module1 = parse(source1).unwrap();
-        let _ = module1.convert_non_bool_relations();
+        let _ = module1.convert_non_bool_relations()?;
 
         let module2 = parse(source2).unwrap();
 
         assert_eq!(module2, module1);
+
+        Ok(())
     }
 
     #[test]
-    fn non_bool_relations_module_conversion_primes() {
+    fn non_bool_relations_module_conversion_primes() -> Result<(), RetsError> {
         let source1 = "
 sort s
 mutable f(s): s
@@ -306,24 +305,26 @@ mutable f(s, s): bool
 assume always forall __0:s. exists __1:s. f(__0, __1)
 assume always forall __0:s, __1:s, __2:s. (f(__0, __1) & f(__0, __2)) -> (__1 = __2)
 
-assume always forall s:s. exists ___1:s. (f(s, ___1))' & ___1' = s
+assume always forall s:s. forall ___1:s. f'(s, ___1) = (___1 = s)
         ";
 
         let mut module1 = parse(source1).unwrap();
-        let _ = module1.convert_non_bool_relations();
+        let _ = module1.convert_non_bool_relations()?;
 
         let module2 = parse(source2).unwrap();
 
         assert_eq!(module2, module1);
+
+        Ok(())
     }
 
     #[test]
-    fn non_bool_relations_module_conversion_nested() {
+    fn non_bool_relations_module_conversion_nested() -> Result<(), RetsError> {
         let source1 = "
 sort s
 mutable f: s
 
-assume always forall s:s. f = s & (forall s:s. s=s)
+assume always forall s:s. (f = s) & (forall s:s. s=s)
         ";
         let source2 = "
 sort s
@@ -332,7 +333,7 @@ mutable f(s): bool
 assume always exists __0:s. f(__0)
 assume always forall __0:s, __1:s. (f(__0) & f(__1)) -> (__0 = __1)
 
-assume always forall s:s. (exists ___1:s. f(___1) & ___1 = s) & (forall s:s. s=s)
+assume always forall s:s. (forall ___1:s. f(___1) = (___1 = s)) & (forall s:s. s=s)
         ";
 
         let mut module1 = parse(source1).unwrap();
@@ -341,10 +342,12 @@ assume always forall s:s. (exists ___1:s. f(___1) & ___1 = s) & (forall s:s. s=s
         let module2 = parse(source2).unwrap();
 
         assert_eq!(module2, module1);
+
+        Ok(())
     }
 
     #[test]
-    fn non_bool_relations_model_back_conversion() {
+    fn non_bool_relations_model_back_conversion() -> Result<(), RetsError> {
         let source = "
 sort s
 
@@ -364,7 +367,7 @@ mutable f(bool): s
             })],
         );
 
-        let back_convert_model = module.convert_non_bool_relations();
+        let back_convert_model = module.convert_non_bool_relations()?;
         let model2 = Model::new(
             &module.signature,
             &vec![3],
@@ -377,5 +380,7 @@ mutable f(bool): s
         let model3 = back_convert_model(&model2);
 
         assert_eq!(model1, model3);
+
+        Ok(())
     }
 }
