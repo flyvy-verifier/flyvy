@@ -149,6 +149,7 @@ struct ToBeQuantified {
 
 fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<ToBeQuantified> {
     // wraps term with an exists quantifier
+    // is called at the first ast node that returns a boolean
     let quantify = |term: &mut Term, to_quantify: Vec<ToBeQuantified>| {
         if !to_quantify.is_empty() {
             let mut binders = vec![];
@@ -210,7 +211,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<
             }
             out
         }
-        Term::UnaryOp(UOp::Always | UOp::Eventually, a) => {
+        Term::UnaryOp(UOp::Always | UOp::Eventually | UOp::Not, a) => {
             let to_quantify = fix_term(a, changed, name);
             quantify(a, to_quantify);
             vec![]
@@ -223,26 +224,25 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl], name: &mut usize) -> Vec<
             })
             .collect(),
         Term::UnaryOp(UOp::Previous, _) => todo!(),
-        Term::UnaryOp(_, a) => fix_term(a, changed, name),
-        Term::BinOp(BinOp::Until | BinOp::Since, a, b) => {
+        Term::BinOp(BinOp::Until | BinOp::Since | BinOp::Implies | BinOp::Iff, a, b) => {
             let to_quantify = fix_term(a, changed, name);
             quantify(a, to_quantify);
             let to_quantify = fix_term(b, changed, name);
             quantify(b, to_quantify);
             vec![]
         }
-        Term::BinOp(_, a, b) => {
+        Term::BinOp(BinOp::Equals | BinOp::NotEquals, a, b) => {
             let mut out = vec![];
             out.extend(fix_term(a, changed, name));
             out.extend(fix_term(b, changed, name));
             out
         }
-        Term::NAryOp(_, terms) => {
-            let mut out = vec![];
+        Term::NAryOp(NOp::And | NOp::Or, terms) => {
             for term in terms {
-                out.extend(fix_term(term, changed, name));
+                let to_quantify = fix_term(term, changed, name);
+                quantify(term, to_quantify);
             }
-            out
+            vec![]
         }
         Term::Ite { cond, then, else_ } => {
             let mut out = vec![];
@@ -332,7 +332,7 @@ mutable f(s): bool
 assume always exists __0:s. f(__0)
 assume always forall __0:s, __1:s. (f(__0) & f(__1)) -> (__0 = __1)
 
-assume always forall s:s. exists ___1:s. f(___1) & ___1 = s & forall s:s. s=s
+assume always forall s:s. (exists ___1:s. f(___1) & ___1 = s) & (forall s:s. s=s)
         ";
 
         let mut module1 = parse(source1).unwrap();
