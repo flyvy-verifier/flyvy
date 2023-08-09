@@ -189,13 +189,26 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
                 Some((Term::App(f, p, xs), x_primes)) if changed.iter().any(|c| c.name == *f) => {
                     **x = Term::App(f.clone(), p + x_primes, xs.clone())
                 }
-                _ => {
-                    fix_term(x, changed)?;
-                    fix_term(y, changed)?;
-                    return Ok(());
+                _ => match strip_primes(y) {
+                    Some((Term::Id(f), y_primes)) if changed.iter().any(|c| c.name == *f) => {
+                        **y = Term::App(f.clone(), y_primes, vec![])
+                    }
+                    Some((Term::App(f, p, xs), y_primes)) if changed.iter().any(|c| c.name == *f) => {
+                        **y = Term::App(f.clone(), p + y_primes, xs.clone())
+                    }
+                    _ => {
+                        fix_term(x, changed)?;
+                        fix_term(y, changed)?;
+                        return Ok(());
+                    }
                 }
             }
 
+            if let Term::Id(id) = &**x {
+                if changed.iter().any(|c| c.name == *id) {
+                    **x = Term::App(id.clone(), 0, vec![]);
+                }
+            }
             if let Term::Id(id) = &**y {
                 if changed.iter().any(|c| c.name == *id) {
                     **y = Term::App(id.clone(), 0, vec![]);
@@ -204,7 +217,10 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
 
             let name = match &**x {
                 Term::App(name, ..) => name,
-                _ => unreachable!(),
+                _ => match &**y {
+                    Term::App(name, ..) => name,
+                    _ => unreachable!(),
+                },
             };
             let sort = changed
                 .iter()
@@ -219,6 +235,9 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
 
             match &mut **x {
                 Term::App(.., xs) => xs.push(Term::Id(binder.name.clone())),
+                Term::Id(id) => {
+                    **x = Term::equals(Term::Id(binder.name.clone()), Term::Id(id.clone()))
+                }
                 _ => unreachable!(),
             };
             match &mut **y {
@@ -226,7 +245,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
                 Term::Id(id) => {
                     **y = Term::equals(Term::Id(binder.name.clone()), Term::Id(id.clone()))
                 }
-                _ => todo!(),
+                _ => unreachable!(),
             };
 
             *term = Term::forall([binder], Term::equals((**x).clone(), (**y).clone()));
