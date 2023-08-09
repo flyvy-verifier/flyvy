@@ -28,7 +28,7 @@
 //! information (the span will be `None` in that case).
 
 use crate::syntax::*;
-use ena::unify::{InPlace, UnificationTable, UnifyKey, UnifyValue};
+use ena::unify::{UnifyKey, UnifyValue};
 use std::collections::HashSet;
 use thiserror::Error;
 
@@ -87,8 +87,9 @@ pub enum SortError {
 
 /// Sort check a module, including inferring sorts for bound variables.
 pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<Span>)> {
+    let scope = Scope::new(&module.signature).map_err(|e| (e, None))?;
     let mut table = UnificationTable::new();
-    let mut context = Scope::new(&module.signature, &mut table).map_err(|e| (e, None))?;
+    let mut context = InternalContext::new(scope, &mut table);
 
     // using immediately invoked closure to tag errors with None spans
     (|| {
@@ -96,12 +97,12 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
             {
                 let mut context = context.new_inner_scope();
                 context.add_binders_for_inference(&mut def.binders)?;
-                context.check_sort_exists(&def.ret_sort)?;
+                context.scope.check_sort_exists(&def.ret_sort)?;
                 let ret = context.sort_check_term(&mut def.body)?;
                 context.unify_var_value(&def.ret_sort, &MaybeUnknownSort::Known(ret))?;
             }
 
-            context.add_name_internal(
+            context.scope.add_name_internal(
                 def.name.clone(),
                 RelationOrIndividual::definition(def),
                 ShadowingConstraint::Disallow,
@@ -113,7 +114,7 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     .map_err(|e| (e, None))?;
 
     // helper that wraps any errors
-    let term_is_bool = |context: &mut Scope, term: &mut Term, span: Option<Span>| {
+    let term_is_bool = |context: &mut InternalContext, term: &mut Term, span: Option<Span>| {
         context
             .sort_check_term(term)
             .and_then(|sort| context.unify_var_value(&Sort::Bool, &MaybeUnknownSort::Known(sort)))
@@ -136,6 +137,14 @@ pub fn sort_check_module(module: &mut Module) -> Result<(), (SortError, Option<S
     assert!(has_all_sort_annotations_module(module));
 
     Ok(())
+}
+
+/// Sort check the term in the given signature, including inferring sorts for bound variables.
+pub fn sort_check_term(signature: &Signature, term: &mut Term) -> Result<Sort, SortError> {
+    let scope = Scope::new(signature)?;
+    let mut table = UnificationTable::new();
+    let mut context = InternalContext::new(scope, &mut table);
+    context.sort_check_term(term)
 }
 
 /// Return whether every quantified variable in every term in the given fly
@@ -281,22 +290,21 @@ enum ShadowingConstraint {
     Disallow,
 }
 
-#[derive(Debug)]
-struct Scope<'a> {
+/// A scope for sort checking, which includes information about global symbols (sorts, relations)
+/// and locally bound variables.
+#[derive(Clone)]
+pub struct Scope<'a> {
     signature: &'a Signature,
     bound_names: im::HashMap<String, RelationOrIndividual>,
-    unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
 }
 
 impl Scope<'_> {
-    /// Create a new context from a signature. Initially the names bound by the context are exactly
+    /// Create a new scope from a signature. Initially the names bound by the context are exactly
     /// the relations in the signature.
     ///
     /// This function also checks that the signature is well formed in the sense that all the sorts
-    fn new<'a>(
-        signature: &'a Signature,
-        unification_table: &'a mut UnificationTable<InPlace<SortVar>>,
-    ) -> Result<Scope<'a>, SortError> {
+    /// mentioned by the relations exist.
+    pub fn new(signature: &Signature) -> Result<Scope<'_>, SortError> {
         let mut sorts = HashSet::new();
         for sort in &signature.sorts {
             // This assert is guaranteed to pass by the parser, but we double check it here for the
@@ -312,7 +320,6 @@ impl Scope<'_> {
         let mut context = Scope {
             signature,
             bound_names: im::HashMap::new(),
-            unification_table,
         };
         for rel in &signature.relations {
             for arg in &rel.args {
@@ -327,15 +334,6 @@ impl Scope<'_> {
         }
 
         Ok(context)
-    }
-
-    // we don't want to clone the references, just the name map
-    fn new_inner_scope(&mut self) -> Scope {
-        Scope {
-            signature: self.signature,
-            bound_names: self.bound_names.clone(),
-            unification_table: self.unification_table,
-        }
     }
 
     // if the given sort is uninterpreted, check that it is declared in the module and report an error if not.
@@ -387,6 +385,32 @@ impl Scope<'_> {
         self.bound_names.insert(name, sort);
         Ok(())
     }
+}
+
+type UnificationTable = ena::unify::InPlaceUnificationTable<SortVar>;
+struct InternalContext<'a> {
+    scope: Scope<'a>,
+    unification_table: &'a mut UnificationTable,
+}
+
+impl InternalContext<'_> {
+    fn new<'a>(
+        scope: Scope<'a>,
+        unification_table: &'a mut UnificationTable,
+    ) -> InternalContext<'a> {
+        InternalContext {
+            scope,
+            unification_table,
+        }
+    }
+
+    /// Create a new context for an inner scope.
+    fn new_inner_scope(&mut self) -> InternalContext {
+        InternalContext {
+            scope: self.scope.clone(),
+            unification_table: self.unification_table,
+        }
+    }
 
     // doesn't allow `binders` to shadow each other, but does allow them to
     // shadow names already in `context`
@@ -404,7 +428,7 @@ impl Scope<'_> {
             if !names.insert(binder.name.clone()) {
                 return Err(SortError::RedeclaredName(binder.name.clone()));
             }
-            self.check_sort_exists_or_empty(&binder.sort)?;
+            self.scope.check_sort_exists_or_empty(&binder.sort)?;
             let sort = if binder.sort == Sort::Uninterpreted("".to_owned()) {
                 let var = self.unification_table.new_key(OptionSort(None));
                 binder.sort = Sort::Uninterpreted(format!("var {}", var.0));
@@ -414,7 +438,8 @@ impl Scope<'_> {
             };
             // Now add it to the context, allowing it to shadow bindings from
             // any outer scopes.
-            self.add_name_internal(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
+            self.scope
+                .add_name_internal(binder.name.clone(), sort, ShadowingConstraint::Allow)?;
         }
         Ok(())
     }
@@ -464,14 +489,14 @@ impl Scope<'_> {
     ) -> Result<MaybeUnknownSort, SortError> {
         match term {
             Term::Literal(_) => Ok(MaybeUnknownSort::Known(Sort::Bool)),
-            Term::Id(name) => match self.bound_names.get(name) {
+            Term::Id(name) => match self.scope.bound_names.get(name) {
                 Some(RelationOrIndividual::Relation(_, _)) => {
                     Err(SortError::Uncalled(name.clone()))
                 }
                 Some(RelationOrIndividual::Individual(ret)) => Ok(ret.clone()),
                 None => Err(SortError::UnknownVariable(name.clone())),
             },
-            Term::App(f, _p, xs) => match self.bound_names.get(f).cloned() {
+            Term::App(f, _p, xs) => match self.scope.bound_names.get(f).cloned() {
                 Some(RelationOrIndividual::Individual(_)) => Err(SortError::Uncallable(f.clone())),
                 Some(RelationOrIndividual::Relation(args, ret)) => {
                     if args.len() != xs.len() {
@@ -616,7 +641,7 @@ impl Scope<'_> {
 
     /// Sort check the term in the current context, inferring any unannotated bound variable sorts,
     /// and return the sort of the term.
-    pub fn sort_check_term(&mut self, term: &mut Term) -> Result<Sort, SortError> {
+    fn sort_check_term(&mut self, term: &mut Term) -> Result<Sort, SortError> {
         // The sort inference algorithm proceeds in two phases.
         //
         // First, we walk the entire AST and do normal "type checking" checks.
