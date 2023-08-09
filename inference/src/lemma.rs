@@ -1052,7 +1052,7 @@ where
     fn trans_cex(&mut self, fo: &FOModule, confs: &[&SolverConf]) -> Option<Model> {
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
-        let solver_pids = Arc::new(SolverPids::new());
+        let solver_pids = SolverPids::new();
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);

@@ -145,7 +145,8 @@ impl<'a> Core<'a> {
 /// Maintains a set of [`SmtPid`]'s which can be canceled whenever necessary.
 /// Composed of a `bool` which tracks whether the set has been canceled, followed by the
 /// [`SmtPid`]'s of the solvers it contains.
-pub struct SolverPids(Mutex<(bool, Vec<SmtPid>)>);
+#[derive(Clone)]
+pub struct SolverPids(Arc<Mutex<(bool, Vec<SmtPid>)>>);
 
 impl Default for SolverPids {
     fn default() -> Self {
@@ -156,7 +157,7 @@ impl Default for SolverPids {
 impl SolverPids {
     /// Create a new empty [`SolverPids`].
     pub fn new() -> Self {
-        SolverPids(Mutex::new((false, vec![])))
+        SolverPids(Arc::new(Mutex::new((false, vec![]))))
     }
 
     /// Add the given [`SmtPid`] to the [`SolverPids`].
@@ -273,7 +274,7 @@ impl FOModule {
         hyp: &[Term],
         t: &Term,
         with_safety: bool,
-        solver_pids: Option<Arc<SolverPids>>,
+        solver_pids: Option<SolverPids>,
     ) -> CexResult {
         let transitions = self.disj_trans();
         let pids = solver_pids.unwrap_or_default();
