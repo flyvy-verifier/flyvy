@@ -33,6 +33,17 @@ pub enum SolverType {
     Cvc5,
 }
 
+impl SolverType {
+    /// Returns the name of the binary of this [`SolverType`].
+    pub fn bin_name(&self) -> &'static str {
+        match self {
+            SolverType::Z3 => "z3",
+            SolverType::Cvc5 => "cvc5",
+            SolverType::Cvc4 => "cvc4",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct GenericOptions {
     timeout_ms: Option<usize>,

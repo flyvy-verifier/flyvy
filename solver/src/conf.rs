@@ -14,14 +14,6 @@ use crate::{
 
 use fly::syntax::Signature;
 
-fn solver_default_bin(t: SolverType) -> &'static str {
-    match t {
-        SolverType::Z3 => "z3",
-        SolverType::Cvc5 => "cvc5",
-        SolverType::Cvc4 => "cvc4",
-    }
-}
-
 /// Wrapper around the configuration needed to launch a solver.
 #[derive(Debug, Clone)]
 pub struct SolverConf {
@@ -47,7 +39,7 @@ impl SolverConf {
         timeout_s: usize,
         seed: usize,
     ) -> Self {
-        let solver_bin = solver_path(solver_default_bin(backend_type));
+        let solver_bin = solver_path(backend_type.bin_name());
         let tee: Option<PathBuf> = if smt {
             let dir = log_dir(Path::new(fname));
             create_dir_all(&dir).expect("could not create log dir");
