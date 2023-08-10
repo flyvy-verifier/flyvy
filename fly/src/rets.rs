@@ -166,7 +166,7 @@ fn strip_primes(term: &Term) -> Option<(Term, usize)> {
     }
 }
 
-/// The result of an unsuccessful attempt to run [`convert_non_bool_relations`].
+/// The result of an unsuccessful attempt to run `convert_non_bool_relations`.
 #[derive(Debug, Error)]
 pub enum RetsError {
     /// A function was found that wasn't the direct child of an `Equals`.
