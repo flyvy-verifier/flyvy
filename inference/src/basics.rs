@@ -50,7 +50,12 @@ impl CexResult {
     }
 }
 
-/// Manages a subset of constraints, based on the counter-models they do not satisfy.
+/// Manages a subset of formulas based on the counter-models they do not satisfy.
+///
+/// This is used to find a small UNSAT-core of some SMT query by iteratively adding negative
+/// counterexamples to be blocked and growing the core in a minimal way to block all of them.
+/// If `minimal` is set, the core is guaranteed to be minimal in the local sense that
+/// no formula can be dropped from it while still blocking all the previous counterexamples.
 struct Core<'a> {
     formulas: &'a [Term],
     participants: HashSet<usize>,
@@ -61,10 +66,13 @@ struct Core<'a> {
 }
 
 impl<'a> Core<'a> {
-    fn new(terms: &'a [Term], initial: HashSet<usize>, minimal: bool) -> Self {
+    /// Create a new core from the given formulas. `participants` specifies which formulas
+    /// to intialize the core with, and `minimal` determines whether to minimize the core
+    /// when adding future participants.
+    fn new(formulas: &'a [Term], participants: HashSet<usize>, minimal: bool) -> Self {
         Core {
-            formulas: terms,
-            participants: initial,
+            formulas,
+            participants,
             counter_models: vec![],
             to_participants: HashMap::new(),
             to_counter_models: HashMap::new(),
@@ -72,6 +80,12 @@ impl<'a> Core<'a> {
         }
     }
 
+    /// Update the core so that it blocks the given model and all previously blocked models.
+    /// This involves adding a blocking formula to the core and potentially minimizing it.
+    /// We assume that the new model satisfies the current core (i.e. is not blocked by it).
+    ///
+    /// Returns `true` if the model has been successfully blocked or `false` if it couldn't be
+    /// blocked because it satisfied all candidate formulas.
     fn add_counter_model(&mut self, counter_model: Model) -> bool {
         // We assume that the new counter-model satisfies all previous formulas.
         for &p_idx in &self.participants {
@@ -113,6 +127,10 @@ impl<'a> Core<'a> {
         }
     }
 
+    /// Reduces the size of the core by one if possible, by trying to find a formula such that any model it blocks
+    /// is also blocked by a different formula in the core. Formulas with a higher index are prioritized for removal.
+    ///
+    /// Returns `true` if the core has been reduced, or `false` otherwise.
     fn reduce(&mut self) -> bool {
         if let Some(p_idx) = self
             .participants
@@ -137,6 +155,7 @@ impl<'a> Core<'a> {
         }
     }
 
+    /// Returns the size of the core.
     fn len(&self) -> usize {
         self.participants.len()
     }
