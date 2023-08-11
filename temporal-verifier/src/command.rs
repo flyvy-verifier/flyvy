@@ -764,11 +764,10 @@ impl App {
                     bounded.print_timing.unwrap_or(true),
                 ) {
                     Ok(inference::finite::FiniteAnswer::BddCounterexample(models)) => {
-                        println!("found counterexample:");
-                        for (i, model) in models.iter().enumerate() {
-                            println!("state {i}:");
-                            println!("{}", back_convert_model(model).fmt());
-                        }
+                        println!(
+                            "found counterexample:\n{}",
+                            models_to_string(models.iter().map(back_convert_model))
+                        )
                     }
                     Ok(inference::finite::FiniteAnswer::InvariantFail(term, err)) => {
                         eprintln!("invariant wasn't inductive: {term}");
@@ -781,10 +780,10 @@ impl App {
                             }
                             match &fail.error {
                                 QueryError::Sat(models) => {
-                                    for (i, model) in models.iter().enumerate() {
-                                        eprintln!("state {i}:");
-                                        eprintln!("{}", back_convert_model(model).fmt());
-                                    }
+                                    println!(
+                                        "{}",
+                                        models_to_string(models.iter().map(&back_convert_model))
+                                    )
                                 }
                                 QueryError::Unknown(message) => eprintln!("{message}"),
                             }

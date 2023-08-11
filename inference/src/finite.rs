@@ -87,7 +87,10 @@ pub fn invariant(
     // Try to verify the term
     let mut destructured = extract(module).map_err(FiniteError::ExtractionError)?;
     assert_eq!(1, destructured.proofs.len());
-    destructured.proofs[0].invariants = vec![MaybeSpannedTerm::Term(ast.clone())];
+    destructured.proofs[0].invariants = vec![Spanned {
+        x: ast.clone(),
+        span: None,
+    }];
 
     if let Err(err) = verify_destructured_module(conf, &destructured, &module.signature) {
         Ok(FiniteAnswer::InvariantFail(ast, err))
