@@ -592,6 +592,7 @@ pub enum QfBody {
 pub struct InferenceConfig {
     pub fname: String,
 
+    pub fallback: bool,
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
 

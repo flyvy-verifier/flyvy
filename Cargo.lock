@@ -1242,6 +1242,7 @@ dependencies = [
  "lazy_static",
  "log",
  "pretty_env_logger",
+ "rayon",
  "regex",
  "serde",
  "serde_derive",

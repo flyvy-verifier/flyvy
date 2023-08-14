@@ -24,7 +24,7 @@ use fly::semantics::models_to_string;
 use fly::syntax::{Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
-use inference::fixpoint::{self, qalpha_by_qf_body};
+use inference::fixpoint::{self, qalpha_dynamic};
 use inference::houdini;
 use inference::quant::QuantifierConfig;
 use inference::updr::Updr;
@@ -139,6 +139,11 @@ struct InferenceConfigArgs {
     q_cfg_args: QuantifierConfigArgs,
 
     #[arg(long)]
+    /// Instead on parallizing the solvers for each query, try them one by one
+    /// in a sequential fallback fashion.
+    fallback: bool,
+
+    #[arg(long)]
     /// Defines the type of quantifier-free body (cnf/pdnf/pdnf-naive)
     qf_body: Option<String>,
 
@@ -236,6 +241,7 @@ impl InferenceConfigArgs {
 
         let mut cfg = InferenceConfig {
             fname,
+            fallback: self.fallback,
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
@@ -583,10 +589,12 @@ impl App {
                 },
             ) => {
                 m.inline_defs();
-                let infer_cfg = qargs
-                    .infer_cfg
-                    .to_cfg(&m.signature, args.infer_cmd.file().to_string());
-                qalpha_by_qf_body(infer_cfg, &m, !args.no_print_invariant);
+                let infer_cfg = Arc::new(
+                    qargs
+                        .infer_cfg
+                        .to_cfg(&m.signature, args.infer_cmd.file().to_string()),
+                );
+                qalpha_dynamic(infer_cfg, &m, !args.no_print_invariant);
                 if args.time {
                     timing::report();
                 }

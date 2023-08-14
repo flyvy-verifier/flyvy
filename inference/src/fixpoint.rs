@@ -10,18 +10,18 @@ use std::time::Duration;
 use std::{collections::VecDeque, fmt::Debug};
 
 use crate::basics::QfBody;
-use crate::{atoms, lemma, subsume};
 use crate::{
-    atoms::{restrict, restrict_by_prefix, Atoms, RestrictedAtoms},
+    atoms::{restrict, restrict_by_prefix, Atoms, Literal, RestrictedAtoms},
     basics::{FOModule, InferenceConfig},
     lemma::InductionFrame,
     subsume::OrderSubsumption,
     weaken::{Domain, LemmaQf},
 };
+use crate::{lemma, subsume};
 use fly::syntax::{Module, Term, ThmStmt};
 use solver::{
     backends::SolverType,
-    basics::{BasicSolver, FallbackSolvers, SingleSolver},
+    basics::{BasicSolver, FallbackSolvers, ParallelSolvers, SingleSolver},
     conf::SolverConf,
 };
 
@@ -119,13 +119,15 @@ impl FoundFixpoint {
     }
 }
 
-pub fn qalpha<O, L, B>(infer_cfg: InferenceConfig, m: &Module, print_invariant: bool)
-where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
-{
-    let main_solver = FallbackSolvers::new(vec![
+fn parallel_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+    ParallelSolvers::new(vec![
+        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 0),
+        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 0, 0),
+    ])
+}
+
+fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+    FallbackSolvers::new(vec![
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 1),
         SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 3, 2),
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 60, 3),
@@ -133,14 +135,32 @@ where
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 600, 5),
         SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 600, 6),
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 7),
-    ]);
-    let simulation_solver = SingleSolver::new(SolverConf::new(
+    ])
+}
+
+fn simulation_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+    SingleSolver::new(SolverConf::new(
         SolverType::Z3,
         true,
         &infer_cfg.fname,
         3,
         0,
-    ));
+    ))
+}
+
+pub fn qalpha<O, L, B, S1, S2>(
+    infer_cfg: Arc<InferenceConfig>,
+    m: &Module,
+    main_solver: &S1,
+    simulation_solver: &S2,
+    print_invariant: bool,
+) where
+    O: OrderSubsumption<Base = B>,
+    L: LemmaQf<Base = B>,
+    B: Clone + Debug + Send,
+    S1: BasicSolver,
+    S2: BasicSolver,
+{
     let fo = FOModule::new(
         m,
         infer_cfg.disj,
@@ -148,9 +168,8 @@ where
         infer_cfg.minimal_smt,
     );
     log::debug!("Computing atoms...");
-    let atoms = Arc::new(Atoms::new(&infer_cfg, &main_solver, &fo));
+    let atoms = Arc::new(Atoms::new(&infer_cfg, main_solver, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
-    let infer_cfg = Arc::new(infer_cfg);
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),
@@ -244,10 +263,10 @@ where
             );
         }
 
-        let fixpoint = run_qalpha::<O, L, B, _, _>(
+        let fixpoint = run_qalpha::<O, L, B, S1, S2>(
             infer_cfg.clone(),
-            &main_solver,
-            &simulation_solver,
+            main_solver,
+            simulation_solver,
             m,
             &fo,
             unrestricted.clone(),
@@ -269,23 +288,54 @@ where
     }
 }
 
-pub fn qalpha_by_qf_body(infer_cfg: InferenceConfig, m: &Module, print_invariant: bool) {
-    match infer_cfg.qf_body {
-        QfBody::CNF => qalpha::<
-            subsume::Cnf<atoms::Literal>,
-            lemma::LemmaCnf,
-            Vec<Vec<atoms::Literal>>,
-        >(infer_cfg, m, print_invariant),
-        QfBody::PDnf => qalpha::<
-            subsume::PDnf<atoms::Literal>,
-            lemma::LemmaPDnf,
-            (Vec<atoms::Literal>, Vec<Vec<atoms::Literal>>),
-        >(infer_cfg, m, print_invariant),
-        QfBody::PDnfNaive => qalpha::<
-            subsume::Dnf<atoms::Literal>,
-            lemma::LemmaPDnfNaive,
-            Vec<Vec<atoms::Literal>>,
-        >(infer_cfg, m, print_invariant),
+pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invariant: bool) {
+    match (&infer_cfg.qf_body, infer_cfg.fallback) {
+        (QfBody::CNF, false) => qalpha::<subsume::Cnf<Literal>, lemma::LemmaCnf, _, _, _>(
+            infer_cfg.clone(),
+            m,
+            &parallel_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
+        (QfBody::PDnf, false) => qalpha::<subsume::PDnf<Literal>, lemma::LemmaPDnf, _, _, _>(
+            infer_cfg.clone(),
+            m,
+            &parallel_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
+        (QfBody::PDnfNaive, false) => {
+            qalpha::<subsume::Dnf<Literal>, lemma::LemmaPDnfNaive, _, _, _>(
+                infer_cfg.clone(),
+                m,
+                &parallel_solver(&infer_cfg),
+                &simulation_solver(&infer_cfg),
+                print_invariant,
+            )
+        }
+        (QfBody::CNF, true) => qalpha::<subsume::Cnf<Literal>, lemma::LemmaCnf, _, _, _>(
+            infer_cfg.clone(),
+            m,
+            &fallback_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
+        (QfBody::PDnf, true) => qalpha::<subsume::PDnf<Literal>, lemma::LemmaPDnf, _, _, _>(
+            infer_cfg.clone(),
+            m,
+            &fallback_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
+        (QfBody::PDnfNaive, true) => {
+            qalpha::<subsume::Dnf<Literal>, lemma::LemmaPDnfNaive, _, _, _>(
+                infer_cfg.clone(),
+                m,
+                &fallback_solver(&infer_cfg),
+                &simulation_solver(&infer_cfg),
+                print_invariant,
+            )
+        }
     }
 }
 

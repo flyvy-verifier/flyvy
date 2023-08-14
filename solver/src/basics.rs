@@ -3,6 +3,8 @@
 
 //! Traits defining a very basic interface to SMT solvers and a few implementations of them.
 
+use itertools::Itertools;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -177,9 +179,11 @@ impl<C: BasicSolverCanceler> SolverCancelers<C> {
             true
         }
     }
+}
 
+impl<C: BasicSolverCanceler> BasicSolverCanceler for SolverCancelers<C> {
     /// Cancel all solvers tracked by this set of cancelers.
-    pub fn cancel(&self) {
+    fn cancel(&self) {
         let mut cancelers = self.0.lock().unwrap();
         cancelers.0 = true;
         for canceler in cancelers.1.drain(..) {
@@ -192,9 +196,14 @@ impl<C: BasicSolverCanceler> SolverCancelers<C> {
 pub struct SingleSolver(SolverConf);
 
 /// A set of solvers used in a fallback fashion: on each query the solvers
-/// are tried sequentially until (1) one of them returns a sat or unsat response,
-/// (2) all solvers return unknown, or (3) the query is canceled.
+/// are tried sequentially until (1) one of them returns a sat/unsat/error response,
+/// (2) the query is canceled, or (3) all solvers return unknown.
 pub struct FallbackSolvers(Vec<SolverConf>);
+
+/// A set of solvers used in a parallel fashion: on each query the solvers
+/// are tried in parallel until (1) one of them returns a sat/unsat/error response,
+/// (2) the query is canceled, or (3) all solvers return unknown.
+pub struct ParallelSolvers(Vec<SolverConf>);
 
 impl BasicSolverCanceler for SmtPid {
     fn cancel(&self) {
@@ -260,5 +269,93 @@ impl BasicSolver for FallbackSolvers {
         }
 
         Ok(BasicSolverResp::Unknown(unknowns.join("\n")))
+    }
+}
+
+impl ParallelSolvers {
+    /// Create a new set of parallel solvers with the given configurations.
+    pub fn new(confs: Vec<SolverConf>) -> Self {
+        Self(confs)
+    }
+}
+
+impl BasicSolver for ParallelSolvers {
+    type Canceler = SolverCancelers<SmtPid>;
+
+    fn check_sat(
+        &self,
+        query_conf: &QueryConf<Self::Canceler>,
+        assertions: &[Term],
+        assumptions: &HashMap<usize, (Term, bool)>,
+    ) -> Result<BasicSolverResp, SolverError> {
+        let local_cancelers: SolverCancelers<SmtPid> = SolverCancelers::new();
+        let local_query_conf = QueryConf {
+            sig: query_conf.sig,
+            n_states: query_conf.n_states,
+            cancelers: Some(local_cancelers.clone()),
+            minimal_model: query_conf.minimal_model,
+            save_tee: query_conf.save_tee,
+        };
+
+        if query_conf
+            .cancelers
+            .as_ref()
+            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
+        {
+            return Err(SolverError::Killed);
+        }
+
+        let results: Vec<_> = self
+            .0
+            .par_iter()
+            .map(|solver_conf| {
+                let res = check_sat_conf(solver_conf, &local_query_conf, assertions, assumptions);
+                match res {
+                    Err(SolverError::Killed) => Err(SolverError::Killed),
+                    Ok(BasicSolverResp::Unknown(reason))
+                    | Err(SolverError::CouldNotMinimize(reason)) => {
+                        Ok(BasicSolverResp::Unknown(reason))
+                    }
+                    // This case is reached only if the result is SAT, UNSAT, or some error other than SolverError::Killed,
+                    // which means that the other solvers should be canceled.
+                    _ => {
+                        local_cancelers.cancel();
+                        res
+                    }
+                }
+            })
+            .collect();
+
+        let mut sat_or_unsat = vec![];
+        let mut unknowns = vec![];
+        let mut errors = vec![];
+        let mut killed = vec![];
+
+        for res in results {
+            match res {
+                Ok(BasicSolverResp::Sat(_) | BasicSolverResp::Unsat(_)) => sat_or_unsat.push(res),
+                Ok(BasicSolverResp::Unknown(_)) => unknowns.push(res),
+                Err(SolverError::Killed) => killed.push(res),
+                Err(_) => errors.push(res),
+            }
+        }
+
+        // If a SAT or UNSAT result was found, return it.
+        // Otherwise, if an error was encountered, return it.
+        // Otherwise, if a solver was killed, return that.
+        if let Some(res) = [sat_or_unsat, errors, killed].into_iter().flatten().next() {
+            return res;
+        }
+
+        // If all results were unknown, concatenate and return their reasons.
+        Ok(BasicSolverResp::Unknown(
+            unknowns
+                .into_iter()
+                .map(|res| match res {
+                    Ok(BasicSolverResp::Unknown(reason)) => reason,
+                    _ => unreachable!(),
+                })
+                .join("\n"),
+        ))
     }
 }
