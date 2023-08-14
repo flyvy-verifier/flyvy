@@ -127,14 +127,20 @@ fn parallel_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
 }
 
 fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+    // For the solvers in fallback fashion we alternate between Z3 and CVC5
+    // with increasing timeouts and varying seeds, ending with a Z3 solver with
+    // no timeout. The idea is to try both Z3 and CVC5 with some timeout to see if any
+    // of them solve the query, and gradually increase the timeout for both,
+    // ending with no timeout at all. The seed changes are meant to add some
+    // variation vis-a-vis previous attempts.
     FallbackSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 1),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 3, 2),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 60, 3),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 60, 4),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 600, 5),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 600, 6),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 7),
+        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 0),
+        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 3, 0),
+        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 60, 1),
+        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 60, 1),
+        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 600, 2),
+        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 600, 2),
+        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 3),
     ])
 }
 
