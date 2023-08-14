@@ -15,6 +15,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod backends;
+pub mod basics;
 pub mod conf;
 pub mod imp;
 pub mod models;

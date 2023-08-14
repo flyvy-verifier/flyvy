@@ -19,7 +19,11 @@ use crate::{
     weaken::{Domain, LemmaQf},
 };
 use fly::syntax::{Module, Term, ThmStmt};
-use solver::{backends::SolverType, conf::SolverConf};
+use solver::{
+    backends::SolverType,
+    basics::{BasicSolver, FallbackSolvers, SingleSolver},
+    conf::SolverConf,
+};
 
 use rayon::prelude::*;
 
@@ -38,9 +42,9 @@ pub mod defaults {
 }
 
 /// Check how much of the handwritten invariant the given lemmas cover.
-fn invariant_cover(
+fn invariant_cover<S: BasicSolver>(
     m: &Module,
-    confs: &[&SolverConf],
+    solver: &S,
     fo: &FOModule,
     lemmas: &[Term],
 ) -> (usize, usize) {
@@ -57,7 +61,7 @@ fn invariant_cover(
     let covered = proof
         .invariants
         .par_iter()
-        .filter(|inv| !fo.implication_cex(confs, lemmas, &inv.x).is_cex())
+        .filter(|inv| !fo.implication_cex(solver, lemmas, &inv.x).is_cex())
         .count();
 
     (covered, proof.invariants.len())
@@ -121,7 +125,7 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    let solver_confs = [
+    let main_solver = FallbackSolvers::new(vec![
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 1),
         SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 3, 2),
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 60, 3),
@@ -129,10 +133,14 @@ where
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 600, 5),
         SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 600, 6),
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 7),
-    ];
-    let confs = solver_confs.iter().collect_vec();
-    let simulation_conf = SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 0);
-
+    ]);
+    let simulation_solver = SingleSolver::new(SolverConf::new(
+        SolverType::Z3,
+        true,
+        &infer_cfg.fname,
+        3,
+        0,
+    ));
     let fo = FOModule::new(
         m,
         infer_cfg.disj,
@@ -140,7 +148,7 @@ where
         infer_cfg.minimal_smt,
     );
     log::debug!("Computing atoms...");
-    let atoms = Arc::new(Atoms::new(&infer_cfg, &confs, &fo));
+    let atoms = Arc::new(Atoms::new(&infer_cfg, &main_solver, &fo));
     let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let infer_cfg = Arc::new(infer_cfg);
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
@@ -236,10 +244,10 @@ where
             );
         }
 
-        let fixpoint = run_qalpha::<O, L, B>(
+        let fixpoint = run_qalpha::<O, L, B, _, _>(
             infer_cfg.clone(),
-            &confs,
-            &simulation_conf,
+            &main_solver,
+            &simulation_solver,
             m,
             &fo,
             unrestricted.clone(),
@@ -283,10 +291,10 @@ pub fn qalpha_by_qf_body(infer_cfg: InferenceConfig, m: &Module, print_invariant
 
 /// Run the qalpha algorithm on the configured lemma domains.
 #[allow(clippy::too_many_arguments)]
-fn run_qalpha<O, L, B>(
+fn run_qalpha<O, L, B, S1, S2>(
     infer_cfg: Arc<InferenceConfig>,
-    confs: &[&SolverConf],
-    simulation_conf: &SolverConf,
+    main_solver: &S1,
+    simulation_solver: &S2,
     m: &Module,
     fo: &FOModule,
     atoms: Arc<RestrictedAtoms>,
@@ -297,6 +305,8 @@ where
     O: OrderSubsumption<Base = B>,
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
+    S1: BasicSolver,
+    S2: BasicSolver,
 {
     let start = std::time::Instant::now();
 
@@ -317,18 +327,18 @@ where
         InductionFrame::new(infer_cfg.clone(), atoms, domains, extend);
 
     // Begin by overapproximating the initial states.
-    while frame.init_cycle(fo, confs) {}
+    while frame.init_cycle(fo, main_solver) {}
 
     // Handle transition CTI's.
     loop {
         // If enabled, extend CTI traces using simulations.
         if extend.is_some() {
-            frame.extend(fo, simulation_conf);
+            frame.extend(fo, simulation_solver);
         }
 
         if infer_cfg.abort_unsafe {
             frame.log_info("Checking safety...");
-            if !frame.is_safe(fo, confs) {
+            if !frame.is_safe(fo, main_solver) {
                 return FoundFixpoint {
                     proof: None,
                     minimized_proof: None,
@@ -339,17 +349,17 @@ where
             }
         }
 
-        if !frame.trans_cycle(fo, confs) {
+        if !frame.trans_cycle(fo, main_solver) {
             break;
         }
     }
 
     frame.log_info("Checking safety...");
-    let safe = frame.is_safe(fo, confs);
+    let safe = frame.is_safe(fo, main_solver);
     let time_taken = start.elapsed();
     let proof: Vec<Term> = frame.proof();
     let minimized_proof = frame.minimized_proof();
-    let covering = Some(invariant_cover(m, confs, fo, &proof));
+    let covering = Some(invariant_cover(m, main_solver, fo, &proof));
 
     FoundFixpoint {
         proof: Some(proof),
