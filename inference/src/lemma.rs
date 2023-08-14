@@ -5,7 +5,7 @@
 
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
-use solver::basics::{BasicSolver, SolverCancelers};
+use solver::basics::{BasicSolver, BasicSolverCanceler, SolverCancelers};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Display};
 use std::sync::{Arc, Mutex, RwLock};
@@ -1052,7 +1052,7 @@ where
     fn trans_cex<S: BasicSolver>(&mut self, fo: &FOModule, solver: &S) -> Option<Model> {
         let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
 
-        let cancelers: SolverCancelers<<S as BasicSolver>::Canceler> = SolverCancelers::new();
+        let cancelers = SolverCancelers::new();
         let unknown = Mutex::new(false);
         let first_sat = Mutex::new(None);
         let total_sat = Mutex::new(0_usize);
@@ -1088,6 +1088,7 @@ where
                     false,
                 ) {
                     CexResult::Cex(mut models) => {
+                        cancelers.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
                             if first_sat_lock.is_none() {

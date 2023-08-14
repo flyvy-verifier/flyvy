@@ -147,6 +147,11 @@ pub trait BasicSolverCanceler: Sync + Send {
 /// Maintains a set of [`BasicSolverCanceler`]'s which can be used to cancel queries whenever necessary.
 /// Composed of a `bool` which tracks whether the set has been canceled, followed by the
 /// [`BasicSolverCanceler`]'s of the solvers it tracks.
+///
+/// Note that this can be used recursively to create hierarchical cancellation, since [`SolverCancelers`]
+/// itself implements [`BasicSolverCanceler`]. That is, multiple [`SolverCancelers`] -- which can be canceled
+/// individually -- can be aggregated within a higher-order [`SolverCancelers`] which can cancel them all at once.
+/// This enables a tree-like structure where the cancellation of a node cancels all of its descendants.
 pub struct SolverCancelers<C: BasicSolverCanceler>(Arc<Mutex<(bool, Vec<C>)>>);
 
 impl<C: BasicSolverCanceler> Clone for SolverCancelers<C> {

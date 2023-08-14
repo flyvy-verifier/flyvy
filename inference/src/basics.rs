@@ -231,7 +231,7 @@ impl FOModule {
         hyp: &[Term],
         t: &Term,
         with_safety: bool,
-        cancelers: Option<SolverCancelers<C>>,
+        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
         save_tee: bool,
     ) -> CexResult
     where
@@ -239,13 +239,20 @@ impl FOModule {
         B: BasicSolver<Canceler = C>,
     {
         let transitions = self.disj_trans();
-        let cancelers = cancelers.unwrap_or_default();
+        let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
         let start_time = Instant::now();
+
+        if cancelers
+            .as_ref()
+            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
+        {
+            return CexResult::Canceled;
+        }
 
         let query_conf = QueryConf {
             sig: &self.signature,
             n_states: 2,
-            cancelers: Some(cancelers.clone()),
+            cancelers: Some(local_cancelers.clone()),
             minimal_model: true,
             save_tee,
         };
@@ -273,7 +280,8 @@ impl FOModule {
                     match solver.check_sat(&query_conf, &local_assertions, &assumptions) {
                         Ok(BasicSolverResp::Sat(models)) => {
                             if !core.add_counter_model(models[0].clone()) {
-                                cancelers.cancel();
+                                // A counter-example to the transition was found, no need to search further.
+                                local_cancelers.cancel();
                                 return CexResult::Cex(models);
                             }
                         }
