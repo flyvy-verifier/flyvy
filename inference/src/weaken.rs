@@ -14,7 +14,7 @@ use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
 use crate::{
-    atoms::{Literal, RestrictedAtoms},
+    atoms::{Atoms, Literal},
     basics::InferenceConfig,
     quant::{QuantifierConfig, QuantifierPrefix},
     subsume::{OrderSubsumption, SubsumptionMap},
@@ -27,7 +27,7 @@ use fly::{
 
 use rayon::prelude::*;
 
-pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<RestrictedAtoms>);
+pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<Atoms>);
 
 /// Extend an assignment by all possible assignments to the given variables
 /// over a domain containing the given number of elements.
@@ -70,11 +70,7 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
     fn base_to_term(&self, base: &Self::Base) -> Term;
 
     /// Create a new instance given the following configuration.
-    fn new(
-        cfg: &InferenceConfig,
-        atoms: Arc<RestrictedAtoms>,
-        non_universal_vars: HashSet<String>,
-    ) -> Self;
+    fn new(cfg: &InferenceConfig, atoms: Arc<Atoms>, non_universal_vars: HashSet<String>) -> Self;
 
     /// Return the strongest instances of the associated [`Self::Base`]
     fn strongest(&self) -> Vec<Self::Base>;
@@ -124,7 +120,7 @@ where
 {
     prefix: Arc<QuantifierPrefix>,
     lemma_qf: Arc<L>,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
     bodies: Box<O::Map<usize>>,
     by_id: HashMap<usize, O>,
     next: usize,
@@ -136,7 +132,7 @@ where
     L: LemmaQf<Base = B>,
     B: Clone + Debug + Send,
 {
-    fn new(prefix: Arc<QuantifierPrefix>, lemma_qf: Arc<L>, atoms: Arc<RestrictedAtoms>) -> Self {
+    fn new(prefix: Arc<QuantifierPrefix>, lemma_qf: Arc<L>, atoms: Arc<Atoms>) -> Self {
         Self {
             prefix,
             lemma_qf,
@@ -511,7 +507,7 @@ where
 {
     config: Arc<QuantifierConfig>,
     infer_cfg: Arc<InferenceConfig>,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
     sets: Vec<PrefixLemmaSet<O, L, B>>,
 }
 
@@ -524,8 +520,8 @@ where
     pub fn new(
         config: Arc<QuantifierConfig>,
         infer_cfg: Arc<InferenceConfig>,
-        atoms: Arc<RestrictedAtoms>,
-        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<RestrictedAtoms>)>,
+        atoms: Arc<Atoms>,
+        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Atoms>)>,
     ) -> Self {
         let sets: Vec<PrefixLemmaSet<O, L, B>> = domains
             .into_iter()
@@ -630,7 +626,7 @@ where
     pub fn new(
         config: Arc<QuantifierConfig>,
         infer_cfg: &InferenceConfig,
-        atoms: Arc<RestrictedAtoms>,
+        atoms: Arc<Atoms>,
     ) -> Self {
         let non_universal_vars = config.non_universal_vars();
 

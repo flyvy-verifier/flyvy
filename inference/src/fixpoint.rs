@@ -11,7 +11,7 @@ use std::{collections::VecDeque, fmt::Debug};
 
 use crate::basics::QfBody;
 use crate::{
-    atoms::{restrict, restrict_by_prefix, Atoms, Literal, RestrictedAtoms},
+    atoms::{Atoms, Literal},
     basics::{FOModule, InferenceConfig},
     lemma::InductionFrame,
     subsume::OrderSubsumption,
@@ -175,7 +175,6 @@ pub fn qalpha<O, L, B, S1, S2>(
     );
     log::debug!("Computing atoms...");
     let atoms = Arc::new(Atoms::new(&infer_cfg, main_solver, &fo));
-    let unrestricted = Arc::new(restrict(&atoms, |_| true));
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),
@@ -206,7 +205,7 @@ pub fn qalpha<O, L, B, S1, S2>(
             .into_iter()
             .map(|prefix| {
                 let prefix = Arc::new(prefix);
-                let restricted = Arc::new(restrict_by_prefix(&atoms, &infer_cfg.cfg, &prefix));
+                let restricted = Arc::new(atoms.restrict_by_prefix(&infer_cfg.cfg, &prefix));
                 let lemma_qf = Arc::new(L::new(
                     &infer_cfg,
                     restricted.clone(),
@@ -222,7 +221,7 @@ pub fn qalpha<O, L, B, S1, S2>(
             .into_iter()
             .flat_map(|prefix| {
                 let prefix = Arc::new(prefix);
-                let restricted = Arc::new(restrict_by_prefix(&atoms, &infer_cfg.cfg, &prefix));
+                let restricted = Arc::new(atoms.restrict_by_prefix(&infer_cfg.cfg, &prefix));
                 let lemma_qf_full =
                     L::new(&infer_cfg, restricted.clone(), prefix.non_universal_vars());
                 lemma_qf_full
@@ -275,7 +274,7 @@ pub fn qalpha<O, L, B, S1, S2>(
             simulation_solver,
             m,
             &fo,
-            unrestricted.clone(),
+            atoms.clone(),
             active_domains.clone(),
             extend,
         );
@@ -353,7 +352,7 @@ fn run_qalpha<O, L, B, S1, S2>(
     simulation_solver: &S2,
     m: &Module,
     fo: &FOModule,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
     domains: Vec<Domain<L>>,
     extend: Option<(usize, usize)>,
 ) -> FoundFixpoint
