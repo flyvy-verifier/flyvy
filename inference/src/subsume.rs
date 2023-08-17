@@ -725,7 +725,7 @@ impl OrderSubsumption for Literal {
     }
 
     fn to_base(&self) -> Self::Base {
-        *self
+        self.clone()
     }
 
     fn from_base(base: Self::Base) -> Self {

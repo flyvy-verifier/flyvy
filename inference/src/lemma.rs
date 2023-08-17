@@ -16,7 +16,7 @@ use fly::syntax::Term;
 use fly::term::subst::Substitution;
 
 use crate::{
-    atoms::{Literal, RestrictedAtoms},
+    atoms::{Atoms, Literal},
     basics::{CexResult, FOModule, InferenceConfig},
     hashmap::{HashMap, HashSet},
     subsume::OrderSubsumption,
@@ -47,7 +47,7 @@ pub struct LemmaCnf {
     pub clauses: usize,
     /// The maximal number of literals in each clause.
     pub clause_size: usize,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
 }
 
 impl Debug for LemmaCnf {
@@ -71,8 +71,9 @@ impl LemmaQf for LemmaCnf {
         for clause in base {
             let mut new_clause = vec![];
             for literal in clause {
-                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
-                    new_clause.push((a, literal.1));
+                let literal_sub = literal.substitute(substitution);
+                if self.atoms.contains_literal(&literal_sub) {
+                    new_clause.push(literal_sub);
                 } else {
                     return None;
                 }
@@ -85,29 +86,16 @@ impl LemmaQf for LemmaCnf {
 
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
         base.iter()
-            .flat_map(|clause| {
-                clause
-                    .iter()
-                    .flat_map(|literal| ids(&self.atoms.to_term(literal).unwrap()))
-            })
+            .flatten()
+            .flat_map(|literal| literal.ids())
             .collect()
     }
 
     fn base_to_term(&self, base: &Self::Base) -> Term {
-        Term::and(base.iter().map(|clause| {
-            Term::or(
-                clause
-                    .iter()
-                    .map(|literal| self.atoms.to_term(literal).unwrap()),
-            )
-        }))
+        Term::and(base.iter().map(|clause| Term::or(clause)))
     }
 
-    fn new(
-        cfg: &InferenceConfig,
-        atoms: Arc<RestrictedAtoms>,
-        non_universal_vars: HashSet<String>,
-    ) -> Self {
+    fn new(cfg: &InferenceConfig, atoms: Arc<Atoms>, non_universal_vars: HashSet<String>) -> Self {
         Self {
             clauses: if non_universal_vars.is_empty() {
                 1
@@ -146,7 +134,7 @@ impl LemmaQf for LemmaCnf {
         let weakened_clauses = base.into_iter().map(|cl| {
             assert!(!cl.is_empty());
 
-            let cl_lits: HashSet<(usize, bool)> = cl.iter().cloned().collect();
+            let cl_lits: HashSet<Literal> = cl.iter().cloned().collect();
             if cube.iter().any(|lit| cl_lits.contains(lit)) {
                 vec![cl]
             } else if cl.len() >= self.clause_size {
@@ -154,14 +142,11 @@ impl LemmaQf for LemmaCnf {
             } else {
                 let mut new_clauses = vec![];
 
-                for lit in cube
-                    .iter()
-                    .filter(|lit| !cl_lits.contains(&(lit.0, !lit.1)))
-                {
+                for lit in cube.iter().filter(|lit| !cl_lits.contains(&lit.negate())) {
                     // Do not add inequalities to non-empty clauses.
-                    if !self.atoms.is_eq(lit.0) || lit.1 {
+                    if !lit.is_neq() {
                         let mut new_clause = cl.to_vec();
-                        new_clause.push(*lit);
+                        new_clause.push(lit.clone());
                         new_clauses.push(new_clause);
                     }
                 }
@@ -209,22 +194,22 @@ pub struct LemmaPDnfNaive {
     pub cubes: usize,
     pub cube_size: usize,
     pub non_unit: usize,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
 }
 
 impl LemmaPDnfNaive {
     fn unit_normalize(
         &self,
         mut base: <Self as LemmaQf>::Base,
-        literal: Literal,
+        literal: &Literal,
     ) -> Option<<Self as LemmaQf>::Base> {
         base = base
             .into_iter()
             .filter_map(|mut cb| {
-                if cb.contains(&literal) {
+                if cb.contains(literal) {
                     None
                 } else {
-                    cb.retain(|lit| (lit.0, !lit.1) != literal);
+                    cb.retain(|lit| &lit.negate() != literal);
                     Some(cb)
                 }
             })
@@ -245,11 +230,11 @@ impl LemmaPDnfNaive {
         let mut literals = HashSet::default();
 
         loop {
-            if self.atoms.is_eq(literal.0) && !literal.1 {
+            if literal.is_neq() {
                 return None;
             }
 
-            match self.unit_normalize(base, literal) {
+            match self.unit_normalize(base, &literal) {
                 Some(new_base) => {
                     base = new_base;
                     literals.insert(literal);
@@ -282,7 +267,7 @@ impl LemmaPDnfNaive {
         let units: HashSet<Literal> = base
             .iter()
             .filter(|cb| cb.len() == 1)
-            .map(|cb| cb[0])
+            .map(|cb| cb[0].clone())
             .collect();
 
         if cube.iter().any(|lit| units.contains(lit)) {
@@ -291,14 +276,14 @@ impl LemmaPDnfNaive {
 
         let cube = cube
             .iter()
-            .filter(|lit| !units.contains(&(lit.0, !lit.1)))
+            .filter(|lit| !units.contains(&lit.negate()))
             .cloned()
             .collect_vec();
         let cube_len = cube.len();
 
         match cube_len {
             0 => vec![],
-            1 => Vec::from_iter(self.add_unit(base, cube[0])),
+            1 => Vec::from_iter(self.add_unit(base, cube[0].clone())),
             _ => {
                 if base.len() < self.cubes {
                     cube.into_iter()
@@ -329,7 +314,7 @@ impl LemmaPDnfNaive {
                     if cube.contains(&cb[0]) {
                         return vec![base];
                     } else {
-                        cube.remove(&(cb[0].0, !cb[0].1));
+                        cube.remove(&cb[0].negate());
                     }
                 }
                 _ => non_units.push(i),
@@ -371,7 +356,7 @@ impl LemmaQf for LemmaPDnfNaive {
     type Base = Vec<Vec<Literal>>;
 
     fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
-        clause.iter().map(|lit| vec![*lit]).collect_vec()
+        clause.iter().map(|lit| vec![lit.clone()]).collect_vec()
     }
 
     fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Option<Self::Base> {
@@ -379,8 +364,9 @@ impl LemmaQf for LemmaPDnfNaive {
         for cube in base {
             let mut new_cube = vec![];
             for literal in cube {
-                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
-                    new_cube.push((a, literal.1));
+                let literal_sub = literal.substitute(substitution);
+                if self.atoms.contains_literal(&literal_sub) {
+                    new_cube.push(literal_sub);
                 } else {
                     return None;
                 }
@@ -393,27 +379,16 @@ impl LemmaQf for LemmaPDnfNaive {
 
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
         base.iter()
-            .flat_map(|cube| {
-                cube.iter()
-                    .flat_map(|literal| ids(&self.atoms.to_term(literal).unwrap()))
-            })
+            .flatten()
+            .flat_map(|literal| literal.ids())
             .collect()
     }
 
     fn base_to_term(&self, base: &Self::Base) -> Term {
-        Term::or(base.iter().map(|cube| {
-            Term::and(
-                cube.iter()
-                    .map(|literal| self.atoms.to_term(literal).unwrap()),
-            )
-        }))
+        Term::or(base.iter().map(|cube| Term::and(cube)))
     }
 
-    fn new(
-        cfg: &InferenceConfig,
-        atoms: Arc<RestrictedAtoms>,
-        non_universal_vars: HashSet<String>,
-    ) -> Self {
+    fn new(cfg: &InferenceConfig, atoms: Arc<Atoms>, non_universal_vars: HashSet<String>) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut non_unit = cfg
             .non_unit
@@ -463,7 +438,7 @@ impl LemmaQf for LemmaPDnfNaive {
             // Add literal from cube.
             weakened.extend(
                 cube.iter()
-                    .filter_map(|lit| self.add_unit(base.clone(), *lit))
+                    .filter_map(|lit| self.add_unit(base.clone(), lit.clone()))
                     .filter(|b| b.len() <= self.cubes && !ignore(b)),
             );
             // Reduce old cube to a literal, and add combinations of new cube.
@@ -541,7 +516,7 @@ pub struct LemmaPDnf {
     pub cubes: usize,
     pub cube_size: usize,
     pub non_unit: usize,
-    atoms: Arc<RestrictedAtoms>,
+    atoms: Arc<Atoms>,
     non_universal_vars: HashSet<String>,
 }
 
@@ -561,7 +536,7 @@ impl LemmaQf for LemmaPDnf {
     fn base_from_clause(&self, clause: &[Literal]) -> Self::Base {
         (
             clause.to_vec(),
-            clause.iter().map(|lit| vec![*lit]).collect(),
+            clause.iter().map(|lit| vec![lit.clone()]).collect(),
         )
     }
 
@@ -569,8 +544,9 @@ impl LemmaQf for LemmaPDnf {
         let mut new_base = (vec![], vec![]);
 
         for literal in &base.0 {
-            if let Some(a) = self.atoms.substitute(literal.0, substitution) {
-                new_base.0.push((a, literal.1));
+            let literal_sub = literal.substitute(substitution);
+            if self.atoms.contains_literal(&literal_sub) {
+                new_base.0.push(literal_sub);
             } else {
                 return None;
             }
@@ -579,8 +555,9 @@ impl LemmaQf for LemmaPDnf {
         for cube in &base.1 {
             let mut new_cube = vec![];
             for literal in cube {
-                if let Some(a) = self.atoms.substitute(literal.0, substitution) {
-                    new_cube.push((a, literal.1));
+                let literal_sub = literal.substitute(substitution);
+                if self.atoms.contains_literal(&literal_sub) {
+                    new_cube.push(literal_sub);
                 } else {
                     return None;
                 }
@@ -594,33 +571,23 @@ impl LemmaQf for LemmaPDnf {
     fn ids(&self, base: &Self::Base) -> HashSet<String> {
         base.1
             .iter()
-            .chain([&base.0])
-            .flat_map(|cube| {
-                cube.iter()
-                    .flat_map(|literal| ids(&self.atoms.to_term(literal).unwrap()))
-            })
+            .flatten()
+            .chain(&base.0)
+            .flat_map(|literal| literal.ids())
             .collect()
     }
 
     fn base_to_term(&self, base: &Self::Base) -> Term {
         Term::or(
-            base.0
-                .iter()
-                .map(|literal| self.atoms.to_term(literal).unwrap())
-                .chain(base.1.iter().map(|cube| {
-                    Term::and(
-                        cube.iter()
-                            .map(|literal| self.atoms.to_term(literal).unwrap()),
-                    )
-                })),
+            base.0.iter().map(|literal| literal.into()).chain(
+                base.1
+                    .iter()
+                    .map(|cube| Term::and(cube.iter().map(|literal| literal))),
+            ),
         )
     }
 
-    fn new(
-        cfg: &InferenceConfig,
-        atoms: Arc<RestrictedAtoms>,
-        non_universal_vars: HashSet<String>,
-    ) -> Self {
+    fn new(cfg: &InferenceConfig, atoms: Arc<Atoms>, non_universal_vars: HashSet<String>) -> Self {
         let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
         let mut cube_size = cfg
             .cube_size
@@ -661,22 +628,22 @@ impl LemmaQf for LemmaPDnf {
 
         // Weaken by adding a new literal
         if units.len() + non_units.len() < self.cubes {
-            for literal in cube.iter().filter(|lit| !self.atoms.is_eq(lit.0) || lit.1) {
-                let neg_literal = (literal.0, !literal.1);
+            for literal in cube.iter().filter(|lit| !lit.is_neq()) {
+                let neg_literal = literal.negate();
                 if !units.contains(&neg_literal) {
                     let new_non_units = non_units
                         .iter()
                         .filter(|cb| !cb.contains(literal))
                         .map(|cb| {
                             cb.iter()
-                                .copied()
-                                .filter(|lit| *lit != neg_literal)
+                                .filter(|lit| *lit != &neg_literal)
+                                .cloned()
                                 .collect_vec()
                         })
                         .collect_vec();
                     if new_non_units.iter().all(|cb| cb.len() > 1) {
                         let mut new_base = (units.clone(), new_non_units);
-                        new_base.0.push(*literal);
+                        new_base.0.push(literal.clone());
                         if !ignore(&new_base) {
                             weakened.push(new_base);
                         }
@@ -687,11 +654,11 @@ impl LemmaQf for LemmaPDnf {
 
         // Weaken by intersecting a cube
         for i in 0..non_units.len() {
-            let cube_map: HashMap<usize, bool> = cube.iter().cloned().collect();
+            let cube_set: HashSet<Literal> = cube.iter().cloned().collect();
             let intersection = non_units[i]
                 .iter()
-                .copied()
-                .filter(|lit| cube_map[&lit.0] == lit.1)
+                .filter(|lit| cube_set.contains(*lit))
+                .cloned()
                 .collect_vec();
             if intersection.len() > 1 {
                 let mut new_non_units = vec![];
@@ -710,12 +677,14 @@ impl LemmaQf for LemmaPDnf {
             && non_units.len() < self.non_unit
             && self.cube_size > 1
         {
-            let mut cube = cube
+            let cube = cube
                 .iter()
-                .filter(|lit| !units.contains(&(lit.0, !lit.1)))
-                .copied()
+                .filter(|lit| {
+                    !units.contains(&lit.negate())
+                        && !lit.ids().is_disjoint(&self.non_universal_vars)
+                })
+                .cloned()
                 .collect_vec();
-            cube = self.atoms.containing_vars(cube, &self.non_universal_vars);
 
             let comb_len = self.cube_size.min(cube.len());
             if comb_len > 1 {
@@ -838,7 +807,7 @@ where
     /// Create a new frame from the given set of lemmas.
     pub fn new(
         infer_cfg: Arc<InferenceConfig>,
-        atoms: Arc<RestrictedAtoms>,
+        atoms: Arc<Atoms>,
         domains: Vec<Domain<L>>,
         extend: Option<(usize, usize)>,
     ) -> Self {
