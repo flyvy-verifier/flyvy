@@ -2,6 +2,7 @@
 name = "temporal-verifier"
 version.workspace = true
 edition.workspace = true
+default-run = "temporal-verifier"
 
 [dependencies]
 bounded = { path = "../bounded" }
