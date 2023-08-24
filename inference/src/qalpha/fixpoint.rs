@@ -11,13 +11,14 @@ use std::time::Duration;
 
 use crate::basics::QfBody;
 use crate::{
-    atoms::{generate_literals, restrict_by_prefix, Literals},
     basics::{FOModule, InferenceConfig},
-    lemma::InductionFrame,
-    subsume::Element,
-    weaken::{Domain, LemmaQf},
+    qalpha::{
+        atoms::{generate_literals, restrict_by_prefix, Literals},
+        lemma::{self, InductionFrame},
+        subsume::{self, Element},
+        weaken::{Domain, LemmaQf},
+    },
 };
-use crate::{lemma, subsume};
 use fly::syntax::{Module, Term, ThmStmt};
 use solver::{
     backends::SolverType,

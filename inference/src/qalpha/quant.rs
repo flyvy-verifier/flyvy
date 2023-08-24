@@ -12,6 +12,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::basics::InferenceConfig;
+use crate::qalpha::lemma;
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
 
@@ -289,7 +290,7 @@ impl Debug for QuantifierConfig {
 impl QuantifierPrefix {
     /// Quantify the given term according to this [`QuantifierPrefix`].
     pub fn quantify(&self, mut term: Term) -> Term {
-        let present_ids = crate::lemma::ids(&term);
+        let present_ids = lemma::ids(&term);
         for (i, v) in self.names.iter().enumerate().rev() {
             let binders = v
                 .iter()

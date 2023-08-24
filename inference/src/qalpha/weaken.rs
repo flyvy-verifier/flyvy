@@ -8,17 +8,18 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
-use crate::subsume::{Element, Structure};
 
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
 use crate::{
-    atoms::{sat_literals, Literals},
     basics::InferenceConfig,
-    quant::{QuantifierConfig, QuantifierPrefix},
-    subsume::{self, SubsumptionMap},
+    qalpha::{
+        atoms::{sat_literals, Literals},
+        quant::{QuantifierConfig, QuantifierPrefix},
+        subsume::{self, Element, Structure, SubsumptionMap},
+    },
 };
 use fly::{
     semantics::{Assignment, Model},
