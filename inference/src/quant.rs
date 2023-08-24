@@ -386,37 +386,37 @@ impl Debug for QuantifierPrefix {
 
 impl PartialOrd for QuantifierPrefix {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for QuantifierPrefix {
+    fn cmp(&self, other: &Self) -> Ordering {
         assert_eq!(self.len(), other.len());
         assert_eq!(self.sorts, other.sorts);
 
         for i in 0..self.len() {
             match (self.names[i].is_empty(), other.names[i].is_empty()) {
                 (true, true) => continue,
-                (true, false) => return Some(Ordering::Greater),
-                (false, true) => return Some(Ordering::Less),
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
                 (false, false) => (),
             }
 
             match (self.quantifiers[i], other.quantifiers[i]) {
-                (Quantifier::Forall, Quantifier::Exists) => return Some(Ordering::Less),
-                (Quantifier::Exists, Quantifier::Forall) => return Some(Ordering::Greater),
+                (Quantifier::Forall, Quantifier::Exists) => return Ordering::Less,
+                (Quantifier::Exists, Quantifier::Forall) => return Ordering::Greater,
                 _ => (),
             }
 
             match self.names[i].len().cmp(&other.names[i].len()) {
-                Ordering::Greater => return Some(Ordering::Less),
-                Ordering::Less => return Some(Ordering::Greater),
+                Ordering::Greater => return Ordering::Less,
+                Ordering::Less => return Ordering::Greater,
                 _ => (),
             }
         }
 
-        Some(Ordering::Equal)
-    }
-}
-
-impl Ord for QuantifierPrefix {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        Ordering::Equal
     }
 }
 
