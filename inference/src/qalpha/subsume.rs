@@ -12,9 +12,11 @@ use fly::ouritertools::OurItertools;
 use fly::term::subst::Substitution;
 use itertools::Itertools;
 
-use crate::atoms::{Literal, Literals};
 use crate::hashmap::{HashMap, HashSet};
-use crate::trie::TrieMap;
+use crate::qalpha::{
+    atoms::{Literal, Literals},
+    trie::TrieMap,
+};
 use fly::syntax::Term;
 
 pub type Structure = HashSet<Literal>;
@@ -1062,8 +1064,8 @@ pub type PDnf = Pair<Clause, Dnf>;
 
 #[cfg(test)]
 mod tests {
-    use crate::atoms::Literal;
     use crate::hashmap::HashSet;
+    use crate::qalpha::atoms::Literal;
     use fly::syntax::Term;
     use std::sync::Arc;
 

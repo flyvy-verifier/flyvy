@@ -13,13 +13,14 @@ use std::time::Instant;
 use fly::semantics::Model;
 use fly::syntax::Term;
 
-use crate::subsume::{Dnf, PDnf, Structure};
 use crate::{
-    atoms::Literals,
     basics::{CexResult, FOModule, InferenceConfig},
     hashmap::{HashMap, HashSet},
-    subsume::{Cnf, Element},
-    weaken::{Domain, LemmaQf, LemmaSet, WeakenLemmaSet},
+    qalpha::{
+        atoms::Literals,
+        subsume::{Cnf, Dnf, Element, PDnf, Structure},
+        weaken::{Domain, LemmaQf, LemmaSet, WeakenLemmaSet},
+    },
 };
 
 use rayon::prelude::*;

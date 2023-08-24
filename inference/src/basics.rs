@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use crate::quant::QuantifierConfig;
+use crate::qalpha::quant::QuantifierConfig;
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;

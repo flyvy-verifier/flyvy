@@ -5,7 +5,7 @@
 
 use itertools::Itertools;
 
-use crate::subsume::{Element, Structure, SubsumptionMap};
+use crate::qalpha::subsume::{Element, Structure, SubsumptionMap};
 
 pub struct TrieMap<E: Element, V: Clone + Send + Sync> {
     value: Option<V>,

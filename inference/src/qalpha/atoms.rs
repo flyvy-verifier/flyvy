@@ -10,8 +10,10 @@ use fly::{
 use crate::{
     basics::{FOModule, InferenceConfig},
     hashmap::HashSet,
-    lemma::ids,
-    quant::{QuantifierConfig, QuantifierPrefix},
+    qalpha::{
+        lemma::ids,
+        quant::{QuantifierConfig, QuantifierPrefix},
+    },
 };
 use solver::basics::BasicSolver;
 
