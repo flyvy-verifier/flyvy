@@ -5,16 +5,16 @@
 //! lemma domain.
 
 use itertools::Itertools;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::VecDeque, fmt::Debug};
 
 use crate::basics::QfBody;
 use crate::{
-    atoms::{Atoms, Literal},
+    atoms::{generate_literals, restrict_by_prefix, Literals},
     basics::{FOModule, InferenceConfig},
     lemma::InductionFrame,
-    subsume::OrderSubsumption,
+    subsume::Element,
     weaken::{Domain, LemmaQf},
 };
 use crate::{lemma, subsume};
@@ -34,8 +34,8 @@ pub mod defaults {
     pub const MAX_QUANT: usize = 6;
     pub const MAX_SAME_SORT: usize = 3;
     pub const QF_BODY: QfBody = QfBody::PDnf;
-    pub const MAX_CLAUSES: Option<usize> = None;
-    pub const MAX_CLAUSE_SIZE: Option<usize> = None;
+    pub const MAX_CLAUSES: Option<usize> = Some(4);
+    pub const MAX_CLAUSE_SIZE: Option<usize> = Some(6);
     pub const MAX_CUBES: Option<usize> = Some(6);
     pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
     pub const MAX_NON_UNIT: Option<usize> = Some(3);
@@ -154,16 +154,15 @@ fn simulation_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
     ))
 }
 
-pub fn qalpha<O, L, B, S1, S2>(
+pub fn qalpha<E, L, S1, S2>(
     infer_cfg: Arc<InferenceConfig>,
     m: &Module,
     main_solver: &S1,
     simulation_solver: &S2,
     print_invariant: bool,
 ) where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
     S1: BasicSolver,
     S2: BasicSolver,
 {
@@ -174,7 +173,7 @@ pub fn qalpha<O, L, B, S1, S2>(
         infer_cfg.minimal_smt,
     );
     log::debug!("Computing atoms...");
-    let atoms = Arc::new(Atoms::new(&infer_cfg, main_solver, &fo));
+    let literals = Arc::new(generate_literals(&infer_cfg, main_solver, &fo));
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),
@@ -205,15 +204,15 @@ pub fn qalpha<O, L, B, S1, S2>(
             .into_iter()
             .map(|prefix| {
                 let prefix = Arc::new(prefix);
-                let restricted = Arc::new(atoms.restrict_by_prefix(&infer_cfg.cfg, &prefix));
+                let restricted = Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
                 let lemma_qf = Arc::new(L::new(
                     &infer_cfg,
                     restricted.clone(),
-                    prefix.non_universal_vars(),
+                    &prefix.non_universal_vars(),
                 ));
                 (prefix, lemma_qf, restricted)
             })
-            .collect_vec();
+            .collect();
     } else {
         domains = infer_cfg
             .cfg
@@ -221,9 +220,9 @@ pub fn qalpha<O, L, B, S1, S2>(
             .into_iter()
             .flat_map(|prefix| {
                 let prefix = Arc::new(prefix);
-                let restricted = Arc::new(atoms.restrict_by_prefix(&infer_cfg.cfg, &prefix));
+                let restricted = Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
                 let lemma_qf_full =
-                    L::new(&infer_cfg, restricted.clone(), prefix.non_universal_vars());
+                    L::new(&infer_cfg, restricted.clone(), &prefix.non_universal_vars());
                 lemma_qf_full
                     .sub_spaces()
                     .into_iter()
@@ -268,13 +267,13 @@ pub fn qalpha<O, L, B, S1, S2>(
             );
         }
 
-        let fixpoint = run_qalpha::<O, L, B, S1, S2>(
+        let fixpoint = run_qalpha::<E, L, S1, S2>(
             infer_cfg.clone(),
             main_solver,
             simulation_solver,
             m,
             &fo,
-            atoms.clone(),
+            literals.clone(),
             active_domains.clone(),
             extend,
         );
@@ -295,71 +294,66 @@ pub fn qalpha<O, L, B, S1, S2>(
 
 pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invariant: bool) {
     match (&infer_cfg.qf_body, infer_cfg.fallback) {
-        (QfBody::CNF, false) => qalpha::<subsume::Cnf<Literal>, lemma::LemmaCnf, _, _, _>(
+        (QfBody::CNF, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _, _>(
             infer_cfg.clone(),
             m,
             &parallel_solver(&infer_cfg),
             &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnf, false) => qalpha::<subsume::PDnf<Literal>, lemma::LemmaPDnf, _, _, _>(
+        (QfBody::PDnf, false) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _, _>(
             infer_cfg.clone(),
             m,
             &parallel_solver(&infer_cfg),
             &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnfNaive, false) => {
-            qalpha::<subsume::Dnf<Literal>, lemma::LemmaPDnfNaive, _, _, _>(
-                infer_cfg.clone(),
-                m,
-                &parallel_solver(&infer_cfg),
-                &simulation_solver(&infer_cfg),
-                print_invariant,
-            )
-        }
-        (QfBody::CNF, true) => qalpha::<subsume::Cnf<Literal>, lemma::LemmaCnf, _, _, _>(
+        (QfBody::Dnf, false) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _, _>(
+            infer_cfg.clone(),
+            m,
+            &parallel_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
+        (QfBody::CNF, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _, _>(
             infer_cfg.clone(),
             m,
             &fallback_solver(&infer_cfg),
             &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnf, true) => qalpha::<subsume::PDnf<Literal>, lemma::LemmaPDnf, _, _, _>(
+        (QfBody::PDnf, true) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _, _>(
             infer_cfg.clone(),
             m,
             &fallback_solver(&infer_cfg),
             &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnfNaive, true) => {
-            qalpha::<subsume::Dnf<Literal>, lemma::LemmaPDnfNaive, _, _, _>(
-                infer_cfg.clone(),
-                m,
-                &fallback_solver(&infer_cfg),
-                &simulation_solver(&infer_cfg),
-                print_invariant,
-            )
-        }
+        (QfBody::Dnf, true) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _, _>(
+            infer_cfg.clone(),
+            m,
+            &fallback_solver(&infer_cfg),
+            &simulation_solver(&infer_cfg),
+            print_invariant,
+        ),
     }
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
 #[allow(clippy::too_many_arguments)]
-fn run_qalpha<O, L, B, S1, S2>(
+fn run_qalpha<E, L, S1, S2>(
     infer_cfg: Arc<InferenceConfig>,
     main_solver: &S1,
     simulation_solver: &S2,
     m: &Module,
     fo: &FOModule,
-    atoms: Arc<Atoms>,
+    literals: Arc<Literals>,
     domains: Vec<Domain<L>>,
     extend: Option<(usize, usize)>,
 ) -> FoundFixpoint
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
     S1: BasicSolver,
     S2: BasicSolver,
 {
@@ -378,8 +372,8 @@ where
         log::debug!("    {a}");
     }
 
-    let mut frame: InductionFrame<O, L, B> =
-        InductionFrame::new(infer_cfg.clone(), atoms, domains, extend);
+    let mut frame: InductionFrame<E, L> =
+        InductionFrame::new(infer_cfg.clone(), literals, domains, extend);
 
     // Begin by overapproximating the initial states.
     while frame.init_cycle(fo, main_solver) {}

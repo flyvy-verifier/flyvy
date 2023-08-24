@@ -4,38 +4,51 @@
 //! Define the abstract notion of subsumption, and provide efficient data structures
 //! for the handling of elements implementing subsumption.
 
-use std::{cmp::Ordering, fmt::Debug, hash::Hash};
+use std::fmt::Debug;
+use std::sync::Arc;
+use std::{cmp::Ordering, hash::Hash};
 
+use fly::ouritertools::OurItertools;
+use fly::term::subst::Substitution;
 use itertools::Itertools;
 
-use crate::atoms::Literal;
+use crate::atoms::{Literal, Literals};
 use crate::hashmap::{HashMap, HashSet};
+use crate::trie::TrieMap;
+use fly::syntax::Term;
 
-pub trait OrderSubsumption: Clone + Eq + Hash + Ord + Send + Sync {
-    type Base: Hash + Debug;
+pub type Structure = HashSet<Literal>;
+
+pub trait Element: Clone + Eq + Hash + Ord + Send + Sync + Debug {
+    type Config;
+    type Base;
     type Map<V: Clone + Send + Sync>: SubsumptionMap<Key = Self, Value = V>;
-
-    fn leq(&self, other: &Self) -> bool;
 
     fn subsumes(&self, other: &Self) -> bool;
 
-    fn to_base(&self) -> Self::Base;
+    fn bottom() -> Self;
 
-    fn from_base(base: Self::Base) -> Self;
+    fn top() -> Self;
 
-    fn leq_cmp(&self, other: &Self) -> Ordering {
-        if self == other {
-            Ordering::Equal
-        } else if self.leq(other) {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    }
+    fn satisfied_by(&self, m: &Structure) -> bool;
+
+    fn weaken(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self>;
+
+    fn strengthen(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self>;
+
+    fn to_term(&self, positive: bool) -> Term;
+
+    fn substitute(&self, substitution: &Substitution) -> Self;
+
+    fn ids(&self) -> HashSet<String>;
+
+    fn to_base(&self, positive: bool) -> Self::Base;
+
+    fn from_base(base: Self::Base, positive: bool) -> Self;
 }
 
 pub trait SubsumptionMap: Clone + Send + Sync {
-    type Key: OrderSubsumption;
+    type Key: Element;
     type Value: Clone + Send + Sync;
 
     fn new() -> Self;
@@ -44,7 +57,7 @@ pub trait SubsumptionMap: Clone + Send + Sync {
 
     fn len(&self) -> usize;
 
-    fn keys(&self) -> Vec<Self::Key>;
+    fn items(&self) -> Vec<(Self::Key, &Self::Value)>;
 
     fn insert(&mut self, key: Self::Key, value: Self::Value);
 
@@ -57,59 +70,94 @@ pub trait SubsumptionMap: Clone + Send + Sync {
     fn get_subsuming(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)>;
 
     fn get_subsumed(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)>;
+
+    fn get_satisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)>;
+
+    fn get_unsatisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)>;
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Reversed<O: OrderSubsumption>(O);
+fn rev<T: Clone>(seq: &[T]) -> Vec<T> {
+    seq.into_iter().cloned().rev().collect_vec()
+}
 
-impl<O: OrderSubsumption> Ord for Reversed<O> {
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Neg<E: Element>(E);
+
+impl<E: Element> Ord for Neg<E> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.leq_cmp(other)
+        self.0.cmp(&other.0).reverse()
     }
 }
 
-impl<O: OrderSubsumption> PartialOrd for Reversed<O> {
+impl<E: Element> PartialOrd for Neg<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<O: OrderSubsumption> OrderSubsumption for Reversed<O> {
-    type Base = O::Base;
-    type Map<V: Clone + Send + Sync> = ReversedSubsumptionMap<O::Map<V>>;
-
-    fn leq(&self, other: &Self) -> bool {
-        other.0.leq(&self.0)
-    }
+impl<E: Element> Element for Neg<E> {
+    type Config = E::Config;
+    type Base = E::Base;
+    type Map<V: Clone + Send + Sync> = NegMap<E::Map<V>>;
 
     fn subsumes(&self, other: &Self) -> bool {
         other.0.subsumes(&self.0)
     }
 
-    fn to_base(&self) -> Self::Base {
-        self.0.to_base()
+    fn bottom() -> Self {
+        Neg(E::top())
     }
 
-    fn from_base(base: Self::Base) -> Self {
-        Reversed(O::from_base(base))
-    }
-}
-
-impl<O: OrderSubsumption> Reversed<O> {
-    fn vec_cloned(v: &[O]) -> Vec<Self> {
-        Self::vec(v.iter().cloned())
+    fn top() -> Self {
+        Neg(E::bottom())
     }
 
-    fn vec<I: DoubleEndedIterator<Item = O>>(iter: I) -> Vec<Self> {
-        iter.rev().map(|o| Reversed(o)).collect_vec()
+    fn satisfied_by(&self, m: &Structure) -> bool {
+        !self.0.satisfied_by(m)
+    }
+
+    fn weaken(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        self.0
+            .strengthen(cfg, m)
+            .into_iter()
+            .map(|e| Neg(e))
+            .collect_vec()
+    }
+
+    fn strengthen(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        self.0
+            .weaken(cfg, m)
+            .into_iter()
+            .map(|e| Neg(e))
+            .collect_vec()
+    }
+
+    fn to_term(&self, positive: bool) -> Term {
+        self.0.to_term(!positive)
+    }
+
+    fn substitute(&self, substitution: &Substitution) -> Self {
+        Neg(self.0.substitute(substitution))
+    }
+
+    fn ids(&self) -> HashSet<String> {
+        self.0.ids()
+    }
+
+    fn to_base(&self, positive: bool) -> Self::Base {
+        self.0.to_base(!positive)
+    }
+
+    fn from_base(base: Self::Base, positive: bool) -> Self {
+        Neg(E::from_base(base, !positive))
     }
 }
 
 #[derive(Clone)]
-pub struct ReversedSubsumptionMap<M: SubsumptionMap>(M);
+pub struct NegMap<M: SubsumptionMap>(M);
 
-impl<M: SubsumptionMap> SubsumptionMap for ReversedSubsumptionMap<M> {
-    type Key = Reversed<M::Key>;
+impl<M: SubsumptionMap> SubsumptionMap for NegMap<M> {
+    type Key = Neg<M::Key>;
     type Value = M::Value;
 
     fn new() -> Self {
@@ -124,8 +172,12 @@ impl<M: SubsumptionMap> SubsumptionMap for ReversedSubsumptionMap<M> {
         self.0.len()
     }
 
-    fn keys(&self) -> Vec<Self::Key> {
-        self.0.keys().into_iter().map(Reversed).collect_vec()
+    fn items(&self) -> Vec<(Self::Key, &Self::Value)> {
+        self.0
+            .items()
+            .into_iter()
+            .map(|(k, v)| (Neg(k), v))
+            .collect_vec()
     }
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) {
@@ -148,7 +200,7 @@ impl<M: SubsumptionMap> SubsumptionMap for ReversedSubsumptionMap<M> {
         self.0
             .get_subsumed(&key.0)
             .into_iter()
-            .map(|(k, v)| (Reversed(k), v))
+            .map(|(k, v)| (Neg(k), v))
             .collect_vec()
     }
 
@@ -156,59 +208,83 @@ impl<M: SubsumptionMap> SubsumptionMap for ReversedSubsumptionMap<M> {
         self.0
             .get_subsuming(&key.0)
             .into_iter()
-            .map(|(k, v)| (Reversed(k), v))
+            .map(|(k, v)| (Neg(k), v))
+            .collect_vec()
+    }
+
+    fn get_satisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        self.0
+            .get_unsatisfied_by(m)
+            .into_iter()
+            .map(|(k, v)| (Neg(k), v))
+            .collect_vec()
+    }
+
+    fn get_unsatisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        self.0
+            .get_satisfied_by(m)
+            .into_iter()
+            .map(|(k, v)| (Neg(k), v))
             .collect_vec()
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct AndLike<O: OrderSubsumption>(Vec<O>);
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct And<E: Element>(Vec<E>);
 
-pub type OrLike<O> = Reversed<AndLike<Reversed<O>>>;
+pub type Or<E> = Neg<And<Neg<E>>>;
 
-impl<O: OrderSubsumption> AndLike<O> {
-    fn leq_slices(and1: &[O], and2: &[O]) -> bool {
-        if and2.is_empty() {
-            return true;
-        } else if and1.is_empty() {
-            return false;
+impl<E: Element> From<Vec<E>> for And<E> {
+    fn from(value: Vec<E>) -> Self {
+        let mut elements = vec![];
+        let top = E::top();
+        for new_e in value {
+            if new_e != top && !elements.iter().any(|e: &E| e.subsumes(&new_e)) {
+                elements.retain(|e: &E| !new_e.subsumes(e));
+                elements.push(new_e);
+            }
         }
-
-        let (first1, rest1) = and1.split_first().unwrap();
-        let (first2, rest2) = and2.split_first().unwrap();
-
-        if first1 == first2 {
-            Self::leq_slices(rest1, rest2)
-        } else {
-            first1.leq(first2)
-        }
+        elements.sort();
+        Self(elements)
     }
 }
 
-impl<O: OrderSubsumption> PartialOrd for AndLike<O> {
+impl<E: Element> PartialOrd for And<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<O: OrderSubsumption> Ord for AndLike<O> {
+impl<E: Element> Ord for And<E> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.leq_cmp(other)
+        let mut i = 0;
+        loop {
+            // A shorter and-sequence is greater.
+            match (self.0.len() <= i, other.0.len() <= i) {
+                (true, true) => return Ordering::Equal,
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
+                (false, false) => (),
+            }
+            let elem_cmp = self.0[i].cmp(&other.0[i]);
+            if !elem_cmp.is_eq() {
+                return elem_cmp;
+            }
+
+            i += 1;
+        }
     }
 }
 
-impl<O: OrderSubsumption> OrderSubsumption for AndLike<O> {
-    type Base = Vec<O::Base>;
-    type Map<V: Clone + Send + Sync> = AndSubsumptionMap<O, V>;
-
-    fn leq(&self, other: &Self) -> bool {
-        Self::leq_slices(&self.0, &other.0)
-    }
+impl<E: Element> Element for And<E> {
+    type Config = (usize, E::Config);
+    type Base = Vec<E::Base>;
+    type Map<V: Clone + Send + Sync> = AndMap<E, V>;
 
     fn subsumes(&self, other: &Self) -> bool {
         other.0.iter().all(|elem2| {
             for elem1 in &self.0 {
-                if !elem1.leq(elem2) {
+                if elem1 > elem2 {
                     break;
                 } else if elem1.subsumes(elem2) {
                     return true;
@@ -219,162 +295,124 @@ impl<O: OrderSubsumption> OrderSubsumption for AndLike<O> {
         })
     }
 
-    fn to_base(&self) -> Self::Base {
-        self.0.iter().map(|o| o.to_base()).collect_vec()
+    fn bottom() -> Self {
+        Self(vec![E::bottom()])
     }
 
-    fn from_base(base: Self::Base) -> Self {
-        let mut seq = vec![];
-
-        for o in base.into_iter().map(|b| O::from_base(b)).sorted() {
-            if seq.iter().all(|pre_o: &O| !pre_o.subsumes(&o)) {
-                seq.push(o);
-            }
-        }
-
-        AndLike(seq)
-    }
-}
-
-struct TrieMap<O: OrderSubsumption, V: Clone + Send + Sync> {
-    value: Option<V>,
-    edges: Box<O::Map<Self>>,
-}
-
-impl<O: OrderSubsumption, V: Clone + Send + Sync> Clone for TrieMap<O, V> {
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            edges: self.edges.clone(),
-        }
-    }
-}
-
-impl<O: OrderSubsumption, V: Clone + Send + Sync> TrieMap<O, V> {
-    fn new() -> Self {
-        Self {
-            value: None,
-            edges: Box::new(O::Map::new()),
-        }
+    fn top() -> Self {
+        Self(vec![])
     }
 
-    fn insert(&mut self, key: &[O], value: V) {
-        if key.is_empty() {
-            assert!(self.value.is_none());
-            self.value = Some(value);
+    fn satisfied_by(&self, m: &Structure) -> bool {
+        self.0.iter().all(|e| e.satisfied_by(m))
+    }
+
+    fn weaken(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if self.satisfied_by(m) {
+            vec![self.clone()]
+        } else if self.0 == vec![E::bottom()] {
+            self.0[0]
+                .weaken(&cfg.1, m)
+                .into_iter()
+                .combinations(cfg.0)
+                .map(|elements| elements.into())
+                .collect_vec()
         } else {
-            let (elem, rest) = key.split_first().unwrap();
-
-            if let Some(trie) = self.edges.get_mut(elem) {
-                trie.insert(rest, value);
-            } else {
-                let mut trie = Self::new();
-                trie.insert(rest, value);
-                self.edges.insert(elem.clone(), trie);
-            }
+            self.0
+                .iter()
+                .map(|element| element.weaken(&cfg.1, m))
+                .multi_cartesian_product_fixed()
+                .map(|elements| elements.into())
+                .collect_vec()
         }
     }
 
-    fn mutate<F>(&mut self, key: &[O], f: F)
-    where
-        F: Fn(V) -> Option<V>,
-    {
-        if key.is_empty() {
-            self.value = f(self.value.take().unwrap());
+    fn strengthen(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if !self.satisfied_by(m) {
+            vec![self.clone()]
+        } else if self.0.len() < cfg.0 {
+            E::top()
+                .strengthen(&cfg.1, m)
+                .into_iter()
+                .map(|new_e| {
+                    let mut new_elements = self.0.clone();
+                    new_elements.push(new_e);
+                    new_elements.into()
+                })
+                .collect_vec()
         } else {
-            let (elem, rest) = key.split_first().unwrap();
-
-            let trie = self.edges.get_mut(elem).unwrap();
-            trie.mutate(rest, f);
-
-            if trie.value.is_none() && trie.edges.is_empty() {
-                self.edges.remove(elem);
-            }
+            self.0
+                .iter()
+                .enumerate()
+                .flat_map(|(i, e)| {
+                    e.strengthen(&cfg.1, m).into_iter().map(move |new_e| {
+                        let mut new_elements = vec![new_e];
+                        new_elements.extend(self.0[..i].iter().cloned());
+                        new_elements.extend(self.0[(i + 1)..].iter().cloned());
+                        new_elements.into()
+                    })
+                })
+                .collect_vec()
         }
     }
 
-    fn remove(&mut self, key: &[O]) -> V {
-        if key.is_empty() {
-            self.value.take().unwrap()
+    fn to_term(&self, positive: bool) -> Term {
+        if positive {
+            Term::and(self.0.iter().map(|e| e.to_term(true)))
         } else {
-            let (elem, rest) = key.split_first().unwrap();
-
-            let trie = self.edges.get_mut(elem).unwrap();
-            let res = trie.remove(rest);
-
-            if trie.value.is_none() && trie.edges.is_empty() {
-                self.edges.remove(elem);
-            }
-
-            res
+            Term::or(self.0.iter().map(|e| e.to_term(false)))
         }
     }
 
-    fn get(&self, key: &[O]) -> Option<&V> {
-        if key.is_empty() {
-            return self.value.as_ref();
-        }
-
-        let (elem, rest) = key.split_first().unwrap();
-
-        match self.edges.get(elem) {
-            Some(trie) => trie.get(rest),
-            None => None,
-        }
-    }
-
-    /// assume and
-    fn get_subsuming_and(&self, key: &[O], path: Vec<O>) -> Vec<(Vec<O>, &V)> {
-        if key.is_empty() {
-            return Vec::from_iter(self.value.as_ref().map(|v| (path, v)));
-        }
-
-        let first = key.first().unwrap();
-
-        key.iter()
-            .flat_map(|o| self.edges.get_subsuming(o))
-            .filter(|(o, _)| o.leq(first))
-            .flat_map(|(o, trie)| {
-                let new_key = key.iter().filter(|k| !o.subsumes(k)).cloned().collect_vec();
-                let mut new_path = path.clone();
-                new_path.push(o);
-
-                trie.get_subsuming_and(&new_key, new_path)
-            })
-            .collect()
-    }
-
-    /// assume or
-    fn get_subsuming_or(&self, key: &[O], path: Vec<O>) -> Vec<(Vec<O>, &V)> {
-        let mut subsumed = key
+    fn substitute(&self, substitution: &Substitution) -> Self {
+        self.0
             .iter()
-            .flat_map(|o| self.edges.get_subsuming(o))
-            .flat_map(|(o, trie)| {
-                let new_key = key.iter().filter(|&k| !k.leq(&o)).cloned().collect_vec();
-                let mut new_path = path.clone();
-                new_path.push(o);
+            .map(|e| e.substitute(substitution))
+            .collect_vec()
+            .into()
+    }
 
-                trie.get_subsuming_or(&new_key, new_path)
-            })
-            .collect_vec();
+    fn ids(&self) -> HashSet<String> {
+        self.0.iter().flat_map(|e| e.ids()).collect()
+    }
 
-        subsumed.extend(self.value.as_ref().map(|v| (path, v)));
+    fn to_base(&self, positive: bool) -> Self::Base {
+        self.0.iter().map(|e| e.to_base(positive)).collect()
+    }
 
-        subsumed
+    fn from_base(base: Self::Base, positive: bool) -> Self {
+        base.into_iter()
+            .map(|b| E::from_base(b, positive))
+            .collect_vec()
+            .into()
     }
 }
 
 #[derive(Clone)]
-pub struct AndSubsumptionMap<O: OrderSubsumption, V: Clone> {
-    keys: HashMap<usize, AndLike<O>>,
+pub struct AndMap<E: Element, V: Clone> {
+    keys: HashMap<usize, Vec<E>>,
     values: HashMap<usize, V>,
-    trie: TrieMap<Reversed<O>, usize>,
-    subsets: TrieMap<O, HashSet<usize>>,
+    trie: TrieMap<E, usize>,
+    subsets: TrieMap<E, HashSet<usize>>,
     next: usize,
 }
 
-impl<O: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for AndSubsumptionMap<O, V> {
-    type Key = AndLike<O>;
+impl<E: Element, V: Clone + Send + Sync> AndMap<E, V> {
+    fn key_value_pairs(
+        &self,
+        ids: &HashSet<usize>,
+    ) -> Vec<(
+        <Self as SubsumptionMap>::Key,
+        &<Self as SubsumptionMap>::Value,
+    )> {
+        ids.into_iter()
+            .map(|i| (self.keys[i].clone().into(), &self.values[i]))
+            .collect_vec()
+    }
+}
+
+impl<E: Element, V: Clone + Send + Sync> SubsumptionMap for AndMap<E, V> {
+    type Key = And<E>;
     type Value = V;
 
     fn new() -> Self {
@@ -395,251 +433,430 @@ impl<O: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for AndSubsumpt
         self.keys.len()
     }
 
-    fn keys(&self) -> Vec<Self::Key> {
-        self.keys.values().cloned().collect_vec()
+    fn items(&self) -> Vec<(Self::Key, &Self::Value)> {
+        self.keys
+            .iter()
+            .map(|(id, k)| (k.clone().into(), &self.values[id]))
+            .collect_vec()
     }
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) {
         let id = self.next;
         self.next += 1;
 
-        let key_rev = Reversed::vec_cloned(&key.0);
-        self.trie.insert(&key_rev, id);
+        self.trie.insert(&rev(&key.0), id);
+        self.subsets.mutate_subsets(&key.0, |v| {
+            let mut hs = v.unwrap_or_default();
+            hs.insert(id);
+            Some(hs)
+        });
 
-        for subset in key.0.iter().cloned().powerset() {
-            if self.subsets.get(&subset).is_none() {
-                self.subsets.insert(&subset, HashSet::from_iter([id]));
-            } else {
-                self.subsets.mutate(&subset, |mut hs| {
-                    hs.insert(id);
-                    Some(hs)
-                });
-            }
-        }
-
-        self.keys.insert(id, key);
+        self.keys.insert(id, key.0);
         self.values.insert(id, value);
     }
 
     fn remove(&mut self, key: &Self::Key) -> Self::Value {
-        let key_rev = Reversed::vec_cloned(&key.0);
-        let id = self.trie.remove(&key_rev);
+        let id = self.trie.remove(&rev(&key.0));
 
-        for subset in key.0.iter().cloned().powerset() {
-            self.subsets.mutate(&subset, |mut hs| {
-                hs.remove(&id);
-
-                if hs.is_empty() {
-                    None
-                } else {
-                    Some(hs)
-                }
-            });
-        }
+        self.subsets.mutate_subsets(&key.0, |v| {
+            let mut hs = v.unwrap();
+            assert!(hs.remove(&id));
+            if hs.is_empty() {
+                None
+            } else {
+                Some(hs)
+            }
+        });
 
         self.keys.remove(&id);
-
         self.values.remove(&id).unwrap()
     }
 
     fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-        let key_rev = Reversed::vec_cloned(&key.0);
-
-        match self.trie.get(&key_rev) {
+        match self.trie.get(&rev(&key.0)) {
             Some(i) => self.values.get(i),
             None => None,
         }
     }
 
     fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
-        let key_rev = Reversed::vec_cloned(&key.0);
-
-        match self.trie.get(&key_rev) {
+        match self.trie.get(&rev(&key.0)) {
             Some(i) => self.values.get_mut(i),
             None => None,
         }
     }
 
     fn get_subsuming(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        self.subsets
-            .get_subsuming_and(&key.0, vec![])
-            .into_iter()
-            .flat_map(|(_, is)| is.iter().map(|i| (self.keys[i].clone(), &self.values[i])))
-            .collect_vec()
+        self.key_value_pairs(
+            &self
+                .subsets
+                .get_subsuming(&key.0)
+                .into_iter()
+                .flat_map(|(_, v)| v.iter().cloned())
+                .collect(),
+        )
     }
 
     fn get_subsumed(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        let key_rev = Reversed::vec_cloned(&key.0);
+        self.key_value_pairs(
+            &self
+                .trie
+                .get_subsumed(&rev(&key.0))
+                .into_iter()
+                .map(|(_, v)| *v)
+                .collect(),
+        )
+    }
 
-        self.trie
-            .get_subsuming_or(&key_rev, vec![])
-            .into_iter()
-            .map(|(k, i)| {
-                (
-                    AndLike(k.into_iter().rev().map(|r| r.0).collect_vec()),
-                    &self.values[i],
-                )
-            })
-            .collect_vec()
+    fn get_satisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        self.key_value_pairs(
+            &self
+                .trie
+                .get_satisfied_by(m)
+                .into_iter()
+                .map(|(_, v)| *v)
+                .collect(),
+        )
+    }
+
+    fn get_unsatisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        self.key_value_pairs(
+            &self
+                .subsets
+                .get_unsatisfied_by(m)
+                .into_iter()
+                .flat_map(|(_, v)| v.iter().cloned())
+                .collect(),
+        )
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Pair<O1: OrderSubsumption, O2: OrderSubsumption>(O1, O2);
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Pair<E1: Element, E2: Element>(E1, E2);
 
-impl<O1: OrderSubsumption, O2: OrderSubsumption> PartialOrd for Pair<O1, O2> {
+impl<E1: Element, E2: Element> From<(E1, E2)> for Pair<E1, E2> {
+    fn from(value: (E1, E2)) -> Self {
+        if value.0 == E1::top() || value.1 == E2::top() {
+            return Pair(E1::top(), E2::top());
+        }
+        Pair(value.0, value.1)
+    }
+}
+
+impl<E1: Element, E2: Element> PartialOrd for Pair<E1, E2> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<O1: OrderSubsumption, O2: OrderSubsumption> Ord for Pair<O1, O2> {
+impl<E1: Element, E2: Element> Ord for Pair<E1, E2> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.leq_cmp(other)
+        match self.0.cmp(&other.0) {
+            Ordering::Equal => self.1.cmp(&other.1),
+            ord => ord,
+        }
     }
 }
 
-impl<O1: OrderSubsumption, O2: OrderSubsumption> OrderSubsumption for Pair<O1, O2> {
-    type Base = (O1::Base, O2::Base);
-
-    type Map<V: Clone + Send + Sync> = PairSubsumptionMap<O1, O2, V>;
-
-    fn leq(&self, other: &Self) -> bool {
-        if self.0 == other.0 {
-            self.1.leq(&other.1)
-        } else {
-            self.0.leq(&other.0)
-        }
-    }
+impl<E1, E2> Element for Pair<E1, E2>
+where
+    E1: Element,
+    E2: Element,
+{
+    type Config = (E1::Config, E2::Config);
+    type Base = (E1::Base, E2::Base);
+    type Map<V: Clone + Send + Sync> = PairMap<E1, E2, V>;
 
     fn subsumes(&self, other: &Self) -> bool {
         self.0.subsumes(&other.0) && self.1.subsumes(&other.1)
     }
 
-    fn to_base(&self) -> Self::Base {
-        (self.0.to_base(), self.1.to_base())
+    fn satisfied_by(&self, m: &Structure) -> bool {
+        self.0.satisfied_by(m) || self.1.satisfied_by(m)
     }
 
-    fn from_base(base: Self::Base) -> Self {
-        Pair(O1::from_base(base.0), O2::from_base(base.1))
+    fn bottom() -> Self {
+        Pair(E1::bottom(), E2::bottom())
+    }
+
+    fn top() -> Self {
+        Pair(E1::top(), E2::top())
+    }
+
+    fn weaken(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if self.satisfied_by(m) {
+            return vec![self.clone()];
+        }
+
+        self.0
+            .weaken(&cfg.0, m)
+            .into_iter()
+            .map(|e1| (e1, self.1.clone()).into())
+            .chain(
+                self.1
+                    .weaken(&cfg.1, m)
+                    .into_iter()
+                    .map(|e2| (self.0.clone(), e2).into()),
+            )
+            .collect_vec()
+    }
+
+    fn strengthen(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if !self.satisfied_by(m) {
+            return vec![self.clone()];
+        }
+
+        let str_0 = self.0.strengthen(&cfg.0, m);
+        let str_1 = self.1.strengthen(&cfg.1, m);
+        [0..str_0.len(), 0..str_1.len()]
+            .into_iter()
+            .multi_cartesian_product_fixed()
+            .map(|i| (str_0[i[0]].clone(), str_1[i[1]].clone()).into())
+            .collect_vec()
+    }
+
+    fn to_term(&self, positive: bool) -> Term {
+        if self == &Self::top() {
+            return Term::true_();
+        }
+
+        let mut terms = vec![];
+        if self.0 != E1::bottom() {
+            terms.push(self.0.to_term(positive));
+        }
+        if self.1 != E2::bottom() {
+            terms.push(self.1.to_term(positive));
+        }
+
+        if positive {
+            Term::or(terms)
+        } else {
+            Term::and(terms)
+        }
+    }
+
+    fn substitute(&self, substitution: &Substitution) -> Self {
+        (
+            self.0.substitute(substitution),
+            self.1.substitute(substitution),
+        )
+            .into()
+    }
+
+    fn ids(&self) -> HashSet<String> {
+        let mut ids = self.0.ids();
+        ids.extend(self.1.ids());
+        ids
+    }
+
+    fn to_base(&self, positive: bool) -> Self::Base {
+        (self.0.to_base(positive), self.1.to_base(positive))
+    }
+
+    fn from_base(base: Self::Base, positive: bool) -> Self {
+        (
+            E1::from_base(base.0, positive),
+            E2::from_base(base.1, positive),
+        )
+            .into()
     }
 }
 
 #[derive(Clone)]
-pub struct PairSubsumptionMap<O1: OrderSubsumption, O2: OrderSubsumption, V: Clone + Send + Sync>(
-    O1::Map<O2::Map<V>>,
-);
+pub struct PairMap<E1: Element, E2: Element, V: Clone + Send + Sync> {
+    map: E1::Map<E2::Map<usize>>,
+    reverse_map: E2::Map<E1::Map<usize>>,
+    values: HashMap<usize, V>,
+    next: usize,
+}
 
-impl<O1: OrderSubsumption, O2: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap
-    for PairSubsumptionMap<O1, O2, V>
-{
-    type Key = Pair<O1, O2>;
-
+impl<E1: Element, E2: Element, V: Clone + Send + Sync> SubsumptionMap for PairMap<E1, E2, V> {
+    type Key = Pair<E1, E2>;
     type Value = V;
 
     fn new() -> Self {
-        Self(O1::Map::new())
+        Self {
+            map: E1::Map::new(),
+            reverse_map: E2::Map::new(),
+            values: HashMap::default(),
+            next: 0,
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.values.is_empty()
     }
 
     fn len(&self) -> usize {
-        self.0
-            .keys()
-            .iter()
-            .map(|k: &O1| self.0.get(k).unwrap().len())
-            .sum()
+        self.values.len()
     }
 
-    fn keys(&self) -> Vec<Self::Key> {
-        self.0
-            .keys()
-            .iter()
-            .flat_map(|k1: &O1| {
-                self.0
-                    .get(k1)
-                    .unwrap()
-                    .keys()
+    fn items(&self) -> Vec<(Self::Key, &Self::Value)> {
+        self.map
+            .items()
+            .into_iter()
+            .flat_map(|(e1, map)| {
+                map.items()
                     .into_iter()
-                    .map(|k2: O2| Pair(k1.clone(), k2))
+                    .map(move |(e2, i): (_, &usize)| ((e1.clone(), e2).into(), &self.values[i]))
             })
             .collect_vec()
     }
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) {
-        if let Some(map) = self.0.get_mut(&key.0) {
-            map.insert(key.1, value);
+        let id = self.next;
+        self.next += 1;
+
+        if let Some(map) = self.map.get_mut(&key.0) {
+            map.insert(key.1.clone(), id);
         } else {
-            let mut map = O2::Map::<V>::new();
-            map.insert(key.1, value);
-            self.0.insert(key.0, map);
+            let mut map = E2::Map::<usize>::new();
+            map.insert(key.1.clone(), id);
+            self.map.insert(key.0.clone(), map);
         }
+
+        if let Some(map) = self.reverse_map.get_mut(&key.1) {
+            map.insert(key.0, id);
+        } else {
+            let mut map = E1::Map::<usize>::new();
+            map.insert(key.0, id);
+            self.reverse_map.insert(key.1, map);
+        }
+
+        self.values.insert(id, value);
     }
 
     fn remove(&mut self, key: &Self::Key) -> Self::Value {
-        let map = self.0.get_mut(&key.0).unwrap();
-        let value = map.remove(&key.1);
+        let map = self.map.get_mut(&key.0).unwrap();
+        let id = map.remove(&key.1);
         if map.is_empty() {
-            self.0.remove(&key.0);
+            self.map.remove(&key.0);
         }
 
-        value
+        let rev_map = self.reverse_map.get_mut(&key.1).unwrap();
+        let rev_id = rev_map.remove(&key.0);
+        if rev_map.is_empty() {
+            self.reverse_map.remove(&key.1);
+        }
+
+        assert_eq!(id, rev_id);
+
+        self.values.remove(&id).unwrap()
     }
 
     fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-        if let Some(map) = self.0.get(&key.0) {
-            map.get(&key.1)
-        } else {
-            None
-        }
+        self.values.get(self.map.get(&key.0)?.get(&key.1)?)
     }
 
     fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
-        if let Some(map) = self.0.get_mut(&key.0) {
-            map.get_mut(&key.1)
-        } else {
-            None
-        }
+        self.values.get_mut(self.map.get(&key.0)?.get(&key.1)?)
     }
 
     fn get_subsuming(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        self.0
+        self.map
             .get_subsuming(&key.0)
             .into_iter()
-            .flat_map(|(k1, map)| {
+            .flat_map(|(e1, map)| {
                 map.get_subsuming(&key.1)
                     .into_iter()
-                    .map(move |(k2, value)| (Pair(k1.clone(), k2), value))
+                    .map(move |(e2, id): (_, &usize)| ((e1.clone(), e2).into(), &self.values[id]))
             })
             .collect_vec()
     }
 
     fn get_subsumed(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        self.0
+        self.map
             .get_subsumed(&key.0)
             .into_iter()
-            .flat_map(|(k1, map)| {
+            .flat_map(|(e1, map)| {
                 map.get_subsumed(&key.1)
                     .into_iter()
-                    .map(move |(k2, value)| (Pair(k1.clone(), k2), value))
+                    .map(move |(e2, id): (_, &usize)| ((e1.clone(), e2).into(), &self.values[id]))
+            })
+            .collect_vec()
+    }
+
+    fn get_satisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        let satisfied: HashSet<_> = self
+            .map
+            .get_satisfied_by(m)
+            .into_iter()
+            .flat_map(|(e1, map)| {
+                map.items()
+                    .into_iter()
+                    .map(move |(e2, id): (_, &usize)| ((e1.clone(), e2), *id))
+            })
+            .chain(
+                self.reverse_map
+                    .get_satisfied_by(m)
+                    .into_iter()
+                    .flat_map(|(e2, map)| {
+                        map.items()
+                            .into_iter()
+                            .map(move |(e1, id): (_, &usize)| ((e1, e2.clone()), *id))
+                    }),
+            )
+            .collect();
+
+        satisfied
+            .into_iter()
+            .map(|(tup, id)| (tup.into(), &self.values[&id]))
+            .collect_vec()
+    }
+
+    fn get_unsatisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        self.map
+            .get_unsatisfied_by(m)
+            .into_iter()
+            .flat_map(|(e1, map)| {
+                map.get_unsatisfied_by(m)
+                    .into_iter()
+                    .map(move |(e2, id): (_, &usize)| ((e1.clone(), e2).into(), &self.values[id]))
             })
             .collect_vec()
     }
 }
 
-pub type Clause<L> = OrLike<L>;
-pub type Cube<L> = AndLike<L>;
-pub type Cnf<L> = AndLike<Clause<L>>;
-pub type Dnf<L> = OrLike<Cube<L>>;
-pub type PDnf<L> = Pair<Clause<L>, Dnf<L>>;
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub enum Bounded<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> {
+    Bottom,
+    Element(E),
+    Top,
+}
+
+impl<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> From<E> for Bounded<E> {
+    fn from(value: E) -> Self {
+        Self::Element(value)
+    }
+}
+
+impl<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> Ord for Bounded<E> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Bounded::Bottom, Bounded::Bottom) | (Bounded::Top, Bounded::Top) => Ordering::Equal,
+            (Bounded::Bottom, _) | (_, Bounded::Top) => Ordering::Less,
+            (_, Bounded::Bottom) | (Bounded::Top, _) => Ordering::Greater,
+            (Bounded::Element(e1), Bounded::Element(e2)) => e1.cmp(e2),
+        }
+    }
+}
+
+impl<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> PartialOrd for Bounded<E> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(&other))
+    }
+}
 
 #[derive(Clone)]
-pub struct EqSubsumptionMap<T: OrderSubsumption, V: Clone + Send + Sync>(HashMap<T, V>);
+pub struct BoundedLiteralMap<V>(HashMap<Bounded<Literal>, V>)
+where
+    V: Clone + Send + Sync;
 
-impl<T: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for EqSubsumptionMap<T, V> {
-    type Key = T;
+impl<V> SubsumptionMap for BoundedLiteralMap<V>
+where
+    V: Clone + Send + Sync,
+{
+    type Key = Bounded<Literal>;
     type Value = V;
 
     fn new() -> Self {
@@ -654,8 +871,8 @@ impl<T: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for EqSubsumpti
         self.0.len()
     }
 
-    fn keys(&self) -> Vec<Self::Key> {
-        self.0.keys().cloned().collect_vec()
+    fn items(&self) -> Vec<(Self::Key, &Self::Value)> {
+        self.0.iter().map(|(k, v)| (k.clone(), v)).collect_vec()
     }
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) {
@@ -675,219 +892,557 @@ impl<T: OrderSubsumption, V: Clone + Send + Sync> SubsumptionMap for EqSubsumpti
     }
 
     fn get_subsuming(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        self.0
-            .get(key)
-            .into_iter()
-            .map(|v| (key.clone(), v))
-            .collect_vec()
+        let mut subsuming = vec![];
+
+        if let Some(v) = self.0.get(key) {
+            subsuming.push((key.clone(), v))
+        }
+
+        if let Some(v) = self.0.get(&Self::Key::Bottom) {
+            subsuming.push((Self::Key::Bottom, v))
+        }
+
+        subsuming
     }
 
     fn get_subsumed(&self, key: &Self::Key) -> Vec<(Self::Key, &Self::Value)> {
-        self.0
-            .get(key)
+        let mut subsumed = vec![];
+
+        if let Some(v) = self.0.get(key) {
+            subsumed.push((key.clone(), v))
+        }
+
+        if let Some(v) = self.0.get(&Self::Key::Top) {
+            subsumed.push((Self::Key::Top, v))
+        }
+
+        subsumed
+    }
+
+    fn get_satisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        let mut satisfied = m
             .into_iter()
-            .map(|v| (key.clone(), v))
-            .collect_vec()
+            .filter_map(|literal| {
+                let key = Bounded::Element(literal.clone());
+                self.0.get(&key).map(|v| (key, v))
+            })
+            .collect_vec();
+
+        if let Some(v) = self.0.get(&Self::Key::Top) {
+            satisfied.push((Self::Key::Top, v))
+        }
+
+        satisfied
+    }
+
+    fn get_unsatisfied_by(&self, m: &Structure) -> Vec<(Self::Key, &Self::Value)> {
+        let mut unsatisfied = m
+            .into_iter()
+            .filter_map(|literal| {
+                let key = Bounded::Element(literal.negate());
+                self.0.get(&key).map(|v| (key, v))
+            })
+            .collect_vec();
+
+        if let Some(v) = self.0.get(&Self::Key::Bottom) {
+            unsatisfied.push((Self::Key::Bottom, v))
+        }
+
+        unsatisfied
     }
 }
 
-impl OrderSubsumption for usize {
+impl Element for Bounded<Literal> {
+    type Config = Arc<Literals>;
     type Base = Self;
-    type Map<V: Clone + Send + Sync> = EqSubsumptionMap<Self, V>;
-
-    fn leq(&self, other: &Self) -> bool {
-        self <= other
-    }
+    type Map<V: Clone + Send + Sync> = BoundedLiteralMap<V>;
 
     fn subsumes(&self, other: &Self) -> bool {
-        self == other
+        match (self, other) {
+            (Bounded::Bottom, _) | (_, Bounded::Top) => true,
+            (Bounded::Element(lit1), Bounded::Element(lit2)) => lit1 == lit2,
+            _ => false,
+        }
     }
 
-    fn to_base(&self) -> Self::Base {
-        *self
+    fn bottom() -> Self {
+        Bounded::Bottom
     }
 
-    fn from_base(base: Self::Base) -> Self {
-        base
+    fn top() -> Self {
+        Bounded::Top
+    }
+
+    fn satisfied_by(&self, m: &Structure) -> bool {
+        match self {
+            Bounded::Bottom => false,
+            Bounded::Element(literal) => m.contains(literal),
+            Bounded::Top => true,
+        }
+    }
+
+    fn weaken(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if self.satisfied_by(m) {
+            return vec![self.clone()];
+        }
+        if matches!(self, Bounded::Bottom) {
+            let weakenings: Vec<Self> = m
+                .iter()
+                .filter(|lit| cfg.contains(*lit))
+                .map(|lit| Bounded::Element(lit.clone()))
+                .collect();
+            if !weakenings.is_empty() {
+                return weakenings;
+            }
+        }
+
+        vec![Bounded::Top]
+    }
+
+    fn strengthen(&self, cfg: &Self::Config, m: &Structure) -> Vec<Self> {
+        if !self.satisfied_by(m) {
+            return vec![self.clone()];
+        }
+        if matches!(self, Bounded::Top) {
+            let strengthenings: Vec<Self> = m
+                .iter()
+                .map(|lit| lit.negate())
+                .filter(|lit| cfg.contains(lit))
+                .map(Bounded::Element)
+                .collect();
+            if !strengthenings.is_empty() {
+                return strengthenings;
+            }
+        }
+
+        vec![Bounded::Bottom]
+    }
+
+    fn to_term(&self, positive: bool) -> Term {
+        match &self.to_base(positive) {
+            Bounded::Bottom => Term::false_(),
+            Bounded::Element(literal) => literal.into(),
+            Bounded::Top => Term::true_(),
+        }
+    }
+
+    fn substitute(&self, substitution: &Substitution) -> Self {
+        match self {
+            Bounded::Element(literal) => Bounded::Element(literal.substitute(substitution)),
+            _ => self.clone(),
+        }
+    }
+
+    fn ids(&self) -> HashSet<String> {
+        match self {
+            Bounded::Element(literal) => literal.ids(),
+            _ => HashSet::default(),
+        }
+    }
+
+    fn to_base(&self, positive: bool) -> Self::Base {
+        Self::from_base(self.clone(), positive)
+    }
+
+    fn from_base(base: Self::Base, positive: bool) -> Self {
+        match (base, positive) {
+            (Bounded::Bottom, true) | (Bounded::Top, false) => Bounded::Bottom,
+            (Bounded::Bottom, false) | (Bounded::Top, true) => Bounded::Top,
+            (Bounded::Element(literal), true) => literal.into(),
+            (Bounded::Element(literal), false) => literal.negate().into(),
+        }
     }
 }
 
-impl OrderSubsumption for Literal {
-    type Base = Self;
-    type Map<V: Clone + Send + Sync> = EqSubsumptionMap<Self, V>;
-
-    fn leq(&self, other: &Self) -> bool {
-        self <= other
-    }
-
-    fn subsumes(&self, other: &Self) -> bool {
-        self == other
-    }
-
-    fn to_base(&self) -> Self::Base {
-        self.clone()
-    }
-
-    fn from_base(base: Self::Base) -> Self {
-        base
-    }
-}
-
-#[derive(Clone)]
-pub struct LiteralSubsumptionMap<V>(HashMap<usize, V>);
+pub type Clause = Or<Bounded<Literal>>;
+pub type Cube = And<Bounded<Literal>>;
+pub type Cnf = And<Clause>;
+pub type Dnf = Or<Cube>;
+pub type PDnf = Pair<Clause, Dnf>;
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
+    use crate::atoms::Literal;
+    use crate::hashmap::HashSet;
+    use fly::syntax::Term;
+    use std::sync::Arc;
 
-    use super::{Clause, Cnf, Cube, OrderSubsumption, SubsumptionMap};
+    use super::{Clause, Cnf, Cube, Element, SubsumptionMap};
 
-    pub type ClauseMap<L, V> = <Clause<L> as OrderSubsumption>::Map<V>;
-    pub type CubeMap<L, V> = <Cube<L> as OrderSubsumption>::Map<V>;
-    pub type CnfMap<L, V> = <Cnf<L> as OrderSubsumption>::Map<V>;
-    // pub type DnfMap<L, V> = <Dnf<L> as OrderSubsumption>::Map<V>;
+    fn lit(name: &str, positive: bool) -> Literal {
+        Literal(Term::id(name), positive)
+    }
 
     #[test]
     fn test_clause() {
-        let literal_count: usize = 20;
-        let clause_size = 3;
-        let mut map: ClauseMap<usize, usize> = ClauseMap::new();
-        let mut next = 0;
+        let literals = Arc::new(HashSet::from_iter([
+            lit("a", true),
+            lit("a", false),
+            lit("b", true),
+            lit("b", false),
+            lit("c", true),
+            lit("c", false),
+        ]));
 
-        // Add all clauses.
-        for cl in (0..literal_count).combinations(clause_size) {
-            let clause = Clause::from_base(cl);
-            assert!(map.get_subsuming(&clause).is_empty());
-            assert!(map.get_subsumed(&clause).is_empty());
-            map.insert(clause, next);
-            next += 1;
+        let cfg = (2, literals.clone());
+        let cl = Clause::bottom();
+        let mut map = <Clause as Element>::Map::<()>::new();
+
+        let m110 = HashSet::from_iter([lit("a", true), lit("b", true), lit("c", false)]);
+        let m000 = HashSet::from_iter([lit("a", false), lit("b", false), lit("c", false)]);
+
+        let weakenings: HashSet<_> = cl.weaken(&cfg, &m110).into_iter().collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Clause::from_base(vec![lit("a", true).into(),], true),
+                Clause::from_base(vec![lit("b", true).into(),], true),
+                Clause::from_base(vec![lit("c", false).into(),], true)
+            ])
+        );
+
+        for w in weakenings {
+            assert!(map.get_subsuming(&w).is_empty());
+            assert!(map.get_subsumed(&w).is_empty());
+            map.insert(w, ());
         }
 
-        // Check that they're in the set.
-        next = 0;
-        for cl in (0..literal_count).combinations(clause_size) {
-            let clause = Clause::from_base(cl);
-            assert_eq!(map.get(&clause), Some(&next));
-            assert_eq!(map.get_subsuming(&clause).len(), 1);
-            assert_eq!(map.get_subsumed(&clause).len(), 1);
-            next += 1;
-        }
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get_satisfied_by(&m110).len(), 3);
+        assert!(map.get_unsatisfied_by(&m110).is_empty());
 
-        // Check subsumption for sub-clauses
-        for cl in (0..literal_count).combinations(clause_size - 1) {
-            let clause = Clause::from_base(cl);
-            assert_eq!(map.get(&clause), None);
-            assert_eq!(map.get_subsuming(&clause).len(), 0);
-            assert_eq!(
-                map.get_subsumed(&clause).len(),
-                literal_count - (clause_size - 1)
-            );
+        let unsat: HashSet<_> = map
+            .get_unsatisfied_by(&m000)
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        for u in &unsat {
+            map.remove(u);
         }
+        assert_eq!(unsat.len(), 2);
+        assert_eq!(map.len(), 1);
 
-        // Check subsumption for super-clauses.
-        for cl in (0..literal_count).combinations(clause_size + 1) {
-            let clause = Clause::from_base(cl);
-            assert_eq!(map.get(&clause), None);
-            assert_eq!(map.get_subsuming(&clause).len(), clause_size + 1);
-            assert_eq!(map.get_subsumed(&clause).len(), 0);
+        let weakenings: HashSet<_> = unsat
+            .into_iter()
+            .flat_map(|c| c.weaken(&cfg, &m000))
+            .collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Clause::from_base(vec![lit("a", true).into(), lit("a", false).into()], true),
+                Clause::from_base(vec![lit("a", true).into(), lit("b", false).into()], true),
+                Clause::from_base(vec![lit("a", true).into(), lit("c", false).into()], true),
+                Clause::from_base(vec![lit("b", true).into(), lit("a", false).into()], true),
+                Clause::from_base(vec![lit("b", true).into(), lit("b", false).into()], true),
+                Clause::from_base(vec![lit("b", true).into(), lit("c", false).into()], true),
+            ])
+        );
+
+        for w in weakenings {
+            if map.get_subsuming(&w).is_empty() {
+                assert!(map.get_subsumed(&w).is_empty());
+                map.insert(w, ());
+            }
         }
-
-        // Remove clauses.
-        next = 0;
-        for cl in (0..literal_count).combinations(clause_size) {
-            let clause = Clause::from_base(cl);
-            assert_eq!(map.remove(&clause), next);
-            next += 1;
-        }
-
-        assert!(map.is_empty());
-        assert!(map.0.values.is_empty());
-        assert!(map.0.trie.edges.is_empty());
-        assert!(map.0.trie.value.is_none());
-        assert!(map.0.subsets.edges.is_empty());
-        assert!(map.0.subsets.value.is_none());
+        assert_eq!(map.len(), 5);
     }
 
     #[test]
     fn test_cube() {
-        let literal_count: usize = 20;
-        let cube_size = 3;
-        let mut map: CubeMap<usize, usize> = CubeMap::new();
-        let mut next = 0;
+        let literals = Arc::new(HashSet::from_iter([
+            lit("a", true),
+            lit("a", false),
+            lit("b", true),
+            lit("b", false),
+            lit("c", true),
+            lit("c", false),
+        ]));
 
-        // Add all cubes.
-        for cb in (0..literal_count).combinations(cube_size) {
-            let cube = Cube::from_base(cb);
-            assert!(map.get_subsuming(&cube).is_empty());
-            assert!(map.get_subsumed(&cube).is_empty());
-            map.insert(cube, next);
-            next += 1;
+        let cfg = (2, literals.clone());
+        let cb = Cube::bottom();
+        let mut map = <Cube as Element>::Map::<()>::new();
+
+        let m110 = HashSet::from_iter([lit("a", true), lit("b", true), lit("c", false)]);
+        let m000 = HashSet::from_iter([lit("a", false), lit("b", false), lit("c", false)]);
+
+        let weakenings: HashSet<_> = cb.weaken(&cfg, &m110).into_iter().collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Cube::from_base(vec![lit("a", true).into(), lit("b", true).into(),], true),
+                Cube::from_base(vec![lit("a", true).into(), lit("c", false).into()], true),
+                Cube::from_base(vec![lit("b", true).into(), lit("c", false).into(),], true)
+            ])
+        );
+
+        for w in weakenings {
+            assert!(map.get_subsuming(&w).is_empty());
+            assert!(map.get_subsumed(&w).is_empty());
+            map.insert(w, ());
         }
 
-        // Check that they're in the set.
-        next = 0;
-        for cb in (0..literal_count).combinations(cube_size) {
-            let cube = Cube::from_base(cb);
-            assert_eq!(map.get(&cube), Some(&next));
-            assert_eq!(map.get_subsuming(&cube).len(), 1);
-            assert_eq!(map.get_subsumed(&cube).len(), 1);
-            next += 1;
-        }
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get_satisfied_by(&m110).len(), 3);
+        assert!(map.get_unsatisfied_by(&m110).is_empty());
 
-        // Check subsumption for sub-clauses
-        for cb in (0..literal_count).combinations(cube_size - 1) {
-            let cube = Cube::from_base(cb);
-            assert_eq!(map.get(&cube), None);
-            assert_eq!(
-                map.get_subsuming(&cube).len(),
-                literal_count - (cube_size - 1)
-            );
-            assert_eq!(map.get_subsumed(&cube).len(), 0);
+        let unsat: HashSet<_> = map
+            .get_unsatisfied_by(&m000)
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        for u in &unsat {
+            map.remove(u);
         }
+        assert_eq!(unsat.len(), 3);
+        assert_eq!(map.len(), 0);
 
-        // Check subsumption for super-clauses.
-        for cb in (0..literal_count).combinations(cube_size + 1) {
-            let cube = Cube::from_base(cb);
-            assert_eq!(map.get(&cube), None);
-            assert_eq!(map.get_subsuming(&cube).len(), 0);
-            assert_eq!(map.get_subsumed(&cube).len(), cube_size + 1);
+        let weakenings: HashSet<_> = unsat
+            .into_iter()
+            .flat_map(|c| c.weaken(&cfg, &m000))
+            .collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Cube::top(),
+                Cube::from_base(vec![lit("c", false).into()], true),
+            ])
+        );
+
+        for w in weakenings {
+            if map.get_subsuming(&w).is_empty() {
+                let subsumed: Vec<_> = map.get_subsumed(&w).into_iter().map(|(e, _)| e).collect();
+                for e in subsumed {
+                    map.remove(&e)
+                }
+                map.insert(w, ());
+            }
         }
-
-        // Remove clauses.
-        next = 0;
-        for cb in (0..literal_count).combinations(cube_size) {
-            let cube = Cube::from_base(cb);
-            assert_eq!(map.remove(&cube), next);
-            next += 1;
-        }
-
-        assert!(map.is_empty());
-        assert!(map.values.is_empty());
-        assert!(map.trie.edges.is_empty());
-        assert!(map.trie.value.is_none());
-        assert!(map.subsets.edges.is_empty());
-        assert!(map.subsets.value.is_none());
+        assert_eq!(map.len(), 1);
     }
 
     #[test]
     fn test_cnf() {
-        let literal_count: usize = 20;
-        let clause_size = 2;
-        let clause_count = 2;
-        let mut map: CnfMap<usize, usize> = CnfMap::new();
+        let literals = Arc::new(HashSet::from_iter([
+            lit("a", true),
+            lit("a", false),
+            lit("b", true),
+            lit("b", false),
+            lit("c", true),
+            lit("c", false),
+        ]));
 
-        let clauses = (0..literal_count).combinations(clause_size).collect_vec();
+        let cfg = (2, (2, literals.clone()));
+        let cnf = Cnf::bottom();
+        let mut map = <Cnf as Element>::Map::<()>::new();
 
-        for (next, cl) in clauses
-            .iter()
-            .cloned()
-            .combinations(clause_count)
-            .enumerate()
-        {
-            let cnf = Cnf::from_base(cl);
-            assert!(map.get_subsuming(&cnf).is_empty());
-            assert!(map.get_subsumed(&cnf).is_empty());
-            map.insert(cnf, next);
+        let m110 = HashSet::from_iter([lit("a", true), lit("b", true), lit("c", false)]);
+        let m100 = HashSet::from_iter([lit("a", true), lit("b", false), lit("c", false)]);
+
+        let weakenings: HashSet<_> = cnf.weaken(&cfg, &m110).into_iter().collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Cnf::from_base(
+                    vec![vec![lit("a", true).into(),], vec![lit("b", true).into(),],],
+                    true
+                ),
+                Cnf::from_base(
+                    vec![vec![lit("a", true).into(),], vec![lit("c", false).into(),],],
+                    true
+                ),
+                Cnf::from_base(
+                    vec![vec![lit("b", true).into(),], vec![lit("c", false).into(),],],
+                    true
+                ),
+            ])
+        );
+
+        for w in weakenings {
+            assert!(map.get_subsuming(&w).is_empty());
+            assert!(map.get_subsumed(&w).is_empty());
+            map.insert(w, ());
         }
+
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get_satisfied_by(&m110).len(), 3);
+        assert!(map.get_unsatisfied_by(&m110).is_empty());
+
+        let unsat: HashSet<_> = map
+            .get_unsatisfied_by(&m100)
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        for u in &unsat {
+            map.remove(u);
+        }
+        assert_eq!(unsat.len(), 2);
+        assert_eq!(map.len(), 1);
+
+        let weakenings: HashSet<_> = unsat
+            .into_iter()
+            .flat_map(|c| c.weaken(&cfg, &m100))
+            .collect();
+        assert_eq!(
+            weakenings,
+            HashSet::from_iter([
+                Cnf::from_base(vec![vec![lit("a", true).into(),],], true),
+                Cnf::from_base(vec![vec![lit("c", false).into(),],], true),
+                Cnf::from_base(
+                    vec![
+                        vec![lit("a", true).into(),],
+                        vec![lit("b", true).into(), lit("b", false).into(),],
+                    ],
+                    true
+                ),
+                Cnf::from_base(
+                    vec![
+                        vec![lit("a", true).into(),],
+                        vec![lit("b", true).into(), lit("c", false).into(),],
+                    ],
+                    true
+                ),
+                Cnf::from_base(
+                    vec![
+                        vec![lit("c", false).into(),],
+                        vec![lit("b", true).into(), lit("a", true).into(),],
+                    ],
+                    true
+                ),
+                Cnf::from_base(
+                    vec![
+                        vec![lit("c", false).into(),],
+                        vec![lit("b", true).into(), lit("b", false).into(),],
+                    ],
+                    true
+                ),
+            ])
+        );
+
+        for w in weakenings {
+            if map.get_subsuming(&w).is_empty() {
+                assert!(map.get_subsumed(&w).is_empty());
+                map.insert(w, ());
+            }
+        }
+        assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn test_clause_map() {
+        let mut map = <Clause as Element>::Map::<()>::new();
+
+        let a = Clause::from_base(vec![lit("a", true).into()], true);
+        let b = Clause::from_base(vec![lit("b", true).into()], true);
+        let ab = Clause::from_base(vec![lit("a", true).into(), lit("b", true).into()], true);
+
+        map.insert(a.clone(), ());
+
+        assert!(map.get(&a).is_some());
+        assert!(map.get(&b).is_none());
+        assert!(map.get(&ab).is_none());
+
+        assert_eq!(map.get_subsuming(&a).len(), 1);
+        assert_eq!(map.get_subsuming(&b).len(), 0);
+        assert_eq!(map.get_subsuming(&ab).len(), 1);
+
+        assert_eq!(map.get_subsumed(&a).len(), 1);
+        assert_eq!(map.get_subsumed(&b).len(), 0);
+        assert_eq!(map.get_subsumed(&ab).len(), 0);
+
+        map.insert(ab.clone(), ());
+
+        assert!(map.get(&a).is_some());
+        assert!(map.get(&b).is_none());
+        assert!(map.get(&ab).is_some());
+
+        assert_eq!(map.get_subsuming(&a).len(), 1);
+        assert_eq!(map.get_subsuming(&b).len(), 0);
+        assert_eq!(map.get_subsuming(&ab).len(), 2);
+
+        assert_eq!(map.get_subsumed(&a).len(), 2);
+        assert_eq!(map.get_subsumed(&b).len(), 1);
+        assert_eq!(map.get_subsumed(&ab).len(), 1);
+    }
+
+    #[test]
+    fn test_cube_map() {
+        let mut map = <Cube as Element>::Map::<()>::new();
+
+        let a = Cube::from_base(vec![lit("a", true).into()], true);
+        let b = Cube::from_base(vec![lit("b", true).into()], true);
+        let ab = Cube::from_base(vec![lit("a", true).into(), lit("b", true).into()], true);
+
+        map.insert(a.clone(), ());
+
+        assert!(map.get(&a).is_some());
+        assert!(map.get(&b).is_none());
+        assert!(map.get(&ab).is_none());
+
+        assert_eq!(map.get_subsuming(&a).len(), 1);
+        assert_eq!(map.get_subsuming(&b).len(), 0);
+        assert_eq!(map.get_subsuming(&ab).len(), 0);
+
+        assert_eq!(map.get_subsumed(&a).len(), 1);
+        assert_eq!(map.get_subsumed(&b).len(), 0);
+        assert_eq!(map.get_subsumed(&ab).len(), 1);
+
+        map.insert(ab.clone(), ());
+
+        assert!(map.get(&a).is_some());
+        assert!(map.get(&b).is_none());
+        assert!(map.get(&ab).is_some());
+
+        assert_eq!(map.get_subsuming(&a).len(), 2);
+        assert_eq!(map.get_subsuming(&b).len(), 1);
+        assert_eq!(map.get_subsuming(&ab).len(), 1);
+
+        assert_eq!(map.get_subsumed(&a).len(), 1);
+        assert_eq!(map.get_subsumed(&b).len(), 0);
+        assert_eq!(map.get_subsumed(&ab).len(), 2);
+    }
+
+    #[test]
+    fn test_cnf_map() {
+        let mut map = <Cnf as Element>::Map::<()>::new();
+
+        let a_b = Cnf::from_base(
+            vec![vec![lit("a", true).into()], vec![lit("b", true).into()]],
+            true,
+        );
+        let ac_b = Cnf::from_base(
+            vec![
+                vec![lit("a", true).into(), lit("c", true).into()],
+                vec![lit("b", true).into()],
+            ],
+            true,
+        );
+
+        assert!(a_b < ac_b);
+
+        map.insert(a_b.clone(), ());
+
+        assert!(map.get(&a_b).is_some());
+        assert!(map.get(&ac_b).is_none());
+
+        assert_eq!(map.get_subsuming(&a_b).len(), 1);
+        assert_eq!(map.get_subsuming(&ac_b).len(), 1);
+
+        assert_eq!(map.get_subsumed(&a_b).len(), 1);
+        assert_eq!(map.get_subsumed(&ac_b).len(), 0);
+
+        map.remove(&a_b);
+        assert!(map.is_empty());
+        map.insert(ac_b.clone(), ());
+        assert!(!map.is_empty());
+        assert_eq!(map.len(), 1);
+
+        assert!(map.get(&a_b).is_none());
+        assert!(map.get(&ac_b).is_some());
+
+        assert_eq!(map.get_subsuming(&a_b).len(), 0);
+        assert_eq!(map.get_subsuming(&ac_b).len(), 1);
+
+        assert_eq!(map.get_subsumed(&a_b).len(), 1);
+        assert_eq!(map.get_subsumed(&ac_b).len(), 1);
     }
 }

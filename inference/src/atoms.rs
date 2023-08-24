@@ -6,7 +6,6 @@ use fly::{
     syntax::{BinOp, Term},
     term::subst::{substitute_qf, Substitution},
 };
-use itertools::Itertools;
 
 use crate::{
     basics::{FOModule, InferenceConfig},
@@ -22,9 +21,8 @@ use rayon::prelude::*;
 pub type Atom = Term;
 /// A [`Literal`] represents an atom, either positive or negated.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Literal(Atom, bool);
-
-pub struct Atoms(HashSet<Atom>);
+pub struct Literal(pub Atom, pub bool);
+pub type Literals = HashSet<Literal>;
 
 fn substitute(atom: &Atom, substitution: &Substitution) -> Atom {
     match &atom {
@@ -68,83 +66,63 @@ impl From<&Literal> for Term {
     }
 }
 
-impl Atoms {
-    pub fn new<B: BasicSolver>(infer_cfg: &InferenceConfig, solver: &B, fo: &FOModule) -> Self {
-        let univ_prefix = infer_cfg.cfg.as_universal();
-        let atoms: HashSet<Term> = infer_cfg
-            .cfg
-            .atoms(infer_cfg.nesting, infer_cfg.include_eq)
-            .into_par_iter()
-            .filter(|t| {
-                let univ_t = univ_prefix.quantify(t.clone());
-                let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
+pub fn generate_literals<B: BasicSolver>(
+    infer_cfg: &InferenceConfig,
+    solver: &B,
+    fo: &FOModule,
+) -> Literals {
+    let univ_prefix = infer_cfg.cfg.as_universal();
+    infer_cfg
+        .cfg
+        .atoms(infer_cfg.nesting, infer_cfg.include_eq)
+        .into_par_iter()
+        .filter(|t| {
+            let univ_t = univ_prefix.quantify(t.clone());
+            let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
 
-                fo.implication_cex(solver, &[], &univ_t).is_cex()
-                    && fo.implication_cex(solver, &[], &univ_not_t).is_cex()
-            })
-            // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
-            // This is done to allow substitutions without creating equivalent equalities.
-            .map(|a| match a {
-                Term::BinOp(BinOp::Equals, t1, t2) => {
-                    if t1 <= t2 {
-                        Term::BinOp(BinOp::Equals, t1, t2)
-                    } else {
-                        Term::BinOp(BinOp::Equals, t2, t1)
-                    }
+            fo.implication_cex(solver, &[], &univ_t).is_cex()
+                && fo.implication_cex(solver, &[], &univ_not_t).is_cex()
+        })
+        // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
+        // This is done to allow substitutions without creating equivalent equalities.
+        .map(|a| match a {
+            Term::BinOp(BinOp::Equals, t1, t2) => {
+                if t1 <= t2 {
+                    Term::BinOp(BinOp::Equals, t1, t2)
+                } else {
+                    Term::BinOp(BinOp::Equals, t2, t1)
                 }
-                _ => a,
-            })
-            .collect();
+            }
+            _ => a,
+        })
+        .flat_map(|a| {
+            let lit_pos = Literal(a, true);
+            let lit_neg = lit_pos.negate();
+            [lit_pos, lit_neg]
+        })
+        .collect()
+}
 
-        Self(atoms)
-    }
+pub fn sat_literals(literals: &Literals, model: &Model, assignment: &Assignment) -> Literals {
+    literals
+        .iter()
+        .filter(|lit| (model.eval_assign(&lit.0, assignment.clone()) == 1) == lit.1)
+        .cloned()
+        .collect()
+}
 
-    pub fn contains(&self, atom: &Atom) -> bool {
-        self.0.contains(atom)
-    }
+pub fn restrict_by_prefix(
+    literals: &Literals,
+    config: &QuantifierConfig,
+    prefix: &QuantifierPrefix,
+) -> Literals {
+    let config_vars = config.all_vars();
+    let prefix_vars = prefix.all_vars();
+    let difference: HashSet<String> = config_vars.difference(&prefix_vars).cloned().collect();
 
-    pub fn contains_literal(&self, literal: &Literal) -> bool {
-        self.0.contains(&literal.0)
-    }
-
-    pub fn restrict<R>(&self, r: R) -> Self
-    where
-        R: Fn(&Term) -> bool,
-    {
-        Self(self.0.iter().filter(|a| r(a)).cloned().collect())
-    }
-
-    pub fn restrict_by_prefix(&self, config: &QuantifierConfig, prefix: &QuantifierPrefix) -> Self {
-        let config_vars = config.all_vars();
-        let prefix_vars = prefix.all_vars();
-        let difference: HashSet<String> = config_vars.difference(&prefix_vars).cloned().collect();
-
-        self.restrict(|a| ids(a).is_disjoint(&difference))
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.len() == 0
-    }
-
-    pub fn cube(&self, model: &Model, assignment: &Assignment) -> Vec<Literal> {
-        self.0
-            .iter()
-            .map(|a| Literal(a.clone(), model.eval_assign(a, assignment.clone()) == 1))
-            .collect_vec()
-    }
-
-    pub fn neg_cube(&self, model: &Model, assignment: &Assignment) -> Vec<Literal> {
-        self.0
-            .iter()
-            .map(|a| Literal(a.clone(), model.eval_assign(a, assignment.clone()) == 0))
-            .collect_vec()
-    }
-
-    pub fn atoms_containing_vars(&self, vars: &HashSet<String>) -> usize {
-        self.0.iter().filter(|a| !ids(a).is_disjoint(vars)).count()
-    }
+    literals
+        .iter()
+        .filter(|lit| lit.ids().is_disjoint(&difference))
+        .cloned()
+        .collect()
 }
