@@ -144,7 +144,7 @@ struct InferenceConfigArgs {
     fallback: bool,
 
     #[arg(long)]
-    /// Defines the type of quantifier-free body (cnf/pdnf/pdnf-naive)
+    /// Defines the type of quantifier-free body (cnf/dnf/pdnf)
     qf_body: Option<String>,
 
     #[arg(long)]
@@ -231,8 +231,8 @@ impl InferenceConfigArgs {
                     QfBody::CNF
                 } else if qf_body_str.to_lowercase() == *"pdnf" {
                     QfBody::PDnf
-                } else if qf_body_str.to_lowercase() == *"pdnf-naive" {
-                    QfBody::PDnfNaive
+                } else if qf_body_str.to_lowercase() == *"dnf" {
+                    QfBody::Dnf
                 } else {
                     panic!("Invalid choice of quantifier-free body!")
                 }
@@ -264,13 +264,11 @@ impl InferenceConfigArgs {
             growth_factor: self.growth_factor,
         };
 
-        if self.qf_body.is_none() {
-            cfg.clauses = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSES);
-            cfg.clause_size = cfg.clause_size.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
-            cfg.cubes = cfg.cubes.or(fixpoint::defaults::MAX_CUBES);
-            cfg.cube_size = cfg.cube_size.or(fixpoint::defaults::MAX_CUBE_SIZE);
-            cfg.non_unit = cfg.non_unit.or(fixpoint::defaults::MAX_NON_UNIT);
-        }
+        cfg.clauses = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSES);
+        cfg.clause_size = cfg.clause_size.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
+        cfg.cubes = cfg.cubes.or(fixpoint::defaults::MAX_CUBES);
+        cfg.cube_size = cfg.cube_size.or(fixpoint::defaults::MAX_CUBE_SIZE);
+        cfg.non_unit = cfg.non_unit.or(fixpoint::defaults::MAX_NON_UNIT);
 
         cfg
     }

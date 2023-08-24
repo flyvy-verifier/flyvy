@@ -594,7 +594,7 @@ impl FOModule {
 pub enum QfBody {
     CNF,
     PDnf,
-    PDnfNaive,
+    Dnf,
 }
 
 pub struct InferenceConfig {

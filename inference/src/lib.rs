@@ -28,5 +28,6 @@ pub mod lemma;
 pub mod marco;
 pub mod quant;
 pub mod subsume;
+pub mod trie;
 pub mod updr;
 pub mod weaken;

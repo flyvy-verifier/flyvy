@@ -8,18 +8,18 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
+use crate::subsume::{Element, Structure};
 
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
 use crate::{
-    atoms::{Atoms, Literal},
+    atoms::{sat_literals, Literals},
     basics::InferenceConfig,
     quant::{QuantifierConfig, QuantifierPrefix},
-    subsume::{OrderSubsumption, SubsumptionMap},
+    subsume::{self, SubsumptionMap},
 };
-use fly::term::subst::Substitution;
 use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Term},
@@ -27,7 +27,7 @@ use fly::{
 
 use rayon::prelude::*;
 
-pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<Atoms>);
+pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>);
 
 /// Extend an assignment by all possible assignments to the given variables
 /// over a domain containing the given number of elements.
@@ -55,30 +55,19 @@ fn extend_assignment(
 /// [`LemmaQf`] defines how quantifier-free bodies of lemmas are handled.
 pub trait LemmaQf: Clone + Sync + Send + Debug {
     /// The type of the quantifier-free bodies which are weakened.
-    type Base: Clone + Debug;
-
-    /// Convert a given clause to a quantifier-free body.
-    fn base_from_clause(&self, clause: &[Literal]) -> Self::Base;
-
-    /// Perform a substitution.
-    fn substitute(&self, base: &Self::Base, substitution: &Substitution) -> Option<Self::Base>;
-
-    /// Get all [`Term::Id`]'s in the body.
-    fn ids(&self, base: &Self::Base) -> HashSet<String>;
-
-    /// Convert body to a [`Term`].
-    fn base_to_term(&self, base: &Self::Base) -> Term;
+    type Body: subsume::Element;
 
     /// Create a new instance given the following configuration.
-    fn new(cfg: &InferenceConfig, atoms: Arc<Atoms>, non_universal_vars: HashSet<String>) -> Self;
+    fn new(
+        cfg: &InferenceConfig,
+        literals: Arc<Literals>,
+        non_universal_vars: &HashSet<String>,
+    ) -> Self;
 
-    /// Return the strongest instances of the associated [`Self::Base`]
-    fn strongest(&self) -> Vec<Self::Base>;
-
-    /// Return weakenings of the given [`Self::Base`] which satisfy the given cube.
-    fn weaken<I>(&self, base: Self::Base, cube: &[Literal], ignore: I) -> Vec<Self::Base>
+    /// Return weakenings of the given [`Self::Body`] which satisfy the given cube.
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
     where
-        I: Fn(&Self::Base) -> bool;
+        I: Fn(&Self::Body) -> bool;
 
     fn approx_space_size(&self) -> usize;
 
@@ -89,55 +78,51 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
 
 /// Specifies that all lemmas subsumed by the given set and permutations over variables should be ignored.
 #[derive(Clone)]
-struct IgnoreSubsumed<'a, O, L, B>
+struct IgnoreSubsumed<'a, E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
-    set: &'a PrefixLemmaSet<O, L, B>,
+    set: &'a PrefixLemmaSet<E, L>,
     perm_index: usize,
 }
 
-impl<'a, O, L, B> IgnoreSubsumed<'a, O, L, B>
+impl<'a, E, L> IgnoreSubsumed<'a, E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
-    fn subsumes(&self, o: &O) -> bool {
-        self.set.subsumes(o, self.perm_index)
+    fn subsumes(&self, e: &E) -> bool {
+        self.set.subsumes(e, self.perm_index)
     }
 }
 
 /// Manages lemmas with a shared quantifier-prefix.
 #[derive(Clone)]
-pub struct PrefixLemmaSet<O, L, B>
+pub struct PrefixLemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
     prefix: Arc<QuantifierPrefix>,
     lemma_qf: Arc<L>,
-    atoms: Arc<Atoms>,
-    bodies: Box<O::Map<usize>>,
-    by_id: HashMap<usize, O>,
+    literals: Arc<Literals>,
+    bodies: Box<E::Map<usize>>,
+    by_id: HashMap<usize, E>,
     next: usize,
 }
 
-impl<O, L, B> PrefixLemmaSet<O, L, B>
+impl<E, L> PrefixLemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
-    fn new(prefix: Arc<QuantifierPrefix>, lemma_qf: Arc<L>, atoms: Arc<Atoms>) -> Self {
+    fn new(prefix: Arc<QuantifierPrefix>, lemma_qf: Arc<L>, literals: Arc<Literals>) -> Self {
         Self {
             prefix,
             lemma_qf,
-            atoms,
-            bodies: Box::new(O::Map::new()),
+            literals,
+            bodies: Box::new(E::Map::new()),
             by_id: HashMap::default(),
             next: 0,
         }
@@ -145,9 +130,7 @@ where
 
     fn init(&mut self) {
         assert!(self.is_empty());
-        for base in self.lemma_qf.strongest() {
-            self.insert(O::from_base(base));
-        }
+        self.insert(E::bottom());
     }
 
     pub fn is_empty(&self) -> bool {
@@ -158,25 +141,25 @@ where
         Self {
             prefix: self.prefix.clone(),
             lemma_qf: self.lemma_qf.clone(),
-            atoms: self.atoms.clone(),
-            bodies: Box::new(O::Map::new()),
+            literals: self.literals.clone(),
+            bodies: Box::new(E::Map::new()),
             by_id: HashMap::default(),
             next: 0,
         }
     }
 
-    fn insert(&mut self, body: O) {
+    fn insert(&mut self, body: E) {
         self.by_id.insert(self.next, body.clone());
         self.bodies.insert(body, self.next);
         self.next += 1;
     }
 
-    pub fn remove(&mut self, body: &O) {
+    pub fn remove(&mut self, body: &E) {
         let id = self.bodies.remove(body);
         self.by_id.remove(&id).unwrap();
     }
 
-    fn remove_by_id(&mut self, id: &usize) -> O {
+    fn remove_by_id(&mut self, id: &usize) -> E {
         let body = self.by_id.remove(id).unwrap();
         self.bodies.remove(&body);
 
@@ -184,16 +167,11 @@ where
     }
 
     #[allow(dead_code)]
-    fn get_subsuming(&self, body: &O, perm_index: usize) -> HashSet<O> {
-        let mut subsuming: HashSet<O> = HashSet::default();
-        let base = body.to_base();
+    fn get_subsuming(&self, body: &E, perm_index: usize) -> HashSet<E> {
+        let mut subsuming: HashSet<E> = HashSet::default();
 
-        for perm in self
-            .prefix
-            .permutations(perm_index, Some(&self.lemma_qf.ids(&base)))
-        {
-            let perm_base = self.lemma_qf.substitute(&base, &perm);
-            let perm_body = O::from_base(perm_base.expect("Substitution couldn't be performed."));
+        for perm in self.prefix.permutations(perm_index, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
             subsuming.extend(
                 self.bodies
                     .get_subsuming(&perm_body)
@@ -205,16 +183,11 @@ where
         subsuming
     }
 
-    fn get_subsumed(&self, body: &O, perm_index: usize) -> HashSet<O> {
-        let mut subsumed: HashSet<O> = HashSet::default();
-        let base = body.to_base();
+    fn get_subsumed(&self, body: &E, perm_index: usize) -> HashSet<E> {
+        let mut subsumed: HashSet<E> = HashSet::default();
 
-        for perm in self
-            .prefix
-            .permutations(perm_index, Some(&self.lemma_qf.ids(&base)))
-        {
-            let perm_base = self.lemma_qf.substitute(&base, &perm);
-            let perm_body = O::from_base(perm_base.expect("Substitution couldn't be performed."));
+        for perm in self.prefix.permutations(perm_index, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
             subsumed.extend(
                 self.bodies
                     .get_subsumed(&perm_body)
@@ -226,15 +199,9 @@ where
         subsumed
     }
 
-    fn subsumes(&self, body: &O, perm_index: usize) -> bool {
-        let base = body.to_base();
-
-        for perm in self
-            .prefix
-            .permutations(perm_index, Some(&self.lemma_qf.ids(&base)))
-        {
-            let perm_base = self.lemma_qf.substitute(&base, &perm);
-            let perm_body = O::from_base(perm_base.expect("Substitution couldn't be performed."));
+    fn subsumes(&self, body: &E, perm_index: usize) -> bool {
+        for perm in self.prefix.permutations(perm_index, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
             if self
                 .bodies
                 .get_subsuming(&perm_body)
@@ -249,7 +216,7 @@ where
         false
     }
 
-    fn insert_minimized(&mut self, body: O, perm_index: usize) {
+    fn insert_minimized(&mut self, body: E, perm_index: usize) {
         if !Self::subsumes(self, &body, perm_index) {
             for subs_body in self.get_subsumed(&body, perm_index) {
                 self.remove(&subs_body);
@@ -260,13 +227,11 @@ where
 
     fn unsat(&self, model: &Model, assignment: &Assignment, index: usize) -> HashSet<usize> {
         if index >= self.prefix.len() {
-            let neg_cube = self.atoms.neg_cube(model, assignment);
-
-            let neg_cube_as_o = O::from_base(self.lemma_qf.base_from_clause(&neg_cube));
+            let structure = sat_literals(&self.literals, model, assignment);
 
             return self
                 .bodies
-                .get_subsuming(&neg_cube_as_o)
+                .get_unsatisfied_by(&structure)
                 .into_iter()
                 .map(|(_, i)| *i)
                 .collect();
@@ -316,7 +281,7 @@ where
         index: usize,
         perm_index: usize,
         prev_exists: bool,
-        ignore: &Vec<IgnoreSubsumed<'_, O, L, B>>,
+        ignore: &Vec<IgnoreSubsumed<'_, E, L>>,
     ) {
         if to_weaken.is_empty() {
             return;
@@ -329,17 +294,15 @@ where
                 perm_index,
             });
 
-            let cube = self.atoms.cube(model, assignment);
-            let weakened: HashSet<O> = to_weaken
-                .bases()
+            let structure = sat_literals(&self.literals, model, assignment);
+            let weakened: HashSet<E> = to_weaken
+                .bodies()
                 .into_par_iter()
-                .flat_map_iter(|base| {
-                    self.lemma_qf.weaken(base, &cube, |b| {
-                        let body: O = O::from_base(b.clone());
-                        new_ignore.iter().any(|ig| ig.subsumes(&body))
+                .flat_map_iter(|body| {
+                    self.lemma_qf.weaken(body, &structure, |b| {
+                        new_ignore.iter().any(|ig| ig.subsumes(&b))
                     })
                 })
-                .map(|new_base| O::from_base(new_base))
                 .collect();
 
             let mut weakened_min = to_weaken.clone_empty();
@@ -408,7 +371,7 @@ where
 
             if prev_exists {
                 let mut minimized = to_weaken.clone_empty();
-                for body in to_weaken.bodies.keys() {
+                for (body, _) in to_weaken.bodies.items() {
                     minimized.insert_minimized(body, perm_index);
                 }
                 to_weaken = minimized;
@@ -484,46 +447,41 @@ where
         true
     }
 
-    fn bases(&self) -> Vec<B> {
-        self.by_id.values().map(|o| o.to_base()).collect_vec()
+    fn bodies(&self) -> Vec<E> {
+        self.by_id.values().cloned().collect_vec()
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
-        self.by_id.values().map(|body| {
-            (
-                Arc::new(self.prefix.restrict(self.lemma_qf.ids(&body.to_base()))),
-                body,
-            )
-        })
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E)> {
+        self.by_id
+            .values()
+            .map(|body| (Arc::new(self.prefix.restrict(body.ids())), body))
     }
 }
 
 /// Manages multiple instances of [`PrefixLemmaSet`] and allows weakening them all simultaneously.
-pub struct WeakenLemmaSet<O, L, B>
+pub struct WeakenLemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
     config: Arc<QuantifierConfig>,
     infer_cfg: Arc<InferenceConfig>,
-    atoms: Arc<Atoms>,
-    sets: Vec<PrefixLemmaSet<O, L, B>>,
+    literals: Arc<Literals>,
+    sets: Vec<PrefixLemmaSet<E, L>>,
 }
 
-impl<O, L, B> WeakenLemmaSet<O, L, B>
+impl<E, L> WeakenLemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug + Send,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
     pub fn new(
         config: Arc<QuantifierConfig>,
         infer_cfg: Arc<InferenceConfig>,
-        atoms: Arc<Atoms>,
-        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Atoms>)>,
+        literals: Arc<Literals>,
+        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>)>,
     ) -> Self {
-        let sets: Vec<PrefixLemmaSet<O, L, B>> = domains
+        let sets: Vec<PrefixLemmaSet<E, L>> = domains
             .into_iter()
             .map(|(prefix, lemma_qf, atoms)| PrefixLemmaSet::new(prefix, lemma_qf, atoms))
             .collect_vec();
@@ -531,7 +489,7 @@ where
         Self {
             config,
             infer_cfg,
-            atoms,
+            literals,
             sets,
         }
     }
@@ -570,11 +528,11 @@ where
         self.len() == 0
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E)> {
         self.sets.iter().flat_map(|set| set.as_iter()).sorted()
     }
 
-    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &O)> {
+    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &E)> {
         self.as_iter().collect_vec()
     }
 
@@ -584,9 +542,9 @@ where
             .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
     }
 
-    pub fn minimized(&self) -> LemmaSet<O, L, B> {
-        let mut lemmas: LemmaSet<O, L, B> =
-            LemmaSet::new(self.config.clone(), &self.infer_cfg, self.atoms.clone());
+    pub fn minimized(&self) -> LemmaSet<E, L> {
+        let mut lemmas: LemmaSet<E, L> =
+            LemmaSet::new(self.config.clone(), &self.infer_cfg, self.literals.clone());
         for (prefix, body) in self.as_iter() {
             lemmas.insert_minimized(prefix.clone(), body.clone());
         }
@@ -594,7 +552,7 @@ where
         lemmas
     }
 
-    pub fn contains(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
+    pub fn contains(&self, prefix: &QuantifierPrefix, body: &E) -> bool {
         self.sets
             .iter()
             .any(|set| set.prefix.contains(prefix) && set.bodies.get(body).is_some())
@@ -603,39 +561,37 @@ where
 
 /// Manages lemmas of several quantifier prefixes together, which all share some [`QuantifierConfig`].
 #[derive(Clone)]
-pub struct LemmaSet<O, L, B>
+pub struct LemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
     config: Arc<QuantifierConfig>,
     lemma_qf: Arc<L>,
     to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
-    to_bodies: HashMap<usize, O>,
-    bodies: O::Map<HashSet<usize>>,
+    to_bodies: HashMap<usize, E>,
+    bodies: E::Map<HashSet<usize>>,
     next: usize,
 }
 
-impl<O, L, B> LemmaSet<O, L, B>
+impl<E, L> LemmaSet<E, L>
 where
-    O: OrderSubsumption<Base = B>,
-    L: LemmaQf<Base = B>,
-    B: Clone + Debug,
+    E: Element,
+    L: LemmaQf<Body = E>,
 {
     pub fn new(
         config: Arc<QuantifierConfig>,
         infer_cfg: &InferenceConfig,
-        atoms: Arc<Atoms>,
+        literals: Arc<Literals>,
     ) -> Self {
         let non_universal_vars = config.non_universal_vars();
 
         Self {
             config,
-            lemma_qf: Arc::new(L::new(infer_cfg, atoms, non_universal_vars)),
+            lemma_qf: Arc::new(L::new(infer_cfg, literals, &non_universal_vars)),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
-            bodies: O::Map::new(),
+            bodies: E::Map::new(),
             next: 0,
         }
     }
@@ -646,7 +602,7 @@ where
             lemma_qf: self.lemma_qf.clone(),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
-            bodies: O::Map::new(),
+            bodies: E::Map::new(),
             next: 0,
         }
     }
@@ -660,10 +616,10 @@ where
     }
 
     pub fn id_to_term(&self, id: &usize) -> Term {
-        self.to_prefixes[id].quantify(self.body_to_term(&self.to_bodies[id]))
+        self.to_prefixes[id].quantify(self.to_bodies[id].to_term(true))
     }
 
-    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, &O) {
+    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, &E) {
         (self.to_prefixes[id].clone(), &self.to_bodies[id])
     }
 
@@ -679,11 +635,7 @@ where
         self.to_prefixes.keys().copied()
     }
 
-    pub fn body_to_term(&self, body: &O) -> Term {
-        self.lemma_qf.base_to_term(&body.to_base())
-    }
-
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &O, usize)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E, usize)> {
         self.ids()
             .map(|id| {
                 let (prefix, body) = self.id_to_lemma(&id);
@@ -692,18 +644,16 @@ where
             .sorted_by_key(|(prefix, _, _)| (prefix.existentials(), prefix.num_vars()))
     }
 
-    pub fn get_id(&self, prefix: &QuantifierPrefix, body: &O) -> Option<usize> {
+    pub fn get_id(&self, prefix: &QuantifierPrefix, body: &E) -> Option<usize> {
         let ids = self.bodies.get(body)?;
         ids.iter()
             .copied()
             .find(|id| self.to_prefixes[id].contains(prefix))
     }
 
-    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &O) -> bool {
-        let base = body.to_base();
-
-        for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
-            let perm_body = O::from_base(self.lemma_qf.substitute(&base, &perm).unwrap());
+    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E) -> bool {
+        for perm in self.config.permutations(0, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
 
             if self
                 .bodies
@@ -719,12 +669,11 @@ where
         false
     }
 
-    pub fn get_subsuming(&self, prefix: &QuantifierPrefix, body: &O) -> HashSet<usize> {
+    pub fn get_subsuming(&self, prefix: &QuantifierPrefix, body: &E) -> HashSet<usize> {
         let mut subsuming: HashSet<usize> = HashSet::default();
-        let base = body.to_base();
 
-        for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
-            let perm_body = O::from_base(self.lemma_qf.substitute(&base, &perm).unwrap());
+        for perm in self.config.permutations(0, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
             subsuming.extend(
                 self.bodies
                     .get_subsuming(&perm_body)
@@ -738,12 +687,11 @@ where
         subsuming
     }
 
-    pub fn get_subsumed(&self, prefix: &QuantifierPrefix, body: &O) -> HashSet<usize> {
+    pub fn get_subsumed(&self, prefix: &QuantifierPrefix, body: &E) -> HashSet<usize> {
         let mut subsumed: HashSet<usize> = HashSet::default();
-        let base = body.to_base();
 
-        for perm in self.config.permutations(0, Some(&self.lemma_qf.ids(&base))) {
-            let perm_body = O::from_base(self.lemma_qf.substitute(&base, &perm).unwrap());
+        for perm in self.config.permutations(0, Some(&body.ids())) {
+            let perm_body = body.substitute(&perm);
             subsumed.extend(
                 self.bodies
                     .get_subsumed(&perm_body)
@@ -757,7 +705,7 @@ where
         subsumed
     }
 
-    pub fn insert(&mut self, prefix: Arc<QuantifierPrefix>, body: O) -> usize {
+    pub fn insert(&mut self, prefix: Arc<QuantifierPrefix>, body: E) -> usize {
         let id = self.next;
         self.next += 1;
 
@@ -772,7 +720,7 @@ where
         id
     }
 
-    pub fn insert_minimized(&mut self, prefix: Arc<QuantifierPrefix>, body: O) -> Option<usize> {
+    pub fn insert_minimized(&mut self, prefix: Arc<QuantifierPrefix>, body: E) -> Option<usize> {
         if !LemmaSet::subsumes(self, &prefix, &body) {
             for id in &self.get_subsumed(&prefix, &body) {
                 self.remove(id);
