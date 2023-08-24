@@ -134,13 +134,23 @@ fn time_val_to_duration(time: TimeVal) -> Duration {
 }
 
 impl RawRunMeasurement {
+    fn max_rss_bytes(&self) -> i64 {
+        if cfg!(target_os = "macos") {
+            // macOS reports maxrss in bytes
+            self.usage.max_rss()
+        } else {
+            // on Linux maxrss is in KB
+            self.usage.max_rss() * 1024
+        }
+    }
+
     fn into_measurement(self) -> RunMeasurement {
         RunMeasurement {
             real_time: self.real_time,
             user_time: time_val_to_duration(self.usage.user_time()),
             sys_time: time_val_to_duration(self.usage.system_time()),
             self_user_time: time_val_to_duration(self.self_usage.user_time()),
-            max_mem_bytes: self.usage.max_rss() as usize,
+            max_mem_bytes: self.max_rss_bytes() as usize,
             timed_out: self.timed_out,
             success: self.status == Some(0),
         }
