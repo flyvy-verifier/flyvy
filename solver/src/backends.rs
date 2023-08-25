@@ -141,7 +141,7 @@ impl Backend for &GenericBackend {
         let mut part_interp = PartialInterp::for_model(&model);
         let mut symbols = model.symbols.iter().collect::<Vec<_>>();
         symbols.sort_unstable_by_key(|(symbol, _)| {
-            let in_signature = sig.contains_name(symbol);
+            let in_signature = sig.contains_relation(symbol);
             // sort the model-only signatures first
             //
             // NOTE: this is just a heuristic to evaluate auxilliary functions
@@ -218,7 +218,7 @@ impl Backend for &GenericBackend {
         let interp = part_interp
             .interps
             .into_iter()
-            .filter(|(symbol, _)| sig.contains_name(symbol))
+            .filter(|(symbol, _)| sig.contains_relation(symbol))
             .map(|(symbol, (interp, _))| (symbol, interp))
             .collect();
         FOModel { universe, interp }

@@ -534,7 +534,7 @@ impl App {
             }
         };
 
-        let r = sorts::sort_check_and_infer(&mut m);
+        let r = sorts::sort_check_module(&mut m);
         if let Err((err, span)) = r {
             eprintln!("sort checking error:");
 

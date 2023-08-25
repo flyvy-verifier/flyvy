@@ -1211,7 +1211,7 @@ impl<'a> Transitions<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fly::sorts::sort_check_and_infer;
+    use fly::sorts::sort_check_module;
 
     fn includes(set: &str, elements: Vec<Element>, context: &Context) -> Guard {
         Guard {
@@ -1417,7 +1417,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut m).unwrap();
+        sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let context = Context::new(&m.signature, &universe);
 
@@ -1518,7 +1518,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut m).unwrap();
+        sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
         let (target, _) = translate(&m, &universe, false)?;
 
@@ -1540,7 +1540,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut m).unwrap();
+        sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("quorum".to_string(), 2),
@@ -1557,7 +1557,7 @@ mod tests {
         let source =
             include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
             Ok(CheckerAnswer::Convergence),
@@ -1576,7 +1576,7 @@ assume forall a:x. !f(a) & !g(a)
 assume always forall a:x. ((g'(a) <-> f(a)) & (f'(a) <-> f(a)))
         ";
         let mut m = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut m).unwrap();
+        sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("x".to_string(), 5)]);
         let (target, _) = translate(&m, &universe, false)?;
         assert_eq!(1, target.trs.len());

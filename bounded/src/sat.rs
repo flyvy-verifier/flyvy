@@ -524,14 +524,14 @@ fn dimacs(cnf: &Cnf, context: &Context) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fly::sorts::sort_check_and_infer;
+    use fly::sorts::sort_check_module;
 
     #[test]
     fn checker_sat_basic() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/tests/examples/basic2.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([]);
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &universe, 0, false)?);
@@ -548,7 +548,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         assert_eq!(
@@ -564,7 +564,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = HashMap::from([("node".to_string(), 2)]);
 
         let bug = check(&module, &universe, 12, false)?;
@@ -581,7 +581,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("quorum".to_string(), 2),
@@ -601,7 +601,7 @@ mod tests {
         let source =
             include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
             CheckerAnswer::Unknown,

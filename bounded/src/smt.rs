@@ -89,7 +89,7 @@ pub fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fly::sorts::sort_check_and_infer;
+    use fly::sorts::sort_check_module;
     use solver::backends::{GenericBackend, SolverType};
     use solver::solver_path;
 
@@ -105,7 +105,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/basic2.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 0, false)?);
         assert!(matches!(
@@ -121,7 +121,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 10, false)?);
 
@@ -134,7 +134,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
 
         let bug = check(&module, &conf(), 12, false)?;
         assert!(matches!(bug, CheckerAnswer::Counterexample(..)));
@@ -150,7 +150,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 5, false)?);
 
@@ -162,7 +162,7 @@ mod tests {
         let source =
             include_str!("../../temporal-verifier/tests/examples/success/immutability.fly");
         let mut module = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut module).unwrap();
+        sort_check_module(&mut module).unwrap();
 
         assert_eq!(CheckerAnswer::Unknown, check(&module, &conf(), 10, false)?);
         Ok(())
