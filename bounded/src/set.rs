@@ -1387,7 +1387,7 @@ mod tests {
         let source = include_str!("../../temporal-verifier/examples/consensus_forall.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
-        sort_check_and_infer(&mut m).unwrap();
+        sort_check_module(&mut m).unwrap();
         let _ = m.convert_non_bool_relations().unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
