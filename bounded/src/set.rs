@@ -4,9 +4,9 @@
 //! A bounded model checker for flyvy programs. Use `translate` to turn a flyvy `Module`
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
+use crate::{checker::*, indices::*, quant_enum::*};
 use bitvec::prelude::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
-use crate::{checker::*, indices::*, quant_enum::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
@@ -880,21 +880,23 @@ impl IsoStateSet {
             .map(|permutation: HashMap<&str, Vec<usize>>| {
                 indices
                     .iter()
-                    .flat_map(|(name, rest)| rest.iter().map(|(elements, (i, _))| {
-                        let relation = indices.signature.relation_decl(name);
-                        assert_eq!(relation.args.len(), elements.len());
-                        // map each old element to a new element
-                        let mut new_elements = elements.clone();
-                        for i in 0..new_elements.len() {
-                            let x = elements[i];
-                            new_elements[i] = match &relation.args[i] {
-                                Sort::Uninterpreted(s) => permutation[s.as_str()][x],
-                                Sort::Bool => x,
-                            };
-                        }
-                        // look up the index to precompute the dst
-                        (*i, indices.get(&relation.name, 0, &new_elements))
-                    }))
+                    .flat_map(|(name, rest)| {
+                        rest.iter().map(|(elements, (i, _))| {
+                            let relation = indices.signature.relation_decl(name);
+                            assert_eq!(relation.args.len(), elements.len());
+                            // map each old element to a new element
+                            let mut new_elements = elements.clone();
+                            for i in 0..new_elements.len() {
+                                let x = elements[i];
+                                new_elements[i] = match &relation.args[i] {
+                                    Sort::Uninterpreted(s) => permutation[s.as_str()][x],
+                                    Sort::Bool => x,
+                                };
+                            }
+                            // look up the index to precompute the dst
+                            (*i, indices.get(&relation.name, 0, &new_elements))
+                        })
+                    })
                     .filter(|(src, dst)| src != dst)
                     .collect()
             })
