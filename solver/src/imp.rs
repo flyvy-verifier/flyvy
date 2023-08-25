@@ -375,7 +375,7 @@ impl<B: Backend> Solver<B> {
         let assumptions = self.last_assumptions.take();
         // initially, assume anything used by the last check_sat call
         let mut indicators = assumptions
-            .unwrap_or(HashMap::new())
+            .unwrap_or_default()
             .into_iter()
             .map(|(ind, val)| if val { ind } else { Term::negate(ind) })
             .sorted()

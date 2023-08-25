@@ -151,7 +151,7 @@ impl Model {
                 self.interp[i].get(&[])
             }
             Term::App(f, p, args) => {
-                let args: Vec<Element> = args.iter().map(|x| go(x)).collect();
+                let args: Vec<Element> = args.iter().map(go).collect();
                 if *p != 0 {
                     panic!("tried to eval {t}")
                 }

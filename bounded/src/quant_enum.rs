@@ -231,8 +231,8 @@ fn term_to_enumerated(
             go(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
         }
         Term::BinOp(BinOp::Implies, a, b) => match element(a) {
-            Ok(a) if a == 1 => go(b)?,
-            Ok(a) if a == 0 => Enumerated::always_true(),
+            Ok(1) => go(b)?,
+            Ok(0) => Enumerated::always_true(),
             _ => Enumerated::or(vec![go(a)?.not(), go(b)?]),
         },
         Term::NAryOp(NOp::And, terms) => {
