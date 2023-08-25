@@ -566,17 +566,17 @@ impl Formula {
     fn evaluate_partial(&self, state: impl IntoIterator<Item = Guard>) -> Option<bool> {
         fn evaluate_partial(formula: &Formula, state: &HashMap<usize, bool>) -> Option<bool> {
             match formula {
-                Formula::And(terms) => terms.iter().fold(Some(true), |b, term| {
+                Formula::And(terms) => terms.iter().try_fold(true, |b, term| {
                     match (b, evaluate_partial(term, state)) {
-                        (Some(false), _) | (_, Some(false)) => Some(false),
-                        (Some(true), Some(true)) => Some(true),
+                        (false, _) | (_, Some(false)) => Some(false),
+                        (true, Some(true)) => Some(true),
                         _ => None,
                     }
                 }),
-                Formula::Or(terms) => terms.iter().fold(Some(false), |b, term| {
+                Formula::Or(terms) => terms.iter().try_fold(false, |b, term| {
                     match (b, evaluate_partial(term, state)) {
-                        (Some(true), _) | (_, Some(true)) => Some(true),
-                        (Some(false), Some(false)) => Some(false),
+                        (true, _) | (_, Some(true)) => Some(true),
+                        (false, Some(false)) => Some(false),
                         _ => None,
                     }
                 }),
