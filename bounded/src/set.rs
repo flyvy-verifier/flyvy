@@ -4,65 +4,16 @@
 //! A bounded model checker for flyvy programs. Use `translate` to turn a flyvy `Module`
 //! into a `BoundedProgram`, then use `interpret` to evaluate it.
 
+use crate::{checker::*, indices::*, quant_enum::*};
 use bitvec::prelude::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
-use thiserror::Error;
 
 // We use FxHashMap and FxHashSet because the hash function performance is about 25% faster
 // and the bounded model checker is essentially a hashing microbenchmark :)
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-
-/// Map from uninterpreted sort names to their sizes.
-// Here is the one place we use a std HashMap. It's not a performance problem because it's not used
-// in the inner loop of the model checker, and it provides a more ergonomic public api to this module.
-type UniverseBounds = std::collections::HashMap<String, usize>;
-
-fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
-    match sort {
-        Sort::Bool => 2,
-        Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
-    }
-}
-
-/// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
-    /// The checker found a counterexample
-    Counterexample(Vec<Model>),
-    /// The checker did not find a counterexample
-    Unknown,
-    /// The checker found that the set of states stopped changing
-    Convergence,
-}
-
-/// The result of an unsuccessful attempt to translate the input module.
-#[derive(Error, Debug, PartialEq)]
-pub enum TranslationError {
-    /// The module contained a sort that wasn't in the universe
-    #[error("sort {0} not found in universe {1:#?}")]
-    UnknownSort(String, UniverseBounds),
-    /// The transition system extraction failed
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    /// The translated formula was not a conjunction
-    #[error("the set checker currently only handles initial conditions that are a conjunction")]
-    InitNotConj,
-    /// The transition system extraction found more than one transition relation
-    #[error("the set checker currently only handles a single transition relation")]
-    MultipleTrs,
-    /// The term could not be translated to an imperative transition
-    #[error("could not translate to transition {0}")]
-    CouldNotTranslateToTransition(Term),
-    /// The term could not be translated to a formula
-    #[error("could not translate to propositional logic {0}")]
-    CouldNotTranslateToFormula(Term),
-    /// The term could not be translated to an element of a sort
-    #[error("could not translate to element {0}")]
-    CouldNotTranslateToElement(Term),
-}
 
 /// Combined entry point to both translate and search the module.
 pub fn check(
@@ -71,11 +22,11 @@ pub fn check(
     depth: Option<usize>,
     compress_traces: TraceCompression,
     print_timing: bool,
-) -> Result<CheckerAnswer, TranslationError> {
-    let (program, context) = translate(module, universe, print_timing)?;
-    match interpret(&program, depth, compress_traces, print_timing, &context) {
+) -> Result<CheckerAnswer<()>, CheckerError> {
+    let (program, indices) = translate(module, universe, print_timing)?;
+    match interpret(&program, depth, compress_traces, print_timing, &indices) {
         InterpreterResult::Unknown => Ok(CheckerAnswer::Unknown),
-        InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence),
+        InterpreterResult::Convergence => Ok(CheckerAnswer::Convergence(())),
         InterpreterResult::Counterexample(trace) => {
             let models: Vec<Model> = match compress_traces {
                 TraceCompression::Yes => {
@@ -84,12 +35,12 @@ pub fn check(
                         Trace::CompressedTrace(state, depth) => (state, depth),
                     };
                     println!("counterexample is at depth {depth}, not 0");
-                    vec![state_to_model(&state, &context)]
+                    vec![indices.model(0, |i| state.get(i) as Element)]
                 }
                 TraceCompression::No => match trace {
                     Trace::Trace(states) => states
                         .iter()
-                        .map(|state| state_to_model(state, &context))
+                        .map(|state| indices.model(0, |i| state.get(i) as Element))
                         .collect(),
                     Trace::CompressedTrace(..) => unreachable!(),
                 },
@@ -99,69 +50,12 @@ pub fn check(
     }
 }
 
-fn state_to_model(state: &BoundedState, c: &Context) -> Model {
-    let u = c.signature.sorts.iter().map(|s| c.universe[s]).collect();
-    Model::new(
-        c.signature,
-        &u,
-        c.signature
-            .relations
-            .iter()
-            .map(|r| {
-                let shape = r
-                    .args
-                    .iter()
-                    .map(|s| cardinality(c.universe, s))
-                    .chain([2])
-                    .collect();
-                Interpretation::new(&shape, |elements| {
-                    state.get(c.indices[&(r.name.as_str(), elements.to_vec())]) as Element
-                })
-            })
-            .collect(),
-    )
-}
-
-/// A map from (name, arguments) pairs to their index in the [BoundedState] bit vector.
-#[derive(Debug, PartialEq)]
-struct Context<'a> {
-    signature: &'a Signature,
-    universe: &'a UniverseBounds,
-    indices: HashMap<(&'a str, Vec<Element>), usize>,
-}
-
-impl Context<'_> {
-    /// Compute an index for the given signature and universe bounds
-    fn new<'a>(signature: &'a Signature, universe: &'a UniverseBounds) -> Context<'a> {
-        let indices = signature
-            .relations
-            .iter()
-            .flat_map(|relation| {
-                relation
-                    .args
-                    .iter()
-                    .map(|sort| 0..cardinality(universe, sort))
-                    .multi_cartesian_product_fixed()
-                    .map(|elements| (relation.name.as_str(), elements))
-                    .collect::<Vec<_>>()
-            })
-            .enumerate()
-            .map(|(i, x)| (x, i))
-            .collect();
-        Context {
-            signature,
-            universe,
-            indices,
-        }
-    }
-}
-
 /// Compile-time upper bound on the bounded universe size.
 const STATE_LEN: usize = 128;
 
 /// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the
-/// presence of a tuple in a relation. The order of the bits is determined by [Context].
+/// presence of a tuple in a relation. The order of the bits is determined by [Indices].
 #[derive(Clone, Copy, Eq, PartialOrd)]
 struct BoundedState(BitArr!(for STATE_LEN));
 
@@ -242,10 +136,10 @@ struct Transition {
 
 /// A Guard is a logical literal, i.e., a possibly negated relation applied to an argument tuple
 /// such as `r(x, y)` or `!r(x, y)`. The relation and argument tuple are represented by an index
-/// into an ambient `Context` map.
+/// into an ambient `Indices` map.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Guard {
-    /// The index representing the relation and argument tuple. Indexes into an ambient `Context`
+    /// The index representing the relation and argument tuple. Indexes into an ambient `Indices`
     /// map.
     index: usize,
     /// True for positive literal, false for negative literal
@@ -253,10 +147,10 @@ struct Guard {
 }
 
 /// An Update is either an insertion or a removal of a tuple from a relation. The relation and
-/// argument tuple are represented by an index into an ambient `Context` map.
+/// argument tuple are represented by an index into an ambient `Indices` map.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Update {
-    /// The index representing the relation and argument tuple. Indexes into an ambient `Context`
+    /// The index representing the relation and argument tuple. Indexes into an ambient `Indices`
     /// map.
     index: usize,
     /// True for insertion, false for removal
@@ -306,8 +200,8 @@ impl Transition {
 
 /// Translate a flyvy module into a `BoundedProgram`, given the bounds on the sort sizes.
 /// The universe should contain the sizes of all the sorts in module.signature.sorts.
-/// This function returns both the desired `BoundedProgram` and a `Context` object. The
-/// `Context` can be used to translate the indices from the program back into a relation
+/// This function returns both the desired `BoundedProgram` and an `Indices` object. The
+/// `Indices` can be used to translate the indices from the program back into a relation
 /// name and the argument values.
 /// The module is assumed to have already been typechecked.
 /// The translator ignores proof blocks.
@@ -315,21 +209,18 @@ fn translate<'a>(
     module: &'a Module,
     universe: &'a UniverseBounds,
     print_timing: bool,
-) -> Result<(BoundedProgram, Context<'a>), TranslationError> {
+) -> Result<(BoundedProgram, Indices<'a>), CheckerError> {
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             panic!("non-bool relations in checker (use Module::convert_non_bool_relations)")
         }
     }
 
-    let context = Context::new(&module.signature, universe);
+    let indices = Indices::new(&module.signature, universe, 1);
 
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
-            return Err(TranslationError::UnknownSort(
-                sort.clone(),
-                universe.clone(),
-            ));
+            return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
         }
     }
 
@@ -340,9 +231,13 @@ fn translate<'a>(
     println!("starting translation...");
     let timer = std::time::Instant::now();
 
-    let d = extract(module).map_err(TranslationError::ExtractionError)?;
+    let d = extract(module).map_err(CheckerError::ExtractionError)?;
 
-    let formula = |term| term_to_formula(&normalize(term, &context), &context, &HashMap::default());
+    let formula = |term| {
+        let term = enumerate_quantifiers(&term, &module.signature, universe)
+            .map_err(CheckerError::EnumerationError)?;
+        enumerated_to_formula(term, &indices)
+    };
 
     // get cube
     let mut init = BoundedState::ZERO;
@@ -353,16 +248,16 @@ fn translate<'a>(
             init.set(index, value);
             constrained.insert(index);
         } else {
-            return Err(TranslationError::InitNotConj);
+            return Err(CheckerError::InitNotConj);
         }
     }
     // enumerate cube
     let mut inits = vec![init];
     println!(
         "enumerating {} initial states",
-        2_usize.pow((context.indices.len() - constrained.len()) as u32)
+        2_usize.pow((indices.num_vars - constrained.len()) as u32)
     );
-    for index in 0..context.indices.len() {
+    for index in 0..indices.num_vars {
         if !constrained.contains(&index) {
             let mut with_unconstrained = inits.clone();
             for init in &mut with_unconstrained {
@@ -385,17 +280,17 @@ fn translate<'a>(
         "currently, the set checker does not support axioms that mention mutable relations"
     );
     // compute imperative transitions
-    let trs = match d.transitions.len() {
-        0 => vec![],
-        1 => traverse_disjunction(
-            &normalize(d.transitions[0].clone(), &context),
-            &context,
-            &HashMap::default(),
-            &|term, assignments| term_to_transition(term, &context, assignments),
-        )?,
-        _ => return Err(TranslationError::MultipleTrs),
+    let trs = match d.transitions.as_slice() {
+        [] => vec![],
+        [tr] => enumerate_quantifiers(tr, &module.signature, universe)
+            .map_err(CheckerError::EnumerationError)?
+            .get_or()
+            .into_iter()
+            .map(|term| enumerated_to_transition(term, &indices))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(CheckerError::MultipleTrs),
     };
-    let trs: Vec<_> = trs
+    let trs: Vec<(Transition, _)> = trs
         .into_iter()
         .filter(|tr| tr.slow_guard != Formula::always_false())
         .map(|tr| {
@@ -405,12 +300,11 @@ fn translate<'a>(
                 constrained.insert(index);
             }
             let mut unconstrained = vec![];
-            for ((name, _), index) in &context.indices {
-                let mut relations = module.signature.relations.iter();
-                if !constrained.contains(index)
-                    && relations.find(|r| &r.name == name).unwrap().mutable
-                {
-                    unconstrained.push(index);
+            for (_, rest) in indices.iter() {
+                for (index, mutable) in rest.values() {
+                    if !constrained.contains(index) && *mutable {
+                        unconstrained.push(index);
+                    }
                 }
             }
             (tr, unconstrained)
@@ -480,10 +374,11 @@ fn translate<'a>(
 
     // do sanity checks on the transitions
     for tr in &trs {
-        let mut indices_to_sets: Vec<&str> = Vec::with_capacity(context.indices.len());
-        indices_to_sets.resize(context.indices.len(), ""); // cap vs len
-        for ((r, _), i) in &context.indices {
-            indices_to_sets[*i] = r;
+        let mut indices_to_sets: Vec<&str> = vec![""; indices.num_vars];
+        for (r, rest) in indices.iter() {
+            for (i, _) in rest.values() {
+                indices_to_sets[*i] = r;
+            }
         }
 
         // check that none of the transitions violate immutability
@@ -535,7 +430,7 @@ fn translate<'a>(
         );
     }
 
-    Ok((BoundedProgram { inits, trs, safe }, context))
+    Ok((BoundedProgram { inits, trs, safe }, indices))
 }
 
 /// A propositional formula over `Guard`s.
@@ -621,13 +516,6 @@ impl Formula {
         ])
     }
 
-    fn ite(self, t: Formula, f: Formula) -> Formula {
-        Formula::or([
-            Formula::and([self.clone(), t]),
-            Formula::and([self.not(), f]),
-        ])
-    }
-
     fn evaluate(&self, state: &BoundedState) -> bool {
         match self {
             Formula::And(terms) => terms.iter().all(|term| term.evaluate(state)),
@@ -637,194 +525,45 @@ impl Formula {
     }
 }
 
-fn normalize(term: Term, context: &Context) -> Term {
-    let term = nullary_id_to_app(term, &context.signature.relations);
-    let term = fly::term::prime::Next::new(context.signature).normalize(&term);
-    term
-}
-
-fn nullary_id_to_app(term: Term, relations: &[RelationDecl]) -> Term {
-    match term {
-        Term::Id(id) if relations.iter().any(|r| r.name == id) => Term::App(id, 0, vec![]),
-        Term::App(name, primes, args) => Term::App(
-            name,
-            primes,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::UnaryOp(op, term) => Term::UnaryOp(op, Box::new(nullary_id_to_app(*term, relations))),
-        Term::BinOp(op, a, b) => Term::BinOp(
-            op,
-            Box::new(nullary_id_to_app(*a, relations)),
-            Box::new(nullary_id_to_app(*b, relations)),
-        ),
-        Term::NAryOp(op, args) => Term::NAryOp(
-            op,
-            args.into_iter()
-                .map(|arg| nullary_id_to_app(arg, relations))
-                .collect(),
-        ),
-        Term::Ite { cond, then, else_ } => Term::Ite {
-            cond: Box::new(nullary_id_to_app(*cond, relations)),
-            then: Box::new(nullary_id_to_app(*then, relations)),
-            else_: Box::new(nullary_id_to_app(*else_, relations)),
-        },
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => Term::Quantified {
-            quantifier,
-            binders,
-            body: Box::new(nullary_id_to_app(*body, relations)),
-        },
-        term => term,
-    }
-}
-
-// this function implements the following procedure:
-// - recursively walk through the term until you get to a term that doesn't represent a disjunction
-// - call func on it
-// - collect all of the results of calls to func into a vector and return it
-fn traverse_disjunction<T>(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-    func: &impl Fn(&Term, &HashMap<String, Element>) -> Result<T, TranslationError>,
-) -> Result<Vec<T>, TranslationError> {
-    let traverse = |term| traverse_disjunction(term, context, assignments, func);
-    let vec: Vec<T> = match term {
-        Term::NAryOp(NOp::Or, terms) => {
-            let vecs = terms
-                .iter()
-                .map(traverse)
-                .collect::<Result<Vec<Vec<T>>, _>>()?;
-            vecs.into_iter().flatten().collect()
-        }
-        Term::Quantified {
-            quantifier: Quantifier::Exists,
-            binders,
-            body,
-        } => {
-            let vecs = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
-                    }
-                    traverse_disjunction(body, context, &new_assignments, func)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            vecs.into_iter().flatten().collect()
-        }
-        term => vec![func(term, assignments)?],
-    };
-    Ok(vec)
-}
-
 // Converts a Term to exactly one Transition (we aren't doing DNF, so this function cannot
 // return multiple transitions). It will fail if given a disjunction where one of the
 // branches contains a primed variable. (It can handle single-vocabulary disjunctions by
-// translating them into `slow_guard`s.) This is the "inner function" for `traverse_disjunction`.
-fn term_to_transition(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-) -> Result<Transition, TranslationError> {
-    let transition = |term| term_to_transition(term, context, assignments);
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
+// translating them into `slow_guard`s.)
+fn enumerated_to_transition(
+    term: Enumerated,
+    indices: &Indices,
+) -> Result<Transition, CheckerError> {
+    let go = |term| enumerated_to_transition(term, indices);
+    let formula = |term| enumerated_to_formula(term, indices);
 
-    let transition: Transition = match term {
-        Term::NAryOp(NOp::And, terms) => {
-            let trs = terms
-                .iter()
-                .map(transition)
-                .collect::<Result<Vec<_>, _>>()?;
-            Transition::from_conjunction(trs)
+    let transition = match term {
+        Enumerated::And(xs) => {
+            Transition::from_conjunction(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?)
         }
-        Term::Quantified {
-            quantifier: Quantifier::Forall,
-            binders,
-            body,
-        } => {
-            let trs = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
+        Enumerated::Not(ref x) => {
+            let mut tr = go(*x.clone())?;
+            match (tr.guards.as_mut_slice(), tr.updates.as_mut_slice()) {
+                ([guard], []) if tr.slow_guard == Formula::always_true() => {
+                    guard.value = !guard.value
+                }
+                ([], [update]) if tr.slow_guard == Formula::always_true() => {
+                    update.formula = update.formula.clone().not()
+                }
+                ([], []) => tr.slow_guard = tr.slow_guard.not(),
+                _ => {
+                    tr = Transition {
+                        guards: vec![],
+                        updates: vec![],
+                        slow_guard: formula(term)?,
                     }
-                    term_to_transition(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Transition::from_conjunction(trs)
-        }
-        Term::Literal(true) => Transition {
-            guards: vec![],
-            updates: vec![],
-            slow_guard: Formula::always_true(),
-        },
-        Term::App(_, 0, _) => match formula(term)? {
-            Formula::Guard(guard) => Transition {
-                guards: vec![guard],
-                updates: vec![],
-                slow_guard: Formula::always_true(),
-            },
-            _ => unreachable!(),
-        },
-        Term::App(name, 1, args) => match formula(&Term::App(name.clone(), 0, args.clone()))? {
-            Formula::Guard(Guard { index, value }) => Transition {
-                guards: vec![],
-                updates: vec![Update {
-                    index,
-                    formula: match value {
-                        true => Formula::always_true(),
-                        false => Formula::always_false(),
-                    },
-                }],
-                slow_guard: Formula::always_true(),
-            },
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Not, body) => {
-            let mut tr = transition(body)?;
-            if tr.guards.len() == 1
-                && tr.updates.is_empty()
-                && tr.slow_guard == Formula::always_true()
-            {
-                tr.guards[0].value = !tr.guards[0].value;
-            } else if tr.guards.is_empty()
-                && tr.updates.len() == 1
-                && tr.slow_guard == Formula::always_true()
-            {
-                tr.updates[0].formula = tr.updates[0].formula.clone().not();
-            } else if tr.guards.is_empty() && tr.updates.is_empty() {
-                tr.slow_guard = tr.slow_guard.not();
-            } else {
-                return Err(TranslationError::CouldNotTranslateToTransition(
-                    term.clone(),
-                ));
+                }
             }
             tr
         }
-        Term::BinOp(BinOp::Iff | BinOp::Equals, left, right)
-            if matches!(**left, Term::App(_, 1, _)) =>
-        {
-            if let Term::App(name, 1, args) = &**left {
-                let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-                let index = context.indices[&(name.as_str(), args)];
-                let formula = formula(right)?;
+        Enumerated::Eq(x, y) if matches!(*x, Enumerated::App(_, 1, _)) => {
+            if let Enumerated::App(name, 1, args) = *x {
+                let index = indices.get(&name, 0, &args);
+                let formula = formula(*y)?;
                 Transition {
                     guards: vec![],
                     updates: vec![Update { index, formula }],
@@ -834,140 +573,55 @@ fn term_to_transition(
                 unreachable!()
             }
         }
-        Term::BinOp(BinOp::NotEquals, left, right) => transition(&Term::UnaryOp(
-            UOp::Not,
-            Box::new(Term::equals(&**left, &**right)),
-        ))?,
-        Term::BinOp(BinOp::Implies, left, right) if element(left) == Ok(1) => transition(right)?,
-        Term::BinOp(BinOp::Implies, left, _) if element(left) == Ok(0) => Transition {
+        Enumerated::App(name, 1, args) => Transition {
             guards: vec![],
-            updates: vec![],
+            updates: vec![Update {
+                index: indices.get(&name, 0, &args),
+                formula: Formula::always_true(),
+            }],
             slow_guard: Formula::always_true(),
         },
-        term => Transition {
-            guards: vec![],
-            updates: vec![],
-            slow_guard: formula(term)?,
-        },
+        term => {
+            let terms = formula(term)?.get_and();
+            if terms.iter().all(|term| matches!(term, Formula::Guard(_))) {
+                Transition {
+                    guards: terms
+                        .into_iter()
+                        .map(|term| match term {
+                            Formula::Guard(guard) => guard,
+                            _ => unreachable!(),
+                        })
+                        .collect(),
+                    updates: vec![],
+                    slow_guard: Formula::always_true(),
+                }
+            } else {
+                Transition {
+                    guards: vec![],
+                    updates: vec![],
+                    slow_guard: Formula::and(terms),
+                }
+            }
+        }
     };
     Ok(transition)
 }
 
-// This function translates a Term to a single-vocabulary propositional formula.
-// It will fail if the term has temporal operators.
-fn term_to_formula(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-) -> Result<Formula, TranslationError> {
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
+fn enumerated_to_formula(term: Enumerated, indices: &Indices) -> Result<Formula, CheckerError> {
+    let go = |term| enumerated_to_formula(term, indices);
 
-    let formula: Formula = match term {
-        Term::Literal(true) => Formula::always_true(),
-        Term::Literal(false) => Formula::always_false(),
-        Term::Id(id) => match assignments.get(id) {
-            Some(1) => Formula::always_true(),
-            Some(0) => Formula::always_false(),
-            _ => {
-                return Err(TranslationError::CouldNotTranslateToTransition(
-                    term.clone(),
-                ))
-            }
-        },
-        Term::App(name, 0, args) => {
-            let args = args.iter().map(element).collect::<Result<Vec<_>, _>>()?;
-            Formula::Guard(Guard {
-                index: context.indices[&(name.as_str(), args)],
-                value: true,
-            })
-        }
-        Term::UnaryOp(UOp::Not, term) => formula(term)?.not(),
-        Term::BinOp(BinOp::Iff, a, b) => formula(a)?.iff(formula(b)?),
-        Term::BinOp(BinOp::Equals, a, b) => match (element(a), element(b)) {
-            (Ok(a), Ok(b)) if a == b => Formula::always_true(),
-            (Ok(a), Ok(b)) if a != b => Formula::always_false(),
-            _ => formula(a)?.iff(formula(b)?),
-        },
-        Term::BinOp(BinOp::NotEquals, a, b) => {
-            formula(&Term::BinOp(BinOp::Equals, a.clone(), b.clone()))?.not()
-        }
-        Term::BinOp(BinOp::Implies, a, b) => Formula::or(vec![formula(a)?.not(), formula(b)?]),
-        Term::NAryOp(NOp::And, terms) => {
-            Formula::and(terms.iter().map(formula).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::NAryOp(NOp::Or, terms) => {
-            Formula::or(terms.iter().map(formula).collect::<Result<Vec<_>, _>>()?)
-        }
-        Term::Ite { cond, then, else_ } => formula(cond)?.ite(formula(then)?, formula(else_)?),
-        Term::Quantified {
-            quantifier,
-            binders,
-            body,
-        } => {
-            let terms = binders
-                .iter()
-                .map(|b| cardinality(context.universe, &b.sort))
-                .map(|card| (0..card).collect::<Vec<Element>>())
-                .multi_cartesian_product_fixed()
-                .map(|elements| {
-                    let mut new_assignments = assignments.clone();
-                    assert_eq!(binders.len(), elements.len());
-                    for (binder, element) in binders.iter().zip(elements) {
-                        new_assignments.insert(binder.name.to_string(), element);
-                    }
-                    term_to_formula(body, context, &new_assignments)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match quantifier {
-                Quantifier::Forall => Formula::and(terms),
-                Quantifier::Exists => Formula::or(terms),
-            }
-        }
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToFormula(term.clone())),
+    let formula = match term {
+        Enumerated::And(xs) => Formula::and(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
+        Enumerated::Or(xs) => Formula::or(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?),
+        Enumerated::Not(x) => go(*x)?.not(),
+        Enumerated::Eq(x, y) => go(*x)?.iff(go(*y)?),
+        Enumerated::App(name, 0, args) => Formula::Guard(Guard {
+            index: indices.get(&name, 0, &args),
+            value: true,
+        }),
+        Enumerated::App(..) => return Err(CheckerError::PrimeInFormula),
     };
     Ok(formula)
-}
-
-// This function tries to translate a Term to a constant element of a sort
-// (either boolean or uninterpreted). It will fail if the term includes temporal
-// operators, or if the value cannot be determined through quantifier enumeration.
-fn term_to_element(
-    term: &Term,
-    context: &Context,
-    assignments: &HashMap<String, Element>,
-) -> Result<Element, TranslationError> {
-    let formula = |term| term_to_formula(term, context, assignments);
-    let element = |term| term_to_element(term, context, assignments);
-
-    let element: Element = match term {
-        Term::Literal(_)
-        | Term::UnaryOp(UOp::Not, ..)
-        | Term::BinOp(BinOp::Iff | BinOp::Equals | BinOp::NotEquals | BinOp::Implies, ..)
-        | Term::NAryOp(NOp::And | NOp::Or, ..)
-        | Term::Quantified { .. } => match formula(term)? {
-            formula if formula == Formula::always_true() => 1,
-            formula if formula == Formula::always_false() => 0,
-            _ => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
-        },
-        Term::Id(id) => match assignments.get(id) {
-            Some(x) => *x,
-            None => panic!("no assignment found for {id}"),
-        },
-        Term::Ite { cond, then, else_ } => match element(cond)? {
-            1 => element(then)?,
-            0 => element(else_)?,
-            _ => unreachable!(),
-        },
-        Term::UnaryOp(UOp::Prime | UOp::Always | UOp::Eventually, _)
-        | Term::UnaryOp(UOp::Next | UOp::Previous, _)
-        | Term::BinOp(BinOp::Until | BinOp::Since, ..)
-        | Term::App(..) => return Err(TranslationError::CouldNotTranslateToElement(term.clone())),
-    };
-    Ok(element)
 }
 
 /// Whether to compress traces by keeping only the last state
@@ -1069,10 +723,10 @@ fn interpret(
     max_depth: Option<usize>,
     compress_traces: TraceCompression,
     print_timing: bool,
-    context: &Context,
+    indices: &Indices,
 ) -> InterpreterResult {
     // States we have seen so far.
-    let mut seen = IsoStateSet::new(context);
+    let mut seen = IsoStateSet::new(indices);
     // The BFS queue, i.e., states on the frontier that need to be explored.
     // The queue is always a subset of seen.
     let mut queue: VecDeque<Trace> = VecDeque::new();
@@ -1208,11 +862,11 @@ struct IsoStateSet {
 }
 
 impl IsoStateSet {
-    fn new(context: &Context) -> IsoStateSet {
-        let sorts: Vec<_> = context.universe.keys().sorted().collect();
+    fn new(indices: &Indices) -> IsoStateSet {
+        let sorts: Vec<_> = indices.universe.keys().sorted().collect();
         let orderings = sorts
             .iter()
-            .map(|sort| context.universe[sort.as_str()])
+            .map(|sort| indices.universe[sort.as_str()])
             // the permutations are maps from old to new element values
             .map(|size| (0..size).permutations(size))
             // get all combinations of different ways to permute values
@@ -1224,23 +878,24 @@ impl IsoStateSet {
             })
             // convert permutations to copy instructions
             .map(|permutation: HashMap<&str, Vec<usize>>| {
-                context
-                    .indices
+                indices
                     .iter()
-                    .map(|((name, elements), i)| {
-                        let relation = context.signature.relation_decl(name);
-                        assert_eq!(relation.args.len(), elements.len());
-                        // map each old element to a new element
-                        let mut new_elements = elements.clone();
-                        for i in 0..new_elements.len() {
-                            let x = elements[i];
-                            new_elements[i] = match &relation.args[i] {
-                                Sort::Uninterpreted(s) => permutation[s.as_str()][x],
-                                Sort::Bool => x,
-                            };
-                        }
-                        // look up the index to precompute the dst
-                        (*i, context.indices[&(relation.name.as_str(), new_elements)])
+                    .flat_map(|(name, rest)| {
+                        rest.iter().map(|(elements, (i, _))| {
+                            let relation = indices.signature.relation_decl(name);
+                            assert_eq!(relation.args.len(), elements.len());
+                            // map each old element to a new element
+                            let mut new_elements = elements.clone();
+                            for i in 0..new_elements.len() {
+                                let x = elements[i];
+                                new_elements[i] = match &relation.args[i] {
+                                    Sort::Uninterpreted(s) => permutation[s.as_str()][x],
+                                    Sort::Bool => x,
+                                };
+                            }
+                            // look up the index to precompute the dst
+                            (*i, indices.get(&relation.name, 0, &new_elements))
+                        })
                     })
                     .filter(|(src, dst)| src != dst)
                     .collect()
@@ -1274,27 +929,27 @@ mod tests {
     use super::*;
     use fly::sorts::sort_check_module;
 
-    fn includes(set: &str, elements: Vec<Element>, context: &Context) -> Guard {
+    fn includes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: context.indices[&(set, elements)],
+            index: indices.get(set, 0, &elements),
             value: true,
         }
     }
-    fn excludes(set: &str, elements: Vec<Element>, context: &Context) -> Guard {
+    fn excludes(set: &str, elements: Vec<Element>, indices: &Indices) -> Guard {
         Guard {
-            index: context.indices[&(set, elements)],
+            index: indices.get(set, 0, &elements),
             value: false,
         }
     }
-    fn insert(set: &str, elements: Vec<Element>, context: &Context) -> Update {
+    fn insert(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: context.indices[&(set, elements)],
+            index: indices.get(set, 0, &elements),
             formula: Formula::always_true(),
         }
     }
-    fn remove(set: &str, elements: Vec<Element>, context: &Context) -> Update {
+    fn remove(set: &str, elements: Vec<Element>, indices: &Indices) -> Update {
         Update {
-            index: context.indices[&(set, elements)],
+            index: indices.get(set, 0, &elements),
             formula: Formula::always_false(),
         }
     }
@@ -1357,7 +1012,7 @@ mod tests {
             }],
         };
         let universe = std::collections::HashMap::new();
-        let context = Context::new(&signature, &universe);
+        let indices = Indices::new(&signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([0])],
@@ -1376,8 +1031,8 @@ mod tests {
                 value: false,
             }),
         };
-        let result0 = interpret(&program, Some(0), TraceCompression::No, false, &context);
-        let result1 = interpret(&program, Some(1), TraceCompression::No, false, &context);
+        let result0 = interpret(&program, Some(0), TraceCompression::No, false, &indices);
+        let result1 = interpret(&program, Some(1), TraceCompression::No, false, &indices);
         assert_eq!(result0, InterpreterResult::Unknown);
         let mut expected1 = Trace::new(state([0]), TraceCompression::No);
         expected1.push(state([1]));
@@ -1416,7 +1071,7 @@ mod tests {
             ],
         };
         let universe = std::collections::HashMap::new();
-        let context = Context::new(&signature, &universe);
+        let indices = Indices::new(&signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
@@ -1491,11 +1146,11 @@ mod tests {
                 value: false,
             }),
         };
-        let result1 = interpret(&program, Some(0), TraceCompression::No, false, &context);
-        let result2 = interpret(&program, Some(1), TraceCompression::No, false, &context);
-        let result3 = interpret(&program, Some(2), TraceCompression::No, false, &context);
-        let result4 = interpret(&program, Some(3), TraceCompression::No, false, &context);
-        let result5 = interpret(&program, Some(4), TraceCompression::No, false, &context);
+        let result1 = interpret(&program, Some(0), TraceCompression::No, false, &indices);
+        let result2 = interpret(&program, Some(1), TraceCompression::No, false, &indices);
+        let result3 = interpret(&program, Some(2), TraceCompression::No, false, &indices);
+        let result4 = interpret(&program, Some(3), TraceCompression::No, false, &indices);
+        let result5 = interpret(&program, Some(4), TraceCompression::No, false, &indices);
         assert_eq!(result1, InterpreterResult::Unknown);
         assert_eq!(result2, InterpreterResult::Unknown);
         assert_eq!(result3, InterpreterResult::Unknown);
@@ -1512,89 +1167,89 @@ mod tests {
     }
 
     #[test]
-    fn checker_set_lockserver_translation() -> Result<(), TranslationError> {
+    fn checker_set_lockserver_translation() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/examples/lockserver.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let context = Context::new(&m.signature, &universe);
+        let indices = Indices::new(&m.signature, &universe, 1);
 
         let trs = vec![
             transition(
-                vec![includes("grant_msg", vec![0], &context)],
+                vec![includes("grant_msg", vec![0], &indices)],
                 vec![
-                    insert("holds_lock", vec![0], &context),
-                    remove("grant_msg", vec![0], &context),
+                    insert("holds_lock", vec![0], &indices),
+                    remove("grant_msg", vec![0], &indices),
                 ],
             ),
             transition(
-                vec![includes("grant_msg", vec![1], &context)],
+                vec![includes("grant_msg", vec![1], &indices)],
                 vec![
-                    insert("holds_lock", vec![1], &context),
-                    remove("grant_msg", vec![1], &context),
+                    insert("holds_lock", vec![1], &indices),
+                    remove("grant_msg", vec![1], &indices),
                 ],
             ),
             transition(
-                vec![includes("holds_lock", vec![0], &context)],
+                vec![includes("holds_lock", vec![0], &indices)],
                 vec![
-                    insert("unlock_msg", vec![0], &context),
-                    remove("holds_lock", vec![0], &context),
+                    insert("unlock_msg", vec![0], &indices),
+                    remove("holds_lock", vec![0], &indices),
                 ],
             ),
             transition(
-                vec![includes("holds_lock", vec![1], &context)],
+                vec![includes("holds_lock", vec![1], &indices)],
                 vec![
-                    insert("unlock_msg", vec![1], &context),
-                    remove("holds_lock", vec![1], &context),
-                ],
-            ),
-            transition(
-                vec![
-                    includes("lock_msg", vec![0], &context),
-                    includes("server_holds_lock", vec![], &context),
-                ],
-                vec![
-                    insert("grant_msg", vec![0], &context),
-                    remove("lock_msg", vec![0], &context),
-                    remove("server_holds_lock", vec![], &context),
+                    insert("unlock_msg", vec![1], &indices),
+                    remove("holds_lock", vec![1], &indices),
                 ],
             ),
             transition(
                 vec![
-                    includes("lock_msg", vec![1], &context),
-                    includes("server_holds_lock", vec![], &context),
+                    includes("lock_msg", vec![0], &indices),
+                    includes("server_holds_lock", vec![], &indices),
                 ],
                 vec![
-                    insert("grant_msg", vec![1], &context),
-                    remove("lock_msg", vec![1], &context),
-                    remove("server_holds_lock", vec![], &context),
+                    insert("grant_msg", vec![0], &indices),
+                    remove("lock_msg", vec![0], &indices),
+                    remove("server_holds_lock", vec![], &indices),
                 ],
             ),
             transition(
-                vec![includes("unlock_msg", vec![0], &context)],
                 vec![
-                    insert("server_holds_lock", vec![], &context),
-                    remove("unlock_msg", vec![0], &context),
+                    includes("lock_msg", vec![1], &indices),
+                    includes("server_holds_lock", vec![], &indices),
+                ],
+                vec![
+                    insert("grant_msg", vec![1], &indices),
+                    remove("lock_msg", vec![1], &indices),
+                    remove("server_holds_lock", vec![], &indices),
                 ],
             ),
             transition(
-                vec![includes("unlock_msg", vec![1], &context)],
+                vec![includes("unlock_msg", vec![0], &indices)],
                 vec![
-                    insert("server_holds_lock", vec![], &context),
-                    remove("unlock_msg", vec![1], &context),
+                    insert("server_holds_lock", vec![], &indices),
+                    remove("unlock_msg", vec![0], &indices),
                 ],
             ),
-            transition(vec![], vec![insert("lock_msg", vec![0], &context)]),
-            transition(vec![], vec![insert("lock_msg", vec![1], &context)]),
+            transition(
+                vec![includes("unlock_msg", vec![1], &indices)],
+                vec![
+                    insert("server_holds_lock", vec![], &indices),
+                    remove("unlock_msg", vec![1], &indices),
+                ],
+            ),
+            transition(vec![], vec![insert("lock_msg", vec![0], &indices)]),
+            transition(vec![], vec![insert("lock_msg", vec![1], &indices)]),
         ];
 
         let expected = BoundedProgram {
             inits: vec![state([0, 0, 0, 0, 0, 0, 0, 0, 1])],
             trs,
             safe: Formula::Or(vec![
-                Formula::Guard(excludes("holds_lock", vec![0], &context)),
-                Formula::Guard(excludes("holds_lock", vec![1], &context)),
+                Formula::Guard(excludes("holds_lock", vec![0], &indices)),
+                Formula::Guard(excludes("holds_lock", vec![1], &indices)),
             ]),
         };
 
@@ -1606,36 +1261,36 @@ mod tests {
             target.trs.iter().sorted().collect::<Vec<_>>(),
         );
 
-        let output = interpret(&target, None, TraceCompression::No, false, &context);
+        let output = interpret(&target, None, TraceCompression::No, false, &indices);
         assert_eq!(output, InterpreterResult::Convergence);
 
         Ok(())
     }
 
     #[test]
-    fn checker_set_lockserver_buggy() -> Result<(), TranslationError> {
+    fn checker_set_lockserver_buggy() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/tests/examples/lockserver_buggy.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let (target, context) = translate(&m, &universe, false)?;
+        let (target, indices) = translate(&m, &universe, false)?;
 
-        let bug = interpret(&target, Some(12), TraceCompression::No, false, &context);
+        let bug = interpret(&target, Some(12), TraceCompression::No, false, &indices);
         if let InterpreterResult::Counterexample(trace) = &bug {
             assert_eq!(trace.depth(), 12);
         } else {
             assert!(matches!(bug, InterpreterResult::Counterexample(_)));
         }
 
-        let too_short = interpret(&target, Some(11), TraceCompression::No, false, &context);
+        let too_short = interpret(&target, Some(11), TraceCompression::No, false, &indices);
         assert_eq!(too_short, InterpreterResult::Unknown);
 
         Ok(())
     }
 
     #[test]
-    fn checker_set_consensus() -> Result<(), TranslationError> {
+    fn checker_set_consensus() -> Result<(), CheckerError> {
         let source = include_str!("../../temporal-verifier/examples/consensus.fly");
 
         let mut m = fly::parser::parse(source).unwrap();
@@ -1659,13 +1314,13 @@ mod tests {
         sort_check_module(&mut module).unwrap();
         let universe = std::collections::HashMap::new();
         assert_eq!(
-            Ok(CheckerAnswer::Convergence),
+            Ok(CheckerAnswer::Convergence(())),
             check(&module, &universe, Some(10), true.into(), false)
         );
     }
 
     #[test]
-    fn checker_set_copy_relation_size() -> Result<(), TranslationError> {
+    fn checker_set_copy_relation_size() -> Result<(), CheckerError> {
         let source = "
 sort x
 mutable f(x): bool
@@ -1690,8 +1345,8 @@ immutable f(s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 2)]);
-        let context = Context::new(&m.signature, &universe);
-        let mut set = IsoStateSet::new(&context);
+        let indices = Indices::new(&m.signature, &universe, 1);
+        let mut set = IsoStateSet::new(&indices);
 
         assert!(set.insert(&state([0, 0])));
         assert!(!set.insert(&state([0, 0])));
@@ -1707,8 +1362,8 @@ immutable f(a, b): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("a".to_string(), 3), ("b".to_string(), 3)]);
-        let context = Context::new(&m.signature, &universe);
-        let mut set = IsoStateSet::new(&context);
+        let indices = Indices::new(&m.signature, &universe, 1);
+        let mut set = IsoStateSet::new(&indices);
 
         // b: 0 -> 2, 2 -> 1, 1 -> 0
         assert!(set.insert(&state([1, 1, 1, 0, 0, 1, 0, 1, 1])));
@@ -1722,12 +1377,12 @@ immutable f(s, t, s): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("s".to_string(), 3), ("t".to_string(), 2)]);
-        let context = Context::new(&m.signature, &universe);
-        let mut set = IsoStateSet::new(&context);
+        let indices = Indices::new(&m.signature, &universe, 1);
+        let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;
             for (x, y, z) in vec {
-                out.set(context.indices[&("f", vec![x, y, z])], true);
+                out.set(indices.get("f", 0, &[x, y, z]), true);
             }
             out
         };
@@ -1757,12 +1412,12 @@ immutable f(s, bool, s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 3)]);
-        let context = Context::new(&m.signature, &universe);
-        let mut set = IsoStateSet::new(&context);
+        let indices = Indices::new(&m.signature, &universe, 1);
+        let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;
             for (x, y, z) in vec {
-                out.set(context.indices[&("f", vec![x, y, z])], true);
+                out.set(indices.get("f", 0, &[x, y, z]), true);
             }
             out
         };

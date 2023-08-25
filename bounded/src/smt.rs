@@ -4,29 +4,10 @@
 //! A bounded model checker for flyvy programs using an SMT solver.
 //! This is useful, even though it's slow, because it doesn't require sort bounds.
 
-use fly::semantics::Model;
+use crate::checker::*;
 use fly::{syntax::*, term::prime::Next, transitions::*};
 use solver::{conf::SolverConf, SatResp};
 use std::collections::HashMap;
-use thiserror::Error;
-
-#[allow(missing_docs)]
-#[derive(Error, Debug)]
-pub enum CheckerError {
-    #[error("{0}")]
-    ExtractionError(ExtractionError),
-    #[error("{0}")]
-    SolverError(String),
-}
-
-/// The result of a successful run of the bounded model checker
-#[derive(Debug, PartialEq)]
-pub enum CheckerAnswer {
-    /// The checker found a counterexample
-    Counterexample(Vec<Model>),
-    /// The checker did not find a counterexample
-    Unknown,
-}
 
 /// Check a given Module out to some depth.
 /// The checker ignores proof blocks.
@@ -35,7 +16,7 @@ pub fn check(
     conf: &SolverConf,
     depth: usize,
     print_timing: bool,
-) -> Result<CheckerAnswer, CheckerError> {
+) -> Result<CheckerAnswer<()>, CheckerError> {
     if !module.defs.is_empty() {
         panic!("definitions are not supported yet");
     }
