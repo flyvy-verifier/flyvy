@@ -3,7 +3,7 @@
 
 //! A structure that can map between (relation name, arguments) pairs and indices.
 
-use crate::quantenum::*;
+use crate::quant_enum::*;
 use biodivine_lib_bdd::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*};
 use std::collections::HashMap;

@@ -16,7 +16,7 @@
 
 pub mod checker;
 pub mod indices;
-pub mod quantenum;
+pub mod quant_enum;
 
 pub mod bdd;
 pub mod sat;

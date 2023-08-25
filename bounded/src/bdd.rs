@@ -3,7 +3,7 @@
 
 //! A bounded model checker for flyvy programs using symbolic evaluation.
 
-use crate::{checker::*, indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quant_enum::*};
 use biodivine_lib_bdd::*;
 use boolean_expression::BooleanExpression;
 use fly::{semantics::*, syntax::*, transitions::*};

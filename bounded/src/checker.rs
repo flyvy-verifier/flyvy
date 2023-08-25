@@ -3,7 +3,7 @@
 
 //! The interface that all bounded model checkers use.
 
-use crate::quantenum::*;
+use crate::quant_enum::*;
 use fly::{semantics::*, transitions::*};
 use thiserror::Error;
 

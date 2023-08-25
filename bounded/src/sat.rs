@@ -5,7 +5,7 @@
 //!
 //! [cadical]: https://fmv.jku.at/cadical/
 
-use crate::{checker::*, indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quant_enum::*};
 use cadical::Solver;
 use fly::{semantics::*, syntax::*, transitions::*};
 

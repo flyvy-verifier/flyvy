@@ -6,7 +6,7 @@
 
 use bitvec::prelude::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*, transitions::*};
-use crate::{checker::*, indices::*, quantenum::*};
+use crate::{checker::*, indices::*, quant_enum::*};
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
