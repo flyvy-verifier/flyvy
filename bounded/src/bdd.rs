@@ -70,20 +70,9 @@ fn check_internal<'a>(
     let indices = Indices::new(&module.signature, universe, 2);
 
     let translate = |term| {
-        fn enumerated_to_bdd(term: Enumerated, indices: &Indices) -> Bdd {
-            let go = |term| enumerated_to_bdd(term, indices);
-            match term {
-                Enumerated::And(xs) => indices.bdd_and(xs.into_iter().map(go)),
-                Enumerated::Or(xs) => indices.bdd_or(xs.into_iter().map(go)),
-                Enumerated::Not(x) => go(*x).not(),
-                Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
-                Enumerated::App(name, primes, args) => indices.bdd_var(&name, primes, &args),
-            }
-        }
-
         let term = enumerate_quantifiers(&term, &module.signature, universe)
             .map_err(CheckerError::EnumerationError)?;
-        Ok(enumerated_to_bdd(term, &indices))
+        Ok(indices.bdd_from_enumerated(term))
     };
 
     println!("starting translation...");

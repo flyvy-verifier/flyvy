@@ -239,46 +239,29 @@ fn translate<'a>(
         enumerated_to_formula(term, &indices)
     };
 
-    // get cube
-    let mut init = BoundedState::ZERO;
-    let mut constrained = HashSet::default();
-    let inits = formula(Term::and(&d.inits))?;
-    for constraint in inits.get_and() {
-        if let Formula::Guard(Guard { index, value }) = constraint {
-            init.set(index, value);
-            constrained.insert(index);
-        } else {
-            return Err(CheckerError::InitNotConj);
-        }
-    }
-    // enumerate cube
-    let mut inits = vec![init];
-    println!(
-        "enumerating {} initial states",
-        2_usize.pow((indices.num_vars - constrained.len()) as u32)
+    // compute initial states
+    let inits = Term::and(d.inits.iter().chain(&d.axioms));
+    let inits = indices.bdd_from_enumerated(
+        enumerate_quantifiers(&inits, &module.signature, universe)
+            .map_err(CheckerError::EnumerationError)?,
     );
-    for index in 0..indices.num_vars {
-        if !constrained.contains(&index) {
-            let mut with_unconstrained = inits.clone();
-            for init in &mut with_unconstrained {
-                init.set(index, true);
+    println!("enumerating {} initial states", inits.exact_cardinality());
+    let inits: Vec<BoundedState> = inits
+        .sat_valuations()
+        .map(|valuation| {
+            let mut init = BoundedState::ZERO;
+            for (r, rest) in indices.iter() {
+                for (xs, (i, _)) in rest {
+                    init.set(
+                        *i,
+                        valuation.value(indices.bdd_variables[indices.get(r, 0, xs)]),
+                    );
+                }
             }
-            inits.append(&mut with_unconstrained);
-        }
-    }
-    // filter by axioms
-    let axiom = formula(Term::and(&d.axioms))?;
-    let inits = inits
-        .into_iter()
-        .filter(|init| axiom.evaluate(init))
+            init
+        })
         .collect();
 
-    assert!(
-        d.mutable_axioms(&module.signature.relations)
-            .next()
-            .is_none(),
-        "currently, the set checker does not support axioms that mention mutable relations"
-    );
     // compute imperative transitions
     let trs = match d.transitions.as_slice() {
         [] => vec![],
@@ -316,7 +299,7 @@ fn translate<'a>(
             .map(|(_, unconstrained)| 2_usize.pow(unconstrained.len() as u32))
             .sum::<usize>()
     );
-    let trs: Vec<_> = trs
+    let mut trs: Vec<_> = trs
         .into_iter()
         .flat_map(|(tr, unconstrained)| {
             // enumerate cube
@@ -360,6 +343,60 @@ fn translate<'a>(
             trs
         })
         .collect();
+
+    // filter transitions using the mutable axioms
+    let mutable_axioms = formula(Term::and(d.mutable_axioms(&module.signature.relations)))?;
+    let guard_indices = mutable_axioms.guard_indices();
+    let mut should_keep = vec![true; trs.len()];
+    for (i, should_keep) in should_keep.iter_mut().enumerate() {
+        // if the axiom was true in the pre-state, it will still be true in the post-state
+        if guard_indices
+            .iter()
+            .all(|index| !trs[i].updates.iter().any(|u| *index == u.index))
+        {
+            continue;
+        }
+        // else, try to statically determine the post-state and evaluate it
+        let guards_with_no_updates: Vec<_> = trs[i]
+            .guards
+            .iter()
+            .cloned()
+            .filter(|guard| {
+                !trs[i]
+                    .updates
+                    .iter()
+                    .any(|update| update.index == guard.index)
+            })
+            .collect();
+        let true_or_false_updates: Vec<_> = trs[i]
+            .updates
+            .iter()
+            .filter_map(|update| match &update.formula {
+                f if *f == Formula::always_true() => Some(Guard {
+                    index: update.index,
+                    value: true,
+                }),
+                f if *f == Formula::always_false() => Some(Guard {
+                    index: update.index,
+                    value: false,
+                }),
+                _ => None,
+            })
+            .collect();
+        match mutable_axioms.evaluate_partial(
+            guards_with_no_updates
+                .into_iter()
+                .chain(true_or_false_updates),
+        ) {
+            Some(b) => *should_keep = b,
+            None => return Err(CheckerError::UnprovenMutableAxiom),
+        }
+    }
+    let mut i = 0;
+    trs.retain(|_| {
+        i += 1;
+        should_keep[i - 1]
+    });
 
     // compute safety property
     let safes = d.proofs.iter().map(|proof| proof.safety.x.clone());
@@ -521,6 +558,44 @@ impl Formula {
             Formula::And(terms) => terms.iter().all(|term| term.evaluate(state)),
             Formula::Or(terms) => terms.iter().any(|term| term.evaluate(state)),
             Formula::Guard(Guard { index, value }) => state.get(*index) == *value,
+        }
+    }
+
+    // returns Some(true) for true, Some(false) for false, and None for unknown
+    fn evaluate_partial(&self, state: impl IntoIterator<Item = Guard>) -> Option<bool> {
+        fn evaluate_partial(formula: &Formula, state: &HashMap<usize, bool>) -> Option<bool> {
+            match formula {
+                Formula::And(terms) => terms.iter().try_fold(true, |b, term| {
+                    match (b, evaluate_partial(term, state)) {
+                        (false, _) | (_, Some(false)) => Some(false),
+                        (true, Some(true)) => Some(true),
+                        _ => None,
+                    }
+                }),
+                Formula::Or(terms) => terms.iter().try_fold(false, |b, term| {
+                    match (b, evaluate_partial(term, state)) {
+                        (true, _) | (_, Some(true)) => Some(true),
+                        (false, Some(false)) => Some(false),
+                        _ => None,
+                    }
+                }),
+                Formula::Guard(Guard { index, value }) => state.get(index).map(|v| v == value),
+            }
+        }
+        let mut map = HashMap::default();
+        for guard in state {
+            map.insert(guard.index, guard.value);
+        }
+        evaluate_partial(self, &map)
+    }
+
+    // returns a vector of the indices in the guards in this formula
+    fn guard_indices(&self) -> Vec<usize> {
+        match self {
+            Formula::And(terms) | Formula::Or(terms) => {
+                terms.iter().flat_map(Formula::guard_indices).collect()
+            }
+            Formula::Guard(Guard { index, .. }) => vec![*index],
         }
     }
 }
@@ -1295,6 +1370,24 @@ mod tests {
 
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_module(&mut m).unwrap();
+        let universe = std::collections::HashMap::from([
+            ("node".to_string(), 2),
+            ("quorum".to_string(), 2),
+            ("value".to_string(), 2),
+        ]);
+        let output = check(&m, &universe, Some(10), TraceCompression::No, false)?;
+        assert_eq!(output, CheckerAnswer::Unknown);
+
+        Ok(())
+    }
+
+    #[test]
+    fn checker_set_consensus_forall() -> Result<(), CheckerError> {
+        let source = include_str!("../../temporal-verifier/examples/consensus_forall.fly");
+
+        let mut m = fly::parser::parse(source).unwrap();
+        sort_check_module(&mut m).unwrap();
+        let _ = m.convert_non_bool_relations().unwrap();
         let universe = std::collections::HashMap::from([
             ("node".to_string(), 2),
             ("quorum".to_string(), 2),

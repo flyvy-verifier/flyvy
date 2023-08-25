@@ -46,6 +46,9 @@ pub enum CheckerError {
     /// `Formula`s are single-vocabulary
     #[error("a transition contained a disjunction that contained a prime")]
     PrimeInFormula,
+    /// We can't support unproven mutable axioms without post-guards
+    #[error("an axiom that mentioned mutable relations couldn't be proven")]
+    UnprovenMutableAxiom,
 
     // smt.rs
     /// See solver::SolveError

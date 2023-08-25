@@ -132,6 +132,18 @@ impl Indices<'_> {
             .fold(self.bdd_context.mk_false(), |acc, term| acc.or(&term))
     }
 
+    /// Construct a `Bdd` from an `Enumerated`.
+    pub fn bdd_from_enumerated(&self, term: Enumerated) -> Bdd {
+        let go = |term| self.bdd_from_enumerated(term);
+        match term {
+            Enumerated::And(xs) => self.bdd_and(xs.into_iter().map(go)),
+            Enumerated::Or(xs) => self.bdd_or(xs.into_iter().map(go)),
+            Enumerated::Not(x) => go(*x).not(),
+            Enumerated::Eq(x, y) => go(*x).iff(&go(*y)),
+            Enumerated::App(name, primes, args) => self.bdd_var(&name, primes, &args),
+        }
+    }
+
     /// Construct a [`Model`] given a function over its indices at some time.
     pub fn model(&self, primes: usize, f: impl Fn(usize) -> usize) -> Model {
         Model::new(
