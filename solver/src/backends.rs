@@ -33,6 +33,17 @@ pub enum SolverType {
     Cvc5,
 }
 
+impl SolverType {
+    /// Returns the name of the binary of this [`SolverType`].
+    pub fn bin_name(&self) -> &'static str {
+        match self {
+            SolverType::Z3 => "z3",
+            SolverType::Cvc5 => "cvc5",
+            SolverType::Cvc4 => "cvc4",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct GenericOptions {
     timeout_ms: Option<usize>,
@@ -68,6 +79,16 @@ impl GenericBackend {
     pub fn seed(&mut self, seed: usize) -> &mut Self {
         self.opts.seed = seed;
         return self;
+    }
+
+    /// Get the solver type.
+    pub fn solver_type(&self) -> SolverType {
+        self.solver_type
+    }
+
+    /// Get the solver timeout.
+    pub fn get_timeout_ms(&self) -> Option<usize> {
+        self.opts.timeout_ms
     }
 }
 
@@ -222,6 +243,14 @@ impl Backend for &GenericBackend {
             .map(|(symbol, (interp, _))| (symbol, interp))
             .collect();
         FOModel { universe, interp }
+    }
+
+    fn returns_minimal(&self) -> bool {
+        // TODO: make sure CVC4 and CVC5 return minimal models
+        match self.solver_type {
+            SolverType::Z3 => false,
+            SolverType::Cvc4 | SolverType::Cvc5 => true,
+        }
     }
 }
 

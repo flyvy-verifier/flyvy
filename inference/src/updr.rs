@@ -5,13 +5,13 @@
 
 use im::{hashset, HashSet};
 use itertools::Itertools;
+use solver::basics::SingleSolver;
 use std::sync::Arc;
 
-use crate::basics::{CexOrCore, FOModule, TermOrModel, TransCexResult};
+use crate::basics::{CexOrCore, CexResult, FOModule, TermOrModel};
 use fly::syntax::Term::{NAryOp, Quantified, UnaryOp};
 use fly::syntax::*;
 use fly::term::cnf::term_to_cnf_clauses;
-use solver::conf::SolverConf;
 
 #[derive(Debug, Clone)]
 struct Frame {
@@ -33,7 +33,7 @@ struct BackwardsReachableState {
 
 /// State for a UPDR invariant search
 pub struct Updr {
-    solver_conf: Arc<SolverConf>,
+    solver: Arc<SingleSolver>,
     frames: Vec<Frame>,
     backwards_reachable_states: Vec<BackwardsReachableState>,
     currently_blocking_id: Option<usize>,
@@ -41,9 +41,9 @@ pub struct Updr {
 
 impl Updr {
     /// Initialize a UPDR search
-    pub fn new(solver_conf: Arc<SolverConf>) -> Updr {
+    pub fn new(solver_conf: Arc<SingleSolver>) -> Updr {
         Updr {
-            solver_conf,
+            solver: solver_conf,
             frames: vec![],
             backwards_reachable_states: vec![],
             currently_blocking_id: None,
@@ -71,7 +71,7 @@ impl Updr {
                     // println!("m: {}", t);
                     if module
                         .implies_cex(
-                            &self.solver_conf,
+                            self.solver.as_conf(),
                             &self.frames[found_state.known_absent_until_frame + 1].terms,
                             &Term::negate(t.clone()),
                         )
@@ -103,7 +103,7 @@ impl Updr {
         // Search for a new state.
         let last_frame = self.frames.last().unwrap();
         // println!("last_frame.terms {}", &last_frame.terms[0]);
-        let counter_example = module.safe_cex(&self.solver_conf, &last_frame.terms);
+        let counter_example = module.safe_cex(self.solver.as_conf(), &last_frame.terms);
         if module.module.proofs.is_empty() || counter_example.is_none() {
             // println!("None");
             // Nothing to block.
@@ -158,7 +158,7 @@ impl Updr {
             || (frame_index == 1
                 && module
                     .implies_cex(
-                        &self.solver_conf,
+                        self.solver.as_conf(),
                         &self.frames[0].terms,
                         &Term::negate(as_term.clone()),
                     )
@@ -229,9 +229,14 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(&negated) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
-                    module.trans_cex(&self.solver_conf, &prev_terms, &negated, false, true, None)
-                {
+                if let CexResult::UnsatCore(_) = module.trans_cex(
+                    self.solver.as_ref(),
+                    &prev_terms,
+                    &negated,
+                    true,
+                    None,
+                    true,
+                ) {
                     self.frames[i + 1].strengthen(negated.clone());
                 } else {
                     break 'push_frames;
@@ -253,7 +258,7 @@ impl Updr {
     ) -> CexOrCore {
         // run UPDR
         let prev_frame = &self.frames[frame_index];
-        let out = module.get_pred(&self.solver_conf, &prev_frame.terms, term_or_model);
+        let out = module.get_pred(self.solver.as_conf(), &prev_frame.terms, term_or_model);
 
         // if let TermOrModel::Model(model) = term_or_model {
         //     if let CexOrCore::Core(out) = &out {
@@ -397,7 +402,7 @@ impl Updr {
                     .filter(|t| t != term && !removed.contains(t))
                     .collect();
                 if module
-                    .implies_cex(&self.solver_conf, &f_minus_t, term)
+                    .implies_cex(self.solver.as_conf(), &f_minus_t, term)
                     .is_some()
                     && !module
                         .module
@@ -428,8 +433,8 @@ impl Updr {
                 if self.frames[i + 1].terms.contains(term) {
                     continue;
                 }
-                if let TransCexResult::UnsatCore(_) =
-                    module.trans_cex(&self.solver_conf, &prev_terms, term, false, true, None)
+                if let CexResult::UnsatCore(_) =
+                    module.trans_cex(self.solver.as_ref(), &prev_terms, term, true, None, true)
                 {
                     self.frames[i + 1].strengthen(term.clone());
                 }
@@ -468,7 +473,7 @@ impl Updr {
             // println!("checking inductiveness of frame {}", i);
             for term in &self.frames[i].terms {
                 if module
-                    .implies_cex(&self.solver_conf, &self.frames[i + 1].terms, term)
+                    .implies_cex(self.solver.as_conf(), &self.frames[i + 1].terms, term)
                     .is_some()
                 {
                     is_inductive = false;

@@ -15,7 +15,9 @@ use crate::{
     lemma::ids,
     quant::{QuantifierConfig, QuantifierPrefix},
 };
-use solver::conf::SolverConf;
+use solver::basics::BasicSolver;
+
+use rayon::prelude::*;
 
 /// An [`Atom`] is referred to via a certain index.
 pub type Atom = usize;
@@ -57,20 +59,20 @@ pub struct Atoms {
 }
 
 impl Atoms {
-    pub fn new(infer_cfg: &InferenceConfig, conf: &SolverConf, fo: &FOModule) -> Self {
+    pub fn new<B: BasicSolver>(infer_cfg: &InferenceConfig, solver: &B, fo: &FOModule) -> Self {
         let univ_prefix = infer_cfg.cfg.as_universal();
-        let to_term = infer_cfg
+        let to_term: Vec<Term> = infer_cfg
             .cfg
             .atoms(infer_cfg.nesting, infer_cfg.include_eq)
-            .into_iter()
+            .into_par_iter()
             .filter(|t| {
                 let univ_t = univ_prefix.quantify(t.clone());
                 let univ_not_t = univ_prefix.quantify(Term::negate(t.clone()));
 
-                fo.implication_cex(conf, &[], &univ_t).is_some()
-                    && fo.implication_cex(conf, &[], &univ_not_t).is_some()
+                fo.implication_cex(solver, &[], &univ_t).is_cex()
+                    && fo.implication_cex(solver, &[], &univ_not_t).is_cex()
             })
-            .collect_vec();
+            .collect();
         let to_index = to_term
             .iter()
             .enumerate()

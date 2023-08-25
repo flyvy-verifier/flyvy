@@ -4,8 +4,15 @@
 //! The temporal-verifier binary's command-line interface.
 
 use bounded::checker::CheckerAnswer;
-use clap::Args;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use path_slash::PathExt;
+use solver::basics::SingleSolver;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::{fs, process};
+
+use clap::Args;
 use codespan_reporting::{
     files::SimpleFile,
     term::{
@@ -17,19 +24,12 @@ use fly::semantics::models_to_string;
 use fly::syntax::{Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
-use inference::fixpoint::{self, qalpha_by_qf_body};
+use inference::fixpoint::{self, qalpha_dynamic};
 use inference::houdini;
 use inference::quant::QuantifierConfig;
 use inference::updr::Updr;
-use path_slash::PathExt;
-use solver::backends::{self, GenericBackend};
+use solver::backends;
 use solver::conf::SolverConf;
-use solver::{log_dir, solver_path};
-use std::collections::HashMap;
-use std::fs::create_dir_all;
-use std::path::Path;
-use std::sync::Arc;
-use std::{fs, path::PathBuf, process};
 use verify::module::verify_module;
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
@@ -139,6 +139,11 @@ struct InferenceConfigArgs {
     q_cfg_args: QuantifierConfigArgs,
 
     #[arg(long)]
+    /// Instead on parallizing the solvers for each query, try them one by one
+    /// in a sequential fallback fashion.
+    fallback: bool,
+
+    #[arg(long)]
     /// Defines the type of quantifier-free body (cnf/pdnf/pdnf-naive)
     qf_body: Option<String>,
 
@@ -218,7 +223,7 @@ struct InferenceConfigArgs {
 }
 
 impl InferenceConfigArgs {
-    fn to_cfg(&self, sig: &Signature) -> InferenceConfig {
+    fn to_cfg(&self, sig: &Signature, fname: String) -> InferenceConfig {
         let qf_body = match &self.qf_body {
             None => fixpoint::defaults::QF_BODY,
             Some(qf_body_str) => {
@@ -235,6 +240,8 @@ impl InferenceConfigArgs {
         };
 
         let mut cfg = InferenceConfig {
+            fname,
+            fallback: self.fallback,
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
@@ -449,14 +456,6 @@ pub struct App {
     command: Command,
 }
 
-fn solver_default_bin(t: SolverType) -> &'static str {
-    match t {
-        SolverType::Z3 => "z3",
-        SolverType::Cvc5 => "cvc5",
-        SolverType::Cvc4 => "cvc4",
-    }
-}
-
 impl SolverArgs {
     fn get_solver_conf(&self, fname: &String) -> SolverConf {
         let backend_type = match &self.solver {
@@ -464,32 +463,14 @@ impl SolverArgs {
             SolverType::Cvc5 => backends::SolverType::Cvc5,
             SolverType::Cvc4 => backends::SolverType::Cvc4,
         };
-        let solver_bin = solver_path(solver_default_bin(self.solver));
-        let tee: Option<PathBuf> = if self.smt {
-            let dir = log_dir(Path::new(fname));
-            create_dir_all(&dir).expect("could not create log dir");
-            if let Ok(rdir) = dir.read_dir() {
-                for entry in rdir {
-                    match entry {
-                        Err(_) => {}
-                        Ok(name) => {
-                            _ = fs::remove_file(name.path());
-                        }
-                    }
-                }
-            }
-            Some(dir)
-        } else {
-            None
-        };
-        let mut backend = GenericBackend::new(backend_type, &solver_bin);
-        backend.timeout_ms(if self.timeout > 0 {
-            Some(self.timeout * 1000)
-        } else {
-            None
-        });
-        backend.seed(self.solver_seed);
-        SolverConf { backend, tee }
+
+        SolverConf::new(
+            backend_type,
+            self.smt,
+            fname,
+            self.timeout,
+            self.solver_seed,
+        )
     }
 }
 
@@ -607,10 +588,13 @@ impl App {
                     ..
                 },
             ) => {
-                let conf = args.get_solver_conf();
                 m.inline_defs();
-                let infer_cfg = qargs.infer_cfg.to_cfg(&m.signature);
-                qalpha_by_qf_body(infer_cfg, &conf, &m, !args.no_print_invariant);
+                let infer_cfg = Arc::new(
+                    qargs
+                        .infer_cfg
+                        .to_cfg(&m.signature, args.infer_cmd.file().to_string()),
+                );
+                qalpha_dynamic(infer_cfg, &m, !args.no_print_invariant);
                 if args.time {
                     timing::report();
                 }
@@ -621,7 +605,7 @@ impl App {
                 println!("{}", printer::fmt(&m));
             }
             Command::UpdrVerify(ref args @ VerifyArgs { .. }) => {
-                let conf = Arc::new(args.get_solver_conf());
+                let conf = Arc::new(SingleSolver::new(args.get_solver_conf()));
                 let mut updr = Updr::new(conf);
                 let _result = updr.search(&m);
             }

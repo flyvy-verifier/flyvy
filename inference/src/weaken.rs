@@ -697,10 +697,8 @@ where
     }
 
     pub fn get_id(&self, prefix: &QuantifierPrefix, body: &O) -> Option<usize> {
-        self.bodies
-            .get(body)
-            .unwrap()
-            .iter()
+        let ids = self.bodies.get(body)?;
+        ids.iter()
             .copied()
             .find(|id| self.to_prefixes[id].contains(prefix))
     }
