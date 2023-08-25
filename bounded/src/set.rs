@@ -354,7 +354,6 @@ fn translate<'a>(
             .iter()
             .all(|index| !trs[i].updates.iter().any(|u| *index == u.index))
         {
-            *should_keep = true;
             continue;
         }
         // else, try to statically determine the post-state and evaluate it
