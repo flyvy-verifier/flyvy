@@ -18,12 +18,12 @@ use crate::{
     qalpha::{
         atoms::{sat_literals, Literals},
         quant::{QuantifierConfig, QuantifierPrefix},
-        subsume::{self, Element, Structure, SubsumptionMap},
+        subsume::{self, Clause, Element, Structure, SubsumptionMap},
     },
 };
 use fly::{
     semantics::{Assignment, Model},
-    syntax::{Quantifier, Term},
+    syntax::{Quantifier, Signature, Term},
 };
 
 use rayon::prelude::*;
@@ -68,13 +68,15 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
     /// Return weakenings of the given [`Self::Body`] which satisfy the given cube.
     fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
     where
-        I: Fn(&Self::Body) -> bool;
+        I: Fn(&Self::Body) -> bool + Sync;
 
     fn approx_space_size(&self) -> usize;
 
     fn sub_spaces(&self) -> Vec<Self>;
 
     fn contains(&self, other: &Self) -> bool;
+
+    fn body_from_clause(clause: Clause) -> Self::Body;
 }
 
 /// Specifies that all lemmas subsumed by the given set and permutations over variables should be ignored.
@@ -301,7 +303,7 @@ where
                 .into_par_iter()
                 .flat_map_iter(|body| {
                     self.lemma_qf.weaken(body, &structure, |b| {
-                        new_ignore.iter().any(|ig| ig.subsumes(&b))
+                        new_ignore.iter().any(|ig| ig.subsumes(b))
                     })
                 })
                 .collect();
@@ -419,43 +421,14 @@ where
         true
     }
 
-    pub fn weaken_cti(&mut self, prestate: &Model, poststate: &Model) -> bool {
-        let non_inductive: HashSet<usize> = self
-            .unsat(poststate, &Assignment::new(), 0)
-            .difference(&self.unsat(prestate, &Assignment::new(), 0))
-            .cloned()
-            .collect();
-
-        if non_inductive.is_empty() {
-            return false;
-        }
-
-        let mut to_weaken = self.clone_empty();
-        for i in &non_inductive {
-            to_weaken.insert(self.remove_by_id(i));
-        }
-
-        self.weaken_add(
-            to_weaken,
-            poststate,
-            &Assignment::new(),
-            0,
-            0,
-            false,
-            &vec![],
-        );
-
-        true
-    }
-
     fn bodies(&self) -> Vec<E> {
         self.by_id.values().cloned().collect_vec()
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> + '_ {
         self.by_id
             .values()
-            .map(|body| (Arc::new(self.prefix.restrict(body.ids())), body))
+            .map(|body| (Arc::new(self.prefix.restrict(body.ids())), body.clone()))
     }
 }
 
@@ -465,9 +438,6 @@ where
     E: Element,
     L: LemmaQf<Body = E>,
 {
-    config: Arc<QuantifierConfig>,
-    infer_cfg: Arc<InferenceConfig>,
-    literals: Arc<Literals>,
     sets: Vec<PrefixLemmaSet<E, L>>,
 }
 
@@ -476,23 +446,13 @@ where
     E: Element,
     L: LemmaQf<Body = E>,
 {
-    pub fn new(
-        config: Arc<QuantifierConfig>,
-        infer_cfg: Arc<InferenceConfig>,
-        literals: Arc<Literals>,
-        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>)>,
-    ) -> Self {
+    pub fn new(domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>)>) -> Self {
         let sets: Vec<PrefixLemmaSet<E, L>> = domains
             .into_iter()
             .map(|(prefix, lemma_qf, atoms)| PrefixLemmaSet::new(prefix, lemma_qf, atoms))
             .collect_vec();
 
-        Self {
-            config,
-            infer_cfg,
-            literals,
-            sets,
-        }
+        Self { sets }
     }
 
     pub fn init(&mut self) {
@@ -511,30 +471,12 @@ where
         weakened.iter().any(|b| *b)
     }
 
-    pub fn weaken_cti(&mut self, prestate: &Model, poststate: &Model) -> bool {
-        let weakened: Vec<bool> = self
-            .sets
-            .par_iter_mut()
-            .map(|set| set.weaken_cti(prestate, poststate))
-            .collect();
-
-        weakened.iter().any(|b| *b)
-    }
-
     pub fn len(&self) -> usize {
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E)> {
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> {
         self.sets.iter().flat_map(|set| set.as_iter()).sorted()
-    }
-
-    pub fn as_vec(&self) -> Vec<(Arc<QuantifierPrefix>, &E)> {
-        self.as_iter().collect_vec()
     }
 
     pub fn unsat(&self, model: &Model) -> bool {
@@ -542,54 +484,28 @@ where
             .par_iter()
             .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
     }
-
-    pub fn minimized(&self) -> LemmaSet<E, L> {
-        let mut lemmas: LemmaSet<E, L> =
-            LemmaSet::new(self.config.clone(), &self.infer_cfg, self.literals.clone());
-        for (prefix, body) in self.as_iter() {
-            lemmas.insert_minimized(prefix.clone(), body.clone());
-        }
-
-        lemmas
-    }
-
-    pub fn contains(&self, prefix: &QuantifierPrefix, body: &E) -> bool {
-        self.sets
-            .iter()
-            .any(|set| set.prefix.contains(prefix) && set.bodies.get(body).is_some())
-    }
 }
 
 /// Manages lemmas of several quantifier prefixes together, which all share some [`QuantifierConfig`].
 #[derive(Clone)]
-pub struct LemmaSet<E, L>
-where
-    E: Element,
-    L: LemmaQf<Body = E>,
-{
-    config: Arc<QuantifierConfig>,
-    lemma_qf: Arc<L>,
+pub struct LemmaSet<E: Element> {
+    signature: Arc<Signature>,
+    pub config: Arc<QuantifierConfig>,
     to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
     to_bodies: HashMap<usize, E>,
     bodies: E::Map<HashSet<usize>>,
     next: usize,
 }
 
-impl<E, L> LemmaSet<E, L>
-where
-    E: Element,
-    L: LemmaQf<Body = E>,
-{
-    pub fn new(
-        config: Arc<QuantifierConfig>,
-        infer_cfg: &InferenceConfig,
-        literals: Arc<Literals>,
-    ) -> Self {
-        let non_universal_vars = config.non_universal_vars();
+fn lemma_key<E: Element>(prefix: &QuantifierPrefix, body: &E) -> impl Ord {
+    (prefix.existentials(), body.size(), prefix.num_vars())
+}
 
+impl<E: Element> LemmaSet<E> {
+    pub fn new(signature: Arc<Signature>, config: Arc<QuantifierConfig>) -> Self {
         Self {
+            signature,
             config,
-            lemma_qf: Arc::new(L::new(infer_cfg, literals, &non_universal_vars)),
             to_prefixes: HashMap::default(),
             to_bodies: HashMap::default(),
             bodies: E::Map::new(),
@@ -597,59 +513,40 @@ where
         }
     }
 
-    pub fn clone_empty(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            lemma_qf: self.lemma_qf.clone(),
-            to_prefixes: HashMap::default(),
-            to_bodies: HashMap::default(),
-            bodies: E::Map::new(),
-            next: 0,
-        }
+    pub fn init(&mut self) {
+        self.insert(
+            Arc::new(self.config.as_universal().restrict(HashSet::default())),
+            E::bottom(),
+        );
     }
 
     pub fn len(&self) -> usize {
         self.to_prefixes.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn id_to_term(&self, id: &usize) -> Term {
-        self.to_prefixes[id].quantify(self.to_bodies[id].to_term(true))
-    }
-
-    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, &E) {
-        (self.to_prefixes[id].clone(), &self.to_bodies[id])
+    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, E) {
+        (self.to_prefixes[id].clone(), self.to_bodies[id].clone())
     }
 
     pub fn to_terms_ids(&self) -> impl Iterator<Item = (usize, Term)> + '_ {
-        self.ids().map(|id| (id, self.id_to_term(&id)))
+        self.as_iter()
+            .map(|((prefix, body), id)| (id, prefix.quantify(&self.signature, body.to_term(true))))
     }
 
     pub fn to_terms(&self) -> Vec<Term> {
         self.to_terms_ids().map(|(_, t)| t).collect()
     }
 
-    pub fn ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.to_prefixes.keys().copied()
-    }
-
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, &E, usize)> {
-        self.ids()
-            .map(|id| {
-                let (prefix, body) = self.id_to_lemma(&id);
-                (prefix, body, id)
-            })
-            .sorted_by_key(|(prefix, _, _)| (prefix.existentials(), prefix.num_vars()))
-    }
-
-    pub fn get_id(&self, prefix: &QuantifierPrefix, body: &E) -> Option<usize> {
-        let ids = self.bodies.get(body)?;
-        ids.iter()
+    pub fn as_iter(&self) -> impl Iterator<Item = ((Arc<QuantifierPrefix>, E), usize)> {
+        self.to_prefixes
+            .keys()
             .copied()
-            .find(|id| self.to_prefixes[id].contains(prefix))
+            .map(|id| (self.id_to_lemma(&id), id))
+            .sorted_by_key(|((prefix, body), _)| lemma_key(prefix, body))
+    }
+
+    pub fn as_vec(&self) -> Vec<((Arc<QuantifierPrefix>, E), usize)> {
+        self.as_iter().collect()
     }
 
     pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E) -> bool {
@@ -668,24 +565,6 @@ where
         }
 
         false
-    }
-
-    pub fn get_subsuming(&self, prefix: &QuantifierPrefix, body: &E) -> HashSet<usize> {
-        let mut subsuming: HashSet<usize> = HashSet::default();
-
-        for perm in self.config.permutations(0, Some(&body.ids())) {
-            let perm_body = body.substitute(&perm);
-            subsuming.extend(
-                self.bodies
-                    .get_subsuming(&perm_body)
-                    .into_iter()
-                    .flat_map(|(_, is)| is)
-                    .copied()
-                    .filter(|i| self.to_prefixes[i].subsumes(prefix)),
-            );
-        }
-
-        subsuming
     }
 
     pub fn get_subsumed(&self, prefix: &QuantifierPrefix, body: &E) -> HashSet<usize> {
@@ -733,13 +612,15 @@ where
         }
     }
 
-    pub fn remove(&mut self, id: &usize) {
-        self.to_prefixes.remove(id).unwrap();
+    pub fn remove(&mut self, id: &usize) -> (Arc<QuantifierPrefix>, E) {
+        let prefix = self.to_prefixes.remove(id).unwrap();
         let body = self.to_bodies.remove(id).unwrap();
         let hs = self.bodies.get_mut(&body).unwrap();
         hs.remove(id);
         if hs.is_empty() {
             self.bodies.remove(&body);
         }
+
+        (prefix, body)
     }
 }
