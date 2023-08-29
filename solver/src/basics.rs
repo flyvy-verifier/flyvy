@@ -4,9 +4,9 @@
 //! Traits defining a very basic interface to SMT solvers and a few implementations of them.
 
 use itertools::Itertools;
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 use fly::{
     semantics::Model,
@@ -310,26 +310,35 @@ impl BasicSolver for ParallelSolvers {
             return Err(SolverError::Killed);
         }
 
-        let results: Vec<_> = self
-            .0
-            .par_iter()
-            .map(|solver_conf| {
-                let res = check_sat_conf(solver_conf, &local_query_conf, assertions, assumptions);
-                match res {
-                    Err(SolverError::Killed) => Err(SolverError::Killed),
-                    Ok(BasicSolverResp::Unknown(reason))
-                    | Err(SolverError::CouldNotMinimize(reason)) => {
-                        Ok(BasicSolverResp::Unknown(reason))
-                    }
-                    // This case is reached only if the result is SAT, UNSAT, or some error other than SolverError::Killed,
-                    // which means that the other solvers should be canceled.
-                    _ => {
-                        local_cancelers.cancel();
-                        res
-                    }
-                }
-            })
-            .collect();
+        let results = thread::scope(|s| {
+            let handles = self
+                .0
+                .iter()
+                .map(|solver_conf| {
+                    s.spawn(|| {
+                        let res =
+                            check_sat_conf(solver_conf, &local_query_conf, assertions, assumptions);
+                        match res {
+                            Err(SolverError::Killed) => Err(SolverError::Killed),
+                            Ok(BasicSolverResp::Unknown(reason))
+                            | Err(SolverError::CouldNotMinimize(reason)) => {
+                                Ok(BasicSolverResp::Unknown(reason))
+                            }
+                            // This case is reached only if the result is SAT, UNSAT, or some error other than SolverError::Killed,
+                            // which means that the other solvers should be canceled.
+                            _ => {
+                                local_cancelers.cancel();
+                                res
+                            }
+                        }
+                    })
+                })
+                .collect_vec();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect_vec()
+        });
 
         let mut sat_or_unsat = vec![];
         let mut unknowns = vec![];
