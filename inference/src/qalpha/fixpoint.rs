@@ -13,7 +13,7 @@ use crate::basics::QfBody;
 use crate::{
     basics::{FOModule, InferenceConfig},
     qalpha::{
-        atoms::{generate_literals, restrict_by_prefix, Literals},
+        atoms::{generate_literals, restrict_by_prefix},
         lemma::{self, InductionFrame},
         subsume::{self, Element},
         weaken::{Domain, LemmaQf},
@@ -173,8 +173,13 @@ pub fn qalpha<E, L, S1, S2>(
         infer_cfg.gradual_smt,
         infer_cfg.minimal_smt,
     );
-    log::debug!("Computing atoms...");
-    let literals = Arc::new(generate_literals(&infer_cfg, main_solver, &fo));
+    log::debug!("Computing literals...");
+    let literals = Arc::new(generate_literals(
+        &infer_cfg,
+        &m.signature,
+        main_solver,
+        &fo,
+    ));
     let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
         (None, None) => None,
         (Some(width), Some(depth)) => Some((width, depth)),
@@ -258,11 +263,11 @@ pub fn qalpha<E, L, S1, S2>(
             (domain_size as f64).log10()
         );
         println!("Prefixes:");
-        for (prefix, lemma_qf, atoms) in &active_domains {
+        for (prefix, lemma_qf, literals) in &active_domains {
             println!(
-                "    {:?} --- {} atoms --- {:?} ~ {}",
+                "    {:?} --- {} literals --- {:?} ~ {}",
                 prefix,
-                atoms.len(),
+                literals.len(),
                 lemma_qf,
                 lemma_qf.approx_space_size()
             );
@@ -274,7 +279,6 @@ pub fn qalpha<E, L, S1, S2>(
             simulation_solver,
             m,
             &fo,
-            literals.clone(),
             active_domains.clone(),
             extend,
         );
@@ -341,14 +345,12 @@ pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invaria
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
-#[allow(clippy::too_many_arguments)]
 fn run_qalpha<E, L, S1, S2>(
     infer_cfg: Arc<InferenceConfig>,
     main_solver: &S1,
     simulation_solver: &S2,
     m: &Module,
     fo: &FOModule,
-    literals: Arc<Literals>,
     domains: Vec<Domain<L>>,
     extend: Option<(usize, usize)>,
 ) -> FoundFixpoint
@@ -373,11 +375,14 @@ where
         log::debug!("    {a}");
     }
 
+    let signature = Arc::new(m.signature.clone());
     let mut frame: InductionFrame<E, L> =
-        InductionFrame::new(infer_cfg.clone(), literals, domains, extend);
+        InductionFrame::new(infer_cfg.clone(), signature, domains, extend);
 
     // Begin by overapproximating the initial states.
     while frame.init_cycle(fo, main_solver) {}
+
+    frame.clear_blocked();
 
     // Handle transition CTI's.
     loop {

@@ -3,10 +3,11 @@
 
 //! An implementation of the qalpha algorithm
 
-pub mod atoms;
+mod atoms;
 pub mod fixpoint;
-pub mod lemma;
+mod lemma;
 pub mod quant;
-pub mod subsume;
-pub mod trie;
-pub mod weaken;
+mod subsume;
+mod transform;
+mod trie;
+mod weaken;

@@ -57,9 +57,8 @@ fn distribute(amount: usize, boxes: &[usize]) -> Vec<Vec<usize>> {
 /// A [`QuantifierSequence`] is a sequence where each position represents a sorted
 /// quantifier with a certain number of quantified variables.
 /// Note that this is a generic structure with a generic quantifier.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct QuantifierSequence<Q: Clone> {
-    pub signature: Arc<Signature>,
     pub quantifiers: Vec<Q>,
     pub sorts: Vec<usize>,
     pub names: Vec<Vec<String>>,
@@ -83,7 +82,6 @@ impl<Q: Clone> QuantifierSequence<Q> {
         let names = vars(&signature, &sorts, counts);
 
         QuantifierSequence {
-            signature,
             quantifiers,
             sorts,
             names,
@@ -103,7 +101,6 @@ impl<Q: Clone> QuantifierSequence<Q> {
     /// Restrict the sequence to variables in the given ID set.
     pub fn restrict(&self, ids: HashSet<String>) -> Self {
         Self {
-            signature: self.signature.clone(),
             quantifiers: self.quantifiers.clone(),
             sorts: self.sorts.clone(),
             names: self
@@ -125,13 +122,18 @@ impl<Q: Clone> QuantifierSequence<Q> {
     }
 
     /// Generate all atoms in a given signature with this [`QuantifierSequence`].
-    pub fn atoms(&self, nesting: Option<usize>, include_eq: bool) -> Vec<Term> {
-        let mut sorted_vars = vec![vec![]; self.signature.sorts.len()];
+    pub fn atoms(
+        &self,
+        signature: &Signature,
+        nesting: Option<usize>,
+        include_eq: bool,
+    ) -> Vec<Term> {
+        let mut sorted_vars = vec![vec![]; signature.sorts.len()];
         for (i, mut v) in self.names.iter().cloned().enumerate() {
             sorted_vars[self.sorts[i]].append(&mut v);
         }
 
-        self.signature
+        signature
             .terms_by_sort(&sorted_vars, nesting, include_eq)
             .pop()
             .unwrap()
@@ -179,7 +181,6 @@ impl<Q: Clone> QuantifierSequence<Q> {
 
     pub fn as_universal(&self) -> QuantifierPrefix {
         QuantifierPrefix {
-            signature: self.signature.clone(),
             quantifiers: vec![Quantifier::Forall; self.len()],
             sorts: self.sorts.clone(),
             names: self.names.clone(),
@@ -208,7 +209,6 @@ impl QuantifierConfig {
     ) -> Vec<QuantifierPrefix> {
         if self.is_empty() {
             return vec![QuantifierPrefix {
-                signature: self.signature.clone(),
                 quantifiers: vec![],
                 sorts: vec![],
                 names: vec![],
@@ -236,7 +236,6 @@ impl QuantifierConfig {
                     })
                     .multi_cartesian_product_fixed()
                     .map(|quantifiers| QuantifierPrefix {
-                        signature: self.signature.clone(),
                         quantifiers,
                         sorts: self.sorts.clone(),
                         names: self
@@ -289,7 +288,7 @@ impl Debug for QuantifierConfig {
 
 impl QuantifierPrefix {
     /// Quantify the given term according to this [`QuantifierPrefix`].
-    pub fn quantify(&self, mut term: Term) -> Term {
+    pub fn quantify(&self, signature: &Signature, mut term: Term) -> Term {
         let present_ids = lemma::ids(&term);
         for (i, v) in self.names.iter().enumerate().rev() {
             let binders = v
@@ -298,7 +297,7 @@ impl QuantifierPrefix {
                     if present_ids.contains(name) {
                         Some(Binder {
                             name: name.clone(),
-                            sort: Sort::Uninterpreted(self.signature.sorts[self.sorts[i]].clone()),
+                            sort: Sort::Uninterpreted(signature.sorts[self.sorts[i]].clone()),
                         })
                     } else {
                         None
@@ -328,10 +327,10 @@ impl QuantifierPrefix {
         assert_eq!(self.len(), other.len());
 
         (0..self.len()).all(|i| {
-            other.names.is_empty()
-                || (self.names[i].len() >= other.names[i].len()
-                    && (self.quantifiers[i] == Quantifier::Forall
-                        || other.quantifiers[i] == Quantifier::Exists))
+            self.names.is_empty()
+                || other.names.is_empty()
+                || self.quantifiers[i] == Quantifier::Forall
+                || other.quantifiers[i] == Quantifier::Exists
         })
     }
 

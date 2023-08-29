@@ -47,6 +47,12 @@ pub trait Element: Clone + Eq + Hash + Ord + Send + Sync + Debug {
     fn to_base(&self, positive: bool) -> Self::Base;
 
     fn from_base(base: Self::Base, positive: bool) -> Self;
+
+    fn to_cnf(&self) -> Cnf;
+
+    fn to_dnf(&self) -> Dnf;
+
+    fn size(&self) -> usize;
 }
 
 pub trait SubsumptionMap: Clone + Send + Sync {
@@ -79,7 +85,7 @@ pub trait SubsumptionMap: Clone + Send + Sync {
 }
 
 fn rev<T: Clone>(seq: &[T]) -> Vec<T> {
-    seq.into_iter().cloned().rev().collect_vec()
+    seq.iter().cloned().rev().collect_vec()
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -152,6 +158,50 @@ impl<E: Element> Element for Neg<E> {
 
     fn from_base(base: Self::Base, positive: bool) -> Self {
         Neg(E::from_base(base, !positive))
+    }
+
+    fn to_cnf(&self) -> Cnf {
+        self.0
+            .to_dnf()
+            .0
+             .0
+            .iter()
+            .map(|neg_cube: &Neg<Cube>| {
+                Neg(And::from(
+                    neg_cube
+                        .0
+                         .0
+                        .iter()
+                        .map(|literal| Neg(literal.negate()))
+                        .collect_vec(),
+                ))
+            })
+            .collect_vec()
+            .into()
+    }
+
+    fn to_dnf(&self) -> Dnf {
+        Neg(self
+            .0
+            .to_cnf()
+            .0
+            .iter()
+            .map(|clause: &Clause| {
+                Neg(And::from(
+                    clause
+                        .0
+                         .0
+                        .iter()
+                        .map(|neg_literal| neg_literal.0.negate())
+                        .collect_vec(),
+                ))
+            })
+            .collect_vec()
+            .into())
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
     }
 }
 
@@ -232,7 +282,7 @@ impl<M: SubsumptionMap> SubsumptionMap for NegMap<M> {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct And<E: Element>(Vec<E>);
+pub struct And<E: Element>(pub Vec<E>);
 
 pub type Or<E> = Neg<And<Neg<E>>>;
 
@@ -313,10 +363,11 @@ impl<E: Element> Element for And<E> {
         if self.satisfied_by(m) {
             vec![self.clone()]
         } else if self.0 == vec![E::bottom()] {
-            self.0[0]
-                .weaken(&cfg.1, m)
+            let weakenings = self.0[0].weaken(&cfg.1, m);
+            let weaken_count = weakenings.len();
+            weakenings
                 .into_iter()
-                .combinations(cfg.0)
+                .combinations(cfg.0.min(weaken_count))
                 .map(|elements| elements.into())
                 .collect_vec()
         } else {
@@ -387,6 +438,35 @@ impl<E: Element> Element for And<E> {
             .map(|b| E::from_base(b, positive))
             .collect_vec()
             .into()
+    }
+
+    fn to_cnf(&self) -> Cnf {
+        self.0
+            .iter()
+            .flat_map(|conjunct| conjunct.to_cnf().0)
+            .collect_vec()
+            .into()
+    }
+
+    fn to_dnf(&self) -> Dnf {
+        Neg(self
+            .0
+            .iter()
+            .map(|disjunct| disjunct.to_dnf().0 .0)
+            .multi_cartesian_product_fixed()
+            .map(|v| {
+                Neg(v
+                    .into_iter()
+                    .flat_map(|cube| cube.0 .0)
+                    .collect_vec()
+                    .into())
+            })
+            .collect_vec()
+            .into())
+    }
+
+    fn size(&self) -> usize {
+        self.0.iter().map(|e| e.size()).sum()
     }
 }
 
@@ -662,6 +742,37 @@ where
         )
             .into()
     }
+
+    fn to_cnf(&self) -> Cnf {
+        [self.0.to_cnf().0, self.1.to_cnf().0]
+            .into_iter()
+            .multi_cartesian_product_fixed()
+            .map(|clauses: Vec<Clause>| {
+                Neg(clauses
+                    .into_iter()
+                    .flat_map(|cl| cl.0 .0)
+                    .collect_vec()
+                    .into())
+            })
+            .collect_vec()
+            .into()
+    }
+
+    fn to_dnf(&self) -> Dnf {
+        Neg(self
+            .0
+            .to_dnf()
+            .0
+             .0
+            .into_iter()
+            .chain(self.1.to_dnf().0 .0)
+            .collect_vec()
+            .into())
+    }
+
+    fn size(&self) -> usize {
+        self.0.size() + self.1.size()
+    }
 }
 
 #[derive(Clone)]
@@ -845,7 +956,7 @@ impl<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> Ord for Bounded<E> {
 
 impl<E: PartialEq + Eq + PartialOrd + Ord + Hash + Clone> PartialOrd for Bounded<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -954,6 +1065,16 @@ where
     }
 }
 
+impl Bounded<Literal> {
+    pub fn negate(&self) -> Self {
+        match self {
+            Bounded::Bottom => Bounded::Top,
+            Bounded::Element(literal) => Bounded::Element(literal.negate()),
+            Bounded::Top => Bounded::Bottom,
+        }
+    }
+}
+
 impl Element for Bounded<Literal> {
     type Config = Arc<Literals>;
     type Base = Self;
@@ -1054,6 +1175,29 @@ impl Element for Bounded<Literal> {
             (Bounded::Element(literal), false) => literal.negate().into(),
         }
     }
+
+    fn to_cnf(&self) -> Cnf {
+        match self {
+            Bounded::Bottom => Cnf::bottom(),
+            Bounded::Element(_) => Cnf::from_base(vec![vec![self.clone()]], true),
+            Bounded::Top => Cnf::top(),
+        }
+    }
+
+    fn to_dnf(&self) -> Dnf {
+        match self {
+            Bounded::Bottom => Dnf::bottom(),
+            Bounded::Element(_) => Dnf::from_base(vec![vec![self.clone()]], true),
+            Bounded::Top => Dnf::top(),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Bounded::Element(_) => 1,
+            _ => 0,
+        }
+    }
 }
 
 pub type Clause = Or<Bounded<Literal>>;
@@ -1072,7 +1216,7 @@ mod tests {
     use super::{Clause, Cnf, Cube, Element, SubsumptionMap};
 
     fn lit(name: &str, positive: bool) -> Literal {
-        Literal(Term::id(name), positive)
+        Literal(Arc::new(Term::id(name)), positive)
     }
 
     #[test]
