@@ -637,8 +637,9 @@ where
 
         let start_time = Instant::now();
         let res = lemmas
-            .into_par_iter()
+            .iter()
             .enumerate()
+            .par_bridge()
             .filter(|(_, (lemma, _))| {
                 let blocked_read = blocked_lock.read().unwrap();
                 !blocked_read.0.contains_key(lemma)
@@ -673,7 +674,7 @@ where
 
                 let term = prefix.quantify(&self.signature, body.to_term(true));
                 // Check if the lemma is implied by the lemmas preceding it.
-                let implication_time = Instant::now();
+                let mut query_start = Instant::now();
                 if let CexResult::UnsatCore(core) = fo.implication_cex(
                     solver,
                     &lemma_terms[..idx],
@@ -682,8 +683,8 @@ where
                     false,
                 ) {
                     log::info!(
-                        "{:>8}ms. Implication found UNSAT with {} formulas in core",
-                        implication_time.elapsed().as_millis(),
+                        "{:>8}ms. ({idx}) Implication found UNSAT with {} formulas in core",
+                        query_start.elapsed().as_millis(),
                         core.len(),
                     );
 
@@ -693,13 +694,14 @@ where
                 }
 
                 // Check if the lemma is inductively implied by the entire frame.
-                let pre_ids = [&[lemma_id], &lemma_ids[..idx], &lemma_ids[(idx + 1)..]].concat();
+                let pre_ids = [&[*lemma_id], &lemma_ids[..idx], &lemma_ids[(idx + 1)..]].concat();
                 let pre_terms = [
                     &[term.clone()],
                     &lemma_terms[..idx],
                     &lemma_terms[(idx + 1)..],
                 ]
                 .concat();
+                query_start = Instant::now();
                 match fo.trans_cex(
                     solver,
                     &pre_terms,
@@ -721,12 +723,29 @@ where
                             *total_sat_lock += 1;
                         }
 
+                        log::info!(
+                            "{:>8}ms. ({idx}) Transition found SAT",
+                            query_start.elapsed().as_millis()
+                        );
                         assert_eq!(models.len(), 2);
                         return Some(models.pop().unwrap());
                     }
-                    CexResult::UnsatCore(core) => handle_core(core, &pre_ids),
+                    CexResult::UnsatCore(core) => {
+                        log::info!(
+                            "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
+                            start_time.elapsed().as_millis(),
+                            core.len()
+                        );
+                        handle_core(core, &pre_ids);
+                    }
                     CexResult::Canceled => (),
-                    CexResult::Unknown(_) => *unknown.lock().unwrap() = true,
+                    CexResult::Unknown(_) => {
+                        log::info!(
+                            "{:>8}ms. ({idx}) Transition found unknown",
+                            query_start.elapsed().as_millis()
+                        );
+                        *unknown.lock().unwrap() = true;
+                    }
                 }
 
                 None

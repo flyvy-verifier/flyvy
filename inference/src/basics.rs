@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     sync::Mutex,
-    time::Instant,
 };
 
 use crate::qalpha::quant::QuantifierConfig;
@@ -240,7 +239,6 @@ impl FOModule {
     {
         let transitions = self.disj_trans();
         let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
-        let start_time = Instant::now();
 
         if cancelers
             .as_ref()
@@ -299,10 +297,6 @@ impl FOModule {
             .iter()
             .any(|res| matches!(res, CexResult::Cex(_)))
         {
-            log::info!(
-                "{:>8}ms. Transition found SAT",
-                start_time.elapsed().as_millis()
-            );
             return cex_results
                 .into_iter()
                 .find(|res| matches!(res, CexResult::Cex(_)))
@@ -322,10 +316,6 @@ impl FOModule {
             .iter()
             .any(|res| matches!(res, CexResult::Unknown(_)))
         {
-            log::info!(
-                "{:>8}ms. Transition found unknown",
-                start_time.elapsed().as_millis()
-            );
             return CexResult::Unknown(
                 cex_results
                     .into_iter()
@@ -338,21 +328,14 @@ impl FOModule {
         }
 
         // Otherwise, all results must be UNSAT-cores
-        let separate_cores = cex_results
+        let unsat_core = cex_results
             .into_iter()
-            .map(|res| match res {
+            .flat_map(|res| match res {
                 CexResult::UnsatCore(core) => core,
                 _ => unreachable!(),
             })
-            .collect_vec();
-        let core_sizes = separate_cores.iter().map(|core| core.len()).collect_vec();
-        let unsat_core: HashSet<usize> = separate_cores.into_iter().flatten().collect();
-        log::info!(
-            "{:>8}ms. Transition found UNSAT with {} formulas in core (by transition: {:?})",
-            start_time.elapsed().as_millis(),
-            unsat_core.len(),
-            core_sizes
-        );
+            .collect();
+
         CexResult::UnsatCore(unsat_core)
     }
 
