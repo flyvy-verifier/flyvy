@@ -84,8 +84,11 @@ pub fn generate_literals<B: BasicSolver>(
             let univ_t = univ_prefix.quantify(signature, t.clone());
             let univ_not_t = univ_prefix.quantify(signature, Term::negate(t.clone()));
 
-            fo.implication_cex(solver, &[], &univ_t).is_cex()
-                && fo.implication_cex(solver, &[], &univ_not_t).is_cex()
+            fo.implication_cex(solver, &[], &univ_t, None, false)
+                .is_cex()
+                && fo
+                    .implication_cex(solver, &[], &univ_not_t, None, false)
+                    .is_cex()
         })
         // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
         // This is done to allow substitutions without creating equivalent equalities.

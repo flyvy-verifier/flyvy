@@ -621,7 +621,12 @@ where
 
     /// Get an post-state of the frame which violates one of the frame's lemmas.
     fn trans_cex<S: BasicSolver>(&mut self, fo: &FOModule, solver: &S) -> Option<Model> {
-        let (pre_ids, pre_terms): (Vec<usize>, Vec<Term>) = self.lemmas.to_terms_ids().unzip();
+        let lemmas = self.lemmas.as_vec();
+        let lemma_ids = lemmas.iter().map(|(_, id)| *id).collect_vec();
+        let lemma_terms = lemmas
+            .iter()
+            .map(|((prefix, body), _)| prefix.quantify(&self.signature, body.to_term(true)))
+            .collect_vec();
 
         let cancelers = SolverCancelers::new();
         let unknown = Mutex::new(false);
@@ -631,21 +636,73 @@ where
         let blocked_lock = RwLock::new((&mut self.blocked_to_core, &mut self.core_to_blocked));
 
         let start_time = Instant::now();
-        let res = self
-            .lemmas
-            .as_vec()
+        let res = lemmas
             .into_par_iter()
-            .filter(|(lemma, _)| {
+            .enumerate()
+            .filter(|(_, (lemma, _))| {
                 let blocked_read = blocked_lock.read().unwrap();
                 !blocked_read.0.contains_key(lemma)
             })
-            .find_map_any(|((prefix, body), lemma_id)| {
+            .find_map_any(|(idx, ((prefix, body), lemma_id))| {
+                let handle_core = |core: std::collections::HashSet<usize>, ids: &[usize]| {
+                    {
+                        let mut total_unsat_lock = total_unsat.lock().unwrap();
+                        *total_unsat_lock += 1;
+                    }
+
+                    {
+                        let lemma = (prefix.clone(), body.clone());
+                        let mut blocked_write = blocked_lock.write().unwrap();
+                        let core = core
+                            .into_iter()
+                            .map(|i| self.lemmas.id_to_lemma(&ids[i]))
+                            .collect();
+                        for core_lemma in &core {
+                            if let Some(hs) = blocked_write.1.get_mut::<Lemma<E>>(core_lemma) {
+                                hs.insert(lemma.clone());
+                            } else {
+                                blocked_write.1.insert(
+                                    core_lemma.clone(),
+                                    HashSet::from_iter([lemma.clone()]),
+                                );
+                            }
+                        }
+                        blocked_write.0.insert(lemma, core);
+                    }
+                };
+
                 let term = prefix.quantify(&self.signature, body.to_term(true));
-                let pre_ids: &[usize] = &[&[lemma_id], &pre_ids[..]].concat();
-                let pre_terms: &[Term] = &[&[term.clone()], &pre_terms[..]].concat();
+                // Check if the lemma is implied by the lemmas preceding it.
+                let implication_time = Instant::now();
+                if let CexResult::UnsatCore(core) = fo.implication_cex(
+                    solver,
+                    &lemma_terms[..idx],
+                    &term,
+                    Some(cancelers.clone()),
+                    false,
+                ) {
+                    log::info!(
+                        "{:>8}ms. Implication found UNSAT with {} formulas in core",
+                        implication_time.elapsed().as_millis(),
+                        core.len(),
+                    );
+
+                    handle_core(core, &lemma_ids);
+
+                    return None;
+                }
+
+                // Check if the lemma is inductively implied by the entire frame.
+                let pre_ids = [&[lemma_id], &lemma_ids[..idx], &lemma_ids[(idx + 1)..]].concat();
+                let pre_terms = [
+                    &[term.clone()],
+                    &lemma_terms[..idx],
+                    &lemma_terms[(idx + 1)..],
+                ]
+                .concat();
                 match fo.trans_cex(
                     solver,
-                    pre_terms,
+                    &pre_terms,
                     &term,
                     false,
                     Some(cancelers.clone()),
@@ -667,32 +724,7 @@ where
                         assert_eq!(models.len(), 2);
                         return Some(models.pop().unwrap());
                     }
-                    CexResult::UnsatCore(core) => {
-                        {
-                            let mut total_unsat_lock = total_unsat.lock().unwrap();
-                            *total_unsat_lock += 1;
-                        }
-
-                        {
-                            let lemma = (prefix, body);
-                            let mut blocked_write = blocked_lock.write().unwrap();
-                            let core = core
-                                .into_iter()
-                                .map(|i| self.lemmas.id_to_lemma(&pre_ids[i]))
-                                .collect();
-                            for core_lemma in &core {
-                                if let Some(hs) = blocked_write.1.get_mut::<Lemma<E>>(core_lemma) {
-                                    hs.insert(lemma.clone());
-                                } else {
-                                    blocked_write.1.insert(
-                                        core_lemma.clone(),
-                                        HashSet::from_iter([lemma.clone()]),
-                                    );
-                                }
-                            }
-                            blocked_write.0.insert(lemma, core);
-                        }
-                    }
+                    CexResult::UnsatCore(core) => handle_core(core, &pre_ids),
                     CexResult::Canceled => (),
                     CexResult::Unknown(_) => *unknown.lock().unwrap() = true,
                 }
