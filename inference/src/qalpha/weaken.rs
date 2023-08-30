@@ -542,7 +542,7 @@ impl<E: Element> LemmaSet<E> {
             .keys()
             .copied()
             .map(|id| (self.id_to_lemma(&id), id))
-            .sorted_by_key(|((prefix, body), _)| lemma_key(prefix, body))
+            .sorted_by_key(|((prefix, body), id)| (lemma_key(prefix, body), *id))
     }
 
     pub fn as_vec(&self) -> Vec<((Arc<QuantifierPrefix>, E), usize)> {

@@ -62,7 +62,10 @@ fn invariant_cover<S: BasicSolver>(
     let covered = proof
         .invariants
         .par_iter()
-        .filter(|inv| !fo.implication_cex(solver, lemmas, &inv.x).is_cex())
+        .filter(|inv| {
+            !fo.implication_cex(solver, lemmas, &inv.x, None, false)
+                .is_cex()
+        })
         .count();
 
     (covered, proof.invariants.len())

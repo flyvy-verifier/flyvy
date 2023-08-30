@@ -217,7 +217,7 @@ impl FOModule {
     }
 
     pub fn init_cex<B: BasicSolver>(&self, solver: &B, t: &Term) -> Option<Model> {
-        self.implication_cex(solver, &self.module.inits, t)
+        self.implication_cex(solver, &self.module.inits, t, None, false)
             .into_option()
             .map(|mut models| {
                 assert_eq!(models.len(), 1);
@@ -299,7 +299,10 @@ impl FOModule {
             .iter()
             .any(|res| matches!(res, CexResult::Cex(_)))
         {
-            log::info!("{:>8}ms. Found SAT", start_time.elapsed().as_millis());
+            log::info!(
+                "{:>8}ms. Transition found SAT",
+                start_time.elapsed().as_millis()
+            );
             return cex_results
                 .into_iter()
                 .find(|res| matches!(res, CexResult::Cex(_)))
@@ -319,7 +322,10 @@ impl FOModule {
             .iter()
             .any(|res| matches!(res, CexResult::Unknown(_)))
         {
-            log::info!("{:>8}ms. Found unknown", start_time.elapsed().as_millis());
+            log::info!(
+                "{:>8}ms. Transition found unknown",
+                start_time.elapsed().as_millis()
+            );
             return CexResult::Unknown(
                 cex_results
                     .into_iter()
@@ -342,7 +348,7 @@ impl FOModule {
         let core_sizes = separate_cores.iter().map(|core| core.len()).collect_vec();
         let unsat_core: HashSet<usize> = separate_cores.into_iter().flatten().collect();
         log::info!(
-            "{:>8}ms. Found UNSAT with {} formulas in core (by transition: {:?})",
+            "{:>8}ms. Transition found UNSAT with {} formulas in core (by transition: {:?})",
             start_time.elapsed().as_millis(),
             unsat_core.len(),
             core_sizes
@@ -350,7 +356,26 @@ impl FOModule {
         CexResult::UnsatCore(unsat_core)
     }
 
-    pub fn implication_cex<B: BasicSolver>(&self, solver: &B, hyp: &[Term], t: &Term) -> CexResult {
+    pub fn implication_cex<B, C>(
+        &self,
+        solver: &B,
+        hyp: &[Term],
+        t: &Term,
+        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
+        save_tee: bool,
+    ) -> CexResult
+    where
+        C: BasicSolverCanceler,
+        B: BasicSolver<Canceler = C>,
+    {
+        let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
+        if cancelers
+            .as_ref()
+            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
+        {
+            return CexResult::Canceled;
+        }
+
         let mut core: Core = if self.gradual {
             Core::new(hyp, HashSet::new(), self.minimal)
         } else {
@@ -360,24 +385,23 @@ impl FOModule {
         let query_conf = QueryConf {
             sig: &self.signature,
             n_states: 1,
-            cancelers: None,
+            cancelers: Some(local_cancelers),
             minimal_model: true,
-            save_tee: false,
+            save_tee,
         };
         let mut assertions = self.module.axioms.clone();
         assertions.push(Term::not(t));
         loop {
-            match solver
-                .check_sat(&query_conf, &assertions, &core.to_assumptions())
-                .expect("error in solver")
-            {
-                BasicSolverResp::Sat(models) => {
+            match solver.check_sat(&query_conf, &assertions, &core.to_assumptions()) {
+                Ok(BasicSolverResp::Sat(models)) => {
                     if !core.add_counter_model(models[0].clone()) {
                         return CexResult::Cex(models);
                     }
                 }
-                BasicSolverResp::Unsat(core) => return CexResult::UnsatCore(core),
-                BasicSolverResp::Unknown(reason) => return CexResult::Unknown(reason),
+                Ok(BasicSolverResp::Unsat(core)) => return CexResult::UnsatCore(core),
+                Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
+                Err(SolverError::Killed) => return CexResult::Canceled,
+                Err(e) => panic!("error in solver: {e}"),
             }
         }
     }
