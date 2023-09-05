@@ -26,7 +26,7 @@ pub type Assignment = im::HashMap<String, Element>;
 
 /// An interpretation gives the complete value of a function for a
 /// finite-cardinality universe.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Hash)]
 pub struct Interpretation {
     /// The type of this function, given as the cardinality first of all the
     /// inputs and finally the cardinality of the output.
@@ -76,7 +76,7 @@ impl Interpretation {
 /// A Model is a finite structure that includes a Signature, a Universe for the
 /// sorts in the signature, and an interpretation of all the functions in the
 /// signature.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct Model {
     // TODO(oded): to optimize, make things Rc<_> (_ = Signature, Universe, and Interpretation)
     /// The signature this model is for

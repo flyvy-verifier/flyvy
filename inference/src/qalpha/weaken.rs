@@ -5,9 +5,10 @@
 //! for handling them, e.g. checking subsumption, weakening, etc.
 
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::hashmap::{HashMap, HashSet};
+use crate::parallel::DequeWorker;
 
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
@@ -25,8 +26,6 @@ use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Signature, Term},
 };
-
-use rayon::prelude::*;
 
 pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>);
 
@@ -298,18 +297,20 @@ where
             });
 
             let structure = sat_literals(&self.literals, model, assignment);
-            let weakened: HashSet<E> = to_weaken
-                .bodies()
-                .into_par_iter()
-                .flat_map_iter(|body| {
-                    self.lemma_qf.weaken(body, &structure, |b| {
+
+            let weakenings = DequeWorker::run(to_weaken.bodies(), |body| {
+                (
+                    self.lemma_qf.weaken(body.clone(), &structure, |b| {
                         new_ignore.iter().any(|ig| ig.subsumes(b))
-                    })
-                })
-                .collect();
+                    }),
+                    vec![],
+                    vec![],
+                    false,
+                )
+            });
 
             let mut weakened_min = to_weaken.clone_empty();
-            for new_body in weakened {
+            for new_body in weakenings.into_iter().filter_map(|(_, w)| w).flatten() {
                 weakened_min.insert_minimized(new_body, perm_index);
             }
 
@@ -462,26 +463,31 @@ where
     }
 
     pub fn weaken(&mut self, model: &Model) -> bool {
-        let weakened: Vec<bool> = self
-            .sets
-            .par_iter_mut()
-            .map(|set| set.weaken(model))
-            .collect();
+        let weakened = Mutex::new(false);
+        rayon::scope_fifo(|s| {
+            for set in &mut self.sets {
+                s.spawn_fifo(|_| {
+                    if set.weaken(model) {
+                        *weakened.lock().unwrap() = true;
+                    }
+                })
+            }
+        });
 
-        weakened.iter().any(|b| *b)
+        weakened.into_inner().unwrap()
     }
 
     pub fn len(&self) -> usize {
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> {
-        self.sets.iter().flat_map(|set| set.as_iter()).sorted()
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> + '_ {
+        self.sets.iter().flat_map(|set| set.as_iter())
     }
 
     pub fn unsat(&self, model: &Model) -> bool {
         self.sets
-            .par_iter()
+            .iter()
             .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
     }
 }

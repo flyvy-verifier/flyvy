@@ -23,5 +23,6 @@ pub mod basics;
 pub mod hashmap;
 pub mod houdini;
 pub mod marco;
+mod parallel;
 pub mod qalpha;
 pub mod updr;

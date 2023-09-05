@@ -528,7 +528,7 @@ impl Term {
 // TODO(oded): rename Relation to Function
 
 /// The declaration of a single function as part of a Signature
-#[derive(PartialEq, Eq, Clone, Debug, Serialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize, Hash)]
 pub struct RelationDecl {
     /// If false, the relation is immutable with respect to time
     pub mutable: bool,
@@ -543,7 +543,7 @@ pub struct RelationDecl {
 /// A Signature defines a state space for an LTL Term, consisting of some number
 /// of uninterpreted sorts and declarations for functions using those sorts (or
 /// the built-in boolean sort).
-#[derive(PartialEq, Eq, Clone, Debug, Serialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize, Hash)]
 pub struct Signature {
     /// Names of uninterpreted sorts
     pub sorts: Vec<String>,

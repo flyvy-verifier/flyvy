@@ -73,51 +73,58 @@ fn invariant_cover<S: BasicSolver>(
 
 /// An inductive fixpoint
 pub struct FoundFixpoint {
-    /// The fixpoint term (the conjunction of these lemmas).
-    /// If `None`, the run has been abort before reaching the fixpoint
-    proof: Option<Vec<Term>>,
-    /// A subset of the fixpoint term which suffices to prove safety
-    minimized_proof: Option<Vec<Term>>,
-    /// Whether the discovered fixpoint implies the safety predicates
-    safe: bool,
+    /// The last frame of the fixpoint computation.
+    /// This is inductive iff `reduced_proof` is not `None`
+    proof: Vec<Term>,
+    /// The fixpoint term, semantically reduced.
+    /// If `None`, the run has been terminated/aborted before reaching the fixpoint
+    reduced_proof: Option<Vec<Term>>,
+    /// A subset of the (reduced) fixpoint term which suffices to prove safety.
+    /// If None, the last frame is unsafe
+    safety_proof: Option<Vec<Term>>,
     /// Total time for fixpoint calculation
     time_taken: Duration,
-    /// Number of terms of handwritten invariant covered
+    /// Number of terms of handwritten invariant covered by the (reduced) fixpoint result
     /// and total number of terms in the handwritten invariant
     covering: Option<(usize, usize)>,
 }
 
 impl FoundFixpoint {
     pub fn report(&self, print_invariant: bool) {
-        let print_inv = |inv: &[Term]| {
-            println!("proof {{");
+        let print_inv = |name: &str, size: usize, inv: &[Term]| {
+            println!("{name} (size={size}) {{");
             for lemma in inv {
                 println!("  invariant {lemma}");
             }
-            println!("}}");
+            println!("}} end of {name}");
         };
 
-        if self.safe {
-            println!("Fixpoint SAFE!");
+        if let Some(reduced_proof) = &self.reduced_proof {
+            println!(
+                "Fixpoint REACHED! frame_size={}, reduced_size={}",
+                self.proof.len(),
+                reduced_proof.len()
+            );
+            let (covered_handwritten, size_handwritten) = self.covering.unwrap();
+            println!("Covers {covered_handwritten} / {size_handwritten} of handwritten invariant.");
         } else {
-            println!("Fixpoint UNSAFE!");
+            println!("Fixpoint NOT reached! frame_size={}", self.proof.len());
         }
 
-        if let Some(proof) = &self.proof {
-            println!("Fixpoint size = {}", proof.len());
-            if let Some((covered_handwritten, size_handwritten)) = self.covering {
-                println!(
-                    "Covers {covered_handwritten} / {size_handwritten} of handwritten invariant."
-                );
-            }
+        if let Some(safety_proof) = &self.safety_proof {
+            println!("Safety VERIFIED! proof_size={}", safety_proof.len());
+        } else {
+            println!("Safety NOT verified.");
+        }
 
-            if print_invariant {
-                println!("Fixpoint runtime = {:.2}s", self.time_taken.as_secs_f64());
-                print_inv(proof);
-                if let Some(minimized_proof) = &self.minimized_proof {
-                    println!("Safety invariant size = {}", minimized_proof.len());
-                    print_inv(minimized_proof);
-                }
+        if print_invariant {
+            println!("Runtime = {:.2}s", self.time_taken.as_secs_f64());
+            print_inv("frame", self.proof.len(), &self.proof);
+            if let Some(reduced_proof) = &self.reduced_proof {
+                print_inv("reduced", reduced_proof.len(), reduced_proof);
+            }
+            if let Some(safety_proof) = &self.safety_proof {
+                print_inv("safety", safety_proof.len(), safety_proof);
             }
         }
     }
@@ -288,7 +295,7 @@ pub fn qalpha<E, L, S1, S2>(
 
         fixpoint.report(print_invariant);
 
-        if (fixpoint.safe && infer_cfg.until_safe) || domains.is_empty() {
+        if (fixpoint.safety_proof.is_some() && infer_cfg.until_safe) || domains.is_empty() {
             break;
         }
 
@@ -379,8 +386,13 @@ where
     }
 
     let signature = Arc::new(m.signature.clone());
-    let mut frame: InductionFrame<E, L> =
-        InductionFrame::new(infer_cfg.clone(), signature, domains, extend);
+    let mut frame: InductionFrame<E, L> = InductionFrame::new(
+        infer_cfg.clone(),
+        signature,
+        domains,
+        extend,
+        infer_cfg.property_directed,
+    );
 
     // Begin by overapproximating the initial states.
     while frame.init_cycle(fo, main_solver) {}
@@ -398,9 +410,9 @@ where
             frame.log_info("Checking safety...");
             if !frame.is_safe(fo, main_solver) {
                 return FoundFixpoint {
-                    proof: None,
-                    minimized_proof: None,
-                    safe: false,
+                    proof: frame.proof(),
+                    reduced_proof: None,
+                    safety_proof: None,
                     time_taken: start.elapsed(),
                     covering: None,
                 };
@@ -413,16 +425,19 @@ where
     }
 
     frame.log_info("Checking safety...");
-    let safe = frame.is_safe(fo, main_solver);
+    frame.is_safe(fo, main_solver);
     let time_taken = start.elapsed();
-    let proof: Vec<Term> = frame.proof();
-    let minimized_proof = frame.minimized_proof();
-    let covering = Some(invariant_cover(m, main_solver, fo, &proof));
+    let proof = frame.proof();
+    let reduced_proof = frame.reduced_proof();
+    let safety_proof = frame.safety_proof();
+    let covering = reduced_proof
+        .as_ref()
+        .map(|reduced| invariant_cover(m, main_solver, fo, reduced));
 
     FoundFixpoint {
-        proof: Some(proof),
-        minimized_proof,
-        safe,
+        proof,
+        reduced_proof,
+        safety_proof,
         time_taken,
         covering,
     }
