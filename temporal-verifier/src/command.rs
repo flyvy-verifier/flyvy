@@ -148,6 +148,10 @@ struct InferenceConfigArgs {
     qf_body: Option<String>,
 
     #[arg(long)]
+    /// Whether the search should should only attempt to prove safety
+    property_directed: bool,
+
+    #[arg(long)]
     /// Do not search gradually for the quantified serach space needed to find an invariant,
     /// and instead begin with the maximal domain matching the specification.
     no_search: bool,
@@ -244,6 +248,7 @@ impl InferenceConfigArgs {
             fallback: self.fallback,
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
+            property_directed: self.property_directed,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
             max_existentials: self.max_exist,
             clauses: self.clauses,

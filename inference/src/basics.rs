@@ -3,10 +3,10 @@
 
 use itertools;
 use itertools::Itertools;
-use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     sync::Mutex,
+    thread,
 };
 
 use crate::qalpha::quant::QuantifierConfig;
@@ -262,35 +262,46 @@ impl FOModule {
         }
         assertions.push(Term::not(next.prime(t)));
 
-        let cex_results: Vec<CexResult> = transitions
-            .into_par_iter()
-            .map(|transition| {
-                let mut core: Core = if self.gradual {
-                    Core::new(hyp, HashSet::new(), self.minimal)
-                } else {
-                    Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
-                };
+        let cex_results: Vec<CexResult> = thread::scope(|s| {
+            transitions
+                .into_iter()
+                .map(|transition| {
+                    s.spawn(|| {
+                        let mut core: Core = if self.gradual {
+                            Core::new(hyp, HashSet::new(), self.minimal)
+                        } else {
+                            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+                        };
 
-                let mut local_assertions = assertions.clone();
-                local_assertions.extend(transition.into_iter().cloned());
-                loop {
-                    let assumptions = core.to_assumptions();
-                    match solver.check_sat(&query_conf, &local_assertions, &assumptions) {
-                        Ok(BasicSolverResp::Sat(models)) => {
-                            if !core.add_counter_model(models[0].clone()) {
-                                // A counter-example to the transition was found, no need to search further.
-                                local_cancelers.cancel();
-                                return CexResult::Cex(models);
+                        let mut local_assertions = assertions.clone();
+                        local_assertions.extend(transition.into_iter().cloned());
+                        loop {
+                            let assumptions = core.to_assumptions();
+                            match solver.check_sat(&query_conf, &local_assertions, &assumptions) {
+                                Ok(BasicSolverResp::Sat(models)) => {
+                                    if !core.add_counter_model(models[0].clone()) {
+                                        // A counter-example to the transition was found, no need to search further.
+                                        local_cancelers.cancel();
+                                        return CexResult::Cex(models);
+                                    }
+                                }
+                                Ok(BasicSolverResp::Unsat(core)) => {
+                                    return CexResult::UnsatCore(core)
+                                }
+                                Ok(BasicSolverResp::Unknown(reason)) => {
+                                    return CexResult::Unknown(reason)
+                                }
+                                Err(SolverError::Killed) => return CexResult::Canceled,
+                                Err(e) => panic!("error in solver: {e}"),
                             }
                         }
-                        Ok(BasicSolverResp::Unsat(core)) => return CexResult::UnsatCore(core),
-                        Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
-                        Err(SolverError::Killed) => return CexResult::Canceled,
-                        Err(e) => panic!("error in solver: {e}"),
-                    }
-                }
-            })
-            .collect();
+                    })
+                })
+                .collect_vec()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect_vec()
+        });
 
         // Check whether any counterexample has been found
         if cex_results
@@ -389,22 +400,12 @@ impl FOModule {
         }
     }
 
-    pub fn simulate_from<B, C>(
-        &self,
-        solver: &B,
-        state: &Model,
-        width: usize,
-        depth: usize,
-    ) -> Vec<Model>
+    pub fn simulate_from<B, C>(&self, solver: &B, state: &Model, width: usize) -> Vec<Model>
     where
         C: BasicSolverCanceler,
         B: BasicSolver<Canceler = C>,
     {
-        assert!(depth >= 1);
-
         let transitions = self.disj_trans();
-        let state_term = state.to_term();
-        let samples = Mutex::new(vec![]);
         let cancelers = SolverCancelers::new();
         let empty_assumptions = HashMap::new();
         let next = Next::new(&self.signature);
@@ -416,45 +417,41 @@ impl FOModule {
             save_tee: false,
         };
 
-        transitions.into_par_iter().for_each(|transition| {
-            let mut assertions = vec![state_term.clone()];
-            assertions.extend(self.module.axioms.iter().map(|a| next.prime(a)));
-            assertions.extend(transition.into_iter().cloned());
+        let state_term = state.to_term();
+        let samples = Mutex::new(vec![]);
+        thread::scope(|s| {
+            for transition in &transitions {
+                s.spawn(|| {
+                    let mut assertions = vec![state_term.clone()];
+                    assertions.extend(self.module.axioms.iter().map(|a| next.prime(a)));
+                    assertions.extend(transition.iter().copied().cloned());
 
-            'this_loop: loop {
-                let resp = solver.check_sat(&query_conf, &assertions, &empty_assumptions);
-                match resp {
-                    Ok(BasicSolverResp::Sat(mut models)) => {
-                        assert_eq!(models.len(), 2);
-                        let new_sample = models.pop().unwrap();
-                        assertions.push(Term::negate(next.prime(&new_sample.to_term())));
-                        {
-                            let mut samples_lock = samples.lock().unwrap();
-                            if samples_lock.len() < width {
-                                samples_lock.push(new_sample);
+                    'this_loop: loop {
+                        let resp = solver.check_sat(&query_conf, &assertions, &empty_assumptions);
+                        match resp {
+                            Ok(BasicSolverResp::Sat(mut models)) => {
+                                assert_eq!(models.len(), 2);
+                                let new_sample = models.pop().unwrap();
+                                assertions.push(Term::negate(next.prime(&new_sample.to_term())));
+                                {
+                                    let mut samples_lock = samples.lock().unwrap();
+                                    if samples_lock.len() < width {
+                                        samples_lock.push(new_sample);
+                                    }
+                                    if samples_lock.len() >= width {
+                                        cancelers.cancel();
+                                        break 'this_loop;
+                                    }
+                                }
                             }
-                            if samples_lock.len() >= width {
-                                cancelers.cancel();
-                                break 'this_loop;
-                            }
+                            _ => break 'this_loop,
                         }
                     }
-                    _ => break 'this_loop,
-                }
+                });
             }
         });
 
-        let mut samples = samples.into_inner().unwrap();
-
-        if depth > 1 {
-            let mut deep_samples: Vec<Model> = samples
-                .par_iter()
-                .flat_map(|sample| self.simulate_from(solver, sample, width, depth - 1))
-                .collect();
-            samples.append(&mut deep_samples);
-        }
-
-        samples
+        samples.into_inner().unwrap()
     }
 
     pub fn get_pred(&self, conf: &SolverConf, hyp: &[Term], t: &TermOrModel) -> CexOrCore {
@@ -575,6 +572,18 @@ impl FOModule {
         }
     }
 
+    pub fn safe_implication_cex<B: BasicSolver>(&self, solver: &B, hyp: &[Term]) -> CexResult {
+        let mut core = HashSet::new();
+        for s in self.module.proofs.iter() {
+            match self.implication_cex(solver, hyp, &s.safety.x, None, false) {
+                CexResult::UnsatCore(new_core) => core.extend(new_core),
+                res => return res,
+            }
+        }
+
+        CexResult::UnsatCore(core)
+    }
+
     pub fn trans_safe_cex<B: BasicSolver>(&self, solver: &B, hyp: &[Term]) -> CexResult {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
@@ -610,6 +619,7 @@ pub struct InferenceConfig {
     pub fallback: bool,
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
+    pub property_directed: bool,
 
     pub max_size: usize,
     pub max_existentials: Option<usize>,
