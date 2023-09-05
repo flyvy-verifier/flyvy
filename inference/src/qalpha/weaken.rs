@@ -5,7 +5,7 @@
 //! for handling them, e.g. checking subsumption, weakening, etc.
 
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
 use crate::parallel::DequeWorker;
@@ -463,18 +463,14 @@ where
     }
 
     pub fn weaken(&mut self, model: &Model) -> bool {
-        let weakened = Mutex::new(false);
-        rayon::scope_fifo(|s| {
-            for set in &mut self.sets {
-                s.spawn_fifo(|_| {
-                    if set.weaken(model) {
-                        *weakened.lock().unwrap() = true;
-                    }
-                })
-            }
-        });
-
-        weakened.into_inner().unwrap()
+        std::thread::scope(|s| {
+            self.sets
+                .iter_mut()
+                .map(|set| s.spawn(|| set.weaken(model)))
+                .collect_vec()
+                .into_iter()
+                .any(|h| h.join().unwrap())
+        })
     }
 
     pub fn len(&self) -> usize {
