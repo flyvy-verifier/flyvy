@@ -49,6 +49,11 @@ impl CexResult {
     }
 }
 
+pub struct AdvancedQueryOptions<C: BasicSolverCanceler> {
+    pub permanent_hyp: Vec<usize>,
+    pub cancelers: SolverCancelers<SolverCancelers<C>>,
+}
+
 /// Manages a subset of formulas based on the counter-models they do not satisfy.
 ///
 /// This is used to find a small UNSAT-core of some SMT query by iteratively adding negative
@@ -57,7 +62,7 @@ impl CexResult {
 /// no formula can be dropped from it while still blocking all the previous counterexamples.
 struct Core<'a> {
     formulas: &'a [Term],
-    participants: HashSet<usize>,
+    permanent: Vec<usize>,
     counter_models: Vec<Model>,
     to_participants: HashMap<usize, HashSet<usize>>,
     to_counter_models: HashMap<usize, HashSet<usize>>,
@@ -65,13 +70,13 @@ struct Core<'a> {
 }
 
 impl<'a> Core<'a> {
-    /// Create a new core from the given formulas. `participants` specifies which formulas
-    /// to intialize the core with, and `minimal` determines whether to minimize the core
+    /// Create a new core from the given formulas. `permanent` specifies which formulas
+    /// should always be in the core, and `minimal` determines whether to minimize the core
     /// when adding future participants.
-    fn new(formulas: &'a [Term], participants: HashSet<usize>, minimal: bool) -> Self {
+    fn new(formulas: &'a [Term], permanent: Vec<usize>, minimal: bool) -> Self {
         Core {
             formulas,
-            participants,
+            permanent,
             counter_models: vec![],
             to_participants: HashMap::new(),
             to_counter_models: HashMap::new(),
@@ -86,19 +91,18 @@ impl<'a> Core<'a> {
     /// Returns `true` if the model has been successfully blocked or `false` if it couldn't be
     /// blocked because it satisfied all candidate formulas.
     fn add_counter_model(&mut self, counter_model: Model) -> bool {
-        // We assume that the new counter-model satisfies all previous formulas.
-        for &p_idx in &self.participants {
-            assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
-        }
-
-        let new_participant = self.formulas.iter().enumerate().find(|(i, formula)| {
-            !self.participants.contains(i) && counter_model.eval(formula) == 0
-        });
+        let new_participant = self
+            .formulas
+            .iter()
+            .enumerate()
+            .find(|(_, formula)| counter_model.eval(formula) == 0);
 
         match new_participant {
             Some((p_idx, _)) => {
+                // We assume that the new counter-model satisfies all previous formulas.
+                assert!(!self.permanent.contains(&p_idx));
+                assert!(!self.to_counter_models.contains_key(&p_idx));
                 let model_idx = self.counter_models.len();
-                self.participants.insert(p_idx);
                 self.to_participants.insert(model_idx, HashSet::new());
                 let mut counter_models: HashSet<usize> = (0..self.counter_models.len())
                     .filter(|i| self.counter_models[*i].eval(&self.formulas[p_idx]) == 0)
@@ -111,13 +115,16 @@ impl<'a> Core<'a> {
                 self.to_counter_models.insert(p_idx, counter_models);
 
                 if self.minimal {
-                    while self.reduce() {}
+                    self.reduce();
 
-                    assert!(self.participants.iter().all(|p_idx| {
-                        self.to_counter_models[p_idx]
-                            .iter()
-                            .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*p_idx]))
-                    }));
+                    assert!(self
+                        .to_counter_models
+                        .iter()
+                        .all(|(p_idx, counter_models)| {
+                            counter_models
+                                .iter()
+                                .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*p_idx]))
+                        }));
                 }
 
                 true
@@ -130,37 +137,38 @@ impl<'a> Core<'a> {
     /// is also blocked by a different formula in the core. Formulas with a higher index are prioritized for removal.
     ///
     /// Returns `true` if the core has been reduced, or `false` otherwise.
-    fn reduce(&mut self) -> bool {
-        if let Some(p_idx) = self
-            .participants
+    fn reduce(&mut self) {
+        while let Some(p_idx) = self
+            .to_counter_models
             .iter()
-            .copied()
-            .sorted()
+            .sorted_by_key(|(idx, _)| **idx)
             .rev()
-            .find(|p_idx| {
-                self.to_counter_models[p_idx]
+            .find(|(_, counter_models)| {
+                counter_models
                     .iter()
                     .all(|m_idx| self.to_participants[m_idx].len() > 1)
             })
+            .map(|(idx, _)| *idx)
         {
-            assert!(self.participants.remove(&p_idx));
             for m_idx in self.to_counter_models.remove(&p_idx).unwrap() {
                 assert!(self.to_participants.get_mut(&m_idx).unwrap().remove(&p_idx));
             }
-
-            true
-        } else {
-            false
         }
+    }
+
+    fn core(&self) -> impl Iterator<Item = usize> + '_ {
+        self.permanent
+            .iter()
+            .chain(self.to_counter_models.keys().sorted())
+            .copied()
     }
 
     /// Convert the current core to a set of assumption for use by the solver.
     /// This yields a map which maps each participant index to its [`Term`] and Boolean assumption,
     /// in this case always `true`.
     fn to_assumptions(&self) -> HashMap<usize, (Term, bool)> {
-        self.participants
-            .iter()
-            .map(|i| (*i, (self.formulas[*i].clone(), true)))
+        self.core()
+            .map(|i| (i, (self.formulas[i].clone(), true)))
             .collect()
     }
 }
@@ -230,7 +238,7 @@ impl FOModule {
         hyp: &[Term],
         t: &Term,
         with_safety: bool,
-        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
+        advanced: Option<AdvancedQueryOptions<C>>,
         save_tee: bool,
     ) -> CexResult
     where
@@ -240,11 +248,15 @@ impl FOModule {
         let transitions = self.disj_trans();
         let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
 
-        if cancelers
-            .as_ref()
-            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
-        {
-            return CexResult::Canceled;
+        let permanent_hyp;
+        match advanced {
+            Some(a) => {
+                if !a.cancelers.add_canceler(local_cancelers.clone()) {
+                    return CexResult::Canceled;
+                }
+                permanent_hyp = a.permanent_hyp;
+            }
+            None => permanent_hyp = vec![],
         }
 
         let query_conf = QueryConf {
@@ -268,7 +280,7 @@ impl FOModule {
                 .map(|transition| {
                     s.spawn(|| {
                         let mut core: Core = if self.gradual {
-                            Core::new(hyp, HashSet::new(), self.minimal)
+                            Core::new(hyp, permanent_hyp.clone(), self.minimal)
                         } else {
                             Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
                         };
@@ -355,7 +367,7 @@ impl FOModule {
         solver: &B,
         hyp: &[Term],
         t: &Term,
-        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
+        advanced: Option<AdvancedQueryOptions<C>>,
         save_tee: bool,
     ) -> CexResult
     where
@@ -363,15 +375,19 @@ impl FOModule {
         B: BasicSolver<Canceler = C>,
     {
         let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
-        if cancelers
-            .as_ref()
-            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
-        {
-            return CexResult::Canceled;
+        let permanent_hyp;
+        match advanced {
+            Some(a) => {
+                if !a.cancelers.add_canceler(local_cancelers.clone()) {
+                    return CexResult::Canceled;
+                }
+                permanent_hyp = a.permanent_hyp;
+            }
+            None => permanent_hyp = vec![],
         }
 
         let mut core: Core = if self.gradual {
-            Core::new(hyp, HashSet::new(), self.minimal)
+            Core::new(hyp, permanent_hyp, self.minimal)
         } else {
             Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
         };

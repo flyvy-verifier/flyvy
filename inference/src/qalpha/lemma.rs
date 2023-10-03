@@ -14,7 +14,7 @@ use fly::semantics::Model;
 use fly::syntax::{Signature, Term};
 
 use crate::{
-    basics::{CexResult, FOModule, InferenceConfig},
+    basics::{AdvancedQueryOptions, CexResult, FOModule, InferenceConfig},
     hashmap::{HashMap, HashSet},
     parallel::DequeWorker,
     qalpha::{
@@ -398,9 +398,8 @@ where
     blocked_to_core: HashMap<usize, HashSet<usize>>,
     /// Mapping from each lemma to the lemmas whose inductiveness proof they paricipate in.
     core_to_blocked: HashMap<usize, HashSet<usize>>,
-    /// Lemmas which are proven inductively, and are therefore necessary.
-    /// This is in contrast to lemmas proved via implication, which are redundant.
-    necessary: HashSet<usize>,
+    /// Lemmas which are not implied by lemmas preceding them.
+    not_implied: HashSet<usize>,
     /// Whether to extend CTI traces, and how much.
     extend: Option<(usize, usize)>,
     /// A set of CTI's to extend.
@@ -438,7 +437,7 @@ where
             weaken_lemmas,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
-            necessary: HashSet::default(),
+            not_implied: HashSet::default(),
             extend,
             ctis: VecDeque::new(),
             safety_core: None,
@@ -472,7 +471,7 @@ where
                 return None;
             }
             // Necessary
-            if self.necessary.contains(&id) {
+            if self.not_implied.contains(&id) {
                 reduced_proof.push(t);
                 indices.push(i);
             }
@@ -520,7 +519,7 @@ where
             .collect_vec();
         let core = extended_core
             .into_iter()
-            .filter(|id| self.necessary.contains(id))
+            .filter(|id| self.not_implied.contains(id))
             .map(|id| {
                 let (prefix, body) = self.lemmas.id_to_lemma(&id);
                 prefix.quantify(&self.signature, body.to_term(true))
@@ -535,8 +534,9 @@ where
     /// Add details about the frame to the given [`Display`].
     pub fn add_details<D: Display>(&self, d: D) -> String {
         format!(
-            "[{:.2}s] [{} | {}] {}",
+            "[{:.2}s] [{} | {} | {}] {}",
             self.start_time.elapsed().as_secs_f64(),
+            self.not_implied.len(),
             self.len(),
             self.weaken_len(),
             d,
@@ -677,6 +677,7 @@ where
 
         let cancelers = SolverCancelers::new();
         let first_sat = Mutex::new(None);
+        let unsat_before = self.blocked_to_core.len();
         let start_time = Instant::now();
         let tasks = if self.property_directed {
             if self.safety_core.is_none() && !self.is_safe(fo, solver) {
@@ -686,11 +687,45 @@ where
         } else {
             lemma_ids.clone()
         };
+        let blocked_to_core = RwLock::new(&mut self.blocked_to_core);
+        let core_to_blocked = Mutex::new(&mut self.core_to_blocked);
+        let necessary = RwLock::new(&mut self.not_implied);
+        let necessary_universal = |before_idx: Option<usize>| -> Vec<usize> {
+            let ctb = necessary.read().unwrap();
+            return ctb
+                .iter()
+                .map(|core_id| id_to_idx[core_id])
+                .filter(|core_idx| {
+                    lemmas[*core_idx].0 .0.existentials() == 0
+                        && !before_idx.is_some_and(|idx| *core_idx >= idx)
+                })
+                .sorted()
+                .collect();
+        };
+        let insert_core = |id: usize, core: HashSet<usize>| {
+            {
+                let mut ctb = core_to_blocked.lock().unwrap();
+                for core_id in &core {
+                    if let Some(hs) = ctb.get_mut(core_id) {
+                        hs.insert(id);
+                    } else {
+                        ctb.insert(*core_id, HashSet::from_iter([id]));
+                    }
+                }
+            }
+            {
+                let mut btc = blocked_to_core.write().unwrap();
+                btc.insert(id, HashSet::from_iter(core));
+            }
+        };
         // The tasks here are lemmas ID's, and each result is an Option<CexResult> together with a bool
         // which specifies whether the result if of a transitions query (true) or an implication query (false).
         let results = DequeWorker::run(tasks, |lemma_id| {
-            if let Some(core) = self.blocked_to_core.get(lemma_id) {
-                return (None, core.iter().copied().collect(), vec![], false);
+            {
+                let btc = blocked_to_core.read().unwrap();
+                if let Some(core) = btc.get(lemma_id) {
+                    return (None, core.iter().copied().collect(), vec![], false);
+                }
             }
 
             let idx: usize = id_to_idx[lemma_id];
@@ -702,45 +737,32 @@ where
             // lemmas in UNSAT-cores.
             if !self.property_directed {
                 let query_start = Instant::now();
-                if let CexResult::UnsatCore(core) = fo.implication_cex(
-                    solver,
-                    &lemma_terms[..idx],
-                    &term,
-                    Some(cancelers.clone()),
-                    false,
-                ) {
+                let advanced = AdvancedQueryOptions {
+                    permanent_hyp: necessary_universal(Some(idx)),
+                    cancelers: cancelers.clone(),
+                };
+                if let CexResult::UnsatCore(core) =
+                    fo.implication_cex(solver, &lemma_terms[..idx], &term, Some(advanced), false)
+                {
                     log::info!(
                         "{:>8}ms. ({idx}) Implication found UNSAT with {} formulas in core",
                         query_start.elapsed().as_millis(),
                         core.len(),
                     );
-                    let id_core = core.into_iter().map(|i| lemma_ids[i]).collect();
-                    return (
-                        Some((CexResult::UnsatCore(id_core), false)),
-                        vec![],
-                        vec![],
-                        false,
-                    );
+                    let id_core_vec = core.into_iter().map(|i| lemma_ids[i]).collect_vec();
+                    let id_core = id_core_vec.iter().copied().collect();
+                    insert_core(*lemma_id, id_core);
+                    return (None, id_core_vec, vec![], false);
                 }
             }
 
             // Check if the lemma is inductively implied by the entire frame.
-            let pre_ids = [&[*lemma_id], &lemma_ids[..idx], &lemma_ids[(idx + 1)..]].concat();
-            let pre_terms = [
-                &[term.clone()],
-                &lemma_terms[..idx],
-                &lemma_terms[(idx + 1)..],
-            ]
-            .concat();
             let query_start = Instant::now();
-            match fo.trans_cex(
-                solver,
-                &pre_terms,
-                &term,
-                false,
-                Some(cancelers.clone()),
-                false,
-            ) {
+            let advanced = AdvancedQueryOptions {
+                permanent_hyp: necessary_universal(None),
+                cancelers: cancelers.clone(),
+            };
+            match fo.trans_cex(solver, &lemma_terms, &term, false, Some(advanced), false) {
                 CexResult::Cex(models) => {
                     cancelers.cancel();
                     {
@@ -753,7 +775,7 @@ where
                         "{:>8}ms. ({idx}) Transition found SAT",
                         query_start.elapsed().as_millis()
                     );
-                    (Some((CexResult::Cex(models), true)), vec![], vec![], true)
+                    (Some(CexResult::Cex(models)), vec![], vec![], true)
                 }
                 CexResult::UnsatCore(core) => {
                     log::info!(
@@ -761,57 +783,33 @@ where
                         start_time.elapsed().as_millis(),
                         core.len()
                     );
-                    let id_core_vec = core.into_iter().map(|i| pre_ids[i]).collect_vec();
+                    let id_core_vec = core.into_iter().map(|i| lemma_ids[i]).collect_vec();
                     let id_core = id_core_vec.iter().copied().collect();
-                    (
-                        Some((CexResult::UnsatCore(id_core), true)),
-                        id_core_vec,
-                        vec![],
-                        false,
-                    )
+                    insert_core(*lemma_id, id_core);
+                    {
+                        necessary.write().unwrap().insert(*lemma_id);
+                    }
+                    (None, id_core_vec, vec![], false)
                 }
-                CexResult::Canceled => (Some((CexResult::Canceled, true)), vec![], vec![], false),
+                CexResult::Canceled => (None, vec![], vec![], false),
                 CexResult::Unknown(reason) => {
                     log::info!(
                         "{:>8}ms. ({idx}) Transition found unknown",
                         query_start.elapsed().as_millis()
                     );
-                    (
-                        Some((CexResult::Unknown(reason), true)),
-                        vec![],
-                        vec![],
-                        false,
-                    )
+                    (Some(CexResult::Unknown(reason)), vec![], vec![], false)
                 }
             }
         });
 
         let mut ctis = vec![];
-        let mut total_sat = 0_usize;
-        let mut total_unsat = 0_usize;
         let mut unknown = false;
-        for (id, out) in results {
+        for (_, out) in results {
             match out {
-                Some(Some((CexResult::Cex(mut models), _))) => {
-                    total_sat += 1;
+                Some(Some(CexResult::Cex(mut models))) => {
                     ctis.push(models.pop().unwrap());
                 }
-                Some(Some((CexResult::UnsatCore(core), transition))) => {
-                    total_unsat += 1;
-                    for core_id in &core {
-                        if let Some(hs) = self.core_to_blocked.get_mut(core_id) {
-                            hs.insert(id);
-                        } else {
-                            self.core_to_blocked
-                                .insert(*core_id, HashSet::from_iter([id]));
-                        }
-                    }
-                    self.blocked_to_core.insert(id, HashSet::from_iter(core));
-                    if transition {
-                        self.necessary.insert(id);
-                    }
-                }
-                Some(Some((CexResult::Unknown(_), _))) => {
+                Some(Some(CexResult::Unknown(_))) => {
                     unknown = true;
                 }
                 _ => (),
@@ -826,8 +824,8 @@ where
             "    SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
             (Instant::now() - start_time).as_secs_f64(),
             (first_sat.into_inner().unwrap().unwrap_or(start_time) - start_time).as_secs_f64(),
-            total_sat,
-            total_unsat,
+            ctis.len(),
+            self.blocked_to_core.len() - unsat_before,
         );
 
         ctis
@@ -920,7 +918,7 @@ where
                 }
             }
         }
-        self.necessary.remove(id);
+        self.not_implied.remove(id);
     }
 
     /// Update the frame. That is, remove each lemma in `self.lemmas` which isn't in the weakened lemmas,
