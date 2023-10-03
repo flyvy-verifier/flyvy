@@ -129,56 +129,73 @@ impl TemporalAssertion {
 
         let mut sig = self.sig.clone();
 
-        // Add $d_sort, $sd_sort, $a_sort unary relations for each sort
+        let a_sort = |sort_name: &str| format!("%a_{sort_name}");
+        let b_sort = |sort_name: &str| format!("%b_{sort_name}");
+        let d_sort = |sort_name: &str| format!("%d_{sort_name}");
+
+        // Add a_sort, b_sort, d_sort unary relations for each sort
         for sort in &self.sig.sorts {
-            sig.relations.extend([
-                RelationDecl {
+            for name in [a_sort(sort), b_sort(sort), d_sort(sort)] {
+                sig.relations.push(RelationDecl {
                     mutable: true,
-                    name: format!("$d_{sort}"),
+                    name,
                     args: vec![Sort::uninterpreted(sort)],
                     sort: Sort::Bool,
-                },
-                RelationDecl {
-                    mutable: true,
-                    name: format!("$sd_{sort}"),
-                    args: vec![Sort::uninterpreted(sort)],
-                    sort: Sort::Bool,
-                },
-                RelationDecl {
-                    mutable: true,
-                    name: format!("$a_{sort}"),
-                    args: vec![Sort::uninterpreted(sort)],
-                    sort: Sort::Bool,
-                },
-            ]);
+                });
+            }
         }
 
-        // Compute update for $d
-        // forall X:sort. $d_sort'(X) <-> ($d_sort(X) | X = c_1 | ... | X = c_n)
-        // where c_1,...,c_n are constants of sort
+        // Use terms_by_sort to initialize and also update d_sort
+        // TODO(oded): maybe we want to allow depths > 0 here
+        let ground_terms_by_sort = self.sig.terms_by_sort(&[], Some(0), false);
+
+        // Initialize d according to the ground terms:
+        //
+        // forall X:sort. d_sort(X) <-> (X = g_1 | ... | X = g_n)
+        // where g_1,...,g_n are ground terms for sort
+        let mut d_init: Vec<Term> = vec![];
+        for (sort, ground_terms) in self.sig.sorts.iter().zip(&ground_terms_by_sort) {
+            let binder = Binder::new("%X", sort);
+            let x = Term::id(&binder.name);
+            let lhs = Term::app(&d_sort(sort), 0, [&x]);
+            let rhs = Term::or(ground_terms.iter().map(|g| Term::equals(&x, g)));
+            d_init.push(Term::forall([binder], Term::iff(&lhs, &rhs)));
+        }
+
+        // Compute update for d:
+        //
+        // forall X:sort. d_sort'(X) <-> (d_sort(X) | X = g_1' | ... | X = g_n')
+        // where g_1,...,g_n are ground terms for sort
+        //
         // TODO(oded): we also need to add transition inputs to $d
-        let update_d = Term::and(
-            self.sig
-                .sorts
-                .iter()
-                .map(|name| Sort::uninterpreted(name))
-                .map(|sort| {
-                    let binder = Binder::new("%X", &sort);
-                    let d_sort = format!("$d_{sort}");
-                    let x = Term::id("%X");
-                    let lhs = Term::app(&d_sort, 1, [&x]);
-                    let rhs = Term::or([Term::app(&d_sort, 0, [&x])].into_iter().chain(
-                        sig.relations.iter().filter_map(|d| {
-                            if d.args.is_empty() && d.sort == sort {
-                                Some(Term::equals(&x, Term::id(&d.name)))
-                            } else {
-                                None
-                            }
-                        }),
-                    ));
-                    Term::forall([binder], Term::iff(&lhs, &rhs))
-                }),
-        );
+        //
+        // TODO(oded): we could use a less deterministic update, which basically
+        // would make d_init an assumed invariant, and then d_update will just
+        // say d monotonically grows and that it contains transition inputs.
+        let mut d_update: Vec<Term> = vec![];
+        for (sort, ground_terms) in self.sig.sorts.iter().zip(&ground_terms_by_sort) {
+            let binder = Binder::new("%X", sort);
+            let x = Term::id(&binder.name);
+            let lhs = Term::app(&d_sort(sort), 1, [&x]);
+            let rhs = Term::or(
+                [Term::app(&d_sort(sort), 0, [&x])].into_iter().chain(
+                    ground_terms
+                        .iter()
+                        .map(|g| Term::equals(&x, Term::prime(g))),
+                ),
+            );
+            d_update.push(Term::forall([binder], Term::iff(&lhs, &rhs)));
+        }
+
+        // Initialize a_sort and b_sort to be empty
+        let mut ab_init: Vec<Term> = vec![];
+        for sort in self.sig.sorts.iter() {
+            for name in [a_sort(sort), b_sort(sort)] {
+                let binder = Binder::new("%X", sort);
+                let x = Term::id(&binder.name);
+                ab_init.push(Term::forall([binder], Term::not(Term::app(&name, 0, [&x]))));
+            }
+        }
 
         // Collect temporal subformulas from temporal_assumptions,
         // temporal_property, prophecy, saves, and waits
@@ -273,26 +290,10 @@ impl TemporalAssertion {
                         },
                     ]);
                 }
-                Term::BinOp(BinOp::Since, t1, t2) => {
+                Term::BinOp(op @ (BinOp::Since | BinOp::Until), t1, t2) => {
                     temporal_subformulas.push(TermWithFreeVariables {
                         binders: binders.clone(),
-                        body: Term::BinOp(BinOp::Since, t1.clone(), t2.clone()),
-                    });
-                    worklist.extend([
-                        TermWithFreeVariables {
-                            binders: binders.clone(),
-                            body: *t1,
-                        },
-                        TermWithFreeVariables {
-                            binders: binders.clone(),
-                            body: *t2,
-                        },
-                    ]);
-                }
-                Term::BinOp(BinOp::Until, t1, t2) => {
-                    temporal_subformulas.push(TermWithFreeVariables {
-                        binders: binders.clone(),
-                        body: Term::BinOp(BinOp::Until, t1.clone(), t2.clone()),
+                        body: Term::BinOp(op, t1.clone(), t2.clone()),
                     });
                     worklist.extend([
                         TermWithFreeVariables {
@@ -486,7 +487,37 @@ impl TemporalAssertion {
         // TODO
 
         // Wait for all the waiting formulas
-        // TODO
+        for w in &self.waits {
+            cycle_transition.push(Term::forall(
+                w.binders.clone(), // TODO(oded): remove clone when possible
+                // TODO(oded): this doesn't handle binders.is_empty(), should
+                // make Term:app better instead of making this code ugly
+                Term::not(Term::app(
+                    &w.name,
+                    0,
+                    w.binders.iter().map(|b| Term::id(&b.name)),
+                )),
+            ));
+        }
+
+        // Update waiting formulas
+        for w in &self.waits {
+            let args_in_d = w.binders.iter().filter_map(|b| match &b.sort {
+                Sort::Bool => None,
+                Sort::Uninterpreted(sort_name) => {
+                    Some(Term::app(&d_sort(sort_name), 0, [Term::id(&b.name)]))
+                }
+            });
+            cycle_transition.push(Term::forall(
+                w.binders.clone(), // TODO(oded): remove clone when possible
+                // TODO(oded): this doesn't handle binders.is_empty(), should
+                // make Term:app better instead of making this code ugly
+                Term::iff(
+                    Term::app(&w.name, 1, w.binders.iter().map(|b| Term::id(&b.name))),
+                    Term::and(args_in_d.chain([Term::until(Term::true_(), w.body.clone())])), // TODO(oded): this should be a tableaux relation, not a temporal formula
+                ),
+            ));
+        }
 
         // Update $a and $sa and leave $d unchaged
         for sort_name in sig.sorts.iter() {
@@ -519,18 +550,18 @@ impl TemporalAssertion {
         // Update saved state
         // TODO
 
-        // Update waiting formulas
-        // TODO
+        // TODO: Convert invariants from temporal formulas to tableaux relations
 
         Ok(InvariantAssertion {
             sig,
-            init: Term::and(cycle_init), // TODO(oded): initialize $d,$sd,$a
+            init: Term::and(cycle_init.into_iter().chain(d_init).chain(ab_init)),
             next: Term::or([
-                Term::and([
-                    &self.transition_relation,
-                    &Term::and(tableaux_transition),
-                    &update_d,
-                ]),
+                Term::and(
+                    [self.transition_relation.clone()]
+                        .into_iter()
+                        .chain(d_update)
+                        .chain(tableaux_transition),
+                ),
                 Term::and(cycle_transition),
             ]),
             assumed_inv: Term::and(tableaux_invariants),
@@ -554,6 +585,10 @@ mod tests {
         let a = TemporalAssertion {
             sig: parse_signature(
                 r#"
+                sort t
+
+                mutable c: t
+
                 mutable p: bool
                 "#,
             ),
