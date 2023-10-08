@@ -23,7 +23,7 @@ pub struct Indices<'a> {
     /// The signature used to create this object
     pub signature: &'a Signature,
     /// The universe used to create this object
-    pub universe: &'a UniverseBounds,
+    pub universe: UniverseBounds,
     /// The number of copies of mutable relations that this object holds
     pub num_mutable_copies: usize,
     /// The number of indices in one copy of the mutable relations
@@ -35,7 +35,7 @@ pub struct Indices<'a> {
     /// Map from indices to BddVariable objects
     pub bdd_variables: Vec<BddVariable>,
     /// The map that this object is wrapping
-    indices: HashMap<&'a str, HashMap<Vec<Element>, (usize, bool)>>,
+    indices: HashMap<String, HashMap<Vec<Element>, (usize, bool)>>,
 }
 
 impl Indices<'_> {
@@ -43,7 +43,7 @@ impl Indices<'_> {
     /// of mutable copies to include.
     pub fn new<'a>(
         signature: &'a Signature,
-        universe: &'a UniverseBounds,
+        universe: &UniverseBounds,
         num_mutable_copies: usize,
     ) -> Indices<'a> {
         let (mutable, immutable): (Vec<_>, Vec<_>) = signature
@@ -57,7 +57,7 @@ impl Indices<'_> {
                 .map(|sort| cardinality(universe, sort))
                 .map(|card| (0..card).collect::<Vec<usize>>())
                 .multi_cartesian_product_fixed()
-                .map(|element| (relation.name.as_str(), element))
+                .map(|element| (relation.name.clone(), element))
                 .collect::<Vec<_>>()
         };
 
@@ -83,7 +83,7 @@ impl Indices<'_> {
 
         Indices {
             signature,
-            universe,
+            universe: universe.clone(),
             num_mutable_copies,
             num_mutables,
             num_vars,
@@ -110,7 +110,7 @@ impl Indices<'_> {
     }
 
     /// Returns an iterator over one copy of the mutable and immutable indices.
-    pub fn iter(&self) -> impl Iterator<Item = (&&str, &HashMap<Vec<Element>, (usize, bool)>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &HashMap<Vec<Element>, (usize, bool)>)> {
         self.indices.iter()
     }
 
@@ -161,8 +161,8 @@ impl Indices<'_> {
                     let shape = r
                         .args
                         .iter()
-                        .map(|s| cardinality(self.universe, s))
-                        .chain([cardinality(self.universe, &r.sort)])
+                        .map(|s| cardinality(&self.universe, s))
+                        .chain([cardinality(&self.universe, &r.sort)])
                         .collect();
                     Interpretation::new(&shape, |xs| f(self.get(&r.name, primes, xs)))
                 })

@@ -293,8 +293,8 @@ fn trace_to_models(
 /// Returns the term and a map from (sort, element) pairs to the name of the variable.
 pub fn bdd_to_term<'a>(
     bdd: &Bdd,
-    indices: &Indices<'a>,
-) -> (Term, HashMap<(&'a str, usize), String>) {
+    indices: &'a Indices,
+) -> (Term, HashMap<(&'a String, usize), String>) {
     fn to_term(term: BooleanExpression, vars_to_terms: &HashMap<String, Term>) -> Term {
         let go = |term| to_term(term, vars_to_terms);
         use BooleanExpression::*;
@@ -311,8 +311,8 @@ pub fn bdd_to_term<'a>(
 
     // Build a map from sort elements to Term variable names
     let mut next_binding = 0;
-    let mut bindings: HashMap<(&str, usize), String> = HashMap::new();
-    for (sort, bound) in indices.universe {
+    let mut bindings: HashMap<(&String, usize), String> = HashMap::new();
+    for (sort, bound) in &indices.universe {
         for i in 0..*bound {
             bindings.insert((sort, i), format!("${next_binding}"));
             next_binding += 1;
@@ -334,9 +334,7 @@ pub fn bdd_to_term<'a>(
                 .iter()
                 .zip_eq(elements)
                 .map(|(sort, element)| match sort {
-                    Sort::Uninterpreted(sort) => {
-                        Term::Id(bindings[&(sort.as_str(), *element)].clone())
-                    }
+                    Sort::Uninterpreted(sort) => Term::Id(bindings[&(sort, *element)].clone()),
                     Sort::Bool => match element {
                         0 => Term::Literal(false),
                         1 => Term::Literal(true),

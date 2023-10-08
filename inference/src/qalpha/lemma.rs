@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use fly::semantics::Model;
-use fly::syntax::{Signature, Term};
+use fly::syntax::{Module, Signature, Term};
+
+use bounded::simulator::MultiSimulator;
 
 use crate::{
     basics::{CexResult, FOModule, InferenceConfig},
@@ -393,7 +395,7 @@ where
     /// The set of lemmas in the frame.
     lemmas: LemmaSet<E>,
     /// The lemmas in the frame, maintained in a way that supports weakening them.
-    weaken_lemmas: WeakenLemmaSet<E, L>,
+    pub weaken_lemmas: WeakenLemmaSet<E, L>,
     /// The set of lemmas inductively implied by the current frame, mapped to the unsat-cores implying them.
     blocked_to_core: HashMap<usize, HashSet<usize>>,
     /// Mapping from each lemma to the lemmas whose inductiveness proof they paricipate in.
@@ -478,7 +480,7 @@ where
             }
         }
 
-        self.log_info(format!("Reduced lemmas at indices {:?}", indices));
+        self.log_info(format!("Reduced lemmas at indices {indices:?}"));
 
         Some(reduced_proof)
     }
@@ -527,7 +529,7 @@ where
             })
             .collect_vec();
 
-        self.log_info(format!("Safety lemmas at indices {:?}", indices));
+        self.log_info(format!("Safety lemmas at indices {indices:?}"));
 
         Some(core)
     }
@@ -599,38 +601,39 @@ where
 
     /// Extend CTI traces and weaken the given lemmas accordingly,
     /// until no more states can be sampled.
-    pub fn extend<S: BasicSolver>(&mut self, fo: &FOModule, solver: &S) {
+    pub fn extend(&mut self, m: &Module) {
         self.log_info("Simulating CTI traces...");
-        let (width, depth) = self.extend.unwrap();
+        let (_, depth) = self.extend.unwrap();
+        let simulator = MultiSimulator::new(m);
         let sample_count;
         let weakened;
         {
             let weaken_lemmas = RwLock::new((&mut self.weaken_lemmas, false));
+            let ctis = self.ctis.drain(..).collect_vec();
+            simulator.see(&ctis);
             sample_count = DequeWorker::run(
-                self.ctis.drain(..).map(|state| (state, depth)),
-                |(state, more_depth)| {
+                ctis.into_iter().map(|model| (model, depth)),
+                |(model, more_depth)| {
                     let unsat = {
                         let wl = weaken_lemmas.read().unwrap();
-                        wl.0.unsat(state)
+                        wl.0.unsat(model)
                     };
 
                     let mut weakened = false;
                     if unsat {
                         let mut wl = weaken_lemmas.write().unwrap();
-                        if wl.0.weaken(state) {
+                        if wl.0.weaken(model) {
                             log::info!("[{}] Weakened", wl.0.len());
                             wl.1 = true;
                             weakened = true;
                         }
                     }
 
-                    let new_depth = if weakened { depth } else { *more_depth };
-
-                    let samples = if new_depth > 0 {
-                        let sim = fo
-                            .simulate_from(solver, state, width)
+                    let samples = if weakened || *more_depth > 0 {
+                        let sim = simulator
+                            .simulate_new(model)
                             .into_iter()
-                            .map(|sample| (sample, new_depth - 1))
+                            .map(|sample| (sample, if weakened { depth } else { *more_depth - 1 }))
                             .collect_vec();
                         log::debug!("Found {} simulated samples from CTI.", sim.len());
                         sim

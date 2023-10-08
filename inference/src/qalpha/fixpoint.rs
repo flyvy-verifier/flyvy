@@ -22,7 +22,7 @@ use crate::{
 use fly::syntax::{Module, Term, ThmStmt};
 use solver::{
     backends::SolverType,
-    basics::{BasicSolver, FallbackSolvers, ParallelSolvers, SingleSolver},
+    basics::{BasicSolver, FallbackSolvers, ParallelSolvers},
     conf::SolverConf,
 };
 
@@ -155,27 +155,15 @@ fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
     ])
 }
 
-fn simulation_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
-    SingleSolver::new(SolverConf::new(
-        SolverType::Z3,
-        true,
-        &infer_cfg.fname,
-        3,
-        0,
-    ))
-}
-
-pub fn qalpha<E, L, S1, S2>(
+pub fn qalpha<E, L, S1>(
     infer_cfg: Arc<InferenceConfig>,
     m: &Module,
     main_solver: &S1,
-    simulation_solver: &S2,
     print_invariant: bool,
 ) where
     E: Element,
     L: LemmaQf<Body = E>,
     S1: BasicSolver,
-    S2: BasicSolver,
 {
     let fo = FOModule::new(
         m,
@@ -283,10 +271,9 @@ pub fn qalpha<E, L, S1, S2>(
             );
         }
 
-        let fixpoint = run_qalpha::<E, L, S1, S2>(
+        let fixpoint = run_qalpha::<E, L, S1>(
             infer_cfg.clone(),
             main_solver,
-            simulation_solver,
             m,
             &fo,
             active_domains.clone(),
@@ -309,56 +296,49 @@ pub fn qalpha<E, L, S1, S2>(
 
 pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invariant: bool) {
     match (&infer_cfg.qf_body, infer_cfg.fallback) {
-        (QfBody::CNF, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _, _>(
+        (QfBody::CNF, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
             infer_cfg.clone(),
             m,
             &parallel_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnf, false) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _, _>(
+        (QfBody::PDnf, false) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
             infer_cfg.clone(),
             m,
             &parallel_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::Dnf, false) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _, _>(
+        (QfBody::Dnf, false) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
             infer_cfg.clone(),
             m,
             &parallel_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::CNF, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _, _>(
+        (QfBody::CNF, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
             infer_cfg.clone(),
             m,
             &fallback_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::PDnf, true) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _, _>(
+        (QfBody::PDnf, true) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
             infer_cfg.clone(),
             m,
             &fallback_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
-        (QfBody::Dnf, true) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _, _>(
+        (QfBody::Dnf, true) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
             infer_cfg.clone(),
             m,
             &fallback_solver(&infer_cfg),
-            &simulation_solver(&infer_cfg),
             print_invariant,
         ),
     }
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
-fn run_qalpha<E, L, S1, S2>(
+fn run_qalpha<E, L, S1>(
     infer_cfg: Arc<InferenceConfig>,
     main_solver: &S1,
-    simulation_solver: &S2,
     m: &Module,
     fo: &FOModule,
     domains: Vec<Domain<L>>,
@@ -368,7 +348,6 @@ where
     E: Element,
     L: LemmaQf<Body = E>,
     S1: BasicSolver,
-    S2: BasicSolver,
 {
     let start = std::time::Instant::now();
 
@@ -403,7 +382,7 @@ where
     loop {
         // If enabled, extend CTI traces using simulations.
         if extend.is_some() {
-            frame.extend(fo, simulation_solver);
+            frame.extend(m);
         }
 
         if infer_cfg.abort_unsafe {

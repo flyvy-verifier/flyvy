@@ -133,6 +133,83 @@ impl Module {
             )
         }))
     }
+
+    /// Given a model from a module which underwent [`convert_non_bool_relations`],
+    /// convert it to one with the original non-boolean relations.
+    /// It is assumed that the calling [`Module`] (`self`) is a copy of the original, non-converted module.
+    pub fn to_non_bool_model(&self, model: &Model) -> Model {
+        Model::new(
+            &self.signature,
+            &model.universe,
+            self.signature
+                .relations
+                .iter()
+                .map(|r| {
+                    let interp = &model.interp[self.signature.relation_idx(&r.name)];
+                    if r.sort == Sort::Bool {
+                        return interp.clone();
+                    }
+                    assert_eq!(r.args.len(), interp.shape.len() - 2);
+
+                    let shape = r
+                        .args
+                        .iter()
+                        .map(|s| model.cardinality(s))
+                        .chain([model.cardinality(&r.sort)])
+                        .collect();
+                    let f = |elements: &[Element]| {
+                        for i in 0..model.cardinality(&r.sort) {
+                            let mut elements = elements.to_vec();
+                            elements.push(i);
+                            if interp.get(&elements) == 1 {
+                                return i;
+                            }
+                        }
+                        unreachable!()
+                    };
+                    Interpretation::new(&shape, f)
+                })
+                .collect(),
+        )
+    }
+
+    /// Given a model convert it to one only boolean relations.
+    /// It is assumed that the calling [`Module`] (`self`) is a copy of the module from which the model came,
+    /// but which underwent the `convert_non_bool_relations` operations.
+    pub fn to_bool_model(&self, model: &Model) -> Model {
+        Model::new(
+            &self.signature,
+            &model.universe,
+            self.signature
+                .relations
+                .iter()
+                .map(|r| {
+                    assert_eq!(r.sort, Sort::Bool);
+                    let interp = &model.interp[self.signature.relation_idx(&r.name)];
+                    if r.args.len() == interp.shape.len() - 1 {
+                        return interp.clone();
+                    }
+                    assert_eq!(r.args.len(), interp.shape.len());
+
+                    let shape = r
+                        .args
+                        .iter()
+                        .map(|s| model.cardinality(s))
+                        .chain([2])
+                        .collect();
+                    let f = |elements: &[Element]| {
+                        let (val, elements) = elements.split_last().unwrap();
+                        if interp.get(elements) == *val {
+                            return 1;
+                        } else {
+                            return 0;
+                        }
+                    };
+                    Interpretation::new(&shape, f)
+                })
+                .collect(),
+        )
+    }
 }
 
 fn contains_changed(term: &Term, changed: &[RelationDecl]) -> bool {

@@ -57,7 +57,7 @@ const STATE_LEN: usize = 128;
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the
 /// presence of a tuple in a relation. The order of the bits is determined by [Indices].
 #[derive(Clone, Copy, Eq, PartialOrd)]
-struct BoundedState(BitArr!(for STATE_LEN));
+pub struct BoundedState(BitArr!(for STATE_LEN));
 
 // Go word by word instead of bit by bit.
 impl std::hash::Hash for BoundedState {
@@ -86,6 +86,28 @@ impl BoundedState {
         assert!(index < STATE_LEN, "STATE_LEN is too small");
         self.0.set(index, value);
     }
+
+    /// Convert this [`BoundedState`] into a flyvy [`Model`].
+    pub fn to_model(&self, indices: &Indices) -> Model {
+        indices.model(0, |i| self.get(i) as Element)
+    }
+
+    /// Convert this flyvy [`Model`] into a [`BoundedState`].
+    pub fn from_model(indices: &Indices, model: &Model) -> Self {
+        let mut state = Self::ZERO;
+
+        for (i, relation) in indices.signature.relations.iter().enumerate() {
+            let ranges = relation.args.iter().map(|s| (0..model.cardinality(s)));
+            for values in ranges.multi_cartesian_product_fixed() {
+                state.set(
+                    indices.get(&relation.name, 0, &values),
+                    model.interp[i].get(&values) == 1,
+                )
+            }
+        }
+
+        state
+    }
 }
 
 impl Debug for BoundedState {
@@ -107,12 +129,12 @@ impl Debug for BoundedState {
 
 /// A BoundedProgram is a set of initial states, a set of transitions, and a safety property
 #[derive(Clone, Debug, PartialEq)]
-struct BoundedProgram {
+pub struct BoundedProgram {
     /// List of initial states
-    inits: Vec<BoundedState>,
+    pub inits: Vec<BoundedState>,
     /// List of transitions to potentially take at each step. The transition relation is the
     /// disjunction of all these transitions.
-    trs: Vec<Transition>,
+    pub trs: Vec<Transition>,
     /// Safety property to check in each reachable state.
     safe: Formula,
 }
@@ -128,7 +150,7 @@ struct BoundedProgram {
 /// If the guard is true, then the transition is enabled and can step to the updated state.
 /// If the guard is false, then the transition is not enabled.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct Transition {
+pub struct Transition {
     guards: Vec<Guard>,
     updates: Vec<Update>,
     slow_guard: Formula,
@@ -196,6 +218,15 @@ impl Transition {
             slow_guard,
         }
     }
+
+    /// Perform this transition's updates on the given [`BoundedState`].
+    pub fn update(&self, state: &BoundedState) -> BoundedState {
+        let mut next = *state;
+        self.updates
+            .iter()
+            .for_each(|update| next.set(update.index, update.formula.evaluate(state)));
+        next
+    }
 }
 
 /// Translate a flyvy module into a `BoundedProgram`, given the bounds on the sort sizes.
@@ -205,9 +236,9 @@ impl Transition {
 /// name and the argument values.
 /// The module is assumed to have already been typechecked.
 /// The translator ignores proof blocks.
-fn translate<'a>(
+pub fn translate<'a>(
     module: &'a Module,
-    universe: &'a UniverseBounds,
+    universe: &UniverseBounds,
     print_timing: bool,
 ) -> Result<(BoundedProgram, Indices<'a>), CheckerError> {
     for relation in &module.signature.relations {
@@ -874,14 +905,14 @@ fn interpret(
 /// efficiently retrieving the set of enabled transitions in a given state without searching through
 /// all transitions.
 #[derive(Clone, Debug)]
-struct Transitions<'a> {
+pub struct Transitions<'a> {
     data: Vec<&'a Transition>,
     children: HashMap<&'a Guard, Transitions<'a>>,
 }
 
 impl<'a> Transitions<'a> {
     /// Construct an empty set of transitions
-    fn new() -> Transitions<'a> {
+    pub fn new() -> Transitions<'a> {
         Transitions {
             data: Vec::new(),
             children: HashMap::default(),
@@ -889,7 +920,7 @@ impl<'a> Transitions<'a> {
     }
 
     /// Insert the given transition into the set
-    fn insert(&mut self, value: &'a Transition) {
+    pub fn insert(&mut self, value: &'a Transition) {
         self.insert_from_iter(value.guards.iter(), value)
     }
 
@@ -912,7 +943,7 @@ impl<'a> Transitions<'a> {
     }
 
     /// Get all the transitions whose guards are a subset of the given set.
-    fn get_subsets(&self, set: &BoundedState) -> Vec<&'a Transition> {
+    pub fn get_subsets(&self, set: &BoundedState) -> Vec<&'a Transition> {
         let mut out = vec![];
         self.get_subsets_into_vec(set, &mut out);
         out
@@ -931,13 +962,14 @@ impl<'a> Transitions<'a> {
 }
 
 /// Can answer the question "have I seen a state that is isomorphic to this one before"?
-struct IsoStateSet {
+pub struct IsoStateSet {
     set: HashSet<BoundedState>,
     orderings: Vec<Vec<(usize, usize)>>,
 }
 
 impl IsoStateSet {
-    fn new(indices: &Indices) -> IsoStateSet {
+    /// Create a new empty state set.
+    pub fn new(indices: &Indices) -> IsoStateSet {
         let sorts: Vec<_> = indices.universe.keys().sorted().collect();
         let orderings = sorts
             .iter()
@@ -983,7 +1015,8 @@ impl IsoStateSet {
         }
     }
 
-    fn insert(&mut self, x: &BoundedState) -> bool {
+    /// Insert a state into this set.
+    pub fn insert(&mut self, x: &BoundedState) -> bool {
         if self.set.contains(x) {
             false
         } else {
