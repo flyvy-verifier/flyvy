@@ -6,6 +6,7 @@
 use crate::syntax::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use peg::{error::ParseError, str::LineCol};
+use std::sync::Arc;
 
 // TODO(oded): Use smart constructors in this module. In principle, no Term
 // should be constructed directly by a (non-smart) constructor. I expect this
@@ -169,7 +170,7 @@ grammar parser() for str {
      rule module0() -> Module
      = _ sig:signature() _ defs:defs() _ thm:stmts() _
        { Module{
-          signature: sig, defs, statements: thm,
+          signature: Arc::new(sig), defs, statements: thm,
          } }
 
       pub rule module() -> Module = traced(<module0()>)

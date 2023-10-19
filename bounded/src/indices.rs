@@ -6,7 +6,7 @@
 use crate::quant_enum::*;
 use biodivine_lib_bdd::*;
 use fly::{ouritertools::OurItertools, semantics::*, syntax::*};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 /// Holds a map from (relation name, arguments) pairs to a number. The number is used
 /// for different purposes depending on the checker, but this is common functionality
@@ -19,9 +19,9 @@ use std::collections::HashMap;
 ///   - It wraps the BDD library that we're using, because anyone who wants to use
 ///   BDDs needs to have both a`BddVariableSet` and this mapping, so it makes sense
 ///   to bundle them together.
-pub struct Indices<'a> {
+pub struct Indices {
     /// The signature used to create this object
-    pub signature: &'a Signature,
+    pub signature: Arc<Signature>,
     /// The universe used to create this object
     pub universe: UniverseBounds,
     /// The number of copies of mutable relations that this object holds
@@ -38,19 +38,19 @@ pub struct Indices<'a> {
     indices: HashMap<String, HashMap<Vec<Element>, (usize, bool)>>,
 }
 
-impl Indices<'_> {
+impl Indices {
     /// Create a new `Indices` object from a signature, universe bounds, and the number
     /// of mutable copies to include.
-    pub fn new<'a>(
-        signature: &'a Signature,
+    pub fn new(
+        signature: Arc<Signature>,
         universe: &UniverseBounds,
         num_mutable_copies: usize,
-    ) -> Indices<'a> {
+    ) -> Indices {
         let (mutable, immutable): (Vec<_>, Vec<_>) = signature
             .relations
             .iter()
             .partition(|relation| relation.mutable);
-        let elements = |relation: &&'a RelationDecl| {
+        let elements = |relation: &&RelationDecl| {
             relation
                 .args
                 .iter()
@@ -147,7 +147,7 @@ impl Indices<'_> {
     /// Construct a [`Model`] given a function over its indices at some time.
     pub fn model(&self, primes: usize, f: impl Fn(usize) -> usize) -> Model {
         Model::new(
-            self.signature,
+            &self.signature,
             &self
                 .signature
                 .sorts

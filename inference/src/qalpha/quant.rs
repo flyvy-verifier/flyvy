@@ -179,6 +179,28 @@ impl<Q: Clone> QuantifierSequence<Q> {
             .collect_vec()
     }
 
+    pub fn substitutions_for(&self, other: &Self) -> Vec<Substitution> {
+        assert_eq!(self.len(), other.len());
+
+        (0..self.len())
+            .map(|i| {
+                other.names[i]
+                    .iter()
+                    .cloned()
+                    .permutations(self.names[i].len())
+            })
+            .multi_cartesian_product_fixed()
+            .map(|asgn| {
+                self.names
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .zip(asgn.into_iter().flatten().map(Term::Id))
+                    .collect()
+            })
+            .collect()
+    }
+
     pub fn as_universal(&self) -> QuantifierPrefix {
         QuantifierPrefix {
             quantifiers: vec![Quantifier::Forall; self.len()],

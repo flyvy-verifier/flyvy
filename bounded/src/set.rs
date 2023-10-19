@@ -236,18 +236,18 @@ impl Transition {
 /// name and the argument values.
 /// The module is assumed to have already been typechecked.
 /// The translator ignores proof blocks.
-pub fn translate<'a>(
-    module: &'a Module,
+pub fn translate(
+    module: &Module,
     universe: &UniverseBounds,
     print_timing: bool,
-) -> Result<(BoundedProgram, Indices<'a>), CheckerError> {
+) -> Result<(BoundedProgram, Indices), CheckerError> {
     for relation in &module.signature.relations {
         if relation.sort != Sort::Bool {
             panic!("non-bool relations in checker (use Module::convert_non_bool_relations)")
         }
     }
 
-    let indices = Indices::new(&module.signature, universe, 1);
+    let indices = Indices::new(module.signature.clone(), universe, 1);
 
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
@@ -1034,6 +1034,8 @@ impl IsoStateSet {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use fly::sorts::sort_check_module;
 
@@ -1110,7 +1112,7 @@ mod tests {
 
     #[test]
     fn checker_set_basic() {
-        let signature = Signature {
+        let signature = Arc::new(Signature {
             sorts: vec![],
             relations: vec![RelationDecl {
                 args: vec![],
@@ -1118,9 +1120,9 @@ mod tests {
                 name: "r".to_string(),
                 mutable: true,
             }],
-        };
+        });
         let universe = std::collections::HashMap::new();
-        let indices = Indices::new(&signature, &universe, 1);
+        let indices = Indices::new(signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([0])],
@@ -1149,7 +1151,7 @@ mod tests {
 
     #[test]
     fn checker_set_cycle() {
-        let signature = Signature {
+        let signature = Arc::new(Signature {
             sorts: vec![],
             relations: vec![
                 RelationDecl {
@@ -1177,9 +1179,9 @@ mod tests {
                     mutable: true,
                 },
             ],
-        };
+        });
         let universe = std::collections::HashMap::new();
-        let indices = Indices::new(&signature, &universe, 1);
+        let indices = Indices::new(signature, &universe, 1);
 
         let program = BoundedProgram {
             inits: vec![state([1, 0, 0, 0])],
@@ -1281,7 +1283,7 @@ mod tests {
         let mut m = fly::parser::parse(source).unwrap();
         sort_check_module(&mut m).unwrap();
         let universe = std::collections::HashMap::from([("node".to_string(), 2)]);
-        let indices = Indices::new(&m.signature, &universe, 1);
+        let indices = Indices::new(m.signature.clone(), &universe, 1);
 
         let trs = vec![
             transition(
@@ -1471,7 +1473,7 @@ immutable f(s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 2)]);
-        let indices = Indices::new(&m.signature, &universe, 1);
+        let indices = Indices::new(m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
 
         assert!(set.insert(&state([0, 0])));
@@ -1488,7 +1490,7 @@ immutable f(a, b): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("a".to_string(), 3), ("b".to_string(), 3)]);
-        let indices = Indices::new(&m.signature, &universe, 1);
+        let indices = Indices::new(m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
 
         // b: 0 -> 2, 2 -> 1, 1 -> 0
@@ -1503,7 +1505,7 @@ immutable f(s, t, s): bool
         let m = fly::parser::parse(source).unwrap();
         let universe =
             std::collections::HashMap::from([("s".to_string(), 3), ("t".to_string(), 2)]);
-        let indices = Indices::new(&m.signature, &universe, 1);
+        let indices = Indices::new(m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;
@@ -1538,7 +1540,7 @@ immutable f(s, bool, s): bool
         ";
         let m = fly::parser::parse(source).unwrap();
         let universe = std::collections::HashMap::from([("s".to_string(), 3)]);
-        let indices = Indices::new(&m.signature, &universe, 1);
+        let indices = Indices::new(m.signature, &universe, 1);
         let mut set = IsoStateSet::new(&indices);
         let state = |vec: Vec<(usize, usize, usize)>| -> BoundedState {
             let mut out = BoundedState::ZERO;

@@ -261,7 +261,6 @@ impl InferenceConfigArgs {
             disj: !self.no_disj,
             gradual_smt: self.gradual_smt || self.minimal_smt,
             minimal_smt: self.minimal_smt,
-            extend_width: self.extend_width,
             extend_depth: self.extend_depth,
             no_search: self.no_search,
             until_safe: self.until_safe,

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::qalpha::{
     quant::{QuantifierConfig, QuantifierPrefix},
     subsume::{Clause, Element},
-    weaken::{LemmaQf, LemmaSet},
+    weaken::LemmaQf,
 };
 
 fn has_opposing_literals(clause: &<Clause as Element>::Base) -> bool {
@@ -22,8 +22,7 @@ pub fn into_equivalent_clause<E: Element, L: LemmaQf<Body = E>>(
     prefix: Arc<QuantifierPrefix>,
     body: E,
     config: &QuantifierConfig,
-    lemma_set: &LemmaSet<E>,
-) -> Option<(Arc<QuantifierPrefix>, E)> {
+) -> Vec<E> {
     let clauses = body.to_cnf().0;
     let universal_prefix = config.as_universal();
     let bodies = clauses

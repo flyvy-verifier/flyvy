@@ -474,7 +474,7 @@ impl Scope<'_> {
         &mut self,
         module: &mut Module,
     ) -> Result<(), (SortError, Option<Span>)> {
-        assert!(module.signature == *self.signature);
+        assert!(module.signature.as_ref() == self.signature);
 
         self.sort_check_definitions(&mut module.defs)
             .map_err(|e| (e, None))?;

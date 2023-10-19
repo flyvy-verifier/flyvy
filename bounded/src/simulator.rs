@@ -35,23 +35,23 @@ fn universe_bounds(signature: &Signature, universe: &Vec<usize>) -> UniverseBoun
 
 /// A simulator for a fixed-size universe.
 /// Keeps track of the states it has already seen and ignores them in new simulations.
-struct Simulator<'a> {
-    indices: Indices<'a>,
+struct Simulator {
+    indices: Indices,
     program: BoundedProgram,
     seen: Mutex<IsoStateSet>,
 }
 
 /// A simulator for arbitrary universe sizes.
 /// Keeps track of the states it has already seen and ignores them in new simulations.
-pub struct MultiSimulator<'a, 'b> {
+pub struct MultiSimulator<'a> {
     module: &'a Module,
     bool_module: Module,
-    sims: RwLock<HashMap<Vec<usize>, Simulator<'b>>>,
+    sims: RwLock<HashMap<Vec<usize>, Simulator>>,
 }
 
-impl<'a> Simulator<'a> {
+impl Simulator {
     /// Create a new simulator for the given module and universe size.
-    fn new(module: &'a Module, universe: &UniverseBounds) -> Self {
+    fn new(module: &Module, universe: &UniverseBounds) -> Self {
         let (program, indices) = translate(module, universe, false).unwrap();
         let seen = IsoStateSet::new(&indices);
 
@@ -105,7 +105,7 @@ impl<'a> Simulator<'a> {
     }
 }
 
-impl<'a, 'b> MultiSimulator<'a, 'b> {
+impl<'a> MultiSimulator<'a> {
     /// Create a new simulator for the given module which supports arbitrary universe sizes.
     pub fn new(module: &'a Module) -> Self {
         let mut bool_module = module.clone();
@@ -118,7 +118,7 @@ impl<'a, 'b> MultiSimulator<'a, 'b> {
     }
 
     /// Create a new internal, fixed-size simulator for the given universe size if one doesn't exist.
-    fn create_sim(&'b self, universe: &Vec<usize>) {
+    fn create_sim(&self, universe: &Vec<usize>) {
         assert_eq!(universe.len(), self.module.signature.sorts.len());
         {
             let sims = self.sims.read().unwrap();
@@ -142,7 +142,7 @@ impl<'a, 'b> MultiSimulator<'a, 'b> {
     }
 
     /// Simulate all transitions from the given model and return those that weren't see before.
-    pub fn simulate_new(&'b self, model: &Model) -> Vec<Model> {
+    pub fn simulate_new(&self, model: &Model) -> Vec<Model> {
         self.create_sim(&model.universe);
         {
             let sims = self.sims.read().unwrap();
@@ -156,7 +156,7 @@ impl<'a, 'b> MultiSimulator<'a, 'b> {
     }
 
     /// Register the given models as already seen by the simulator.
-    pub fn see(&'b self, models: &[Model]) {
+    pub fn see(&self, models: &[Model]) {
         for model in models {
             self.create_sim(&model.universe);
             {
@@ -169,7 +169,7 @@ impl<'a, 'b> MultiSimulator<'a, 'b> {
     }
 
     /// Return all initial states of the given universe size that weren't see before.
-    pub fn initials_new(&'b self, universe: &Vec<usize>) -> Vec<Model> {
+    pub fn initials_new(&self, universe: &Vec<usize>) -> Vec<Model> {
         self.create_sim(universe);
         {
             let sims = self.sims.read().unwrap();

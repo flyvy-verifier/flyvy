@@ -43,7 +43,7 @@ pub fn check(
         .cloned();
     let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
-    let mut indices = Indices::new(&module.signature, universe, depth + 1);
+    let mut indices = Indices::new(module.signature.clone(), universe, depth + 1);
 
     let translate = |term| {
         enumerate_quantifiers(&term, &module.signature, universe)

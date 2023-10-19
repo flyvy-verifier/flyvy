@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
-use crate::parallel::DequeWorker;
+use crate::parallel::{paralllelism, DequeWorker};
 
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
@@ -18,7 +18,7 @@ use crate::{
     basics::InferenceConfig,
     qalpha::{
         atoms::{sat_literals, Literals},
-        quant::{QuantifierConfig, QuantifierPrefix},
+        quant::QuantifierPrefix,
         subsume::{self, Clause, Element, Structure, SubsumptionMap},
     },
 };
@@ -298,19 +298,24 @@ where
 
             let structure = sat_literals(&self.literals, model, assignment);
 
-            let weakenings = DequeWorker::run(to_weaken.bodies(), |body| {
-                (
-                    self.lemma_qf.weaken(body.clone(), &structure, |b| {
-                        new_ignore.iter().any(|ig| ig.subsumes(b))
-                    }),
-                    vec![],
-                    vec![],
-                    false,
-                )
-            });
+            let weakenings = DequeWorker::run(
+                to_weaken.bodies(),
+                |body| {
+                    (
+                        self.lemma_qf.weaken(body.clone(), &structure, |b| {
+                            new_ignore.iter().any(|ig| ig.subsumes(b))
+                        }),
+                        vec![],
+                        vec![],
+                        false,
+                    )
+                },
+                paralllelism(),
+            )
+            .0;
 
             let mut weakened_min = to_weaken.clone_empty();
-            for new_body in weakenings.into_iter().filter_map(|(_, w)| w).flatten() {
+            for new_body in weakenings.into_iter().flat_map(|(_, w)| w) {
                 weakened_min.insert_minimized(new_body, perm_index);
             }
 
@@ -433,12 +438,15 @@ where
     }
 }
 
+pub type LemmaId = (usize, usize);
+
 /// Manages multiple instances of [`PrefixLemmaSet`] and allows weakening them all simultaneously.
 pub struct WeakenLemmaSet<E, L>
 where
     E: Element,
     L: LemmaQf<Body = E>,
 {
+    signature: Arc<Signature>,
     sets: Vec<PrefixLemmaSet<E, L>>,
 }
 
@@ -447,13 +455,17 @@ where
     E: Element,
     L: LemmaQf<Body = E>,
 {
-    pub fn new(domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>)>) -> Self {
+    pub fn new(
+        signature: Arc<Signature>,
+        domains: Vec<(Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>)>,
+    ) -> Self {
         let sets: Vec<PrefixLemmaSet<E, L>> = domains
             .into_iter()
+            .sorted_by_key(|(prefix, _, _)| prefix.clone())
             .map(|(prefix, lemma_qf, atoms)| PrefixLemmaSet::new(prefix, lemma_qf, atoms))
             .collect_vec();
 
-        Self { sets }
+        Self { signature, sets }
     }
 
     pub fn init(&mut self) {
@@ -477,8 +489,42 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> + '_ {
-        self.sets.iter().flat_map(|set| set.as_iter())
+    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E, before: Option<usize>) -> bool {
+        (0..before.unwrap_or(self.sets.len())).any(|i| {
+            let set_i = &self.sets[i];
+            let prefix_i = set_i.prefix.as_ref();
+            prefix_i.subsumes(prefix)
+                && prefix.substitutions_for(prefix_i).iter().any(|subst| {
+                    !set_i
+                        .bodies
+                        .get_subsuming(&body.substitute(subst))
+                        .is_empty()
+                })
+        })
+    }
+
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E, LemmaId)> + '_ {
+        DequeWorker::run(
+            self.sets
+                .iter()
+                .enumerate()
+                .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| (i, *j, body))),
+            |(i, _, body)| {
+                let prefix = self.sets[*i].prefix.restrict(body.ids());
+                if (prefix.existentials() == 0 && !body.is_clause())
+                    || self.subsumes(&prefix, body, Some(*i))
+                {
+                    (None, vec![], vec![], false)
+                } else {
+                    (Some(prefix), vec![], vec![], false)
+                }
+            },
+            paralllelism(),
+        )
+        .0
+        .into_iter()
+        .filter_map(|((i, j, body), prefix)| prefix.map(|p| (Arc::new(p), body.clone(), (i, j))))
+        .sorted_by_key(|(prefix, body, id)| (lemma_key(prefix, body), *id))
     }
 
     pub fn unsat(&self, model: &Model) -> bool {
@@ -486,143 +532,27 @@ where
             .iter()
             .any(|set| !set.unsat(model, &Assignment::new(), 0).is_empty())
     }
-}
 
-/// Manages lemmas of several quantifier prefixes together, which all share some [`QuantifierConfig`].
-#[derive(Clone)]
-pub struct LemmaSet<E: Element> {
-    signature: Arc<Signature>,
-    pub config: Arc<QuantifierConfig>,
-    to_prefixes: HashMap<usize, Arc<QuantifierPrefix>>,
-    to_bodies: HashMap<usize, E>,
-    bodies: E::Map<HashSet<usize>>,
-    next: usize,
+    pub fn to_terms_ids(&self) -> impl Iterator<Item = (Term, LemmaId)> + '_ {
+        self.as_iter()
+            .map(|(prefix, body, id)| (prefix.quantify(&self.signature, body.to_term(true)), id))
+    }
+
+    pub fn to_terms(&self) -> Vec<Term> {
+        self.to_terms_ids().map(|(t, _)| t).collect()
+    }
+
+    pub fn id_to_term(&self, id: &LemmaId) -> Term {
+        let set = &self.sets[id.0];
+        let body = &set.by_id[&id.1];
+        set.prefix.quantify(&self.signature, body.to_term(true))
+    }
+
+    pub fn contains_id(&self, id: &LemmaId) -> bool {
+        id.0 < self.sets.len() && self.sets[id.0].by_id.contains_key(&id.1)
+    }
 }
 
 fn lemma_key<E: Element>(prefix: &QuantifierPrefix, body: &E) -> impl Ord {
     (prefix.existentials(), body.size(), prefix.num_vars())
-}
-
-impl<E: Element> LemmaSet<E> {
-    pub fn new(signature: Arc<Signature>, config: Arc<QuantifierConfig>) -> Self {
-        Self {
-            signature,
-            config,
-            to_prefixes: HashMap::default(),
-            to_bodies: HashMap::default(),
-            bodies: E::Map::new(),
-            next: 0,
-        }
-    }
-
-    pub fn init(&mut self) {
-        self.insert(
-            Arc::new(self.config.as_universal().restrict(HashSet::default())),
-            E::bottom(),
-        );
-    }
-
-    pub fn len(&self) -> usize {
-        self.to_prefixes.len()
-    }
-
-    pub fn id_to_lemma(&self, id: &usize) -> (Arc<QuantifierPrefix>, E) {
-        (self.to_prefixes[id].clone(), self.to_bodies[id].clone())
-    }
-
-    pub fn to_terms_ids(&self) -> impl Iterator<Item = (usize, Term)> + '_ {
-        self.as_iter()
-            .map(|((prefix, body), id)| (id, prefix.quantify(&self.signature, body.to_term(true))))
-    }
-
-    pub fn to_terms(&self) -> Vec<Term> {
-        self.to_terms_ids().map(|(_, t)| t).collect()
-    }
-
-    pub fn as_iter(&self) -> impl Iterator<Item = ((Arc<QuantifierPrefix>, E), usize)> {
-        self.to_prefixes
-            .keys()
-            .copied()
-            .map(|id| (self.id_to_lemma(&id), id))
-            .sorted_by_key(|((prefix, body), id)| (lemma_key(prefix, body), *id))
-    }
-
-    pub fn as_vec(&self) -> Vec<((Arc<QuantifierPrefix>, E), usize)> {
-        self.as_iter().collect()
-    }
-
-    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E) -> bool {
-        for perm in self.config.permutations(0, Some(&body.ids())) {
-            let perm_body = body.substitute(&perm);
-
-            if self
-                .bodies
-                .get_subsuming(&perm_body)
-                .into_iter()
-                .flat_map(|(_, is)| is)
-                .any(|i| self.to_prefixes[i].subsumes(prefix))
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    pub fn get_subsumed(&self, prefix: &QuantifierPrefix, body: &E) -> HashSet<usize> {
-        let mut subsumed: HashSet<usize> = HashSet::default();
-
-        for perm in self.config.permutations(0, Some(&body.ids())) {
-            let perm_body = body.substitute(&perm);
-            subsumed.extend(
-                self.bodies
-                    .get_subsumed(&perm_body)
-                    .into_iter()
-                    .flat_map(|(_, is)| is)
-                    .copied()
-                    .filter(|i| prefix.subsumes(&self.to_prefixes[i])),
-            );
-        }
-
-        subsumed
-    }
-
-    pub fn insert(&mut self, prefix: Arc<QuantifierPrefix>, body: E) -> usize {
-        let id = self.next;
-        self.next += 1;
-
-        self.to_prefixes.insert(id, prefix);
-        self.to_bodies.insert(id, body.clone());
-        if let Some(hs) = self.bodies.get_mut(&body) {
-            hs.insert(id);
-        } else {
-            self.bodies.insert(body.clone(), HashSet::from_iter([id]));
-        }
-
-        id
-    }
-
-    pub fn insert_minimized(&mut self, prefix: Arc<QuantifierPrefix>, body: E) -> Option<usize> {
-        if !LemmaSet::subsumes(self, &prefix, &body) {
-            for id in &self.get_subsumed(&prefix, &body) {
-                self.remove(id);
-            }
-
-            Some(self.insert(prefix, body))
-        } else {
-            None
-        }
-    }
-
-    pub fn remove(&mut self, id: &usize) -> (Arc<QuantifierPrefix>, E) {
-        let prefix = self.to_prefixes.remove(id).unwrap();
-        let body = self.to_bodies.remove(id).unwrap();
-        let hs = self.bodies.get_mut(&body).unwrap();
-        hs.remove(id);
-        if hs.is_empty() {
-            self.bodies.remove(&body);
-        }
-
-        (prefix, body)
-    }
 }

@@ -3,7 +3,7 @@
 
 //! Advanced parallelism infrastructure
 
-use crate::hashmap::HashMap;
+use crate::hashmap::{HashMap, HashSet};
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::sync::Mutex;
@@ -15,7 +15,8 @@ where
     T: Eq + Hash,
 {
     deque: VecDeque<T>,
-    results: HashMap<T, Option<R>>,
+    running: HashSet<T>,
+    results: HashMap<T, R>,
     waiting: usize,
     processing: usize,
     cancel: bool,
@@ -23,6 +24,10 @@ where
 
 // result, push front, push back, cancel
 type DequeResult<T, R> = (R, Vec<T>, Vec<T>, bool);
+
+pub fn paralllelism() -> usize {
+    std::thread::available_parallelism().unwrap().get()
+}
 
 pub struct DequeWorker<T, R, F>
 where
@@ -44,6 +49,7 @@ where
         Self {
             dm: Mutex::new(DequeManager {
                 deque,
+                running: HashSet::default(),
                 results: HashMap::default(),
                 waiting,
                 processing: 0,
@@ -53,17 +59,19 @@ where
         }
     }
 
-    pub fn run<I: IntoIterator<Item = T>>(tasks: I, work: F) -> HashMap<T, Option<R>> {
+    pub fn run<I: IntoIterator<Item = T>>(
+        tasks: I,
+        work: F,
+        mut num_workers: usize,
+    ) -> (HashMap<T, R>, VecDeque<T>) {
         let deque: VecDeque<T> = tasks.into_iter().collect();
-        let num_workers = std::thread::available_parallelism()
-            .unwrap()
-            .get()
-            .min(deque.len());
+        num_workers = num_workers.min(deque.len());
         let par_worker = Self::new(deque, work, num_workers);
 
         thread::scope(|s| par_worker.launch_workers(num_workers, s));
 
-        par_worker.dm.into_inner().unwrap().results
+        let dm = par_worker.dm.into_inner().unwrap();
+        (dm.results, dm.deque)
     }
 
     fn worker<'a>(&'a self, s: &'a Scope<'a, '_>) {
@@ -74,12 +82,12 @@ where
                 dm.waiting -= 1;
                 if !dm.cancel {
                     task = dm.deque.pop_front();
-                    while task.as_ref().is_some_and(|t| dm.results.contains_key(t)) {
+                    while task.as_ref().is_some_and(|t| dm.running.contains(t)) {
                         task = dm.deque.pop_front();
                     }
 
                     if let Some(t) = &task {
-                        dm.results.insert(t.clone(), None);
+                        dm.running.insert(t.clone());
                         dm.processing += 1;
                     }
                 }
@@ -92,12 +100,16 @@ where
 
             {
                 let mut dm = self.dm.lock().unwrap();
-                dm.results.insert(task.unwrap(), Some(result));
+                dm.results.insert(task.unwrap(), result);
                 for t in push_front {
-                    dm.deque.push_front(t);
+                    if !dm.results.contains_key(&t) {
+                        dm.deque.push_front(t);
+                    }
                 }
                 for t in push_back {
-                    dm.deque.push_back(t);
+                    if !dm.results.contains_key(&t) {
+                        dm.deque.push_back(t);
+                    }
                 }
                 dm.cancel |= cancel;
                 dm.processing -= 1;

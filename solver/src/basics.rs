@@ -5,7 +5,7 @@
 
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::thread;
 
 use fly::{
@@ -142,6 +142,9 @@ pub trait BasicSolver: Sync + Send {
 pub trait BasicSolverCanceler: Sync + Send {
     /// Cancel the query associated with this canceler.
     fn cancel(&self);
+
+    /// Check whether the canceler has been canceled.
+    fn is_canceled(&self) -> bool;
 }
 
 /// Maintains a set of [`BasicSolverCanceler`]'s which can be used to cancel queries whenever necessary.
@@ -152,7 +155,7 @@ pub trait BasicSolverCanceler: Sync + Send {
 /// itself implements [`BasicSolverCanceler`]. That is, multiple [`SolverCancelers`] -- which can be canceled
 /// individually -- can be aggregated within a higher-order [`SolverCancelers`] which can cancel them all at once.
 /// This enables a tree-like structure where the cancellation of a node cancels all of its descendants.
-pub struct SolverCancelers<C: BasicSolverCanceler>(Arc<Mutex<(bool, Vec<C>)>>);
+pub struct SolverCancelers<C: BasicSolverCanceler>(Arc<RwLock<(bool, Vec<C>)>>);
 
 impl<C: BasicSolverCanceler> Clone for SolverCancelers<C> {
     fn clone(&self) -> Self {
@@ -169,14 +172,18 @@ impl<C: BasicSolverCanceler> Default for SolverCancelers<C> {
 impl<C: BasicSolverCanceler> SolverCancelers<C> {
     /// Create a new empty set of solver cancelers.
     pub fn new() -> Self {
-        SolverCancelers(Arc::new(Mutex::new((false, vec![]))))
+        SolverCancelers(Arc::new(RwLock::new((false, vec![]))))
     }
 
     /// Add the given canceler to the set of cancelers.
     ///
     /// Returns `true` if the [`BasicSolverCanceler`] was added, or `false` if the set has already been canceled.
     pub fn add_canceler(&self, canceler: C) -> bool {
-        let mut cancelers = self.0.lock().unwrap();
+        if self.is_canceled() {
+            return false;
+        }
+
+        let mut cancelers = self.0.write().unwrap();
         if cancelers.0 {
             false
         } else {
@@ -189,11 +196,16 @@ impl<C: BasicSolverCanceler> SolverCancelers<C> {
 impl<C: BasicSolverCanceler> BasicSolverCanceler for SolverCancelers<C> {
     /// Cancel all solvers tracked by this set of cancelers.
     fn cancel(&self) {
-        let mut cancelers = self.0.lock().unwrap();
+        let mut cancelers = self.0.write().unwrap();
         cancelers.0 = true;
         for canceler in cancelers.1.drain(..) {
             canceler.cancel();
         }
+    }
+
+    fn is_canceled(&self) -> bool {
+        let cancelers = self.0.read().unwrap();
+        cancelers.0
     }
 }
 
@@ -213,6 +225,10 @@ pub struct ParallelSolvers(Vec<SolverConf>);
 impl BasicSolverCanceler for SmtPid {
     fn cancel(&self) {
         self.kill()
+    }
+
+    fn is_canceled(&self) -> bool {
+        self.is_killed()
     }
 }
 

@@ -53,6 +53,10 @@ pub trait Element: Clone + Eq + Hash + Ord + Send + Sync + Debug {
     fn to_dnf(&self) -> Dnf;
 
     fn size(&self) -> usize;
+
+    fn is_clause(&self) -> bool {
+        self.to_cnf().0.len() == 1
+    }
 }
 
 pub trait SubsumptionMap: Clone + Send + Sync {

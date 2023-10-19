@@ -8,6 +8,5 @@ pub mod fixpoint;
 mod lemma;
 pub mod quant;
 mod subsume;
-mod transform;
 mod trie;
 mod weaken;

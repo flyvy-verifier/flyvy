@@ -3,6 +3,8 @@
 
 //! Utility to convert all non-boolean-returning relations in a Module to boolean-returning ones.
 
+use std::sync::Arc;
+
 use crate::{semantics::*, syntax::*};
 use thiserror::Error;
 
@@ -21,7 +23,8 @@ impl Module {
             .collect();
 
         let mut axioms = vec![];
-        for relation in &mut self.signature.relations {
+        let mut new_signature = self.signature.as_ref().clone();
+        for relation in &mut new_signature.relations {
             if relation.sort != Sort::Bool {
                 let binders: Vec<Binder> = relation
                     .args
@@ -83,6 +86,7 @@ impl Module {
                 relation.sort = Sort::Bool;
             }
         }
+        self.signature = Arc::new(new_signature);
 
         for statement in &mut self.statements {
             match statement {

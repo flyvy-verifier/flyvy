@@ -14,34 +14,34 @@ use std::collections::HashMap;
 /// This assumes that the module has been typechecked.
 /// Passing `None` for depth means to run until a counterexample is found.
 /// The checker ignores proof blocks.
-pub fn check<'a>(
-    module: &'a Module,
-    universe: &'a UniverseBounds,
+pub fn check(
+    module: &Module,
+    universe: &UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, false)
 }
 
 /// The same as `check`, but instead of starting at `init` and going until it gets to `not_safe`,
 /// it starts at `not_safe` and goes backwards until it gets to `init`.
 /// It also returns a negated Bdd if it returns Convergence.
-pub fn check_reversed<'a>(
-    module: &'a Module,
-    universe: &'a UniverseBounds,
+pub fn check_reversed(
+    module: &Module,
+    universe: &UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
-) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices)>, CheckerError> {
     check_internal(module, universe, depth, print_timing, true)
 }
 
-fn check_internal<'a>(
-    module: &'a Module,
-    universe: &'a UniverseBounds,
+fn check_internal(
+    module: &Module,
+    universe: &UniverseBounds,
     depth: Option<usize>,
     print_timing: bool,
     reversed: bool,
-) -> Result<CheckerAnswer<(Bdd, Indices<'a>)>, CheckerError> {
+) -> Result<CheckerAnswer<(Bdd, Indices)>, CheckerError> {
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
             return Err(CheckerError::UnknownSort(sort.clone(), universe.clone()));
@@ -67,7 +67,7 @@ fn check_internal<'a>(
         .cloned();
     let safeties = d.proofs.iter().map(|proof| proof.safety.x.clone());
 
-    let indices = Indices::new(&module.signature, universe, 2);
+    let indices = Indices::new(module.signature.clone(), universe, 2);
 
     let translate = |term| {
         let term = enumerate_quantifiers(&term, &module.signature, universe)

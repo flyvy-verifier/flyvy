@@ -4,7 +4,7 @@
 //! The flyvy AST for terms and modules.
 
 use itertools::Itertools;
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use serde::Serialize;
 
@@ -774,7 +774,7 @@ pub enum ThmStmt {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Module {
     /// Signature for all terms in the module
-    pub signature: Signature,
+    pub signature: Arc<Signature>,
     /// Helper definitions (essentially macros) that may be used in the module's
     /// statements
     pub defs: Vec<Definition>,

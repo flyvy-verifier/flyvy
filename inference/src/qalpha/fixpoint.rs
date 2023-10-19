@@ -4,9 +4,12 @@
 //! Find a fixpoint invariant expressing reachable states in a given
 //! lemma domain.
 
+use fly::semantics::Model;
 use itertools::Itertools;
+use solver::basics::{BasicSolverCanceler, SolverCancelers};
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use crate::basics::QfBody;
@@ -40,6 +43,8 @@ pub mod defaults {
     pub const MAX_CUBES: Option<usize> = Some(6);
     pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
     pub const MAX_NON_UNIT: Option<usize> = Some(3);
+
+    pub const MAX_SORT_SIZE: usize = 3;
 }
 
 /// Check how much of the handwritten invariant the given lemmas cover.
@@ -155,15 +160,15 @@ fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
     ])
 }
 
-pub fn qalpha<E, L, S1>(
+pub fn qalpha<E, L, S>(
     infer_cfg: Arc<InferenceConfig>,
     m: &Module,
-    main_solver: &S1,
+    solver: &S,
     print_invariant: bool,
 ) where
     E: Element,
     L: LemmaQf<Body = E>,
-    S1: BasicSolver,
+    S: BasicSolver,
 {
     let fo = FOModule::new(
         m,
@@ -172,17 +177,7 @@ pub fn qalpha<E, L, S1>(
         infer_cfg.minimal_smt,
     );
     log::debug!("Computing literals...");
-    let literals = Arc::new(generate_literals(
-        &infer_cfg,
-        &m.signature,
-        main_solver,
-        &fo,
-    ));
-    let extend = match (infer_cfg.extend_width, infer_cfg.extend_depth) {
-        (None, None) => None,
-        (Some(width), Some(depth)) => Some((width, depth)),
-        (_, _) => panic!("Only one of extend-width and extend-depth is specified."),
-    };
+    let literals = Arc::new(generate_literals(&infer_cfg, &m.signature, solver, &fo));
 
     let mut domains: VecDeque<Domain<L>>;
     let mut active_domains: Vec<Domain<L>>;
@@ -271,14 +266,8 @@ pub fn qalpha<E, L, S1>(
             );
         }
 
-        let fixpoint = run_qalpha::<E, L, S1>(
-            infer_cfg.clone(),
-            main_solver,
-            m,
-            &fo,
-            active_domains.clone(),
-            extend,
-        );
+        let fixpoint =
+            run_qalpha::<E, L, S>(infer_cfg.clone(), solver, m, &fo, active_domains.clone());
 
         fixpoint.report(print_invariant);
 
@@ -336,58 +325,62 @@ pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invaria
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
-fn run_qalpha<E, L, S1>(
+fn run_qalpha<E, L, S>(
     infer_cfg: Arc<InferenceConfig>,
-    main_solver: &S1,
+    solver: &S,
     m: &Module,
     fo: &FOModule,
     domains: Vec<Domain<L>>,
-    extend: Option<(usize, usize)>,
 ) -> FoundFixpoint
 where
     E: Element,
     L: LemmaQf<Body = E>,
-    S1: BasicSolver,
+    S: BasicSolver,
 {
     let start = std::time::Instant::now();
 
-    log::debug!("Axioms:");
-    for a in fo.module.axioms.iter() {
-        log::debug!("    {a}");
-    }
-    log::debug!("Initial states:");
-    for a in fo.module.inits.iter() {
-        log::debug!("    {a}");
-    }
-    log::debug!("Transitions:");
-    for a in fo.module.transitions.iter() {
-        log::debug!("    {a}");
-    }
-
-    let signature = Arc::new(m.signature.clone());
     let mut frame: InductionFrame<E, L> = InductionFrame::new(
-        infer_cfg.clone(),
-        signature,
+        m,
+        m.signature.clone(),
         domains,
-        extend,
+        infer_cfg.extend_depth,
         infer_cfg.property_directed,
     );
 
+    let mut samples = VecDeque::new();
+
     // Begin by overapproximating the initial states.
-    while frame.init_cycle(fo, main_solver) {}
+    let mut initial_samples: VecDeque<Vec<(Model, usize)>> =
+        frame.initial_samples(defaults::MAX_SORT_SIZE).collect();
+    frame.log_info(format!("Sampled {} initial samples.", samples.len()));
+    initial_samples
+        .iter()
+        .flatten()
+        .for_each(|(model, _)| frame.weaken(model));
+    frame.update();
+    loop {
+        frame.log_info("Finding initial CTI...");
+        let ctis = frame.init_cex(fo, solver);
+        if ctis.is_empty() {
+            break;
+        }
+        frame.log_info(format!("{} initial CTI(s) found.", ctis.len()));
+        for cex in ctis {
+            frame.weaken(&cex);
+            samples.insert(0, (cex, 0));
+        }
+        frame.update();
+    }
+
+    frame.log_info("No initial CTI found.");
 
     frame.clear_blocked();
 
     // Handle transition CTI's.
     loop {
-        // If enabled, extend CTI traces using simulations.
-        if extend.is_some() {
-            frame.extend(m);
-        }
-
-        if infer_cfg.abort_unsafe {
+        if infer_cfg.abort_unsafe || infer_cfg.property_directed {
             frame.log_info("Checking safety...");
-            if !frame.is_safe(fo, main_solver) {
+            if !frame.is_safe(fo, solver) {
                 return FoundFixpoint {
                     proof: frame.proof(),
                     reduced_proof: None,
@@ -398,20 +391,57 @@ where
             }
         }
 
-        if !frame.trans_cycle(fo, main_solver) {
+        frame.log_info("Finding transition CTI...");
+        let mut unsat: Vec<Model> = vec![];
+        let canceler = SolverCancelers::new();
+        thread::scope(|s| {
+            let smt_handle = s.spawn(|| frame.trans_cex(fo, solver, canceler.clone()));
+            let mut models;
+            let mut remaining;
+            loop {
+                (models, remaining) = frame.extend(canceler.clone(), samples.drain(..));
+                if canceler.is_canceled() || initial_samples.is_empty() {
+                    break;
+                }
+                assert!(models.is_empty() && remaining.is_empty());
+                samples.extend(initial_samples.pop_front().unwrap());
+            }
+            let smt_result: Vec<Model> = smt_handle.join().unwrap();
+
+            unsat = smt_result.clone();
+            unsat.append(&mut models);
+            samples.extend(smt_result.into_iter().map(|model| (model, 0)));
+            samples.append(&mut remaining);
+        });
+
+        frame.log_info(format!(
+            "{} transition CTI(s) found, {} samples remaining",
+            unsat.len(),
+            samples.len()
+        ));
+
+        if unsat.is_empty() {
             break;
         }
+
+        for model in &unsat {
+            frame.weaken(model);
+        }
+
+        frame.update();
     }
 
+    frame.log_info("No transition CTI found.");
+
     frame.log_info("Checking safety...");
-    frame.is_safe(fo, main_solver);
+    frame.is_safe(fo, solver);
     let time_taken = start.elapsed();
     let proof = frame.proof();
     let reduced_proof = frame.reduced_proof();
     let safety_proof = frame.safety_proof();
     let covering = reduced_proof
         .as_ref()
-        .map(|reduced| invariant_cover(m, main_solver, fo, reduced));
+        .map(|reduced| invariant_cover(m, solver, fo, reduced));
 
     FoundFixpoint {
         proof,

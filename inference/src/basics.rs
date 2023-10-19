@@ -5,7 +5,7 @@ use itertools;
 use itertools::Itertools;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -181,7 +181,7 @@ pub enum CexOrCore {
 /// and double-vocabulary transition assertions.
 /// `disj` denotes whether to split the transitions disjunctively, if possible.
 pub struct FOModule {
-    signature: Signature,
+    signature: Arc<Signature>,
     pub module: DestructuredModule,
     disj: bool,
     gradual: bool,
@@ -638,7 +638,6 @@ pub struct InferenceConfig {
     pub gradual_smt: bool,
     pub minimal_smt: bool,
 
-    pub extend_width: Option<usize>,
     pub extend_depth: Option<usize>,
 
     pub until_safe: bool,
