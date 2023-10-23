@@ -486,6 +486,32 @@ impl<I: Hash + Eq + Copy, E: Element> LemmaManager<I, E> {
             self.remove_from_cores(id);
         }
     }
+
+    fn blocked_closure(&self, core: HashSet<I>) -> Option<HashSet<I>> {
+        let mut extended_core: HashSet<I> = HashSet::default();
+        let mut new_ids: HashSet<I> = core;
+
+        while !new_ids.is_empty() {
+            let mut new_new_ids = HashSet::default();
+            for id in &new_ids {
+                if let Some(blocking_lemmas) = self.blocked_to_core.get(id) {
+                    new_new_ids.extend(blocking_lemmas.constituents());
+                } else {
+                    return None;
+                }
+            }
+
+            extended_core.extend(new_ids);
+            new_ids = new_new_ids
+                .into_iter()
+                .filter(|id| !extended_core.contains(id))
+                .collect();
+        }
+
+        extended_core.retain(|id| self.inductively_proven(id));
+
+        Some(extended_core)
+    }
 }
 
 /// A [`InductionFrame`] maintains quantified formulas during invariant inference.
@@ -568,26 +594,10 @@ where
     /// Get a minimized inductive set of lemmas in the frame which inductively implies safety,
     /// provided that `is_safe` has been called and returned `true`.
     pub fn safety_proof(&self) -> Option<Vec<Term>> {
-        let lemmas = self.lemmas.read().unwrap();
-        lemmas.safety_core.as_ref()?;
-
-        let mut extended_core: HashSet<LemmaId> = HashSet::default();
-        let mut new_ids: HashSet<LemmaId> = lemmas.safety_core.as_ref().unwrap().constituents();
-
-        while !new_ids.is_empty() {
-            let mut new_new_ids = HashSet::default();
-            for lemma in &new_ids {
-                if let Some(blocking_lemmas) = lemmas.blocked_to_core.get(lemma) {
-                    new_new_ids.extend(blocking_lemmas.constituents());
-                }
-            }
-
-            extended_core.extend(new_ids);
-            new_ids = new_new_ids
-                .into_iter()
-                .filter(|lemma| !extended_core.contains(lemma))
-                .collect();
-        }
+        let manager = self.lemmas.read().unwrap();
+        let extended_core: HashSet<LemmaId> = manager
+            .blocked_closure(manager.safety_core.as_ref().unwrap().constituents())
+            .unwrap();
 
         let indices = self
             .weaken_lemmas
@@ -603,7 +613,6 @@ where
             .collect_vec();
         let core = extended_core
             .into_iter()
-            .filter(|id| lemmas.inductively_proven(id))
             .map(|id| self.weaken_lemmas.id_to_term(&id))
             .collect_vec();
 
@@ -651,7 +660,9 @@ where
                 }
 
                 let term = prefix.quantify(&self.signature, body.to_term(true));
-                return (fo.init_cex(solver, &term), vec![], false);
+                let res = fo.init_cex(solver, &term);
+                let found = res.is_some();
+                return (res, vec![], found);
             },
             paralllelism(),
         );
@@ -987,7 +998,10 @@ where
     }
 
     pub fn initial_samples(&mut self) -> PriorityTasks<SamplePriority, Model> {
-        let max_model_size = defaults::MAX_MODEL_SIZE;
+        let max_model_size = self
+            .sim_options
+            .max_size
+            .unwrap_or(defaults::MAX_MODEL_SIZE);
         let universe_sizes = (0..self.signature.sorts.len())
             .map(|_| 1..=self.sim_options.max_size.unwrap_or(max_model_size))
             .multi_cartesian_product_fixed()

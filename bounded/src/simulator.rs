@@ -17,6 +17,7 @@ use fly::{
 use itertools::Itertools;
 
 use crate::{
+    checker::CheckerError,
     indices::Indices,
     quant_enum::UniverseBounds,
     set::{translate, BoundedProgram, BoundedState, IsoStateSet, Transitions},
@@ -51,15 +52,15 @@ pub struct MultiSimulator<'a> {
 
 impl Simulator {
     /// Create a new simulator for the given module and universe size.
-    fn new(module: &Module, universe: &UniverseBounds) -> Self {
-        let (program, indices) = translate(module, universe, false).unwrap();
+    fn new(module: &Module, universe: &UniverseBounds) -> Result<Self, CheckerError> {
+        let (program, indices) = translate(module, universe, false)?;
         let seen = IsoStateSet::new(&indices);
 
-        Self {
+        Ok(Self {
             indices,
             program,
             seen: Mutex::new(seen),
-        }
+        })
     }
 
     /// Simulate all transitions from the given state and return those that weren't see before.
@@ -118,32 +119,34 @@ impl<'a> MultiSimulator<'a> {
     }
 
     /// Create a new internal, fixed-size simulator for the given universe size if one doesn't exist.
-    fn create_sim(&self, universe: &Vec<usize>) {
+    fn create_sim(&self, universe: &Vec<usize>) -> Result<(), CheckerError> {
         assert_eq!(universe.len(), self.module.signature.sorts.len());
         {
             let sims = self.sims.read().unwrap();
             if sims.contains_key(universe) {
-                return;
+                return Ok(());
             }
         }
         {
             let mut sims = self.sims.write().unwrap();
             if sims.contains_key(universe) {
-                return;
+                return Ok(());
             }
             sims.insert(
                 universe.clone(),
                 Simulator::new(
                     &self.bool_module,
                     &universe_bounds(&self.module.signature, universe),
-                ),
+                )?,
             );
         }
+
+        Ok(())
     }
 
     /// Simulate all transitions from the given model and return those that weren't see before.
     pub fn simulate_new(&self, model: &Model) -> Vec<Model> {
-        self.create_sim(&model.universe);
+        assert!(self.create_sim(&model.universe).is_ok());
         {
             let sims = self.sims.read().unwrap();
             let sim = &sims[&model.universe];
@@ -158,7 +161,7 @@ impl<'a> MultiSimulator<'a> {
     /// Register the given models as already seen by the simulator.
     pub fn see(&self, models: &[Model]) {
         for model in models {
-            self.create_sim(&model.universe);
+            assert!(self.create_sim(&model.universe).is_ok());
             {
                 let sims = self.sims.read().unwrap();
                 let sim = &sims[&model.universe];
@@ -170,14 +173,15 @@ impl<'a> MultiSimulator<'a> {
 
     /// Return all initial states of the given universe size that weren't see before.
     pub fn initials_new(&self, universe: &Vec<usize>) -> Vec<Model> {
-        self.create_sim(universe);
-        {
+        if self.create_sim(universe).is_ok() {
             let sims = self.sims.read().unwrap();
             let sim = &sims[universe];
             sim.initials_new()
                 .into_iter()
                 .map(|s| self.module.to_non_bool_model(&sim.state_to_model(&s)))
                 .collect()
+        } else {
+            vec![]
         }
     }
 }

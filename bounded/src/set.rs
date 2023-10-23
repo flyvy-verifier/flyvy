@@ -183,7 +183,9 @@ impl Transition {
     // This function constructs a Transition that comes from taking all of the
     // input transitions at the same time. If any of the input transitions would
     // not be run for a given state, the new transition will not be run for that state.
-    fn from_conjunction(trs: impl IntoIterator<Item = Transition>) -> Transition {
+    fn from_conjunction(
+        trs: impl IntoIterator<Item = Transition>,
+    ) -> Result<Transition, CheckerError> {
         let mut guards: Vec<_> = vec![];
         let mut updates: Vec<_> = vec![];
         let mut slow_guard = Formula::always_true();
@@ -198,7 +200,10 @@ impl Transition {
         for g in &guards {
             for h in &guards {
                 if g != h && g.index == h.index {
-                    panic!("found two parallel guards that conflict\n{g:?}\n{h:?}")
+                    return Err(CheckerError::ParallelGuards(
+                        format!("{g:?}"),
+                        format!("{h:?}"),
+                    ));
                 }
             }
         }
@@ -212,11 +217,11 @@ impl Transition {
             }
         }
 
-        Transition {
+        Ok(Transition {
             guards,
             updates,
             slow_guard,
-        }
+        })
     }
 
     /// Perform this transition's updates on the given [`BoundedState`].
@@ -644,7 +649,7 @@ fn enumerated_to_transition(
 
     let transition = match term {
         Enumerated::And(xs) => {
-            Transition::from_conjunction(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?)
+            Transition::from_conjunction(xs.into_iter().map(go).collect::<Result<Vec<_>, _>>()?)?
         }
         Enumerated::Not(ref x) => {
             let mut tr = go(*x.clone())?;
