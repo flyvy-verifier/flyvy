@@ -8,14 +8,14 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::hashmap::{HashMap, HashSet};
-use crate::parallel::{paralllelism, DequeWorker};
+use crate::parallel::{paralllelism, PriorityWorker};
 
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
 use crate::{
-    basics::InferenceConfig,
+    basics::QalphaConfig,
     qalpha::{
         atoms::{sat_literals, Literals},
         quant::QuantifierPrefix,
@@ -59,7 +59,7 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
 
     /// Create a new instance given the following configuration.
     fn new(
-        cfg: &InferenceConfig,
+        cfg: &QalphaConfig,
         literals: Arc<Literals>,
         non_universal_vars: &HashSet<String>,
     ) -> Self;
@@ -298,21 +298,19 @@ where
 
             let structure = sat_literals(&self.literals, model, assignment);
 
-            let weakenings = DequeWorker::run(
-                to_weaken.bodies(),
-                |body| {
+            let weakenings = PriorityWorker::run(
+                &mut to_weaken.bodies().map(|b| ((), b)).collect(),
+                |_, body| {
                     (
                         self.lemma_qf.weaken(body.clone(), &structure, |b| {
                             new_ignore.iter().any(|ig| ig.subsumes(b))
                         }),
                         vec![],
-                        vec![],
                         false,
                     )
                 },
                 paralllelism(),
-            )
-            .0;
+            );
 
             let mut weakened_min = to_weaken.clone_empty();
             for new_body in weakenings.into_iter().flat_map(|(_, w)| w) {
@@ -427,8 +425,8 @@ where
         true
     }
 
-    fn bodies(&self) -> Vec<E> {
-        self.by_id.values().cloned().collect_vec()
+    fn bodies(&self) -> impl Iterator<Item = E> + '_ {
+        self.by_id.values().cloned()
     }
 
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> + '_ {
@@ -504,24 +502,25 @@ where
     }
 
     pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E, LemmaId)> + '_ {
-        DequeWorker::run(
-            self.sets
+        PriorityWorker::run(
+            &mut self
+                .sets
                 .iter()
                 .enumerate()
-                .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| (i, *j, body))),
-            |(i, _, body)| {
+                .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| ((), (i, *j, body))))
+                .collect(),
+            |_, (i, _, body)| {
                 let prefix = self.sets[*i].prefix.restrict(body.ids());
                 if (prefix.existentials() == 0 && !body.is_clause())
                     || self.subsumes(&prefix, body, Some(*i))
                 {
-                    (None, vec![], vec![], false)
+                    (None, vec![], false)
                 } else {
-                    (Some(prefix), vec![], vec![], false)
+                    (Some(prefix), vec![], false)
                 }
             },
             paralllelism(),
         )
-        .0
         .into_iter()
         .filter_map(|((i, j, body), prefix)| prefix.map(|p| (Arc::new(p), body.clone(), (i, j))))
         .sorted_by_key(|(prefix, body, id)| (lemma_key(prefix, body), *id))
@@ -550,6 +549,14 @@ where
 
     pub fn contains_id(&self, id: &LemmaId) -> bool {
         id.0 < self.sets.len() && self.sets[id.0].by_id.contains_key(&id.1)
+    }
+
+    pub fn remove_unsat(&mut self, model: &Model) {
+        for set in &mut self.sets {
+            for id in &set.unsat(model, &Assignment::new(), 0) {
+                set.remove_by_id(id);
+            }
+        }
     }
 }
 

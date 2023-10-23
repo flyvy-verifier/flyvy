@@ -11,7 +11,7 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::basics::InferenceConfig;
+use crate::basics::QalphaConfig;
 use crate::qalpha::lemma;
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
@@ -211,7 +211,7 @@ impl<Q: Clone> QuantifierSequence<Q> {
 }
 
 impl QuantifierConfig {
-    pub fn all_prefixes(&self, infer_cfg: &InferenceConfig) -> Vec<QuantifierPrefix> {
+    pub fn all_prefixes(&self, infer_cfg: &QalphaConfig) -> Vec<QuantifierPrefix> {
         let mut res = vec![];
 
         for e in 0..=infer_cfg.max_existentials.unwrap_or(self.num_vars()) {

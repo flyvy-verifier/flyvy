@@ -8,7 +8,7 @@ use fly::{
 };
 
 use crate::{
-    basics::{FOModule, InferenceConfig},
+    basics::{FOModule, QalphaConfig},
     hashmap::HashSet,
     qalpha::{
         lemma::ids,
@@ -70,7 +70,7 @@ impl From<&Literal> for Term {
 }
 
 pub fn generate_literals<B: BasicSolver>(
-    infer_cfg: &InferenceConfig,
+    infer_cfg: &QalphaConfig,
     signature: &Signature,
     solver: &B,
     fo: &FOModule,

@@ -23,9 +23,9 @@ use codespan_reporting::{
 use fly::semantics::models_to_string;
 use fly::syntax::{Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
-use inference::basics::{parse_quantifier, InferenceConfig, QfBody};
+use inference::basics::{parse_quantifier, QalphaConfig, QfBody};
 use inference::houdini;
-use inference::qalpha::fixpoint::{self, qalpha_dynamic};
+use inference::qalpha::fixpoint::{self, qalpha_dynamic, CtiOption, SimulationOptions};
 use inference::qalpha::quant::QuantifierConfig;
 use inference::updr::Updr;
 use solver::backends;
@@ -148,10 +148,6 @@ struct InferenceConfigArgs {
     qf_body: Option<String>,
 
     #[arg(long)]
-    /// Whether the search should should only attempt to prove safety
-    property_directed: bool,
-
-    #[arg(long)]
     /// Do not search gradually for the quantified serach space needed to find an invariant,
     /// and instead begin with the maximal domain matching the specification.
     no_search: bool,
@@ -206,12 +202,26 @@ struct InferenceConfigArgs {
     minimal_smt: bool,
 
     #[arg(long)]
-    /// Try to extend model traces before looking for CEX in the frame
-    extend_width: Option<usize>,
+    /// Run reachability simulations up to this depth
+    sim_depth: Option<usize>,
 
     #[arg(long)]
-    /// Try to extend model traces before looking for CEX in the frame
-    extend_depth: Option<usize>,
+    /// Run reachability simulations up to this state size (default: 8)
+    sim_size: Option<usize>,
+
+    #[arg(long)]
+    /// In simulations, consider the depth from the last counterexample found
+    guided: bool,
+
+    #[arg(long)]
+    /// Run simulations in a DFS manner (default is BFS)
+    dfs: bool,
+
+    #[arg(long)]
+    /// Determines the CTI strategy that is used in addition to the simulations.
+    /// Options are "weaken", "weaken-pd", "houdini", "houdini-pd", or "none".
+    /// "pd" indicates a property-directed strategy.
+    cti: Option<String>,
 
     #[arg(long)]
     /// Launch no new runs after safety has been proven
@@ -227,7 +237,7 @@ struct InferenceConfigArgs {
 }
 
 impl InferenceConfigArgs {
-    fn to_cfg(&self, sig: &Signature, fname: String) -> InferenceConfig {
+    fn to_cfg(&self, sig: &Signature, fname: String) -> QalphaConfig {
         let qf_body = match &self.qf_body {
             None => fixpoint::defaults::QF_BODY,
             Some(qf_body_str) => {
@@ -243,12 +253,11 @@ impl InferenceConfigArgs {
             }
         };
 
-        let mut cfg = InferenceConfig {
+        let mut cfg = QalphaConfig {
             fname,
             fallback: self.fallback,
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
-            property_directed: self.property_directed,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
             max_existentials: self.max_exist,
             clauses: self.clauses,
@@ -261,7 +270,16 @@ impl InferenceConfigArgs {
             disj: !self.no_disj,
             gradual_smt: self.gradual_smt || self.minimal_smt,
             minimal_smt: self.minimal_smt,
-            extend_depth: self.extend_depth,
+            sim_options: SimulationOptions {
+                max_size: self.sim_size,
+                max_depth: self.sim_depth,
+                weaken_guided: self.guided,
+                bfs: !self.dfs,
+            },
+            cti_option: self
+                .cti
+                .as_ref()
+                .map_or(CtiOption::default(), |s| s.as_str().into()),
             no_search: self.no_search,
             until_safe: self.until_safe,
             abort_unsafe: self.abort_unsafe,

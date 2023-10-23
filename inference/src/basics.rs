@@ -9,7 +9,10 @@ use std::{
     thread,
 };
 
-use crate::qalpha::quant::QuantifierConfig;
+use crate::qalpha::{
+    fixpoint::{CtiOption, SimulationOptions},
+    quant::QuantifierConfig,
+};
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
@@ -613,13 +616,12 @@ pub enum QfBody {
     Dnf,
 }
 
-pub struct InferenceConfig {
+pub struct QalphaConfig {
     pub fname: String,
 
     pub fallback: bool,
     pub cfg: QuantifierConfig,
     pub qf_body: QfBody,
-    pub property_directed: bool,
 
     pub max_size: usize,
     pub max_existentials: Option<usize>,
@@ -638,7 +640,8 @@ pub struct InferenceConfig {
     pub gradual_smt: bool,
     pub minimal_smt: bool,
 
-    pub extend_depth: Option<usize>,
+    pub sim_options: SimulationOptions,
+    pub cti_option: CtiOption,
 
     pub until_safe: bool,
     pub abort_unsafe: bool,

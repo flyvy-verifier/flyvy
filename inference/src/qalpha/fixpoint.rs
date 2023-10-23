@@ -7,14 +7,15 @@
 use fly::semantics::Model;
 use itertools::Itertools;
 use solver::basics::{BasicSolverCanceler, SolverCancelers};
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::basics::QfBody;
 use crate::{
-    basics::{FOModule, InferenceConfig},
+    basics::{FOModule, QalphaConfig},
     qalpha::{
         atoms::{generate_literals, restrict_by_prefix},
         lemma::{self, InductionFrame},
@@ -44,7 +45,113 @@ pub mod defaults {
     pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
     pub const MAX_NON_UNIT: Option<usize> = Some(3);
 
-    pub const MAX_SORT_SIZE: usize = 3;
+    pub const MAX_MODEL_SIZE: usize = 8;
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub enum TraversalDepth {
+    Bfs(usize),
+    Dfs(usize),
+}
+
+use TraversalDepth::*;
+
+impl TraversalDepth {
+    pub fn depth(&self) -> usize {
+        match self {
+            TraversalDepth::Bfs(d) | TraversalDepth::Dfs(d) => *d,
+        }
+    }
+}
+
+impl PartialOrd for TraversalDepth {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TraversalDepth {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Bfs(x), Bfs(y)) => x.cmp(y),
+            (Dfs(x), Dfs(y)) => x.cmp(y).reverse(),
+            _ => panic!("cannot compare BFS and DFS depths!"),
+        }
+    }
+}
+
+/// (ascending sort sizes, simulation depth, depth since weaken)
+pub type SamplePriority = (usize, TraversalDepth, usize);
+
+#[derive(Clone)]
+pub struct SimulationOptions {
+    pub max_size: Option<usize>,
+    pub max_depth: Option<usize>,
+    pub weaken_guided: bool,
+    pub bfs: bool,
+}
+
+impl SimulationOptions {
+    pub fn sample_priority(
+        &self,
+        universe: &[usize],
+        depth: usize,
+        since_weaken: usize,
+    ) -> Option<SamplePriority> {
+        if !self
+            .max_depth
+            .is_some_and(|d| depth > d && (!self.weaken_guided || since_weaken > d))
+        {
+            Some((
+                universe.iter().copied().sum(),
+                if self.bfs { Bfs(depth) } else { Dfs(depth) },
+                since_weaken,
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+pub enum CtiOption {
+    None,
+    Houdini,
+    HoudiniPd,
+    Weaken,
+    WeakenPd,
+}
+
+impl Default for CtiOption {
+    fn default() -> Self {
+        Self::Weaken
+    }
+}
+
+impl From<&str> for CtiOption {
+    fn from(value: &str) -> Self {
+        match value {
+            "none" => Self::None,
+            "houdini" => Self::Houdini,
+            "houdini-pd" => Self::HoudiniPd,
+            "weaken" => Self::Weaken,
+            "weaken-pd" => Self::WeakenPd,
+            _ => panic!("invalid CTI option"),
+        }
+    }
+}
+
+impl CtiOption {
+    fn property_directed(&self) -> bool {
+        matches!(self, Self::HoudiniPd | Self::WeakenPd)
+    }
+
+    fn is_weaken(&self) -> bool {
+        matches!(self, Self::Weaken | Self::WeakenPd)
+    }
+
+    fn is_houdini(&self) -> bool {
+        matches!(self, Self::Houdini | Self::HoudiniPd)
+    }
 }
 
 /// Check how much of the handwritten invariant the given lemmas cover.
@@ -135,14 +242,14 @@ impl FoundFixpoint {
     }
 }
 
-fn parallel_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+fn parallel_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
     ParallelSolvers::new(vec![
         SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 0),
         SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 0, 0),
     ])
 }
 
-fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
+fn fallback_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
     // For the solvers in fallback fashion we alternate between Z3 and CVC5
     // with increasing timeouts and varying seeds, ending with a Z3 solver with
     // no timeout. The idea is to try both Z3 and CVC5 with some timeout to see if any
@@ -160,12 +267,8 @@ fn fallback_solver(infer_cfg: &InferenceConfig) -> impl BasicSolver {
     ])
 }
 
-pub fn qalpha<E, L, S>(
-    infer_cfg: Arc<InferenceConfig>,
-    m: &Module,
-    solver: &S,
-    print_invariant: bool,
-) where
+pub fn qalpha<E, L, S>(infer_cfg: Arc<QalphaConfig>, m: &Module, solver: &S, print_invariant: bool)
+where
     E: Element,
     L: LemmaQf<Body = E>,
     S: BasicSolver,
@@ -283,7 +386,7 @@ pub fn qalpha<E, L, S>(
     }
 }
 
-pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invariant: bool) {
+pub fn qalpha_dynamic(infer_cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
     match (&infer_cfg.qf_body, infer_cfg.fallback) {
         (QfBody::CNF, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
             infer_cfg.clone(),
@@ -326,7 +429,7 @@ pub fn qalpha_dynamic(infer_cfg: Arc<InferenceConfig>, m: &Module, print_invaria
 
 /// Run the qalpha algorithm on the configured lemma domains.
 fn run_qalpha<E, L, S>(
-    infer_cfg: Arc<InferenceConfig>,
+    infer_cfg: Arc<QalphaConfig>,
     solver: &S,
     m: &Module,
     fo: &FOModule,
@@ -343,95 +446,115 @@ where
         m,
         m.signature.clone(),
         domains,
-        infer_cfg.extend_depth,
-        infer_cfg.property_directed,
+        infer_cfg.sim_options.clone(),
+        infer_cfg.cti_option.property_directed(),
     );
+    let cti_option = &infer_cfg.cti_option;
+    let sim_options = &infer_cfg.sim_options;
 
-    let mut samples = VecDeque::new();
+    // Initialize simulations.
+    let mut samples = frame.initial_samples();
 
-    // Begin by overapproximating the initial states.
-    let mut initial_samples: VecDeque<Vec<(Model, usize)>> =
-        frame.initial_samples(defaults::MAX_SORT_SIZE).collect();
-    frame.log_info(format!("Sampled {} initial samples.", samples.len()));
-    initial_samples
-        .iter()
-        .flatten()
-        .for_each(|(model, _)| frame.weaken(model));
-    frame.update();
+    // Overapproximate initial states.
     loop {
-        frame.log_info("Finding initial CTI...");
+        frame.update();
         let ctis = frame.init_cex(fo, solver);
         if ctis.is_empty() {
             break;
+        } else if !cti_option.is_weaken() {
+            panic!("overapproximation of initial states failed!")
         }
-        frame.log_info(format!("{} initial CTI(s) found.", ctis.len()));
         for cex in ctis {
             frame.weaken(&cex);
-            samples.insert(0, (cex, 0));
+            samples.insert(
+                sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                cex,
+            )
         }
-        frame.update();
     }
 
-    frame.log_info("No initial CTI found.");
-
-    frame.clear_blocked();
+    frame.finish_initial();
 
     // Handle transition CTI's.
     loop {
-        if infer_cfg.abort_unsafe || infer_cfg.property_directed {
-            frame.log_info("Checking safety...");
-            if !frame.is_safe(fo, solver) {
-                return FoundFixpoint {
-                    proof: frame.proof(),
-                    reduced_proof: None,
-                    safety_proof: None,
-                    time_taken: start.elapsed(),
-                    covering: None,
-                };
-            }
-        }
-
-        frame.log_info("Finding transition CTI...");
-        let mut unsat: Vec<Model> = vec![];
+        let mut smt_unsat: Vec<Model> = vec![];
+        let mut sim_unsat: Vec<Model> = vec![];
         let canceler = SolverCancelers::new();
-        thread::scope(|s| {
-            let smt_handle = s.spawn(|| frame.trans_cex(fo, solver, canceler.clone()));
-            let mut models;
-            let mut remaining;
-            loop {
-                (models, remaining) = frame.extend(canceler.clone(), samples.drain(..));
-                if canceler.is_canceled() || initial_samples.is_empty() {
-                    break;
-                }
-                assert!(models.is_empty() && remaining.is_empty());
-                samples.extend(initial_samples.pop_front().unwrap());
-            }
-            let smt_result: Vec<Model> = smt_handle.join().unwrap();
+        let had_samples = samples.len() > 0;
+        // Get new samples and CTI's, and if enable, check the safety of the frame.
+        let not_safe = thread::scope(|s| {
+            let smt_handle = s.spawn(|| {
+                qalpha_cti(
+                    &infer_cfg,
+                    solver,
+                    fo,
+                    &frame,
+                    canceler.clone(),
+                    had_samples,
+                    cti_option.is_weaken() || (!had_samples && cti_option.is_houdini()),
+                )
+            });
 
-            unsat = smt_result.clone();
-            unsat.append(&mut models);
-            samples.extend(smt_result.into_iter().map(|model| (model, 0)));
-            samples.append(&mut remaining);
+            let mut sim_cti = frame.extend(canceler.clone(), &mut samples);
+            if had_samples {
+                frame.log_info(format!("{} simulated CTI(s) found.", sim_cti.len()));
+            }
+
+            let smt_cti = smt_handle.join().unwrap();
+            if smt_cti.is_none() {
+                return true;
+            }
+
+            smt_unsat = smt_cti.unwrap();
+            if infer_cfg.cti_option.is_weaken() {
+                for cex in &smt_unsat {
+                    samples.insert(
+                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                        cex.clone(),
+                    );
+                }
+            }
+            sim_unsat.append(&mut sim_cti);
+
+            false
         });
 
-        frame.log_info(format!(
-            "{} transition CTI(s) found, {} samples remaining",
-            unsat.len(),
-            samples.len()
-        ));
+        if not_safe {
+            return FoundFixpoint {
+                proof: frame.proof(),
+                reduced_proof: None,
+                safety_proof: None,
+                time_taken: start.elapsed(),
+                covering: None,
+            };
+        }
 
-        if unsat.is_empty() {
+        if had_samples {
+            frame.log_info(format!(
+                "{} samples remaining (out of {})",
+                samples.len(),
+                samples.total()
+            ));
+        }
+
+        if !had_samples && smt_unsat.is_empty() {
             break;
         }
 
-        for model in &unsat {
+        for model in &sim_unsat {
             frame.weaken(model);
         }
 
-        frame.update();
+        if infer_cfg.cti_option.is_houdini() {
+            for model in &smt_unsat {
+                frame.remove_unsat(model);
+            }
+        } else if infer_cfg.cti_option.is_weaken() {
+            for model in &smt_unsat {
+                frame.weaken(model);
+            }
+        }
     }
-
-    frame.log_info("No transition CTI found.");
 
     frame.log_info("Checking safety...");
     frame.is_safe(fo, solver);
@@ -449,5 +572,54 @@ where
         safety_proof,
         time_taken,
         covering,
+    }
+}
+
+/// Attempt to find a transition CTI for the current frame. If enabled by the configuration, this also checks
+/// the safety of the frame and returns `None` if it is unsafe. Otherwise, `Some(_)` is returned which contains
+/// a vector of counterexamples.
+///
+/// If `wait` is `true`, the code waits and checks for cancelation for a second before looking for CTI's.
+/// If `get_cti` is `false`, then the code doesn't actually look for CTI's (but might check safety).
+fn qalpha_cti<E, L, S>(
+    infer_cfg: &QalphaConfig,
+    solver: &S,
+    fo: &FOModule,
+    frame: &InductionFrame<'_, E, L>,
+    canceler: SolverCancelers<SolverCancelers<S::Canceler>>,
+    wait: bool,
+    get_cti: bool,
+) -> Option<Vec<Model>>
+where
+    E: Element,
+    L: LemmaQf<Body = E>,
+    S: BasicSolver,
+{
+    let canceled = || {
+        let start = Instant::now();
+        while start.elapsed().as_millis() < 1000 && !canceler.is_canceled() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        canceler.is_canceled()
+    };
+
+    if wait && canceled() {
+        return Some(vec![]);
+    }
+
+    frame.update();
+
+    if infer_cfg.abort_unsafe || infer_cfg.cti_option.property_directed() {
+        frame.log_info("Checking safety...");
+        if !frame.is_safe(fo, solver) {
+            return None;
+        }
+        frame.log_info("Safety verified.");
+    }
+
+    if get_cti {
+        Some(frame.trans_cex(fo, solver, canceler))
+    } else {
+        Some(vec![])
     }
 }
