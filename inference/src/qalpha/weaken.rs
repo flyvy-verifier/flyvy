@@ -426,6 +426,12 @@ where
     }
 }
 
+fn has_opposing_literals(clause: &<Clause as Element>::Base) -> bool {
+    clause
+        .iter()
+        .any(|literal| clause.contains(&literal.negate()))
+}
+
 pub type LemmaId = (usize, usize);
 
 /// Manages multiple instances of [`PrefixLemmaSet`] and allows weakening them all simultaneously.
@@ -470,18 +476,68 @@ where
         self.sets.iter().map(|set| set.by_id.len()).sum()
     }
 
-    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E, before: Option<usize>) -> bool {
-        (0..before.unwrap_or(self.sets.len())).any(|i| {
-            let set_i = &self.sets[i];
+    pub fn subsumes(&self, prefix: &QuantifierPrefix, body: &E, before: Option<LemmaOrd>) -> bool {
+        self.sets.iter().enumerate().any(|(i, set_i)| {
             let prefix_i = set_i.prefix.as_ref();
             prefix_i.subsumes(prefix)
                 && prefix.substitutions_for(prefix_i).iter().any(|subst| {
-                    !set_i
+                    set_i
                         .bodies
                         .get_subsuming(&body.substitute(subst))
-                        .is_empty()
+                        .iter()
+                        .any(|(other_body, other_id)| {
+                            !before.is_some_and(|b| {
+                                lemma_key(
+                                    &prefix_i.restrict(other_body.ids()),
+                                    other_body,
+                                    (i, **other_id),
+                                ) >= b
+                            })
+                        })
                 })
         })
+    }
+
+    fn reduced(&self, id: &LemmaId) -> Option<(QuantifierPrefix, E)> {
+        let set = &self.sets[id.0];
+        let body = &set.by_id[&id.1];
+        let prefix = set.prefix.restrict(body.ids());
+        let this_key = lemma_key(&prefix, body, *id);
+        let clauses = body.to_cnf().0;
+        let multi_clause = clauses.len() > 1;
+
+        if self.subsumes(&prefix, body, Some(this_key)) {
+            None
+        } else if multi_clause {
+            if prefix.existentials() == 0 {
+                return None;
+            }
+
+            let universal_prefix = prefix.as_universal();
+            let not_subsumed = clauses
+                .into_iter()
+                .filter(|clause| !has_opposing_literals(&clause.to_base(true)))
+                .map(|clause| L::body_from_clause(clause))
+                .filter(|body| {
+                    !self.subsumes(&universal_prefix.restrict(body.ids()), body, Some(this_key))
+                })
+                .collect_vec();
+
+            match not_subsumed.len() {
+                0 => None,
+                1 => {
+                    let reduced_body = not_subsumed.into_iter().next().unwrap();
+                    if self.subsumes(&prefix, &reduced_body, Some(this_key)) {
+                        None
+                    } else {
+                        Some((prefix, reduced_body))
+                    }
+                }
+                _ => Some((prefix, body.clone())),
+            }
+        } else {
+            Some((prefix, body.clone()))
+        }
     }
 
     pub fn as_iter_cancelable<C: BasicCanceler>(
@@ -492,21 +548,15 @@ where
             .sets
             .iter()
             .enumerate()
-            .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| ((), (i, *j, body))))
+            .flat_map(|(i, set)| set.by_id.keys().map(move |j| ((), (i, *j))))
             .collect();
         let res = PriorityWorker::run(
             &mut tasks,
-            |_, (i, _, body)| {
+            |_, id| {
                 if canceler.is_canceled() {
-                    return (None, vec![], true);
-                }
-                let prefix = self.sets[*i].prefix.restrict(body.ids());
-                if (prefix.existentials() == 0 && !body.is_clause())
-                    || self.subsumes(&prefix, body, Some(*i))
-                {
-                    (None, vec![], false)
+                    (None, vec![], true)
                 } else {
-                    (Some(prefix), vec![], false)
+                    (self.reduced(id), vec![], false)
                 }
             },
             paralllelism(),
@@ -518,10 +568,12 @@ where
             assert!(tasks.is_empty());
             Some(
                 res.into_iter()
-                    .filter_map(|((i, j, body), prefix)| {
-                        prefix.map(|p| (Arc::new(p), body.clone(), (i, j)))
+                    .filter_map(|((i, j), res)| {
+                        res.map(|(prefix, body)| (Arc::new(prefix), body, (i, j)))
                     })
-                    .sorted_by_key(|(prefix, body, id)| (lemma_key(prefix, body), *id)),
+                    .sorted_by_key(|(prefix, _, id)| {
+                        lemma_key(prefix, &self.sets[id.0].by_id[&id.1], *id)
+                    }),
             )
         }
     }
@@ -564,6 +616,8 @@ where
     }
 }
 
-fn lemma_key<E: Element>(prefix: &QuantifierPrefix, body: &E) -> impl Ord {
-    (prefix.existentials(), body.size(), prefix.num_vars())
+type LemmaOrd = (usize, usize, usize, LemmaId);
+
+fn lemma_key<E: Element>(prefix: &QuantifierPrefix, body: &E, id: LemmaId) -> LemmaOrd {
+    (prefix.existentials(), body.size(), prefix.num_vars(), id)
 }
