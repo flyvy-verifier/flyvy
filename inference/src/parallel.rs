@@ -30,6 +30,11 @@ impl<P: Ord + Clone, T: Eq + Hash> PriorityTasks<P, T> {
         self.tasks.values().map(|v| v.len()).sum()
     }
 
+    /// Return whether there are no tasks remaining.
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
     // Return the total number of tasks inserted.
     pub fn total(&self) -> usize {
         self.total_inserted

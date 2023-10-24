@@ -20,7 +20,7 @@ use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
 use smtlib::proc::{SatResp, SolverError};
 use solver::{
-    basics::{BasicSolver, BasicSolverCanceler, BasicSolverResp, QueryConf, SolverCancelers},
+    basics::{BasicCanceler, BasicSolver, BasicSolverResp, MultiCanceler, QueryConf},
     conf::SolverConf,
 };
 
@@ -233,15 +233,15 @@ impl FOModule {
         hyp: &[Term],
         t: &Term,
         with_safety: bool,
-        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
         save_tee: bool,
     ) -> CexResult
     where
-        C: BasicSolverCanceler,
+        C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
         let transitions = self.disj_trans();
-        let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
+        let local_cancelers: MultiCanceler<C> = MultiCanceler::new();
 
         if cancelers
             .as_ref()
@@ -358,14 +358,14 @@ impl FOModule {
         solver: &B,
         hyp: &[Term],
         t: &Term,
-        cancelers: Option<SolverCancelers<SolverCancelers<C>>>,
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
         save_tee: bool,
     ) -> CexResult
     where
-        C: BasicSolverCanceler,
+        C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
-        let local_cancelers: SolverCancelers<C> = SolverCancelers::new();
+        let local_cancelers: MultiCanceler<C> = MultiCanceler::new();
         if cancelers
             .as_ref()
             .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
@@ -405,11 +405,11 @@ impl FOModule {
 
     pub fn simulate_from<B, C>(&self, solver: &B, state: &Model, width: usize) -> Vec<Model>
     where
-        C: BasicSolverCanceler,
+        C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
         let transitions = self.disj_trans();
-        let cancelers = SolverCancelers::new();
+        let cancelers = MultiCanceler::new();
         let empty_assumptions = HashMap::new();
         let next = Next::new(&self.signature);
         let query_conf = QueryConf {

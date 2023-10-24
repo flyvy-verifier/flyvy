@@ -13,6 +13,8 @@ use crate::parallel::{paralllelism, PriorityWorker};
 use fly::ouritertools::OurItertools;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
+use rayon::prelude::*;
+use solver::basics::{BasicCanceler, NeverCanceler};
 
 use crate::{
     basics::QalphaConfig,
@@ -297,23 +299,17 @@ where
             });
 
             let structure = sat_literals(&self.literals, model, assignment);
-
-            let weakenings = PriorityWorker::run(
-                &mut to_weaken.bodies().map(|b| ((), b)).collect(),
-                |_, body| {
-                    (
-                        self.lemma_qf.weaken(body.clone(), &structure, |b| {
-                            new_ignore.iter().any(|ig| ig.subsumes(b))
-                        }),
-                        vec![],
-                        false,
-                    )
-                },
-                paralllelism(),
-            );
-
+            let weakenings: Vec<_> = to_weaken
+                .bodies()
+                .par_bridge()
+                .flat_map_iter(|body| {
+                    self.lemma_qf.weaken(body.clone(), &structure, |b| {
+                        new_ignore.iter().any(|ig| ig.subsumes(b))
+                    })
+                })
+                .collect();
             let mut weakened_min = to_weaken.clone_empty();
-            for new_body in weakenings.into_iter().flat_map(|(_, w)| w) {
+            for new_body in weakenings {
                 weakened_min.insert_minimized(new_body, perm_index);
             }
 
@@ -428,12 +424,6 @@ where
     fn bodies(&self) -> impl Iterator<Item = E> + '_ {
         self.by_id.values().cloned()
     }
-
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E)> + '_ {
-        self.by_id
-            .values()
-            .map(|body| (Arc::new(self.prefix.restrict(body.ids())), body.clone()))
-    }
 }
 
 pub type LemmaId = (usize, usize);
@@ -473,14 +463,7 @@ where
     }
 
     pub fn weaken(&mut self, model: &Model) -> bool {
-        std::thread::scope(|s| {
-            self.sets
-                .iter_mut()
-                .map(|set| s.spawn(|| set.weaken(model)))
-                .collect_vec()
-                .into_iter()
-                .any(|h| h.join().unwrap())
-        })
+        self.sets.par_iter_mut().any(|set| set.weaken(model))
     }
 
     pub fn len(&self) -> usize {
@@ -501,15 +484,22 @@ where
         })
     }
 
-    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E, LemmaId)> + '_ {
-        PriorityWorker::run(
-            &mut self
-                .sets
-                .iter()
-                .enumerate()
-                .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| ((), (i, *j, body))))
-                .collect(),
+    pub fn as_iter_cancelable<C: BasicCanceler>(
+        &self,
+        canceler: C,
+    ) -> Option<impl Iterator<Item = (Arc<QuantifierPrefix>, E, LemmaId)>> {
+        let mut tasks = self
+            .sets
+            .iter()
+            .enumerate()
+            .flat_map(|(i, set)| set.by_id.iter().map(move |(j, body)| ((), (i, *j, body))))
+            .collect();
+        let res = PriorityWorker::run(
+            &mut tasks,
             |_, (i, _, body)| {
+                if canceler.is_canceled() {
+                    return (None, vec![], true);
+                }
                 let prefix = self.sets[*i].prefix.restrict(body.ids());
                 if (prefix.existentials() == 0 && !body.is_clause())
                     || self.subsumes(&prefix, body, Some(*i))
@@ -520,10 +510,24 @@ where
                 }
             },
             paralllelism(),
-        )
-        .into_iter()
-        .filter_map(|((i, j, body), prefix)| prefix.map(|p| (Arc::new(p), body.clone(), (i, j))))
-        .sorted_by_key(|(prefix, body, id)| (lemma_key(prefix, body), *id))
+        );
+
+        if canceler.is_canceled() {
+            None
+        } else {
+            assert!(tasks.is_empty());
+            Some(
+                res.into_iter()
+                    .filter_map(|((i, j, body), prefix)| {
+                        prefix.map(|p| (Arc::new(p), body.clone(), (i, j)))
+                    })
+                    .sorted_by_key(|(prefix, body, id)| (lemma_key(prefix, body), *id)),
+            )
+        }
+    }
+
+    pub fn as_iter(&self) -> impl Iterator<Item = (Arc<QuantifierPrefix>, E, LemmaId)> {
+        self.as_iter_cancelable(NeverCanceler).unwrap()
     }
 
     pub fn unsat(&self, model: &Model) -> bool {

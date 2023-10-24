@@ -6,12 +6,12 @@
 
 use fly::semantics::Model;
 use itertools::Itertools;
-use solver::basics::{BasicSolverCanceler, SolverCancelers};
+use solver::basics::{BasicCanceler, MultiCanceler, NeverCanceler};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::basics::QfBody;
 use crate::{
@@ -457,7 +457,7 @@ where
 
     // Overapproximate initial states.
     loop {
-        frame.update();
+        frame.update(NeverCanceler);
         let ctis = frame.init_cex(fo, solver);
         if ctis.is_empty() {
             break;
@@ -479,8 +479,8 @@ where
     loop {
         let mut smt_unsat: Vec<Model> = vec![];
         let mut sim_unsat: Vec<Model> = vec![];
-        let canceler = SolverCancelers::new();
-        let had_samples = samples.len() > 0;
+        let canceler = MultiCanceler::new();
+        let had_samples = !samples.is_empty();
         // Get new samples and CTI's, and if enable, check the safety of the frame.
         let not_safe = thread::scope(|s| {
             let smt_handle = s.spawn(|| {
@@ -490,12 +490,11 @@ where
                     fo,
                     &frame,
                     canceler.clone(),
-                    had_samples,
                     cti_option.is_weaken() || (!had_samples && cti_option.is_houdini()),
                 )
             });
 
-            let mut sim_cti = frame.extend(canceler.clone(), &mut samples);
+            let mut sim_cti = frame.extend(&mut samples, canceler.clone());
             if had_samples {
                 frame.log_info(format!("{} simulated CTI(s) found.", sim_cti.len()));
             }
@@ -586,8 +585,7 @@ fn qalpha_cti<E, L, S>(
     solver: &S,
     fo: &FOModule,
     frame: &InductionFrame<'_, E, L>,
-    canceler: SolverCancelers<SolverCancelers<S::Canceler>>,
-    wait: bool,
+    canceler: MultiCanceler<MultiCanceler<S::Canceler>>,
     get_cti: bool,
 ) -> Option<Vec<Model>>
 where
@@ -595,19 +593,11 @@ where
     L: LemmaQf<Body = E>,
     S: BasicSolver,
 {
-    let canceled = || {
-        let start = Instant::now();
-        while start.elapsed().as_millis() < 1000 && !canceler.is_canceled() {
-            thread::sleep(Duration::from_millis(10));
-        }
-        canceler.is_canceled()
-    };
+    frame.update(canceler.clone());
 
-    if wait && canceled() {
+    if canceler.is_canceled() {
         return Some(vec![]);
     }
-
-    frame.update();
 
     if infer_cfg.abort_unsafe || infer_cfg.cti_option.property_directed() {
         frame.log_info("Checking safety...");
@@ -617,7 +607,7 @@ where
         frame.log_info("Safety verified.");
     }
 
-    if get_cti {
+    if get_cti && !canceler.is_canceled() {
         Some(frame.trans_cex(fo, solver, canceler))
     } else {
         Some(vec![])

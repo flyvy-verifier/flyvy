@@ -97,13 +97,13 @@ fn check_sat_conf(
 }
 
 /// Defines a configuration for performing a solver query.
-pub struct QueryConf<'a, C: BasicSolverCanceler> {
+pub struct QueryConf<'a, C: BasicCanceler> {
     /// The signature used
     pub sig: &'a Signature,
     /// The number of states
     pub n_states: usize,
-    /// Optional [`SolverCancelers`] which can be used to cancel the query at any time
-    pub cancelers: Option<SolverCancelers<C>>,
+    /// Optional [`MultiCanceler`] which can be used to cancel the query at any time
+    pub cancelers: Option<MultiCanceler<C>>,
     /// Whether to return a minimal model in case of satifiability
     pub minimal_model: bool,
     /// Whether to save the solver tee after the query
@@ -123,7 +123,7 @@ pub enum BasicSolverResp {
 /// A basic solver interface
 pub trait BasicSolver: Sync + Send {
     /// A canceler type for this solver, able to cancel queries at any time
-    type Canceler: BasicSolverCanceler;
+    type Canceler: BasicCanceler;
 
     /// Check the satisfiability of the following query using the solver.
     /// The query is defined by a query configuration, a sequence of assertions,
@@ -138,8 +138,8 @@ pub trait BasicSolver: Sync + Send {
     ) -> Result<BasicSolverResp, SolverError>;
 }
 
-/// A basic canceler object for a solver, able to cancel queries at any time
-pub trait BasicSolverCanceler: Sync + Send {
+/// A basic canceler object, able to cancel queries at any time
+pub trait BasicCanceler: Sync + Send {
     /// Cancel the query associated with this canceler.
     fn cancel(&self);
 
@@ -147,37 +147,37 @@ pub trait BasicSolverCanceler: Sync + Send {
     fn is_canceled(&self) -> bool;
 }
 
-/// Maintains a set of [`BasicSolverCanceler`]'s which can be used to cancel queries whenever necessary.
+/// Maintains a set of [`BasicCanceler`]'s which can be used to cancel queries whenever necessary.
 /// Composed of a `bool` which tracks whether the set has been canceled, followed by the
-/// [`BasicSolverCanceler`]'s of the solvers it tracks.
+/// [`BasicCanceler`]'s of the solvers it tracks.
 ///
-/// Note that this can be used recursively to create hierarchical cancellation, since [`SolverCancelers`]
-/// itself implements [`BasicSolverCanceler`]. That is, multiple [`SolverCancelers`] -- which can be canceled
-/// individually -- can be aggregated within a higher-order [`SolverCancelers`] which can cancel them all at once.
+/// Note that this can be used recursively to create hierarchical cancellation, since [`MultiCanceler`]
+/// itself implements [`BasicCanceler`]. That is, multiple [`MultiCanceler`] -- which can be canceled
+/// individually -- can be aggregated within a higher-order [`MultiCanceler`] which can cancel them all at once.
 /// This enables a tree-like structure where the cancellation of a node cancels all of its descendants.
-pub struct SolverCancelers<C: BasicSolverCanceler>(Arc<RwLock<(bool, Vec<C>)>>);
+pub struct MultiCanceler<C: BasicCanceler>(Arc<RwLock<(bool, Vec<C>)>>);
 
-impl<C: BasicSolverCanceler> Clone for SolverCancelers<C> {
+impl<C: BasicCanceler> Clone for MultiCanceler<C> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<C: BasicSolverCanceler> Default for SolverCancelers<C> {
+impl<C: BasicCanceler> Default for MultiCanceler<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: BasicSolverCanceler> SolverCancelers<C> {
+impl<C: BasicCanceler> MultiCanceler<C> {
     /// Create a new empty set of solver cancelers.
     pub fn new() -> Self {
-        SolverCancelers(Arc::new(RwLock::new((false, vec![]))))
+        MultiCanceler(Arc::new(RwLock::new((false, vec![]))))
     }
 
     /// Add the given canceler to the set of cancelers.
     ///
-    /// Returns `true` if the [`BasicSolverCanceler`] was added, or `false` if the set has already been canceled.
+    /// Returns `true` if the [`BasicCanceler`] was added, or `false` if the set has already been canceled.
     pub fn add_canceler(&self, canceler: C) -> bool {
         if self.is_canceled() {
             return false;
@@ -193,7 +193,7 @@ impl<C: BasicSolverCanceler> SolverCancelers<C> {
     }
 }
 
-impl<C: BasicSolverCanceler> BasicSolverCanceler for SolverCancelers<C> {
+impl<C: BasicCanceler> BasicCanceler for MultiCanceler<C> {
     /// Cancel all solvers tracked by this set of cancelers.
     fn cancel(&self) {
         let mut cancelers = self.0.write().unwrap();
@@ -206,6 +206,19 @@ impl<C: BasicSolverCanceler> BasicSolverCanceler for SolverCancelers<C> {
     fn is_canceled(&self) -> bool {
         let cancelers = self.0.read().unwrap();
         cancelers.0
+    }
+}
+
+/// A canceler than can never be canceled
+pub struct NeverCanceler;
+
+impl BasicCanceler for NeverCanceler {
+    fn cancel(&self) {
+        panic!("NeverCanceler cannot be canceled")
+    }
+
+    fn is_canceled(&self) -> bool {
+        false
     }
 }
 
@@ -222,7 +235,7 @@ pub struct FallbackSolvers(Vec<SolverConf>);
 /// (2) the query is canceled, or (3) all solvers return unknown.
 pub struct ParallelSolvers(Vec<SolverConf>);
 
-impl BasicSolverCanceler for SmtPid {
+impl BasicCanceler for SmtPid {
     fn cancel(&self) {
         self.kill()
     }
@@ -301,7 +314,7 @@ impl ParallelSolvers {
 }
 
 impl BasicSolver for ParallelSolvers {
-    type Canceler = SolverCancelers<SmtPid>;
+    type Canceler = MultiCanceler<SmtPid>;
 
     fn check_sat(
         &self,
@@ -309,7 +322,7 @@ impl BasicSolver for ParallelSolvers {
         assertions: &[Term],
         assumptions: &HashMap<usize, (Term, bool)>,
     ) -> Result<BasicSolverResp, SolverError> {
-        let local_cancelers: SolverCancelers<SmtPid> = SolverCancelers::new();
+        let local_cancelers: MultiCanceler<SmtPid> = MultiCanceler::new();
         let local_query_conf = QueryConf {
             sig: query_conf.sig,
             n_states: query_conf.n_states,

@@ -5,7 +5,7 @@
 
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
-use solver::basics::{BasicSolver, BasicSolverCanceler, SolverCancelers};
+use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, RwLock};
@@ -698,12 +698,12 @@ where
     }
 
     /// Extend simulations of traces in order to find a CTI for the current frame.
-    pub fn extend<C: BasicSolverCanceler>(
+    pub fn extend<C: BasicCanceler>(
         &self,
-        canceler: C,
         samples: &mut PriorityTasks<SamplePriority, Model>,
+        canceler: C,
     ) -> Vec<Model> {
-        if samples.len() == 0 {
+        if samples.is_empty() {
             return vec![];
         }
         self.log_info("Simulating CTI traces...");
@@ -712,10 +712,13 @@ where
             samples,
             |(_, t_depth, mut since_weaken), model| {
                 let unsat = self.weaken_lemmas.unsat(model);
-                if unsat {
+                let cancel = if unsat {
                     since_weaken = 0;
-                }
-                let cancel = canceler.is_canceled();
+                    canceler.cancel();
+                    true
+                } else {
+                    canceler.is_canceled()
+                };
 
                 let new_samples = if let Some(p) = self.sim_options.sample_priority(
                     &model.universe,
@@ -734,22 +737,16 @@ where
                     vec![]
                 };
 
-                (unsat, new_samples, unsat || cancel)
+                (unsat, new_samples, cancel)
             },
             paralllelism(),
         );
 
-        let counterexamples = results
+        results
             .into_iter()
             .filter(|(_, unsat)| *unsat)
             .map(|(m, _)| m)
-            .collect_vec();
-
-        if !counterexamples.is_empty() {
-            canceler.cancel();
-        }
-
-        counterexamples
+            .collect_vec()
     }
 
     /// Make sure that all lemmas overapproximate initial states and remove the corresponding proofs.
@@ -767,7 +764,7 @@ where
         &self,
         fo: &FOModule,
         solver: &S,
-        cancelers: SolverCancelers<SolverCancelers<S::Canceler>>,
+        cancelers: MultiCanceler<MultiCanceler<S::Canceler>>,
     ) -> Vec<Model> {
         self.log_info("Finding transition CTI...");
         let lemma_ids;
@@ -989,12 +986,16 @@ where
         }
     }
 
-    pub fn update(&self) {
+    pub fn update<C: BasicCanceler>(&self, canceler: C) {
         self.log_info("Updating frame...");
-        let mut manager = self.lemmas.write().unwrap();
-        manager.lemmas = self.weaken_lemmas.as_iter().collect_vec();
-        manager.retain(|id| self.weaken_lemmas.contains_id(id));
-        self.log_info(format!("Updated ({}).", manager.lemmas.len()));
+        if let Some(lemmas) = self.weaken_lemmas.as_iter_cancelable(canceler) {
+            let mut manager = self.lemmas.write().unwrap();
+            manager.lemmas = lemmas.collect_vec();
+            manager.retain(|id| self.weaken_lemmas.contains_id(id));
+            self.log_info(format!("Updated ({}).", manager.lemmas.len()));
+        } else {
+            self.log_info("Update canceled.");
+        }
     }
 
     pub fn initial_samples(&mut self) -> PriorityTasks<SamplePriority, Model> {
