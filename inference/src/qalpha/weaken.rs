@@ -527,10 +527,11 @@ where
                 0 => None,
                 1 => {
                     let reduced_body = not_subsumed.into_iter().next().unwrap();
+                    let reduced_prefix = prefix.restrict(reduced_body.ids());
                     if self.subsumes(&prefix, &reduced_body, Some(this_key)) {
                         None
                     } else {
-                        Some((prefix, reduced_body))
+                        Some((reduced_prefix, reduced_body))
                     }
                 }
                 _ => Some((prefix, body.clone())),
@@ -538,6 +539,12 @@ where
         } else {
             Some((prefix, body.clone()))
         }
+    }
+
+    fn lemma_key(&self, id: LemmaId) -> LemmaOrd {
+        let set = &self.sets[id.0];
+        let body = &set.by_id[&id.1];
+        lemma_key(&set.prefix.restrict(body.ids()), body, id)
     }
 
     pub fn as_iter_cancelable<C: BasicCanceler>(
@@ -571,9 +578,7 @@ where
                     .filter_map(|((i, j), res)| {
                         res.map(|(prefix, body)| (Arc::new(prefix), body, (i, j)))
                     })
-                    .sorted_by_key(|(prefix, _, id)| {
-                        lemma_key(prefix, &self.sets[id.0].by_id[&id.1], *id)
-                    }),
+                    .sorted_by_key(|(_, _, id)| self.lemma_key(*id)),
             )
         }
     }

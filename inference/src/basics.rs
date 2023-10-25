@@ -644,7 +644,6 @@ pub struct QalphaConfig {
     pub cti_option: CtiOption,
 
     pub until_safe: bool,
-    pub abort_unsafe: bool,
     pub no_search: bool,
     pub growth_factor: Option<usize>,
 }

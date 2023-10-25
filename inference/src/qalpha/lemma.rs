@@ -703,9 +703,6 @@ where
         samples: &mut PriorityTasks<SamplePriority, Model>,
         canceler: C,
     ) -> Vec<Model> {
-        if samples.is_empty() {
-            return vec![];
-        }
         self.log_info("Simulating CTI traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
         let results = PriorityWorker::run(
@@ -742,11 +739,15 @@ where
             paralllelism(),
         );
 
-        results
+        let models = results
             .into_iter()
             .filter(|(_, unsat)| *unsat)
             .map(|(m, _)| m)
-            .collect_vec()
+            .collect_vec();
+
+        self.log_info(format!("{} simulated CTI(s) found.", models.len()));
+
+        models
     }
 
     /// Make sure that all lemmas overapproximate initial states and remove the corresponding proofs.
@@ -794,8 +795,11 @@ where
         let start_time = Instant::now();
         // The tasks here are lemmas ID's, and each result is an Option<CexResult>.
         let results = PriorityWorker::run(
-            &mut tasks.into_iter().map(|id| (id_to_idx[&id], id)).collect(),
-            |idx, lemma_id| {
+            &mut tasks
+                .into_iter()
+                .map(|id| ((0_isize, id_to_idx[&id]), id))
+                .collect(),
+            |(p, idx), lemma_id| {
                 {
                     let blocked = self.lemmas.read().unwrap();
                     if let Some(core) = blocked.blocked_to_core.get(lemma_id) {
@@ -803,7 +807,7 @@ where
                             None,
                             core.constituents()
                                 .into_iter()
-                                .map(|id| (id_to_idx[&id], id))
+                                .map(|id| ((p - 1, id_to_idx[&id]), id))
                                 .collect(),
                             false,
                         );
@@ -881,7 +885,7 @@ where
                         let new_tasks = core
                             .constituents()
                             .into_iter()
-                            .map(|id| (id_to_idx[&id], id))
+                            .map(|id| ((p - 1, id_to_idx[&id]), id))
                             .collect();
                         {
                             let mut manager = self.lemmas.write().unwrap();

@@ -463,57 +463,56 @@ where
             break;
         } else if !cti_option.is_weaken() {
             panic!("overapproximation of initial states failed!")
-        }
-        for cex in ctis {
-            frame.weaken(&cex);
-            samples.insert(
-                sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                cex,
-            )
+        } else {
+            for cex in ctis {
+                frame.weaken(&cex);
+                samples.insert(
+                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                    cex,
+                )
+            }
         }
     }
 
     frame.finish_initial();
 
     // Handle transition CTI's.
-    loop {
-        let mut smt_unsat: Vec<Model> = vec![];
-        let mut sim_unsat: Vec<Model> = vec![];
+
+    let mut run_sim = !samples.is_empty();
+    let mut run_smt = cti_option.is_weaken() || (cti_option.is_houdini() && !run_sim);
+    while run_sim || run_smt {
+        let mut ctis: Vec<Model> = vec![];
         let canceler = MultiCanceler::new();
-        let had_samples = !samples.is_empty();
         // Get new samples and CTI's, and if enable, check the safety of the frame.
         let not_safe = thread::scope(|s| {
             let smt_handle = s.spawn(|| {
-                qalpha_cti(
-                    &infer_cfg,
-                    solver,
-                    fo,
-                    &frame,
-                    canceler.clone(),
-                    cti_option.is_weaken() || (!had_samples && cti_option.is_houdini()),
-                )
+                if run_smt {
+                    qalpha_cti(&infer_cfg, solver, fo, &frame, canceler.clone())
+                } else {
+                    Some(vec![])
+                }
             });
 
-            let mut sim_cti = frame.extend(&mut samples, canceler.clone());
-            if had_samples {
-                frame.log_info(format!("{} simulated CTI(s) found.", sim_cti.len()));
-            }
+            ctis = if run_sim {
+                frame.extend(&mut samples, canceler.clone())
+            } else {
+                vec![]
+            };
 
             let smt_cti = smt_handle.join().unwrap();
+            // Abort
             if smt_cti.is_none() {
                 return true;
             }
 
-            smt_unsat = smt_cti.unwrap();
-            if infer_cfg.cti_option.is_weaken() {
-                for cex in &smt_unsat {
-                    samples.insert(
-                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                        cex.clone(),
-                    );
-                }
+            let smt_cti = smt_cti.unwrap();
+            for cex in &smt_cti {
+                samples.insert(
+                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                    cex.clone(),
+                );
             }
-            sim_unsat.append(&mut sim_cti);
+            ctis.extend(smt_cti);
 
             false
         });
@@ -528,7 +527,7 @@ where
             };
         }
 
-        if had_samples {
+        if run_sim {
             frame.log_info(format!(
                 "{} samples remaining (out of {})",
                 samples.len(),
@@ -536,22 +535,25 @@ where
             ));
         }
 
-        if !had_samples && smt_unsat.is_empty() {
-            break;
-        }
-
-        for model in &sim_unsat {
-            frame.weaken(model);
-        }
-
-        if infer_cfg.cti_option.is_houdini() {
-            for model in &smt_unsat {
+        if infer_cfg.cti_option.is_houdini() && run_smt {
+            for model in &ctis {
                 frame.remove_unsat(model);
             }
-        } else if infer_cfg.cti_option.is_weaken() {
-            for model in &smt_unsat {
+        } else {
+            for model in &ctis {
                 frame.weaken(model);
             }
+        }
+
+        // There cannot be 0 CTI's but more samples to check.
+        assert!(!(ctis.is_empty() && !samples.is_empty()));
+        run_sim = !samples.is_empty();
+        run_smt = if cti_option.is_weaken() {
+            !ctis.is_empty()
+        } else if cti_option.is_houdini() {
+            (!run_smt && ctis.is_empty()) || (run_smt && !ctis.is_empty())
+        } else {
+            false
         }
     }
 
@@ -575,18 +577,14 @@ where
 }
 
 /// Attempt to find a transition CTI for the current frame. If enabled by the configuration, this also checks
-/// the safety of the frame and returns `None` if it is unsafe. Otherwise, `Some(_)` is returned which contains
-/// a vector of counterexamples.
-///
-/// If `wait` is `true`, the code waits and checks for cancelation for a second before looking for CTI's.
-/// If `get_cti` is `false`, then the code doesn't actually look for CTI's (but might check safety).
+/// the safety of the frame and returns `None` if the execution should abort. Otherwise, `Some(_)` is returned
+/// which contains a vector of counterexamples.
 fn qalpha_cti<E, L, S>(
     infer_cfg: &QalphaConfig,
     solver: &S,
     fo: &FOModule,
     frame: &InductionFrame<'_, E, L>,
     canceler: MultiCanceler<MultiCanceler<S::Canceler>>,
-    get_cti: bool,
 ) -> Option<Vec<Model>>
 where
     E: Element,
@@ -599,7 +597,7 @@ where
         return Some(vec![]);
     }
 
-    if infer_cfg.abort_unsafe || infer_cfg.cti_option.property_directed() {
+    if infer_cfg.cti_option.property_directed() {
         frame.log_info("Checking safety...");
         if !frame.is_safe(fo, solver) {
             return None;
@@ -607,7 +605,7 @@ where
         frame.log_info("Safety verified.");
     }
 
-    if get_cti && !canceler.is_canceled() {
+    if !canceler.is_canceled() {
         Some(frame.trans_cex(fo, solver, canceler))
     } else {
         Some(vec![])

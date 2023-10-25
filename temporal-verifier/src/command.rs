@@ -282,7 +282,6 @@ impl InferenceConfigArgs {
                 .map_or(CtiOption::default(), |s| s.as_str().into()),
             no_search: self.no_search,
             until_safe: self.until_safe,
-            abort_unsafe: self.abort_unsafe,
             growth_factor: self.growth_factor,
         };
 
