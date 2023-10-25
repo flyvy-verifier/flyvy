@@ -150,6 +150,7 @@ dependencies = [
  "fly",
  "fxhash",
  "itertools",
+ "log",
  "solver",
  "thiserror",
 ]

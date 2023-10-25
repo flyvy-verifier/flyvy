@@ -465,11 +465,13 @@ where
             panic!("overapproximation of initial states failed!")
         } else {
             for cex in ctis {
-                frame.weaken(&cex);
-                samples.insert(
-                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                    cex,
-                )
+                if frame.see(&cex) {
+                    frame.weaken(&cex);
+                    samples.insert(
+                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                        cex,
+                    )
+                }
             }
         }
     }
@@ -507,10 +509,12 @@ where
 
             let smt_cti = smt_cti.unwrap();
             for cex in &smt_cti {
-                samples.insert(
-                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                    cex.clone(),
-                );
+                if frame.see(cex) {
+                    samples.insert(
+                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                        cex.clone(),
+                    );
+                }
             }
             ctis.extend(smt_cti);
 

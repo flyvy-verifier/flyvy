@@ -132,22 +132,26 @@ impl<'a> MultiSimulator<'a> {
             if sims.contains_key(universe) {
                 return Ok(());
             }
-            sims.insert(
-                universe.clone(),
-                Simulator::new(
-                    &self.bool_module,
-                    &universe_bounds(&self.module.signature, universe),
-                )?,
+            let res = Simulator::new(
+                &self.bool_module,
+                &universe_bounds(&self.module.signature, universe),
             );
+            match res {
+                Ok(sim) => {
+                    sims.insert(universe.clone(), sim);
+                    Ok(())
+                }
+                Err(err) => {
+                    log::info!("Simulator creation error (universe={universe:?}): {err:?}");
+                    Err(err)
+                }
+            }
         }
-
-        Ok(())
     }
 
     /// Simulate all transitions from the given model and return those that weren't see before.
     pub fn simulate_new(&self, model: &Model) -> Vec<Model> {
-        assert!(self.create_sim(&model.universe).is_ok());
-        {
+        if self.create_sim(&model.universe).is_ok() {
             let sims = self.sims.read().unwrap();
             let sim = &sims[&model.universe];
             let state = sim.model_to_state(&self.bool_module.to_bool_model(model));
@@ -155,19 +159,24 @@ impl<'a> MultiSimulator<'a> {
                 .into_iter()
                 .map(|s| self.module.to_non_bool_model(&sim.state_to_model(&s)))
                 .collect()
+        } else {
+            vec![]
         }
     }
 
-    /// Register the given models as already seen by the simulator.
-    pub fn see(&self, models: &[Model]) {
-        for model in models {
-            assert!(self.create_sim(&model.universe).is_ok());
-            {
-                let sims = self.sims.read().unwrap();
-                let sim = &sims[&model.universe];
-                let state = sim.model_to_state(&self.bool_module.to_bool_model(model));
-                sim.seen.lock().unwrap().insert(&state);
-            }
+    /// Register the given model as already seen by the simulator.
+    ///
+    /// Returns `true` if this model is seen for the first time, or `false` if seen before or
+    /// if a simulator couldn't be created for this model.
+    pub fn see(&self, model: &Model) -> bool {
+        if self.create_sim(&model.universe).is_ok() {
+            let sims = self.sims.read().unwrap();
+            let sim = &sims[&model.universe];
+            let state = sim.model_to_state(&self.bool_module.to_bool_model(model));
+            let first_seen = sim.seen.lock().unwrap().insert(&state);
+            first_seen
+        } else {
+            false
         }
     }
 

@@ -1028,4 +1028,8 @@ where
 
         samples
     }
+
+    pub fn see(&self, model: &Model) -> bool {
+        self.simulator.see(model)
+    }
 }
