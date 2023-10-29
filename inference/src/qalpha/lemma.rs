@@ -19,14 +19,13 @@ use bounded::simulator::MultiSimulator;
 use crate::{
     basics::{CexResult, FOModule, QalphaConfig},
     hashmap::{HashMap, HashSet},
-    parallel::PriorityTasks,
-    parallel::{paralllelism, PriorityWorker},
+    parallel::Tasks,
+    parallel::{paralllelism, ParallelWorker},
     qalpha::{
         atoms::Literals,
         fixpoint::{defaults, SamplePriority, SimulationOptions},
-        quant::QuantifierPrefix,
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
-        weaken::{Domain, LemmaId, LemmaQf, WeakenLemmaSet},
+        weaken::{Domain, LemmaKey, LemmaQf, WeakenLemmaSet},
     },
 };
 
@@ -398,11 +397,16 @@ impl<I: Eq + Hash + Copy> Blocked<I> {
             Blocked::Consequence(core) | Blocked::Transition(core) => core.clone(),
         }
     }
+
+    fn contains(&self, id: &I) -> bool {
+        match self {
+            Blocked::Initial => false,
+            Blocked::Consequence(core) | Blocked::Transition(core) => core.contains(id),
+        }
+    }
 }
 
-struct LemmaManager<I: Hash + Eq + Copy, E: Element> {
-    /// The lemmas in the frame, mapped from their ID's, with some syntactic reduction.
-    lemmas: Vec<(Arc<QuantifierPrefix>, E, LemmaId)>,
+struct LemmaManager<I: Hash + Eq + Copy> {
     /// The set of lemmas inductively implied by the frame, mapped to the unsat-cores implying them.
     blocked_to_core: HashMap<I, Blocked<I>>,
     /// Mapping from each lemma to the lemmas whose inductiveness proof they paricipate in.
@@ -411,10 +415,9 @@ struct LemmaManager<I: Hash + Eq + Copy, E: Element> {
     safety_core: Option<Blocked<I>>,
 }
 
-impl<I: Hash + Eq + Copy, E: Element> LemmaManager<I, E> {
-    fn new(lemmas: Vec<(Arc<QuantifierPrefix>, E, LemmaId)>) -> Self {
+impl<I: Hash + Eq + Copy> LemmaManager<I> {
+    fn new() -> Self {
         Self {
-            lemmas,
             blocked_to_core: HashMap::default(),
             core_to_blocked: HashMap::default(),
             safety_core: None,
@@ -459,30 +462,18 @@ impl<I: Hash + Eq + Copy, E: Element> LemmaManager<I, E> {
         }
     }
 
-    fn retain<F: Fn(&I) -> bool + Copy>(&mut self, f: F) {
+    fn remove(&mut self, id: &I) {
         if self
             .safety_core
             .as_ref()
-            .is_some_and(|core| !core.constituents().iter().all(f))
+            .is_some_and(|core| core.contains(id))
         {
             self.safety_core = None;
         }
-        for id in &self
-            .blocked_to_core
-            .keys()
-            .filter(|id| !f(id))
-            .copied()
-            .collect_vec()
-        {
+        if self.blocked_to_core.contains_key(id) {
             self.remove_from_blocked(id);
         }
-        for id in &self
-            .core_to_blocked
-            .keys()
-            .filter(|id| !f(id))
-            .copied()
-            .collect_vec()
-        {
+        if self.core_to_blocked.contains_key(id) {
             self.remove_from_cores(id);
         }
     }
@@ -494,11 +485,7 @@ impl<I: Hash + Eq + Copy, E: Element> LemmaManager<I, E> {
         while !new_ids.is_empty() {
             let mut new_new_ids = HashSet::default();
             for id in &new_ids {
-                if let Some(blocking_lemmas) = self.blocked_to_core.get(id) {
-                    new_new_ids.extend(blocking_lemmas.constituents());
-                } else {
-                    return None;
-                }
+                new_new_ids.extend(self.blocked_to_core.get(id)?.constituents());
             }
 
             extended_core.extend(new_ids);
@@ -521,7 +508,9 @@ where
     L: LemmaQf<Body = E>,
 {
     /// Manages lemmas inductively proven by the frame.
-    lemmas: RwLock<LemmaManager<LemmaId, E>>,
+    lemmas: RwLock<LemmaManager<LemmaKey>>,
+    /// The mapping from a key to the lemma's position in the ordering.
+    key_to_idx: HashMap<LemmaKey, usize>,
     /// The signature of the frame's lemmas.
     signature: Arc<Signature>,
     /// The lemmas in the frame, maintained in a way that supports weakening them.
@@ -551,10 +540,11 @@ where
     ) -> Self {
         let mut weaken_lemmas = WeakenLemmaSet::new(signature.clone(), domains);
         weaken_lemmas.init();
-        let lemmas = weaken_lemmas.as_iter().collect_vec();
+        let key_to_idx = weaken_lemmas.key_to_idx();
 
         InductionFrame {
-            lemmas: RwLock::new(LemmaManager::new(lemmas)),
+            lemmas: RwLock::new(LemmaManager::new()),
+            key_to_idx,
             signature,
             weaken_lemmas,
             sim_options,
@@ -574,7 +564,7 @@ where
         let manager = self.lemmas.read().unwrap();
         let mut reduced_proof = vec![];
         let mut indices = vec![];
-        for (i, (t, id)) in self.weaken_lemmas.to_terms_ids().enumerate() {
+        for (i, (t, id)) in self.weaken_lemmas.to_terms_keys().enumerate() {
             // Not inductive
             if !manager.blocked_to_core.contains_key(&id) {
                 return None;
@@ -595,25 +585,16 @@ where
     /// provided that `is_safe` has been called and returned `true`.
     pub fn safety_proof(&self) -> Option<Vec<Term>> {
         let manager = self.lemmas.read().unwrap();
-        let extended_core: HashSet<LemmaId> = manager
-            .blocked_closure(manager.safety_core.as_ref().unwrap().constituents())
-            .unwrap();
+        let extended_core: HashSet<LemmaKey> =
+            manager.blocked_closure(manager.safety_core.as_ref().unwrap().constituents())?;
 
-        let indices = self
-            .weaken_lemmas
-            .as_iter()
-            .enumerate()
-            .filter_map(|(i, (_, _, id))| {
-                if extended_core.contains(&id) {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
+        let indices = extended_core
+            .iter()
+            .map(|key| self.key_to_idx[key])
             .collect_vec();
         let core = extended_core
-            .into_iter()
-            .map(|id| self.weaken_lemmas.id_to_term(&id))
+            .iter()
+            .map(|key| self.weaken_lemmas.key_to_term(key))
             .collect_vec();
 
         self.log_info(format!("Safety lemmas at indices {indices:?}"));
@@ -624,7 +605,7 @@ where
     /// Add details about the frame to the given [`Display`].
     pub fn add_details<D: Display>(&self, d: D) -> String {
         format!(
-            "[{:.2}s] [{}] {}",
+            "[{:.5}s] [{}] {}",
             self.start_time.elapsed().as_secs_f64(),
             self.weaken_lemmas.len(),
             d,
@@ -639,41 +620,32 @@ where
     /// Get an initial state which violates one of the frame's lemmas.
     pub fn init_cex<S: BasicSolver>(&self, fo: &FOModule, solver: &S) -> Vec<Model> {
         self.log_info("Finding initial CTI...");
-        let mut lemmas = {
-            self.lemmas
-                .read()
-                .unwrap()
-                .lemmas
-                .iter()
-                .cloned()
-                .enumerate()
-                .collect()
-        };
-        let results = PriorityWorker::run(
-            &mut lemmas,
-            |_, (prefix, body, id)| {
+        let results = ParallelWorker::new(
+            &mut self.weaken_lemmas.keys().map(|key| (*key, *key)).collect(),
+            |_, key| {
                 {
-                    let blocked = self.lemmas.read().unwrap();
-                    if blocked.blocked_to_core.contains_key(id) {
+                    let manager = self.lemmas.read().unwrap();
+                    if manager.blocked_to_core.contains_key(key) {
                         return (None, vec![], false);
                     }
                 }
 
-                let term = prefix.quantify(&self.signature, body.to_term(true));
+                let term = self.weaken_lemmas.key_to_term(key);
                 let res = fo.init_cex(solver, &term);
                 let found = res.is_some();
                 return (res, vec![], found);
             },
             paralllelism(),
-        );
+        )
+        .run();
 
         let mut ctis = vec![];
         let mut manager = self.lemmas.write().unwrap();
-        for ((_, _, id), out) in results {
+        for (key, out) in results {
             match out {
                 Some(model) => ctis.push(model),
                 None => {
-                    manager.blocked_to_core.insert(id, Blocked::Initial);
+                    manager.blocked_to_core.insert(key, Blocked::Initial);
                 }
             }
         }
@@ -684,31 +656,68 @@ where
     }
 
     /// Weaken the lemmas in the frame.
-    pub fn weaken(&mut self, model: &Model) -> bool {
-        if self.weaken_lemmas.weaken(model) {
-            self.log_info("Weakened.");
-            true
-        } else {
+    pub fn weaken(&mut self, models: &[Model]) -> bool {
+        let removed = models
+            .iter()
+            .flat_map(|model| {
+                let rem = self.weaken_lemmas.weaken(model).0;
+                if !rem.is_empty() {
+                    self.log_info("Weakened.");
+                }
+                rem
+            })
+            .collect_vec();
+        if removed.is_empty() {
             false
+        } else {
+            self.remove_by_keys(&removed);
+            self.log_info("Cores updated.");
+            self.key_to_idx = self.weaken_lemmas.key_to_idx();
+            self.log_info("Indices updated.");
+            true
         }
     }
 
-    pub fn remove_unsat(&mut self, model: &Model) {
-        self.weaken_lemmas.remove_unsat(model)
+    pub fn remove_unsat(&mut self, models: &[Model]) {
+        let removed = models
+            .iter()
+            .flat_map(|model| {
+                let rem = self.weaken_lemmas.remove_unsat(model);
+                if !rem.is_empty() {
+                    self.log_info("Removed unsatisfied.");
+                }
+                rem
+            })
+            .collect_vec();
+        if !removed.is_empty() {
+            self.remove_by_keys(&removed);
+            self.log_info("Cores updated.");
+            self.key_to_idx = self.weaken_lemmas.key_to_idx();
+            self.log_info("Indices updated.");
+        }
+    }
+
+    fn remove_by_keys(&self, removed: &[LemmaKey]) {
+        {
+            let mut manager = self.lemmas.write().unwrap();
+            for key in removed {
+                manager.remove(key);
+            }
+        }
     }
 
     /// Extend simulations of traces in order to find a CTI for the current frame.
     pub fn extend<C: BasicCanceler>(
         &self,
-        samples: &mut PriorityTasks<SamplePriority, Model>,
+        samples: &mut Tasks<SamplePriority, Model>,
         canceler: C,
     ) -> Vec<Model> {
         self.log_info("Simulating CTI traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
-        let results = PriorityWorker::run(
+        let results = ParallelWorker::new(
             samples,
             |(_, t_depth, mut since_weaken), model| {
-                let unsat = self.weaken_lemmas.unsat(model);
+                let unsat = !self.weaken_lemmas.unsat(model).is_empty();
                 let cancel = if unsat {
                     since_weaken = 0;
                     canceler.cancel();
@@ -737,7 +746,8 @@ where
                 (unsat, new_samples, cancel)
             },
             paralllelism(),
-        );
+        )
+        .run();
 
         let models = results
             .into_iter()
@@ -753,8 +763,8 @@ where
     /// Make sure that all lemmas overapproximate initial states and remove the corresponding proofs.
     pub fn finish_initial(&self) {
         let mut manager = self.lemmas.write().unwrap();
-        for (_, _, id) in &manager.lemmas {
-            assert_eq!(manager.blocked_to_core.get(id), Some(&Blocked::Initial));
+        for key in self.weaken_lemmas.keys() {
+            assert_eq!(manager.blocked_to_core.get(key), Some(&Blocked::Initial));
         }
         manager.blocked_to_core = HashMap::default();
         manager.core_to_blocked = HashMap::default();
@@ -768,93 +778,94 @@ where
         cancelers: MultiCanceler<MultiCanceler<S::Canceler>>,
     ) -> Vec<Model> {
         self.log_info("Finding transition CTI...");
-        let lemma_ids;
-        let lemma_terms;
-        let tasks;
-        {
+        let mut tasks = if self.property_directed {
             let manager = self.lemmas.read().unwrap();
-            lemma_ids = manager.lemmas.iter().map(|(_, _, id)| *id).collect_vec();
-            lemma_terms = manager
-                .lemmas
-                .iter()
-                .map(|(_, _, id)| self.weaken_lemmas.id_to_term(id))
-                .collect_vec();
-            tasks = if self.property_directed {
-                Vec::from_iter(manager.safety_core.as_ref().unwrap().constituents())
-            } else {
-                lemma_ids.clone()
-            };
-        }
-        let id_to_idx: HashMap<LemmaId, usize> = lemma_ids
-            .iter()
-            .enumerate()
-            .map(|(idx, id)| (*id, idx))
-            .collect();
+            manager
+                .safety_core
+                .as_ref()
+                .unwrap()
+                .constituents()
+                .into_iter()
+                .map(|key| ((0_u8, key), key))
+                .collect()
+        } else {
+            self.weaken_lemmas
+                .keys()
+                .map(|key| ((1_u8, *key), *key))
+                .collect()
+        };
 
         let first_sat = Mutex::new(None);
         let start_time = Instant::now();
         // The tasks here are lemmas ID's, and each result is an Option<CexResult>.
-        let results = PriorityWorker::run(
-            &mut tasks
-                .into_iter()
-                .map(|id| ((0_isize, id_to_idx[&id]), id))
-                .collect(),
-            |(p, idx), lemma_id| {
+        let results = ParallelWorker::new(
+            &mut tasks,
+            |(check_implied, _), key| {
                 {
                     let blocked = self.lemmas.read().unwrap();
-                    if let Some(core) = blocked.blocked_to_core.get(lemma_id) {
+                    if let Some(core) = blocked.blocked_to_core.get(key) {
                         return (
                             None,
                             core.constituents()
                                 .into_iter()
-                                .map(|id| ((p - 1, id_to_idx[&id]), id))
+                                .map(|k| ((1, k), k))
                                 .collect(),
                             false,
                         );
                     }
                 }
 
-                let term = self.weaken_lemmas.id_to_term(lemma_id);
+                let idx = self.key_to_idx[key];
+                let term = self.weaken_lemmas.key_to_term(key);
                 // Check if the lemma is implied by the lemmas preceding it.
-                // If property directed is enabled this will never happen since we only try to violate
-                // lemmas in UNSAT-cores.
-                if !self.property_directed {
+                if *check_implied == 1 {
                     let query_start = Instant::now();
+                    // Begin with a syntactic implication check.
+                    if let Some(blocking_core) = self.weaken_lemmas.get_implying(key) {
+                        log::info!(
+                            "{:>8}ms. ({idx}) Syntactic implication found UNSAT with {} formulas in core",
+                            query_start.elapsed().as_millis(),
+                            blocking_core.len(),
+                        );
+                        let core_tasks = blocking_core.iter().cloned().map(|k| ((1, k), k)).collect();
+                        let core = blocking_core.iter().cloned().collect();
+                        {
+                            let mut manager = self.lemmas.write().unwrap();
+                            manager.add_blocked(*key, Blocked::Consequence(blocking_core));
+                        }
+                        return (Some(CexResult::UnsatCore(core)), core_tasks, false);
+                    }
+
+                    let query_start = Instant::now();
+                    // If that fails, use a semantic implication check.
                     let res = fo.implication_cex(
                         solver,
-                        &lemma_terms[..*idx],
+                        &self.weaken_lemmas.hypotheses(Some(*key), vec![]),
                         &term,
                         Some(cancelers.clone()),
                         false,
                     );
                     if let CexResult::UnsatCore(core) = &res {
                         log::info!(
-                            "{:>8}ms. ({idx}) Implication found UNSAT with {} formulas in core",
+                            "{:>8}ms. ({idx}) Semantic implication found UNSAT with {} formulas in core",
                             query_start.elapsed().as_millis(),
                             core.len(),
                         );
-                        let core =
-                            Blocked::Consequence(core.iter().map(|i| lemma_ids[*i]).collect());
+                        let blocking_core = Blocked::Consequence(core.iter().cloned().collect());
                         {
                             let mut manager = self.lemmas.write().unwrap();
-                            manager.add_blocked(*lemma_id, core);
+                            manager.add_blocked(*key, blocking_core);
                         }
-                        return (Some(res), vec![], false);
+                        let core_tasks = core.iter().cloned().map(|k| ((0, k), k)).collect();
+                        return (Some(res), core_tasks, false);
                     }
                 }
 
                 // Check if the lemma is inductively implied by the entire frame.
-                let pre_ids = [&[*lemma_id], &lemma_ids[..*idx], &lemma_ids[(idx + 1)..]].concat();
-                let pre_terms = [
-                    &[term.clone()],
-                    &lemma_terms[..*idx],
-                    &lemma_terms[(idx + 1)..],
-                ]
-                .concat();
                 let query_start = Instant::now();
                 let res = fo.trans_cex(
                     solver,
-                    &pre_terms,
+                    &self.weaken_lemmas.hypotheses(None, vec![*key]),
                     &term,
                     false,
                     Some(cancelers.clone()),
@@ -881,17 +892,17 @@ where
                             start_time.elapsed().as_millis(),
                             core.len()
                         );
-                        let core = Blocked::Transition(core.iter().map(|i| pre_ids[*i]).collect());
-                        let new_tasks = core
+                        let core = Blocked::Transition(core.iter().cloned().collect());
+                        let core_tasks = core
                             .constituents()
                             .into_iter()
-                            .map(|id| ((p - 1, id_to_idx[&id]), id))
+                            .map(|k| ((0, k), k))
                             .collect();
                         {
                             let mut manager = self.lemmas.write().unwrap();
-                            manager.add_blocked(*lemma_id, core);
+                            manager.add_blocked(*key, core);
                         }
-                        (Some(res), new_tasks, false)
+                        (Some(res), core_tasks, false)
                     }
                     CexResult::Canceled => (Some(res), vec![], true),
                     CexResult::Unknown(reason) => {
@@ -904,7 +915,8 @@ where
                 }
             },
             paralllelism(),
-        );
+        )
+        .run();
 
         cancelers.cancel();
 
@@ -953,24 +965,18 @@ where
         }
 
         let start_time = Instant::now();
-        let (terms, ids): (Vec<Term>, Vec<LemmaId>) = manager
-            .lemmas
-            .iter()
-            .map(|(prefix, body, id)| (prefix.quantify(&self.signature, body.to_term(true)), *id))
-            .unzip();
-        if let CexResult::UnsatCore(core) = fo.safe_implication_cex(solver, &terms) {
+        let hyp = self.weaken_lemmas.hypotheses(None, vec![]);
+        if let CexResult::UnsatCore(core) = fo.safe_implication_cex(solver, &hyp) {
             log::info!(
                 "{:>8}ms. Safety implied with {} formulas in core",
                 start_time.elapsed().as_millis(),
                 core.len()
             );
-            manager.safety_core = Some(Blocked::Consequence(
-                core.into_iter().map(|i| ids[i]).collect(),
-            ));
+            manager.safety_core = Some(Blocked::Consequence(HashSet::from_iter(core)));
             return true;
         }
 
-        match fo.trans_safe_cex(solver, &terms) {
+        match fo.trans_safe_cex(solver, &hyp) {
             CexResult::Cex(_) => {
                 log::info!("{:>8}ms. Safety violated", start_time.elapsed().as_millis());
                 false
@@ -981,28 +987,14 @@ where
                     start_time.elapsed().as_millis(),
                     core.len()
                 );
-                manager.safety_core = Some(Blocked::Transition(
-                    core.into_iter().map(|i| ids[i]).collect(),
-                ));
+                manager.safety_core = Some(Blocked::Transition(HashSet::from_iter(core)));
                 true
             }
             _ => panic!("safety check failed"),
         }
     }
 
-    pub fn update<C: BasicCanceler>(&self, canceler: C) {
-        self.log_info("Updating frame...");
-        if let Some(lemmas) = self.weaken_lemmas.as_iter_cancelable(canceler) {
-            let mut manager = self.lemmas.write().unwrap();
-            manager.lemmas = lemmas.collect_vec();
-            manager.retain(|id| self.weaken_lemmas.contains_id(id));
-            self.log_info(format!("Updated ({}).", manager.lemmas.len()));
-        } else {
-            self.log_info("Update canceled.");
-        }
-    }
-
-    pub fn initial_samples(&mut self) -> PriorityTasks<SamplePriority, Model> {
+    pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
         let max_model_size = self
             .sim_options
             .max_size
@@ -1012,18 +1004,20 @@ where
             .multi_cartesian_product_fixed()
             .filter(|u| u.iter().copied().sum::<usize>() <= max_model_size)
             .sorted_by_key(|u| u.iter().copied().sorted().collect_vec());
+        let models = universe_sizes
+            .flat_map(|universe| self.simulator.initials_new(&universe))
+            .collect_vec();
 
-        let mut samples = PriorityTasks::new();
-        for universe in universe_sizes {
-            for model in self.simulator.initials_new(&universe) {
-                self.weaken(&model);
-                samples.insert(
-                    self.sim_options
-                        .sample_priority(&model.universe, 0, 0)
-                        .unwrap(),
-                    model,
-                )
-            }
+        self.weaken(&models);
+
+        let mut samples = Tasks::new();
+        for model in models {
+            samples.insert(
+                self.sim_options
+                    .sample_priority(&model.universe, 0, 0)
+                    .unwrap(),
+                model,
+            )
         }
 
         samples

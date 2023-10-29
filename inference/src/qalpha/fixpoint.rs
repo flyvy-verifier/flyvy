@@ -6,7 +6,7 @@
 
 use fly::semantics::Model;
 use itertools::Itertools;
-use solver::basics::{BasicCanceler, MultiCanceler, NeverCanceler};
+use solver::basics::{BasicCanceler, MultiCanceler};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -457,21 +457,19 @@ where
 
     // Overapproximate initial states.
     loop {
-        frame.update(NeverCanceler);
-        let ctis = frame.init_cex(fo, solver);
+        let mut ctis = frame.init_cex(fo, solver);
         if ctis.is_empty() {
             break;
         } else if !cti_option.is_weaken() {
             panic!("overapproximation of initial states failed!")
         } else {
+            ctis.retain(|cex| frame.see(cex));
+            frame.weaken(&ctis);
             for cex in ctis {
-                if frame.see(&cex) {
-                    frame.weaken(&cex);
-                    samples.insert(
-                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                        cex,
-                    )
-                }
+                samples.insert(
+                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
+                    cex,
+                );
             }
         }
     }
@@ -540,17 +538,13 @@ where
         }
 
         if infer_cfg.cti_option.is_houdini() && run_smt {
-            for model in &ctis {
-                frame.remove_unsat(model);
-            }
+            frame.remove_unsat(&ctis);
         } else {
-            for model in &ctis {
-                frame.weaken(model);
-            }
+            frame.weaken(&ctis);
         }
 
         // There cannot be 0 CTI's but more samples to check.
-        assert!(!(ctis.is_empty() && !samples.is_empty()));
+        assert!(!ctis.is_empty() || samples.is_empty());
         run_sim = !samples.is_empty();
         run_smt = if cti_option.is_weaken() {
             !ctis.is_empty()
@@ -595,8 +589,6 @@ where
     L: LemmaQf<Body = E>,
     S: BasicSolver,
 {
-    frame.update(canceler.clone());
-
     if canceler.is_canceled() {
         return Some(vec![]);
     }

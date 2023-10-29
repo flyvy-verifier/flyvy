@@ -4,7 +4,8 @@
 use itertools;
 use itertools::Itertools;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
+    hash::Hash,
     sync::{Arc, Mutex},
     thread,
 };
@@ -24,14 +25,14 @@ use solver::{
     conf::SolverConf,
 };
 
-pub enum CexResult {
+pub enum CexResult<K: Eq + Hash> {
     Cex(Vec<Model>),
-    UnsatCore(HashSet<usize>),
+    UnsatCore(HashSet<K>),
     Canceled,
     Unknown(String),
 }
 
-impl CexResult {
+impl<K: Eq + Hash> CexResult<K> {
     /// Convert into an [`Option`], which either contains a counterexample or [`None`].
     pub fn into_option(self) -> Option<Vec<Model>> {
         match self {
@@ -58,20 +59,20 @@ impl CexResult {
 /// counterexamples to be blocked and growing the core in a minimal way to block all of them.
 /// If `minimal` is set, the core is guaranteed to be minimal in the local sense that
 /// no formula can be dropped from it while still blocking all the previous counterexamples.
-struct Core<'a> {
-    formulas: &'a [Term],
-    participants: HashSet<usize>,
+struct Core<H: OrderedTerms> {
+    formulas: H,
+    participants: BTreeMap<H::Key, Term>,
     counter_models: Vec<Model>,
-    to_participants: HashMap<usize, HashSet<usize>>,
-    to_counter_models: HashMap<usize, HashSet<usize>>,
+    to_participants: HashMap<usize, HashSet<H::Key>>,
+    to_counter_models: HashMap<H::Key, HashSet<usize>>,
     minimal: bool,
 }
 
-impl<'a> Core<'a> {
+impl<H: OrderedTerms> Core<H> {
     /// Create a new core from the given formulas. `participants` specifies which formulas
     /// to intialize the core with, and `minimal` determines whether to minimize the core
     /// when adding future participants.
-    fn new(formulas: &'a [Term], participants: HashSet<usize>, minimal: bool) -> Self {
+    fn new(formulas: H, participants: BTreeMap<H::Key, Term>, minimal: bool) -> Self {
         Core {
             formulas,
             participants,
@@ -89,37 +90,28 @@ impl<'a> Core<'a> {
     /// Returns `true` if the model has been successfully blocked or `false` if it couldn't be
     /// blocked because it satisfied all candidate formulas.
     fn add_counter_model(&mut self, counter_model: Model) -> bool {
-        // We assume that the new counter-model satisfies all previous formulas.
-        for &p_idx in &self.participants {
-            assert_eq!(counter_model.eval(&self.formulas[p_idx]), 1);
-        }
-
-        let new_participant = self.formulas.iter().enumerate().find(|(i, formula)| {
-            !self.participants.contains(i) && counter_model.eval(formula) == 0
-        });
-
-        match new_participant {
-            Some((p_idx, _)) => {
+        match self.formulas.first_unsat(&counter_model) {
+            Some((key, term)) => {
                 let model_idx = self.counter_models.len();
-                self.participants.insert(p_idx);
                 self.to_participants.insert(model_idx, HashSet::new());
                 let mut counter_models: HashSet<usize> = (0..self.counter_models.len())
-                    .filter(|i| self.counter_models[*i].eval(&self.formulas[p_idx]) == 0)
+                    .filter(|i| self.counter_models[*i].eval(&term) == 0)
                     .collect();
                 counter_models.insert(model_idx);
                 self.counter_models.push(counter_model);
                 for m_idx in &counter_models {
-                    self.to_participants.get_mut(m_idx).unwrap().insert(p_idx);
+                    self.to_participants.get_mut(m_idx).unwrap().insert(key);
                 }
-                self.to_counter_models.insert(p_idx, counter_models);
+                self.to_counter_models.insert(key, counter_models);
+                self.participants.insert(key, term);
 
                 if self.minimal {
                     while self.reduce() {}
 
-                    assert!(self.participants.iter().all(|p_idx| {
-                        self.to_counter_models[p_idx]
+                    assert!(self.participants.keys().all(|key| {
+                        self.to_counter_models[key]
                             .iter()
-                            .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*p_idx]))
+                            .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*key]))
                     }));
                 }
 
@@ -134,21 +126,14 @@ impl<'a> Core<'a> {
     ///
     /// Returns `true` if the core has been reduced, or `false` otherwise.
     fn reduce(&mut self) -> bool {
-        if let Some(p_idx) = self
-            .participants
-            .iter()
-            .copied()
-            .sorted()
-            .rev()
-            .find(|p_idx| {
-                self.to_counter_models[p_idx]
-                    .iter()
-                    .all(|m_idx| self.to_participants[m_idx].len() > 1)
-            })
-        {
-            assert!(self.participants.remove(&p_idx));
-            for m_idx in self.to_counter_models.remove(&p_idx).unwrap() {
-                assert!(self.to_participants.get_mut(&m_idx).unwrap().remove(&p_idx));
+        if let Some(key) = self.participants.keys().copied().rev().find(|p_idx| {
+            self.to_counter_models[p_idx]
+                .iter()
+                .all(|m_idx| self.to_participants[m_idx].len() > 1)
+        }) {
+            assert!(self.participants.remove(&key).is_some());
+            for m_idx in self.to_counter_models.remove(&key).unwrap() {
+                assert!(self.to_participants.get_mut(&m_idx).unwrap().remove(&key));
             }
 
             true
@@ -162,8 +147,21 @@ impl<'a> Core<'a> {
     /// in this case always `true`.
     fn to_assumptions(&self) -> HashMap<usize, (Term, bool)> {
         self.participants
-            .iter()
-            .map(|i| (*i, (self.formulas[*i].clone(), true)))
+            .values()
+            .enumerate()
+            .map(|(i, term)| (i, (term.clone(), true)))
+            .collect()
+    }
+
+    /// Convert a core returned by the solver to one of `H::Key` elements.
+    fn convert_core<O>(&self, core: &HashSet<usize>) -> O
+    where
+        O: FromIterator<H::Key>,
+    {
+        self.participants
+            .keys()
+            .enumerate()
+            .filter_map(|(i, key)| if core.contains(&i) { Some(*key) } else { None })
             .collect()
     }
 }
@@ -177,6 +175,32 @@ pub enum TermOrModel {
 pub enum CexOrCore {
     Cex((Term, Model)),
     Core(HashMap<Term, bool>),
+}
+
+pub trait OrderedTerms: Copy + Send + Sync {
+    type Key: Ord + Hash + Eq + Clone + Copy + Send + Sync;
+
+    fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)>;
+
+    fn all_terms(self) -> BTreeMap<Self::Key, Term>;
+}
+
+impl<V: AsRef<[Term]> + Copy + Send + Sync> OrderedTerms for V {
+    type Key = usize;
+
+    fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
+        self.as_ref().iter().enumerate().find_map(|(i, t)| {
+            if model.eval(t) == 0 {
+                Some((i, t.clone()))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn all_terms(self) -> BTreeMap<Self::Key, Term> {
+        self.as_ref().iter().cloned().enumerate().collect()
+    }
 }
 
 /// A first-order module is represented using first-order formulas,
@@ -227,16 +251,17 @@ impl FOModule {
             })
     }
 
-    pub fn trans_cex<B, C>(
+    pub fn trans_cex<H, B, C>(
         &self,
         solver: &B,
-        hyp: &[Term],
+        hyp: H,
         t: &Term,
         with_safety: bool,
         cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
         save_tee: bool,
-    ) -> CexResult
+    ) -> CexResult<H::Key>
     where
+        H: OrderedTerms,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
@@ -265,15 +290,15 @@ impl FOModule {
         }
         assertions.push(Term::not(next.prime(t)));
 
-        let cex_results: Vec<CexResult> = thread::scope(|s| {
+        let cex_results: Vec<CexResult<H::Key>> = thread::scope(|s| {
             transitions
                 .into_iter()
                 .map(|transition| {
                     s.spawn(|| {
-                        let mut core: Core = if self.gradual {
-                            Core::new(hyp, HashSet::new(), self.minimal)
+                        let mut core = if self.gradual {
+                            Core::new(hyp, BTreeMap::new(), self.minimal)
                         } else {
-                            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+                            Core::new(hyp, hyp.all_terms(), self.minimal)
                         };
 
                         let mut local_assertions = assertions.clone();
@@ -288,8 +313,8 @@ impl FOModule {
                                         return CexResult::Cex(models);
                                     }
                                 }
-                                Ok(BasicSolverResp::Unsat(core)) => {
-                                    return CexResult::UnsatCore(core)
+                                Ok(BasicSolverResp::Unsat(c)) => {
+                                    return CexResult::UnsatCore(core.convert_core(&c))
                                 }
                                 Ok(BasicSolverResp::Unknown(reason)) => {
                                     return CexResult::Unknown(reason)
@@ -353,15 +378,16 @@ impl FOModule {
         CexResult::UnsatCore(unsat_core)
     }
 
-    pub fn implication_cex<B, C>(
+    pub fn implication_cex<H, B, C>(
         &self,
         solver: &B,
-        hyp: &[Term],
+        hyp: H,
         t: &Term,
         cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
         save_tee: bool,
-    ) -> CexResult
+    ) -> CexResult<H::Key>
     where
+        H: OrderedTerms,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
@@ -373,10 +399,10 @@ impl FOModule {
             return CexResult::Canceled;
         }
 
-        let mut core: Core = if self.gradual {
-            Core::new(hyp, HashSet::new(), self.minimal)
+        let mut core = if self.gradual {
+            Core::new(hyp, BTreeMap::new(), self.minimal)
         } else {
-            Core::new(hyp, (0..hyp.len()).collect(), self.minimal)
+            Core::new(hyp, hyp.all_terms(), self.minimal)
         };
 
         let query_conf = QueryConf {
@@ -395,7 +421,9 @@ impl FOModule {
                         return CexResult::Cex(models);
                     }
                 }
-                Ok(BasicSolverResp::Unsat(core)) => return CexResult::UnsatCore(core),
+                Ok(BasicSolverResp::Unsat(c)) => {
+                    return CexResult::UnsatCore(core.convert_core(&c))
+                }
                 Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
                 Err(SolverError::Killed) => return CexResult::Canceled,
                 Err(e) => panic!("error in solver: {e}"),
@@ -575,7 +603,11 @@ impl FOModule {
         }
     }
 
-    pub fn safe_implication_cex<B: BasicSolver>(&self, solver: &B, hyp: &[Term]) -> CexResult {
+    pub fn safe_implication_cex<H: OrderedTerms, B: BasicSolver>(
+        &self,
+        solver: &B,
+        hyp: H,
+    ) -> CexResult<H::Key> {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
             match self.implication_cex(solver, hyp, &s.safety.x, None, false) {
@@ -587,7 +619,11 @@ impl FOModule {
         CexResult::UnsatCore(core)
     }
 
-    pub fn trans_safe_cex<B: BasicSolver>(&self, solver: &B, hyp: &[Term]) -> CexResult {
+    pub fn trans_safe_cex<H: OrderedTerms, B: BasicSolver>(
+        &self,
+        solver: &B,
+        hyp: H,
+    ) -> CexResult<H::Key> {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
             match self.trans_cex(solver, hyp, &s.safety.x, true, None, false) {
