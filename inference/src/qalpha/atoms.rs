@@ -8,16 +8,14 @@ use fly::{
 };
 
 use crate::{
-    basics::{FOModule, QalphaConfig},
+    basics::QalphaConfig,
     hashmap::HashSet,
     qalpha::{
         lemma::ids,
         quant::{QuantifierConfig, QuantifierPrefix},
     },
 };
-use solver::basics::BasicSolver;
 
-use rayon::prelude::*;
 use std::sync::Arc;
 
 /// An [`Atom`] is referred to via a certain index.
@@ -69,27 +67,11 @@ impl From<&Literal> for Term {
     }
 }
 
-pub fn generate_literals<B: BasicSolver>(
-    infer_cfg: &QalphaConfig,
-    signature: &Signature,
-    solver: &B,
-    fo: &FOModule,
-) -> Literals {
-    let univ_prefix = infer_cfg.cfg.as_universal();
+pub fn generate_literals(infer_cfg: &QalphaConfig, signature: &Signature) -> Literals {
     infer_cfg
         .cfg
         .atoms(signature, infer_cfg.nesting, infer_cfg.include_eq)
-        .into_par_iter()
-        .filter(|t| {
-            let univ_t = univ_prefix.quantify(signature, t.clone());
-            let univ_not_t = univ_prefix.quantify(signature, Term::negate(t.clone()));
-
-            fo.implication_cex(solver, &[], &univ_t, None, false)
-                .is_cex()
-                && fo
-                    .implication_cex(solver, &[], &univ_not_t, None, false)
-                    .is_cex()
-        })
+        .into_iter()
         // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
         // This is done to allow substitutions without creating equivalent equalities.
         .map(|a| match a {

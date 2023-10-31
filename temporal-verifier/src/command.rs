@@ -259,7 +259,7 @@ impl InferenceConfigArgs {
             cfg: self.q_cfg_args.to_cfg(sig),
             qf_body,
             max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
-            max_existentials: self.max_exist,
+            max_exist: self.max_exist.unwrap_or(fixpoint::defaults::MAX_EXIST),
             clauses: self.clauses,
             clause_size: self.clause_size,
             cubes: self.cubes,

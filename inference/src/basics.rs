@@ -660,7 +660,7 @@ pub struct QalphaConfig {
     pub qf_body: QfBody,
 
     pub max_size: usize,
-    pub max_existentials: Option<usize>,
+    pub max_exist: usize,
 
     pub clauses: Option<usize>,
     pub clause_size: Option<usize>,

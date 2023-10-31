@@ -214,7 +214,7 @@ impl QuantifierConfig {
     pub fn all_prefixes(&self, infer_cfg: &QalphaConfig) -> Vec<QuantifierPrefix> {
         let mut res = vec![];
 
-        for e in 0..=infer_cfg.max_existentials.unwrap_or(self.num_vars()) {
+        for e in 0..=infer_cfg.max_exist {
             for s in 0..=infer_cfg.max_size {
                 res.append(&mut self.exact_prefixes(e, e, s));
             }
@@ -283,6 +283,12 @@ impl QuantifierConfig {
                 .collect(),
             None => HashSet::default(),
         }
+    }
+
+    pub fn is_universal(&self) -> bool {
+        self.quantifiers
+            .iter()
+            .all(|q| matches!(q, Some(Quantifier::Forall)))
     }
 }
 

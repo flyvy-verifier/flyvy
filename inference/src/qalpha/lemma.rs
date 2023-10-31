@@ -25,13 +25,9 @@ use crate::{
         atoms::Literals,
         fixpoint::{defaults, SamplePriority, SimulationOptions},
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
-        weaken::{Domain, LemmaKey, LemmaQf, WeakenLemmaSet},
+        weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
     },
 };
-
-/// The minimal number of disjuncts a lemma is allowed to have.
-/// This corresponds to number of cubes in DNF, or the clause size in CNF.
-const MIN_DISJUNCTS: usize = 3;
 
 fn choose(n: usize, k: usize) -> usize {
     if n < k {
@@ -46,52 +42,83 @@ fn choose_combinations(n: usize, k: usize, count: usize) -> usize {
     choose(combinations, count)
 }
 
-#[derive(Clone)]
-pub struct LemmaCnf {
+#[derive(Clone, Debug)]
+pub struct LemmaCnfConfig {
     clauses: usize,
     clause_size: usize,
+}
+
+impl LemmaQfConfig for LemmaCnfConfig {
+    fn new(cfg: &QalphaConfig) -> Self {
+        Self {
+            clauses: cfg
+                .clauses
+                .expect("Maximum number of clauses not provided."),
+            clause_size: cfg
+                .clause_size
+                .expect("Maximum number of literals per clause not provided."),
+        }
+    }
+
+    fn is_universal(&self) -> bool {
+        self.clauses <= 1
+    }
+
+    fn as_universal(&self) -> Self {
+        return Self {
+            clauses: 1,
+            clause_size: self.clause_size,
+        };
+    }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (1..=self.clauses)
+            .flat_map(|clauses| {
+                (defaults::MIN_DISJUNCTS..=self.clause_size).map(move |clause_size| Self {
+                    clauses,
+                    clause_size,
+                })
+            })
+            .collect_vec()
+    }
+}
+
+#[derive(Clone)]
+pub struct LemmaCnf {
+    cfg: Arc<LemmaCnfConfig>,
     literals: Arc<Literals>,
 }
 
 impl Debug for LemmaCnf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CNF")
-            .field("clauses", &self.clauses)
-            .field("clause_size", &self.clause_size)
-            .finish()
+        self.cfg.fmt(f)
     }
 }
 
 impl LemmaQf for LemmaCnf {
     type Body = Cnf;
+    type Config = LemmaCnfConfig;
 
     fn new(
-        cfg: &QalphaConfig,
+        mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
         non_universal_vars: &HashSet<String>,
     ) -> Self {
-        let clauses = if non_universal_vars.is_empty() {
-            1
-        } else {
-            cfg.clauses
-                .expect("Maximum number of clauses not provided.")
-        };
-        let clause_size = cfg
-            .clause_size
-            .expect("Maximum number of literals per clause not provided.");
-
-        Self {
-            clauses,
-            clause_size,
-            literals,
+        if non_universal_vars.is_empty() {
+            cfg = Arc::new(cfg.as_universal());
         }
+
+        Self { cfg, literals }
     }
 
     fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
     where
         I: Fn(&Self::Body) -> bool,
     {
-        let cfg = (self.clauses, (self.clause_size, self.literals.clone()));
+        let cfg = (
+            self.cfg.clauses,
+            (self.cfg.clause_size, self.literals.clone()),
+        );
         body.weaken(&cfg, structure)
             .into_iter()
             .filter(|cnf| !ignore(cnf))
@@ -99,24 +126,12 @@ impl LemmaQf for LemmaCnf {
     }
 
     fn approx_space_size(&self) -> usize {
-        choose_combinations(self.literals.len(), self.clause_size, self.clauses)
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        (1..=self.clauses)
-            .flat_map(|clauses| {
-                (MIN_DISJUNCTS..=self.clause_size).map(move |clause_size| Self {
-                    clauses,
-                    clause_size,
-                    literals: self.literals.clone(),
-                })
-            })
-            .collect_vec()
+        choose_combinations(self.literals.len(), self.cfg.clause_size, self.cfg.clauses)
     }
 
     fn contains(&self, other: &Self) -> bool {
-        self.clauses >= other.clauses
-            && self.clause_size >= other.clause_size
+        self.cfg.clauses >= other.cfg.clauses
+            && self.cfg.clause_size >= other.cfg.clause_size
             && self.literals.is_superset(&other.literals)
     }
 
@@ -125,50 +140,73 @@ impl LemmaQf for LemmaCnf {
     }
 }
 
-#[derive(Clone)]
-pub struct LemmaDnf {
+#[derive(Clone, Debug)]
+pub struct LemmaDnfConfig {
     cubes: usize,
     cube_size: usize,
+}
+
+impl LemmaQfConfig for LemmaDnfConfig {
+    fn new(cfg: &QalphaConfig) -> Self {
+        Self {
+            cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
+            cube_size: cfg
+                .cube_size
+                .expect("Maximum size of non-unit cubes not provided."),
+        }
+    }
+
+    fn is_universal(&self) -> bool {
+        self.cube_size <= 1
+    }
+
+    fn as_universal(&self) -> Self {
+        Self {
+            cubes: self.cubes,
+            cube_size: 1,
+        }
+    }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (defaults::MIN_DISJUNCTS..=self.cubes)
+            .flat_map(|cubes| (1..=self.cube_size).map(move |cube_size| Self { cubes, cube_size }))
+            .collect_vec()
+    }
+}
+
+#[derive(Clone)]
+pub struct LemmaDnf {
+    cfg: Arc<LemmaDnfConfig>,
     literals: Arc<Literals>,
 }
 
 impl Debug for LemmaDnf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DNF")
-            .field("cubes", &self.cubes)
-            .field("cube_size", &self.cube_size)
-            .finish()
+        self.cfg.fmt(f)
     }
 }
 
 impl LemmaQf for LemmaDnf {
     type Body = Dnf;
+    type Config = LemmaDnfConfig;
 
     fn new(
-        cfg: &QalphaConfig,
+        mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
         non_universal_vars: &HashSet<String>,
     ) -> Self {
-        let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
-        let cube_size = if non_universal_vars.is_empty() {
-            1
-        } else {
-            cfg.cube_size
-                .expect("Maximum size of non-unit cubes not provided.")
+        if non_universal_vars.is_empty() {
+            cfg = Arc::new(cfg.as_universal());
         };
 
-        Self {
-            cubes,
-            cube_size,
-            literals,
-        }
+        Self { cfg, literals }
     }
 
     fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
     where
         I: Fn(&Self::Body) -> bool,
     {
-        let cfg = (self.cubes, (self.cube_size, self.literals.clone()));
+        let cfg = (self.cfg.cubes, (self.cfg.cube_size, self.literals.clone()));
         body.weaken(&cfg, structure)
             .into_iter()
             .filter(|dnf| !ignore(dnf))
@@ -176,24 +214,12 @@ impl LemmaQf for LemmaDnf {
     }
 
     fn approx_space_size(&self) -> usize {
-        choose_combinations(self.literals.len(), self.cube_size, self.cubes)
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        (MIN_DISJUNCTS..=self.cubes)
-            .flat_map(|cubes| {
-                (1..=self.cube_size).map(move |cube_size| Self {
-                    cubes,
-                    cube_size,
-                    literals: self.literals.clone(),
-                })
-            })
-            .collect_vec()
+        choose_combinations(self.literals.len(), self.cfg.cube_size, self.cfg.cubes)
     }
 
     fn contains(&self, other: &Self) -> bool {
-        self.cubes >= other.cubes
-            && self.cube_size >= other.cube_size
+        self.cfg.cubes >= other.cfg.cubes
+            && self.cfg.cube_size >= other.cfg.cube_size
             && self.literals.is_superset(&other.literals)
     }
 
@@ -202,22 +228,68 @@ impl LemmaQf for LemmaDnf {
     }
 }
 
-#[derive(Clone)]
-pub struct LemmaPDnf {
+#[derive(Clone, Debug)]
+pub struct LemmaPDnfConfig {
     cubes: usize,
     cube_size: usize,
     non_unit: usize,
+}
+
+impl LemmaQfConfig for LemmaPDnfConfig {
+    fn new(cfg: &QalphaConfig) -> Self {
+        Self {
+            cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
+            cube_size: cfg
+                .cube_size
+                .expect("Maximum size of non-unit cubes not provided."),
+            non_unit: cfg
+                .non_unit
+                .expect("Number of pDNF non-unit cubes not provided."),
+        }
+    }
+
+    fn is_universal(&self) -> bool {
+        self.non_unit == 0
+    }
+
+    fn as_universal(&self) -> Self {
+        Self {
+            cubes: self.cubes,
+            cube_size: 1,
+            non_unit: 0,
+        }
+    }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        (0..=self.non_unit)
+            .flat_map(|non_unit| {
+                (defaults::MIN_DISJUNCTS.max(non_unit)..=self.cubes).flat_map(move |cubes| {
+                    let min_cube_size = match non_unit {
+                        0 => 1,
+                        _ => defaults::MIN_NON_UNIT_SIZE,
+                    };
+                    let max_cube_size = if non_unit == 0 { 1 } else { self.cube_size };
+                    (min_cube_size..=max_cube_size).map(move |cube_size| Self {
+                        cubes,
+                        cube_size,
+                        non_unit,
+                    })
+                })
+            })
+            .collect_vec()
+    }
+}
+
+#[derive(Clone)]
+pub struct LemmaPDnf {
+    cfg: Arc<LemmaPDnfConfig>,
     literals: Arc<Literals>,
     non_universal_literals: Arc<Literals>,
 }
 
 impl Debug for LemmaPDnf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("pDNF")
-            .field("cubes", &self.cubes)
-            .field("cube_size", &self.cube_size)
-            .field("non_unit", &self.non_unit)
-            .finish()
+        self.cfg.fmt(f)
     }
 }
 
@@ -233,28 +305,19 @@ fn unit_resolution(mut base: <PDnf as Element>::Base) -> <PDnf as Element>::Base
 
 impl LemmaQf for LemmaPDnf {
     type Body = PDnf;
+    type Config = LemmaPDnfConfig;
     fn new(
-        cfg: &QalphaConfig,
+        mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
         non_universal_vars: &HashSet<String>,
     ) -> Self {
-        let cubes = cfg.cubes.expect("Maximum number of cubes not provided.");
-        let mut cube_size = cfg
-            .cube_size
-            .expect("Maximum size of non-unit cubes not provided.");
-        let mut non_unit = cfg
-            .non_unit
-            .expect("Number of pDNF non-unit cubes not provided.");
-
         if non_universal_vars.is_empty() {
-            non_unit = 0;
+            cfg = Arc::new(cfg.as_universal());
         }
 
-        if non_unit == 0 {
-            cube_size = 1;
-        }
-
-        assert!(cubes >= non_unit && cube_size > 0);
+        assert!(cfg.cubes >= cfg.non_unit);
+        assert!(cfg.non_unit == 0 || cfg.cube_size > 1);
+        assert!(cfg.non_unit > 0 || cfg.cube_size <= 1);
 
         let non_universal_literals = Arc::new(
             literals
@@ -265,9 +328,7 @@ impl LemmaQf for LemmaPDnf {
         );
 
         Self {
-            cubes,
-            non_unit,
-            cube_size,
+            cfg,
             literals,
             non_universal_literals,
         }
@@ -299,17 +360,17 @@ impl LemmaQf for LemmaPDnf {
                 .cloned()
                 .collect(),
         );
-        let clause_cfg = (self.cubes - base.1.len(), clause_literals);
+        let clause_cfg = (self.cfg.cubes - base.1.len(), clause_literals);
         let dnf_cfg = (
-            self.non_unit.min(self.cubes - base.0.len()),
-            (self.cube_size, dnf_literals),
+            self.cfg.non_unit.min(self.cfg.cubes - base.0.len()),
+            (self.cfg.cube_size, dnf_literals),
         );
 
         body.weaken(&(clause_cfg, dnf_cfg), structure)
             .into_iter()
             .map(|pdnf| unit_resolution(pdnf.to_base(true)))
             .filter(|base| {
-                assert!(base.0.len() + base.1.len() <= self.cubes);
+                assert!(base.0.len() + base.1.len() <= self.cfg.cubes);
                 base.1.iter().all(|cube| cube.len() > 1)
             })
             .map(|base| PDnf::from_base(base, true))
@@ -318,12 +379,13 @@ impl LemmaQf for LemmaPDnf {
     }
 
     fn approx_space_size(&self) -> usize {
-        (0..=self.non_unit)
+        (0..=self.cfg.non_unit)
             .map(|non_unit| {
-                let clauses = choose_combinations(self.literals.len(), self.cubes - non_unit, 1);
+                let clauses =
+                    choose_combinations(self.literals.len(), self.cfg.cubes - non_unit, 1);
                 let dnfs = choose_combinations(
                     self.non_universal_literals.len(),
-                    self.cube_size,
+                    self.cfg.cube_size,
                     non_unit,
                 );
                 clauses * dnfs
@@ -331,30 +393,10 @@ impl LemmaQf for LemmaPDnf {
             .sum()
     }
 
-    fn sub_spaces(&self) -> Vec<Self> {
-        (1..=self.cube_size)
-            .flat_map(|cube_size| {
-                let max_cubes =
-                    self.cubes
-                        .min(choose_combinations(self.literals.len(), cube_size, 1));
-                (MIN_DISJUNCTS..=max_cubes).flat_map(move |cubes| {
-                    let max_non_unit = if cube_size <= 1 { 0 } else { self.non_unit };
-                    (0..=max_non_unit).map(move |non_unit| Self {
-                        cubes,
-                        cube_size,
-                        non_unit,
-                        literals: self.literals.clone(),
-                        non_universal_literals: self.non_universal_literals.clone(),
-                    })
-                })
-            })
-            .collect_vec()
-    }
-
     fn contains(&self, other: &Self) -> bool {
-        self.cubes >= other.cubes
-            && self.non_unit >= other.non_unit
-            && self.cube_size >= other.cube_size
+        self.cfg.cubes >= other.cfg.cubes
+            && self.cfg.non_unit >= other.cfg.non_unit
+            && self.cfg.cube_size >= other.cfg.cube_size
             && self.literals.is_superset(&other.literals)
             && self
                 .non_universal_literals
@@ -586,7 +628,7 @@ where
     pub fn safety_proof(&self) -> Option<Vec<Term>> {
         let manager = self.lemmas.read().unwrap();
         let extended_core: HashSet<LemmaKey> =
-            manager.blocked_closure(manager.safety_core.as_ref().unwrap().constituents())?;
+            manager.blocked_closure(manager.safety_core.as_ref()?.constituents())?;
 
         let indices = extended_core
             .iter()
@@ -605,9 +647,10 @@ where
     /// Add details about the frame to the given [`Display`].
     pub fn add_details<D: Display>(&self, d: D) -> String {
         format!(
-            "[{:.5}s] [{}] {}",
+            "[{:.5}s] [{} | {}] {}",
             self.start_time.elapsed().as_secs_f64(),
             self.weaken_lemmas.len(),
+            self.weaken_lemmas.full_len(),
             d,
         )
     }

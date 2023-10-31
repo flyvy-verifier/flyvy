@@ -52,14 +52,28 @@ fn extend_assignment(
         .collect_vec()
 }
 
-/// [`LemmaQf`] defines how quantifier-free bodies of lemmas are handled.
+/// Defines a general configuation for quantifier-free bodies of lemmas,
+/// namely the attributes that do not depend on the atoms themselves.
+pub trait LemmaQfConfig: Clone + Sync + Send + Debug {
+    fn new(cfg: &QalphaConfig) -> Self;
+
+    fn is_universal(&self) -> bool;
+
+    fn as_universal(&self) -> Self;
+
+    fn sub_spaces(&self) -> Vec<Self>;
+}
+
+/// Defines how quantifier-free bodies of lemmas are handled.
 pub trait LemmaQf: Clone + Sync + Send + Debug {
     /// The type of the quantifier-free bodies which are weakened.
     type Body: subsume::Element;
+    /// The basic configuration of the quantifier-free bodies.
+    type Config: LemmaQfConfig;
 
     /// Create a new instance given the following configuration.
     fn new(
-        cfg: &QalphaConfig,
+        cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
         non_universal_vars: &HashSet<String>,
     ) -> Self;
@@ -70,8 +84,6 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
         I: Fn(&Self::Body) -> bool + Sync;
 
     fn approx_space_size(&self) -> usize;
-
-    fn sub_spaces(&self) -> Vec<Self>;
 
     fn contains(&self, other: &Self) -> bool;
 
@@ -124,6 +136,20 @@ where
         }
     }
 
+    fn matches_prefix(&self, id: &usize) -> bool {
+        let non_universal_indices = (0..self.prefix.len())
+            .filter(|i| !matches!(self.prefix.quantifiers[*i], Quantifier::Forall))
+            .collect_vec();
+        if non_universal_indices.is_empty() {
+            self.by_id[id].is_clause()
+        } else {
+            let ids = self.by_id[id].ids();
+            non_universal_indices
+                .iter()
+                .all(|i| self.prefix.names[*i].iter().any(|n| ids.contains(n)))
+        }
+    }
+
     fn init(&mut self) -> Vec<usize> {
         assert!(self.is_empty());
         vec![self.insert(E::bottom())]
@@ -146,27 +172,20 @@ where
 
     fn insert(&mut self, body: E) -> usize {
         let id = self.next;
+        self.next += 1;
         self.by_id.insert(id, body.clone());
         self.bodies.insert(body, id);
-        self.next += 1;
         id
     }
 
-    pub fn remove(&mut self, body: &E) {
-        let id = self.bodies.remove(body);
-        self.by_id.remove(&id).unwrap();
-    }
-
-    fn remove_by_id(&mut self, id: &usize) -> E {
+    fn remove(&mut self, id: &usize) -> E {
         let body = self.by_id.remove(id).unwrap();
         self.bodies.remove(&body);
-
         body
     }
 
-    #[allow(dead_code)]
-    fn get_subsuming(&self, body: &E, perm_index: usize) -> HashSet<E> {
-        let mut subsuming: HashSet<E> = HashSet::default();
+    fn get_subsuming(&self, body: &E, perm_index: usize) -> HashSet<usize> {
+        let mut subsuming: HashSet<usize> = HashSet::default();
 
         for perm in self.prefix.permutations(perm_index, Some(&body.ids())) {
             let perm_body = body.substitute(&perm);
@@ -174,15 +193,15 @@ where
                 self.bodies
                     .get_subsuming(&perm_body)
                     .into_iter()
-                    .map(|(o, _)| o),
+                    .map(|(_, id)| *id),
             );
         }
 
         subsuming
     }
 
-    fn get_subsumed(&self, body: &E, perm_index: usize) -> HashSet<E> {
-        let mut subsumed: HashSet<E> = HashSet::default();
+    fn get_subsumed(&self, body: &E, perm_index: usize) -> HashSet<usize> {
+        let mut subsumed: HashSet<usize> = HashSet::default();
 
         for perm in self.prefix.permutations(perm_index, Some(&body.ids())) {
             let perm_body = body.substitute(&perm);
@@ -190,7 +209,7 @@ where
                 self.bodies
                     .get_subsumed(&perm_body)
                     .into_iter()
-                    .map(|(o, _)| o),
+                    .map(|(_, id)| *id),
             );
         }
 
@@ -216,8 +235,8 @@ where
 
     fn insert_minimized(&mut self, body: E, perm_index: usize) {
         if !Self::subsumes(self, &body, perm_index) {
-            for subs_body in self.get_subsumed(&body, perm_index) {
-                self.remove(&subs_body);
+            for subs_id in &self.get_subsumed(&body, perm_index) {
+                self.remove(subs_id);
             }
             self.insert(body);
         }
@@ -295,7 +314,7 @@ where
                 unsat
                     .into_iter()
                     .flat_map(|(i, structures)| {
-                        let body = set.remove_by_id(&i);
+                        let body = set.remove(&i);
                         structures
                             .into_iter()
                             .map(move |st| (body.clone(), HashSet::from_iter(st)))
@@ -329,10 +348,6 @@ where
 
         (removed, added)
     }
-
-    fn bodies(&self) -> impl Iterator<Item = E> + '_ {
-        self.by_id.values().cloned()
-    }
 }
 
 fn has_opposing_literals(clause: &<Clause as Element>::Base) -> bool {
@@ -355,7 +370,6 @@ where
     id_to_key: HashMap<LemmaId, LemmaKey>,
     key_to_term: BTreeMap<LemmaKey, Term>,
 }
-
 pub struct WeakenHypotheses<'a, E, L>
 where
     E: Element,
@@ -375,9 +389,6 @@ where
 
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
         let unsat = self.set.unsat(model);
-        if unsat.is_empty() {
-            return None;
-        }
 
         if let Some(key) = self.try_first.iter().find(|key| unsat.contains(key)) {
             return Some((*key, self.set.key_to_term(key)));
@@ -445,7 +456,12 @@ where
             .sets
             .iter_mut()
             .enumerate()
-            .flat_map(|(i, set)| set.init().into_iter().map(move |j| LemmaId(i, j)))
+            .flat_map(|(i, set)| {
+                set.init()
+                    .into_iter()
+                    .filter(|j| set.matches_prefix(j))
+                    .map(move |j| LemmaId(i, j))
+            })
             .collect_vec();
 
         for id in &added {
@@ -461,7 +477,8 @@ where
             .par_iter_mut()
             .enumerate()
             .map(|(i, set)| {
-                let (removed, added) = set.weaken(model);
+                let (removed, mut added) = set.weaken(model);
+                added.retain(|j| set.matches_prefix(j));
                 (i, removed, added)
             })
             .collect();
@@ -469,10 +486,11 @@ where
         let mut removed = vec![];
         let mut added = vec![];
         for (i, r, a) in &results {
-            removed.extend(r.iter().map(|j| {
-                let id = LemmaId(*i, *j);
-                let key = self.id_to_key.remove(&id).unwrap();
-                self.key_to_term.remove(&key);
+            removed.extend(r.iter().filter_map(|j| {
+                let key = self.id_to_key.remove(&LemmaId(*i, *j));
+                if let Some(k) = &key {
+                    self.key_to_term.remove(k);
+                }
                 key
             }));
             added.extend(a.iter().map(|j| {
@@ -487,8 +505,12 @@ where
         (removed, added)
     }
 
-    pub fn len(&self) -> usize {
+    pub fn full_len(&self) -> usize {
         self.sets.iter().map(|set| set.by_id.len()).sum()
+    }
+
+    pub fn len(&self) -> usize {
+        self.id_to_key.len()
     }
 
     pub fn first_subsuming(
@@ -497,21 +519,24 @@ where
         body: &E,
         before: Option<&LemmaKey>,
     ) -> Option<LemmaKey> {
-        for (i, set_i) in self.sets.iter().enumerate() {
-            let prefix_i = set_i.prefix.as_ref();
-            if prefix_i.subsumes(prefix) {
-                for subst in &prefix.substitutions_for(prefix_i) {
-                    for (_, other_id) in &set_i.bodies.get_subsuming(&body.substitute(subst)) {
-                        let key = self.lemma_key(LemmaId(i, **other_id));
-                        if !before.is_some_and(|b| &key >= b) {
-                            return Some(key);
-                        }
-                    }
-                }
-            }
-        }
+        let res = self
+            .sets
+            .iter()
+            .enumerate()
+            .filter(|(_, set_i)| set_i.prefix.subsumes(prefix))
+            .flat_map(|(i, set_i)| {
+                set_i
+                    .get_subsuming(body, 0)
+                    .into_iter()
+                    .filter_map(move |j| self.id_to_key.get(&LemmaId(i, j)).cloned())
+            })
+            .min();
 
-        None
+        if res.is_some_and(|res_key| !before.is_some_and(|bound| &res_key >= bound)) {
+            res
+        } else {
+            None
+        }
     }
 
     pub fn get_implying(&self, key: &LemmaKey) -> Option<HashSet<LemmaKey>> {
@@ -588,7 +613,7 @@ where
             .flat_map(|(i, set)| {
                 set.unsat(model, &Assignment::new(), 0, &[])
                     .keys()
-                    .map(move |j| self.id_to_key[&LemmaId(i, *j)])
+                    .filter_map(move |j| self.id_to_key.get(&LemmaId(i, *j)).cloned())
                     .collect_vec()
             })
             .collect()
@@ -633,7 +658,7 @@ where
                 set.unsat(model, &Assignment::new(), 0, &[])
                     .iter()
                     .map(|(j, _)| {
-                        set.remove_by_id(j);
+                        set.remove(j);
                         LemmaId(i, *j)
                     })
                     .collect_vec()
@@ -641,10 +666,12 @@ where
             .collect();
 
         removed_ids
-            .into_iter()
-            .map(|id| {
-                let key = self.id_to_key.remove(&id).unwrap();
-                self.key_to_term.remove(&key);
+            .iter()
+            .filter_map(|id| {
+                let key = self.id_to_key.remove(id);
+                if let Some(k) = &key {
+                    self.key_to_term.remove(k);
+                }
                 key
             })
             .collect()

@@ -5,10 +5,10 @@
 //! lemma domain.
 
 use fly::semantics::Model;
+use fly::syntax::Quantifier;
 use itertools::Itertools;
 use solver::basics::{BasicCanceler, MultiCanceler};
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -20,7 +20,7 @@ use crate::{
         atoms::{generate_literals, restrict_by_prefix},
         lemma::{self, InductionFrame},
         subsume::{self, Element},
-        weaken::{Domain, LemmaQf},
+        weaken::{Domain, LemmaQf, LemmaQfConfig},
     },
 };
 use fly::syntax::{Module, Term, ThmStmt};
@@ -37,14 +37,16 @@ pub mod defaults {
     pub const MIN_DOMAIN_SIZE: usize = 100;
     pub const DOMAIN_GROWTH_FACTOR: usize = 5;
     pub const MAX_QUANT: usize = 6;
+    pub const MAX_EXIST: usize = 1;
     pub const MAX_SAME_SORT: usize = 3;
     pub const QF_BODY: QfBody = QfBody::PDnf;
     pub const MAX_CLAUSES: Option<usize> = Some(4);
     pub const MAX_CLAUSE_SIZE: Option<usize> = Some(6);
     pub const MAX_CUBES: Option<usize> = Some(6);
-    pub const MAX_CUBE_SIZE: Option<usize> = Some(4);
-    pub const MAX_NON_UNIT: Option<usize> = Some(3);
-
+    pub const MAX_CUBE_SIZE: Option<usize> = Some(3);
+    pub const MIN_NON_UNIT_SIZE: usize = 3;
+    pub const MAX_NON_UNIT: Option<usize> = Some(2);
+    pub const MIN_DISJUNCTS: usize = 3;
     pub const MAX_MODEL_SIZE: usize = 8;
 }
 
@@ -273,6 +275,15 @@ where
     L: LemmaQf<Body = E>,
     S: BasicSolver,
 {
+    if infer_cfg
+        .cfg
+        .quantifiers
+        .iter()
+        .any(|q| matches!(q, Some(Quantifier::Exists)))
+    {
+        panic!("only existential quantification is not supported; quantify either with F or *");
+    }
+
     let fo = FOModule::new(
         m,
         infer_cfg.disj,
@@ -280,85 +291,71 @@ where
         infer_cfg.minimal_smt,
     );
     log::debug!("Computing literals...");
-    let literals = Arc::new(generate_literals(&infer_cfg, &m.signature, solver, &fo));
-
-    let mut domains: VecDeque<Domain<L>>;
-    let mut active_domains: Vec<Domain<L>>;
+    let literals = Arc::new(generate_literals(&infer_cfg, &m.signature));
 
     let domain_size_of = |doms: &[Domain<L>]| {
         doms.iter()
             .map(|(_, lemma_qf, _)| lemma_qf.approx_space_size())
-            .sum()
+            .sum::<usize>()
     };
 
     log::debug!("Computing predicate domains...");
-    if infer_cfg.no_search {
-        domains = VecDeque::new();
-        active_domains = infer_cfg
-            .cfg
-            .exact_prefixes(
-                0,
-                infer_cfg
-                    .max_existentials
-                    .unwrap_or(infer_cfg.cfg.num_vars()),
-                infer_cfg.max_size,
-            )
-            .into_iter()
-            .map(|prefix| {
-                let prefix = Arc::new(prefix);
-                let restricted = Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
-                let lemma_qf = Arc::new(L::new(
-                    &infer_cfg,
-                    restricted.clone(),
-                    &prefix.non_universal_vars(),
-                ));
-                (prefix, lemma_qf, restricted)
-            })
-            .collect();
+    let lemma_qf_config = Arc::new(L::Config::new(&infer_cfg));
+    let max_exist = if infer_cfg.cfg.is_universal() {
+        0
     } else {
-        domains = infer_cfg
-            .cfg
-            .all_prefixes(&infer_cfg)
+        infer_cfg.max_exist
+    };
+    let domain_configs: Vec<((usize, usize), Arc<L::Config>)> = if infer_cfg.no_search {
+        vec![((max_exist, infer_cfg.max_size), lemma_qf_config)]
+    } else {
+        let lemma_qf_configs = lemma_qf_config
+            .sub_spaces()
             .into_iter()
-            .flat_map(|prefix| {
-                let prefix = Arc::new(prefix);
-                let restricted = Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
-                let lemma_qf_full =
-                    L::new(&infer_cfg, restricted.clone(), &prefix.non_universal_vars());
-                lemma_qf_full
-                    .sub_spaces()
-                    .into_iter()
-                    .map(move |lemma_qf| (prefix.clone(), Arc::new(lemma_qf), restricted.clone()))
-            })
-            .filter(|(_, lemma_qf, _)| lemma_qf.approx_space_size() > 1)
-            .sorted_by_key(|(p, lemma_qf, _)| (lemma_qf.approx_space_size(), p.existentials()))
-            .collect();
-        active_domains = vec![];
-    }
+            .map(|qf_cfg| Arc::new(qf_cfg));
+        (0..=max_exist)
+            .cartesian_product(0..=infer_cfg.max_size)
+            .cartesian_product(lemma_qf_configs)
+            .filter(|((e, s), qf_cfg)| e <= s && (*e > 0 || qf_cfg.is_universal()))
+            .collect()
+    };
 
-    println!(
-        "Number of individual domains: {}",
-        domains.len() + active_domains.len()
-    );
+    let domains: Vec<(_, Vec<Domain<_>>, usize)> = domain_configs
+        .into_iter()
+        .map(|((e, s), qf_cfg)| {
+            let d: Vec<_> = infer_cfg
+                .cfg
+                .exact_prefixes(0, e, s)
+                .into_iter()
+                .map(|prefix| {
+                    let prefix = Arc::new(prefix);
+                    let restricted =
+                        Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
+                    let lemma_qf = Arc::new(L::new(
+                        qf_cfg.clone(),
+                        restricted.clone(),
+                        &prefix.non_universal_vars(),
+                    ));
+                    (prefix, lemma_qf, restricted)
+                })
+                .collect();
+            let domain_size = domain_size_of(&d);
 
-    let mut domain_size: usize = domain_size_of(&active_domains);
-    let mut next_domain_size = defaults::MIN_DOMAIN_SIZE;
-    let mut iteration: usize = 1;
-    loop {
-        while !domains.is_empty() && domain_size < next_domain_size {
-            let dom = domains.pop_front().unwrap();
-            active_domains.retain(|d| !(dom.0.contains(&d.0) && dom.1.contains(&d.1)));
-            active_domains.push(dom);
-            domain_size = domain_size_of(&active_domains);
-        }
+            ((e, s, qf_cfg), d, domain_size)
+        })
+        .sorted_by_key(|(_, _, domain_size)| *domain_size)
+        .collect();
 
+    println!("Number of individual domains: {}", domains.len());
+
+    for (iteration, ((e, s, qf), active_domains, domain_size)) in domains.into_iter().enumerate() {
         println!();
         println!("({iteration}) Running qalpha algorithm...");
         println!(
             "Approximate domain size: 10^{:.2} ({domain_size})",
             (domain_size as f64).log10()
         );
-        println!("Prefixes:");
+        println!("Prefixes: size = {s}, exist = {e}, qf = {qf:?}):");
         for (prefix, lemma_qf, literals) in &active_domains {
             println!(
                 "    {:?} --- {} literals --- {:?} ~ {}",
@@ -374,15 +371,9 @@ where
 
         fixpoint.report(print_invariant);
 
-        if (fixpoint.safety_proof.is_some() && infer_cfg.until_safe) || domains.is_empty() {
+        if fixpoint.safety_proof.is_some() && infer_cfg.until_safe {
             break;
         }
-
-        iteration += 1;
-        next_domain_size = domain_size
-            * infer_cfg
-                .growth_factor
-                .unwrap_or(defaults::DOMAIN_GROWTH_FACTOR);
     }
 }
 
@@ -543,9 +534,7 @@ where
             frame.weaken(&ctis);
         }
 
-        // There cannot be 0 CTI's but more samples to check.
-        assert!(!ctis.is_empty() || samples.is_empty());
-        run_sim = !samples.is_empty();
+        run_sim = !ctis.is_empty() && !samples.is_empty();
         run_smt = if cti_option.is_weaken() {
             !ctis.is_empty()
         } else if cti_option.is_houdini() {
@@ -596,6 +585,7 @@ where
     if infer_cfg.cti_option.property_directed() {
         frame.log_info("Checking safety...");
         if !frame.is_safe(fo, solver) {
+            canceler.cancel();
             return None;
         }
         frame.log_info("Safety verified.");
