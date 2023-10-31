@@ -264,7 +264,7 @@ pub fn translate(
         panic!("definitions in checker (use Module::inline_defs)")
     }
 
-    println!("starting translation...");
+    log::debug!("starting translation...");
     let timer = std::time::Instant::now();
 
     let d = extract(module).map_err(CheckerError::ExtractionError)?;
@@ -281,7 +281,7 @@ pub fn translate(
         enumerate_quantifiers(&inits, &module.signature, universe)
             .map_err(CheckerError::EnumerationError)?,
     );
-    println!("enumerating {} initial states", inits.exact_cardinality());
+    log::debug!("enumerating {} initial states", inits.exact_cardinality());
     let inits: Vec<BoundedState> = inits
         .sat_valuations()
         .map(|valuation| {
@@ -329,7 +329,7 @@ pub fn translate(
             (tr, unconstrained)
         })
         .collect();
-    println!(
+    log::debug!(
         "enumerating {} transitions",
         trs.iter()
             .map(|(_, unconstrained)| 2_usize.pow(unconstrained.len() as u32))
