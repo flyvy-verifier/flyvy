@@ -18,6 +18,7 @@ use crate::{
     basics::{FOModule, QalphaConfig},
     qalpha::{
         atoms::{generate_literals, restrict_by_prefix},
+        baseline::Baseline,
         lemma::{self, InductionFrame},
         subsume::{self, Element},
         weaken::{Domain, LemmaQf, LemmaQfConfig},
@@ -397,6 +398,14 @@ pub fn qalpha_dynamic(infer_cfg: Arc<QalphaConfig>, m: &Module, print_invariant:
             &parallel_solver(&infer_cfg),
             print_invariant,
         ),
+        (QfBody::PDnfBaseline, false) => {
+            qalpha::<Baseline<subsume::PDnf>, lemma::LemmaPDnfBaseline, _>(
+                infer_cfg.clone(),
+                m,
+                &parallel_solver(&infer_cfg),
+                print_invariant,
+            )
+        }
         (QfBody::CNF, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
             infer_cfg.clone(),
             m,
@@ -415,6 +424,14 @@ pub fn qalpha_dynamic(infer_cfg: Arc<QalphaConfig>, m: &Module, print_invariant:
             &fallback_solver(&infer_cfg),
             print_invariant,
         ),
+        (QfBody::PDnfBaseline, true) => {
+            qalpha::<Baseline<subsume::PDnf>, lemma::LemmaPDnfBaseline, _>(
+                infer_cfg.clone(),
+                m,
+                &fallback_solver(&infer_cfg),
+                print_invariant,
+            )
+        }
     }
 }
 

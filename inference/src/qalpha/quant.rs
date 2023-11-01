@@ -366,8 +366,9 @@ impl QuantifierPrefix {
     pub fn contains(&self, other: &Self) -> bool {
         assert_eq!(self.len(), other.len());
         (0..self.len()).all(|i| {
-            self.quantifiers[i] == other.quantifiers[i]
-                && self.names[i].len() >= other.names[i].len()
+            other.names[i].is_empty()
+                || (self.quantifiers[i] == other.quantifiers[i]
+                    && self.names[i].len() >= other.names[i].len())
         })
     }
 

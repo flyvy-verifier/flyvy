@@ -23,6 +23,7 @@ use crate::{
     parallel::{paralllelism, ParallelWorker},
     qalpha::{
         atoms::Literals,
+        baseline::Baseline,
         fixpoint::{defaults, SamplePriority, SimulationOptions},
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
         weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
@@ -405,6 +406,69 @@ impl LemmaQf for LemmaPDnf {
 
     fn body_from_clause(clause: Clause) -> Self::Body {
         (clause, Dnf::bottom()).into()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LemmaPDnfBaselineConfig(LemmaPDnfConfig);
+#[derive(Clone, Debug)]
+pub struct LemmaPDnfBaseline(LemmaPDnf);
+
+impl LemmaQfConfig for LemmaPDnfBaselineConfig {
+    fn new(cfg: &QalphaConfig) -> Self {
+        Self(LemmaPDnfConfig::new(cfg))
+    }
+
+    fn is_universal(&self) -> bool {
+        self.0.is_universal()
+    }
+
+    fn as_universal(&self) -> Self {
+        Self(self.0.as_universal())
+    }
+
+    fn sub_spaces(&self) -> Vec<Self> {
+        self.0.sub_spaces().into_iter().map(Self).collect()
+    }
+}
+
+impl LemmaQf for LemmaPDnfBaseline {
+    type Body = Baseline<PDnf>;
+    type Config = LemmaPDnfBaselineConfig;
+
+    fn new(
+        cfg: Arc<Self::Config>,
+        literals: Arc<Literals>,
+        non_universal_vars: &HashSet<String>,
+    ) -> Self {
+        Self(LemmaPDnf::new(
+            Arc::new(cfg.0.clone()),
+            literals,
+            non_universal_vars,
+        ))
+    }
+
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    where
+        I: Fn(&Self::Body) -> bool + Sync,
+    {
+        self.0
+            .weaken(body.0, structure, |b| ignore(&Baseline(b.clone())))
+            .into_iter()
+            .map(Baseline)
+            .collect()
+    }
+
+    fn approx_space_size(&self) -> usize {
+        self.0.approx_space_size()
+    }
+
+    fn contains(&self, other: &Self) -> bool {
+        self.0.contains(&other.0)
+    }
+
+    fn body_from_clause(clause: Clause) -> Self::Body {
+        Baseline(LemmaPDnf::body_from_clause(clause))
     }
 }
 

@@ -144,7 +144,7 @@ struct InferenceConfigArgs {
     fallback: bool,
 
     #[arg(long)]
-    /// Defines the type of quantifier-free body (cnf/dnf/pdnf)
+    /// Defines the type of quantifier-free body (cnf/dnf/pdnf/pdnf-baseline)
     qf_body: Option<String>,
 
     #[arg(long)]
@@ -247,6 +247,8 @@ impl InferenceConfigArgs {
                     QfBody::PDnf
                 } else if qf_body_str.to_lowercase() == *"dnf" {
                     QfBody::Dnf
+                } else if qf_body_str.to_lowercase() == *"pdnf-baseline" {
+                    QfBody::PDnfBaseline
                 } else {
                     panic!("Invalid choice of quantifier-free body!")
                 }

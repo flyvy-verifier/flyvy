@@ -650,6 +650,7 @@ pub enum QfBody {
     CNF,
     PDnf,
     Dnf,
+    PDnfBaseline,
 }
 
 pub struct QalphaConfig {

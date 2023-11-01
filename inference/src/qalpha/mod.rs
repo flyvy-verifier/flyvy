@@ -4,6 +4,7 @@
 //! An implementation of the qalpha algorithm
 
 mod atoms;
+mod baseline;
 pub mod fixpoint;
 mod lemma;
 pub mod quant;

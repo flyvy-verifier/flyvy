@@ -136,20 +136,6 @@ where
         }
     }
 
-    fn matches_prefix(&self, id: &usize) -> bool {
-        let non_universal_indices = (0..self.prefix.len())
-            .filter(|i| !matches!(self.prefix.quantifiers[*i], Quantifier::Forall))
-            .collect_vec();
-        if non_universal_indices.is_empty() {
-            self.by_id[id].is_clause()
-        } else {
-            let ids = self.by_id[id].ids();
-            non_universal_indices
-                .iter()
-                .all(|i| self.prefix.names[*i].iter().any(|n| ids.contains(n)))
-        }
-    }
-
     fn init(&mut self) -> Vec<usize> {
         assert!(self.is_empty());
         vec![self.insert(E::bottom())]
@@ -456,18 +442,15 @@ where
             .sets
             .iter_mut()
             .enumerate()
-            .flat_map(|(i, set)| {
-                set.init()
-                    .into_iter()
-                    .filter(|j| set.matches_prefix(j))
-                    .map(move |j| LemmaId(i, j))
-            })
+            .flat_map(|(i, set)| set.init().into_iter().map(move |j| LemmaId(i, j)))
             .collect_vec();
 
         for id in &added {
-            let key = self.lemma_key(*id);
-            self.id_to_key.insert(*id, key);
-            self.key_to_term.insert(key, self.id_to_term(id));
+            if !self.redundant(id) {
+                let key = self.lemma_key(*id);
+                self.id_to_key.insert(*id, key);
+                self.key_to_term.insert(key, self.id_to_term(id));
+            }
         }
     }
 
@@ -477,8 +460,7 @@ where
             .par_iter_mut()
             .enumerate()
             .map(|(i, set)| {
-                let (removed, mut added) = set.weaken(model);
-                added.retain(|j| set.matches_prefix(j));
+                let (removed, added) = set.weaken(model);
                 (i, removed, added)
             })
             .collect();
@@ -493,12 +475,16 @@ where
                 }
                 key
             }));
-            added.extend(a.iter().map(|j| {
+            added.extend(a.iter().filter_map(|j| {
                 let id = LemmaId(*i, *j);
-                let key = self.lemma_key(id);
-                self.id_to_key.insert(id, key);
-                self.key_to_term.insert(key, self.id_to_term(&id));
-                key
+                if !self.redundant(&id) {
+                    let key = self.lemma_key(id);
+                    self.id_to_key.insert(id, key);
+                    self.key_to_term.insert(key, self.id_to_term(&id));
+                    Some(key)
+                } else {
+                    None
+                }
             }));
         }
 
@@ -511,6 +497,13 @@ where
 
     pub fn len(&self) -> usize {
         self.id_to_key.len()
+    }
+
+    fn redundant(&self, id: &LemmaId) -> bool {
+        let prefix = self.sets[id.0]
+            .prefix
+            .restrict(self.sets[id.0].by_id[&id.1].ids());
+        self.sets[..id.0].iter().any(|s| s.prefix.contains(&prefix))
     }
 
     pub fn first_subsuming(
