@@ -5,6 +5,7 @@
 
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
 use solver::basics::SingleSolver;
 use std::collections::HashMap;
@@ -21,12 +22,17 @@ use codespan_reporting::{
     },
 };
 use fly::semantics::models_to_string;
-use fly::syntax::{Signature, Sort};
+use fly::syntax::{Module, Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
-use inference::basics::{parse_quantifier, QalphaConfig, QfBody};
+use inference::basics::{
+    FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, VariationConfig,
+};
 use inference::houdini;
-use inference::qalpha::fixpoint::{self, qalpha_dynamic, CtiOption, SimulationOptions};
-use inference::qalpha::quant::QuantifierConfig;
+use inference::qalpha::{
+    atoms::generate_literals,
+    fixpoint::{self, qalpha_dynamic, Strategy},
+    quant::{parse_quantifier, QuantifierConfig},
+};
 use inference::updr::Updr;
 use solver::backends;
 use solver::conf::SolverConf;
@@ -84,7 +90,7 @@ struct VerifyArgs {
 struct QuantifierConfigArgs {
     #[arg(long)]
     /// Use a custom prefix, given either by the sort ordering (via `--sort`) or by exact quantifiers (via `--quantifier`).
-    /// Otherwise, use the sort ordering found in the loaded module
+    /// Otherwise, use the sort ordering found in the loaded module with three universal/existential quantifiers per sort.
     custom_quant: bool,
 
     #[arg(short, long)]
@@ -92,8 +98,20 @@ struct QuantifierConfigArgs {
     sort: Vec<String>,
 
     #[arg(short, long)]
-    /// Quantifiers in the form `<quantifier: F/E/*> <sort> <var1> <var2> ...`
+    /// Quantifiers in the form `<quantifier: F/E/*> <sort> <count>`
     quantifier: Vec<String>,
+
+    #[arg(long)]
+    /// Defines the maximal size of the quantifier prefix
+    max_size: Option<usize>,
+
+    #[arg(long)]
+    /// Defines the maximal number of existential quantifiers
+    max_exist: Option<usize>,
+
+    #[arg(long)]
+    /// Vary the quantifier prefix gradually up to the specified configuration
+    vary_quant: bool,
 }
 
 impl QuantifierConfigArgs {
@@ -134,31 +152,14 @@ impl QuantifierConfigArgs {
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
-struct InferenceConfigArgs {
-    #[command(flatten)]
-    q_cfg_args: QuantifierConfigArgs,
-
-    #[arg(long)]
-    /// Instead on parallizing the solvers for each query, try them one by one
-    /// in a sequential fallback fashion.
-    fallback: bool,
-
+struct QuantifierFreeConfigArgs {
     #[arg(long)]
     /// Defines the type of quantifier-free body (cnf/dnf/pdnf/pdnf-baseline)
-    qf_body: Option<String>,
+    qf: Option<String>,
 
     #[arg(long)]
-    /// Do not search gradually for the quantified serach space needed to find an invariant,
-    /// and instead begin with the maximal domain matching the specification.
-    no_search: bool,
-
-    #[arg(long)]
-    /// Defines the maximal size of the quantifier prefix
-    max_size: Option<usize>,
-
-    #[arg(long)]
-    /// Defines the maximal number of existential quantifiers
-    max_exist: Option<usize>,
+    /// Vary the quantifier-free structure gradually up to the specified configuration
+    vary_qf: bool,
 
     #[arg(long)]
     /// For a quantifier-free body in CNF, determines the maximal number of clauses
@@ -188,6 +189,54 @@ struct InferenceConfigArgs {
     #[arg(long, action)]
     /// Do not include equality terms in the vocabulary
     no_include_eq: bool,
+}
+
+impl QuantifierFreeConfigArgs {
+    fn to_cfg(&self) -> QuantifierFreeConfig {
+        QuantifierFreeConfig {
+            qf_body: self.qf.as_ref().map_or(QfBody::default(), |qf| qf.into()),
+            clauses: self.clauses,
+            clause_size: self.clause_size,
+            cubes: self.cubes,
+            cube_size: self.cube_size,
+            non_unit: self.non_unit,
+        }
+    }
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct SimulationConfigArgs {
+    /// What size bound to use for the given sort in simulations, given as SORT=N as in --bound node=2
+    #[arg(long)]
+    bound: Vec<String>,
+
+    #[arg(long)]
+    /// Run simulations up to this depth
+    depth: Option<usize>,
+
+    #[arg(long)]
+    /// In simulations, consider the depth from the last counterexample found
+    guided: bool,
+
+    #[arg(long)]
+    /// Run simulations in a DFS manner (default is BFS)
+    dfs: bool,
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct InferenceConfigArgs {
+    #[command(flatten)]
+    quant_cfg: QuantifierConfigArgs,
+
+    #[arg(long)]
+    /// Instead on parallizing the solvers for each query, try them one by one
+    /// in a sequential fallback fashion.
+    fallback: bool,
+
+    #[arg(long)]
+    /// Do not search gradually for the quantified search space needed to find an invariant,
+    /// and instead begin with the maximal domain matching the specification.
+    no_search: bool,
 
     #[arg(long)]
     /// Do not try to decompose the transition relation disjunctively
@@ -200,101 +249,6 @@ struct InferenceConfigArgs {
     #[arg(long)]
     /// Perform SMT queries gradually and minimally
     minimal_smt: bool,
-
-    #[arg(long)]
-    /// Run reachability simulations up to this depth
-    sim_depth: Option<usize>,
-
-    #[arg(long)]
-    /// Run reachability simulations up to this state size (default: 8)
-    sim_size: Option<usize>,
-
-    #[arg(long)]
-    /// In simulations, consider the depth from the last counterexample found
-    guided: bool,
-
-    #[arg(long)]
-    /// Run simulations in a DFS manner (default is BFS)
-    dfs: bool,
-
-    #[arg(long)]
-    /// Determines the CTI strategy that is used in addition to the simulations.
-    /// Options are "weaken", "weaken-pd", "houdini", "houdini-pd", or "none".
-    /// "pd" indicates a property-directed strategy.
-    cti: Option<String>,
-
-    #[arg(long)]
-    /// Launch no new runs after safety has been proven
-    until_safe: bool,
-
-    #[arg(long)]
-    /// Abort a run once it is evident that safety cannot be proven
-    abort_unsafe: bool,
-
-    #[arg(long)]
-    /// Grow the domain of quantified lemmas by this factor each iteration (default: 5)
-    growth_factor: Option<usize>,
-}
-
-impl InferenceConfigArgs {
-    fn to_cfg(&self, sig: &Signature, fname: String) -> QalphaConfig {
-        let qf_body = match &self.qf_body {
-            None => fixpoint::defaults::QF_BODY,
-            Some(qf_body_str) => {
-                if qf_body_str.to_lowercase() == *"cnf" {
-                    QfBody::CNF
-                } else if qf_body_str.to_lowercase() == *"pdnf" {
-                    QfBody::PDnf
-                } else if qf_body_str.to_lowercase() == *"dnf" {
-                    QfBody::Dnf
-                } else if qf_body_str.to_lowercase() == *"pdnf-baseline" {
-                    QfBody::PDnfBaseline
-                } else {
-                    panic!("Invalid choice of quantifier-free body!")
-                }
-            }
-        };
-
-        let mut cfg = QalphaConfig {
-            fname,
-            fallback: self.fallback,
-            cfg: self.q_cfg_args.to_cfg(sig),
-            qf_body,
-            max_size: self.max_size.unwrap_or(fixpoint::defaults::MAX_QUANT),
-            max_exist: self.max_exist.unwrap_or(fixpoint::defaults::MAX_EXIST),
-            clauses: self.clauses,
-            clause_size: self.clause_size,
-            cubes: self.cubes,
-            cube_size: self.cube_size,
-            non_unit: self.non_unit,
-            nesting: self.nesting,
-            include_eq: !self.no_include_eq,
-            disj: !self.no_disj,
-            gradual_smt: self.gradual_smt || self.minimal_smt,
-            minimal_smt: self.minimal_smt,
-            sim_options: SimulationOptions {
-                max_size: self.sim_size,
-                max_depth: self.sim_depth,
-                weaken_guided: self.guided,
-                bfs: !self.dfs,
-            },
-            cti_option: self
-                .cti
-                .as_ref()
-                .map_or(CtiOption::default(), |s| s.as_str().into()),
-            no_search: self.no_search,
-            until_safe: self.until_safe,
-            growth_factor: self.growth_factor,
-        };
-
-        cfg.clauses = cfg.clauses.or(fixpoint::defaults::MAX_CLAUSES);
-        cfg.clause_size = cfg.clause_size.or(fixpoint::defaults::MAX_CLAUSE_SIZE);
-        cfg.cubes = cfg.cubes.or(fixpoint::defaults::MAX_CUBES);
-        cfg.cube_size = cfg.cube_size.or(fixpoint::defaults::MAX_CUBE_SIZE);
-        cfg.non_unit = cfg.non_unit.or(fixpoint::defaults::MAX_NON_UNIT);
-
-        cfg
-    }
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -302,8 +256,87 @@ struct QalphaArgs {
     #[command(flatten)]
     infer_cfg: InferenceConfigArgs,
 
+    #[command(flatten)]
+    sim_cfg: SimulationConfigArgs,
+
+    #[command(flatten)]
+    qf_cfg: QuantifierFreeConfigArgs,
+
+    #[arg(long)]
+    /// Determines the strategy that is used in addition to the simulations.
+    /// Options are "weaken", "weaken-pd", "houdini", "houdini-pd", or "none".
+    /// "pd" indicates a property-directed strategy.
+    strategy: Option<String>,
+
+    #[arg(long)]
+    /// Launch no new runs after safety has been proven
+    until_safe: bool,
+
     /// File name for a .fly file
     file: String,
+}
+
+impl QalphaArgs {
+    fn to_cfg(&self, m: &Module, fname: String) -> QalphaConfig {
+        let quant_cfg = self.infer_cfg.quant_cfg.to_cfg(&m.signature);
+
+        let literals = generate_literals(
+            &m.signature,
+            &quant_cfg,
+            self.qf_cfg.nesting,
+            !self.qf_cfg.no_include_eq,
+        );
+
+        let (gradual, minimal) = if self.infer_cfg.minimal_smt {
+            (true, true)
+        } else if self.infer_cfg.gradual_smt {
+            (true, false)
+        } else {
+            (false, false)
+        };
+
+        let universe_map = get_universe(&m.signature, &self.sim_cfg.bound);
+        let universe = m.signature.sorts.iter().map(|s| universe_map[s]).collect();
+        QalphaConfig {
+            fname,
+            fo: FOModule::new(m, !self.infer_cfg.no_disj, gradual, minimal),
+
+            quant_cfg: self.infer_cfg.quant_cfg.to_cfg(&m.signature),
+            max_size: self
+                .infer_cfg
+                .quant_cfg
+                .max_size
+                .unwrap_or(defaults::MAX_QUANT_SIZE),
+            max_exist: self
+                .infer_cfg
+                .quant_cfg
+                .max_exist
+                .unwrap_or(defaults::MAX_QUANT_EXIST),
+
+            qf_cfg: self.qf_cfg.to_cfg(),
+
+            sim: SimulationConfig {
+                universe,
+                depth: self.sim_cfg.depth,
+                guided: self.sim_cfg.guided,
+                dfs: self.sim_cfg.dfs,
+            },
+
+            vary: VariationConfig {
+                quant: self.infer_cfg.quant_cfg.vary_quant,
+                qf: self.qf_cfg.vary_qf,
+            },
+
+            literals,
+
+            strategy: self
+                .strategy
+                .as_ref()
+                .map_or(Strategy::default(), |s| s.into()),
+            until_safe: self.until_safe,
+            fallback: self.infer_cfg.fallback,
+        }
+    }
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
@@ -349,37 +382,44 @@ struct BoundedArgs {
     print_timing: Option<bool>,
 }
 
+/// Parses the arguments in `bound` into a universe size map.
+///
+/// Ensures that every sort in the given signature is given a bound.
+fn get_universe(sig: &Signature, bound: &[String]) -> HashMap<String, usize> {
+    let mut universe: HashMap<String, usize> = HashMap::new();
+    for b in bound {
+        if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
+            let sort_name = sort_name.to_string();
+            if !sig.sorts.contains(&sort_name) {
+                eprintln!("unknown sort name {sort_name} in bound {b}");
+                process::exit(1);
+            }
+            if let Ok(bound_size) = bound_size.parse::<usize>() {
+                universe.insert(sort_name, bound_size);
+            } else {
+                eprintln!("could not parse bound as integer in {b}");
+                process::exit(1);
+            }
+        } else {
+            eprintln!("expected exactly one '=' in bound {b}");
+            process::exit(1);
+        }
+    }
+    if let Some(unbounded_sort) = sig.sorts.iter().find(|&s| !universe.contains_key(s)) {
+        eprintln!(
+            "need a bound for sort {unbounded_sort} on the command line, as in --bound {unbounded_sort}=N"
+        );
+        process::exit(1);
+    }
+    universe
+}
+
 impl BoundedArgs {
     /// Parses the arguments in self.bound into a universe size map.
     ///
     /// Ensures that every sort in the given signature is given a bound.
     fn get_universe(&self, sig: &Signature) -> HashMap<String, usize> {
-        let mut universe: HashMap<String, usize> = HashMap::new();
-        for b in &self.bound {
-            if let [sort_name, bound_size] = b.split('=').collect::<Vec<&str>>()[..] {
-                let sort_name = sort_name.to_string();
-                if !sig.sorts.contains(&sort_name) {
-                    eprintln!("unknown sort name {sort_name} in bound {b}");
-                    process::exit(1);
-                }
-                if let Ok(bound_size) = bound_size.parse::<usize>() {
-                    universe.insert(sort_name, bound_size);
-                } else {
-                    eprintln!("could not parse bound as integer in {b}");
-                    process::exit(1);
-                }
-            } else {
-                eprintln!("expected exactly one '=' in bound {b}");
-                process::exit(1);
-            }
-        }
-        if let Some(unbounded_sort) = sig.sorts.iter().find(|&s| !universe.contains_key(s)) {
-            eprintln!(
-                "need a bound for sort {unbounded_sort} on the command line, as in --bound {unbounded_sort}=N"
-            );
-            process::exit(1);
-        }
-        universe
+        get_universe(sig, &self.bound)
     }
 }
 
@@ -610,11 +650,7 @@ impl App {
                 },
             ) => {
                 m.inline_defs();
-                let infer_cfg = Arc::new(
-                    qargs
-                        .infer_cfg
-                        .to_cfg(&m.signature, args.infer_cmd.file().to_string()),
-                );
+                let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
                 qalpha_dynamic(infer_cfg, &m, !args.no_print_invariant);
                 if args.time {
                     timing::report();

@@ -11,8 +11,7 @@ use std::{
 };
 
 use crate::qalpha::{
-    fixpoint::{CtiOption, SimulationOptions},
-    quant::QuantifierConfig,
+    atoms::Literals, fixpoint::Strategy, quant::QuantifierConfig, weaken::LemmaQfConfig,
 };
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
@@ -647,64 +646,104 @@ impl FOModule {
 }
 
 pub enum QfBody {
-    CNF,
+    Cnf,
     PDnf,
     Dnf,
     PDnfBaseline,
 }
 
-pub struct QalphaConfig {
-    pub fname: String,
+impl Default for QfBody {
+    fn default() -> Self {
+        Self::PDnf
+    }
+}
 
-    pub fallback: bool,
-    pub cfg: QuantifierConfig,
+impl From<&String> for QfBody {
+    fn from(value: &String) -> Self {
+        match value.as_str() {
+            "cnf" => QfBody::Cnf,
+            "dnf" => QfBody::Dnf,
+            "pdnf" => QfBody::PDnf,
+            "pdnf-baseline" => QfBody::PDnfBaseline,
+            _ => panic!("invalid choice of quantifier-free body!"),
+        }
+    }
+}
+
+pub struct QuantifierFreeConfig {
     pub qf_body: QfBody,
-
-    pub max_size: usize,
-    pub max_exist: usize,
 
     pub clauses: Option<usize>,
     pub clause_size: Option<usize>,
 
     pub cubes: Option<usize>,
     pub cube_size: Option<usize>,
+
     pub non_unit: Option<usize>,
-
-    pub nesting: Option<usize>,
-    pub include_eq: bool,
-
-    pub disj: bool,
-    pub gradual_smt: bool,
-    pub minimal_smt: bool,
-
-    pub sim_options: SimulationOptions,
-    pub cti_option: CtiOption,
-
-    pub until_safe: bool,
-    pub no_search: bool,
-    pub growth_factor: Option<usize>,
 }
 
-pub fn parse_quantifier(
-    sig: &Signature,
-    s: &str,
-) -> Result<(Option<Quantifier>, Sort, usize), String> {
-    let mut parts = s.split_whitespace();
+pub struct VariationConfig {
+    pub quant: bool,
+    pub qf: bool,
+}
 
-    let quantifier = match parts.next().unwrap() {
-        "*" => None,
-        "F" => Some(Quantifier::Forall),
-        "E" => Some(Quantifier::Exists),
-        _ => return Err("invalid quantifier (choose F/E/*)".to_string()),
-    };
+impl VariationConfig {
+    pub fn quant_sizes(&self, cfg: &QalphaConfig) -> Vec<usize> {
+        if self.quant {
+            (0..=cfg.max_size).collect()
+        } else {
+            vec![cfg.max_size]
+        }
+    }
 
-    let sort_id = parts.next().unwrap().to_string();
-    let sort = if sig.sorts.contains(&sort_id) {
-        Sort::Uninterpreted(sort_id)
-    } else {
-        return Err(format!("invalid sort {sort_id}"));
-    };
+    pub fn quant_exists(&self, cfg: &QalphaConfig) -> Vec<usize> {
+        if self.quant {
+            (0..=cfg.max_exist).collect()
+        } else {
+            vec![cfg.max_exist]
+        }
+    }
 
-    let count = parts.next().unwrap().parse::<usize>().unwrap();
-    Ok((quantifier, sort, count))
+    pub fn qf_configs<C: LemmaQfConfig>(&self, lemma_qf_cfg: C) -> Vec<Arc<C>> {
+        if self.qf {
+            lemma_qf_cfg
+                .sub_spaces()
+                .into_iter()
+                .map(|qf| Arc::new(qf))
+                .collect()
+        } else {
+            vec![Arc::new(lemma_qf_cfg)]
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SimulationConfig {
+    pub universe: Vec<usize>,
+    pub depth: Option<usize>,
+    pub guided: bool,
+    pub dfs: bool,
+}
+
+pub struct QalphaConfig {
+    pub fname: String,
+    pub fo: FOModule,
+
+    pub quant_cfg: QuantifierConfig,
+    pub max_size: usize,
+    pub max_exist: usize,
+
+    pub qf_cfg: QuantifierFreeConfig,
+
+    pub vary: VariationConfig,
+
+    pub sim: SimulationConfig,
+
+    pub literals: Literals,
+
+    pub strategy: Strategy,
+
+    pub until_safe: bool,
+
+    pub fallback: bool,
 }

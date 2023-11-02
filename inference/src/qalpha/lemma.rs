@@ -3,7 +3,6 @@
 
 //! Implement simple components, lemma domains and data structures for use in inference.
 
-use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler};
 use std::fmt::{Debug, Display};
@@ -16,15 +15,16 @@ use fly::syntax::{Module, Signature, Term};
 
 use bounded::simulator::MultiSimulator;
 
+use crate::basics::SimulationConfig;
 use crate::{
-    basics::{CexResult, FOModule, QalphaConfig},
+    basics::{CexResult, FOModule, QuantifierFreeConfig},
     hashmap::{HashMap, HashSet},
     parallel::Tasks,
     parallel::{paralllelism, ParallelWorker},
     qalpha::{
         atoms::Literals,
         baseline::Baseline,
-        fixpoint::{defaults, SamplePriority, SimulationOptions},
+        fixpoint::{defaults, sample_priority, TraversalDepth},
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
         weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
     },
@@ -50,7 +50,7 @@ pub struct LemmaCnfConfig {
 }
 
 impl LemmaQfConfig for LemmaCnfConfig {
-    fn new(cfg: &QalphaConfig) -> Self {
+    fn new(cfg: &QuantifierFreeConfig) -> Self {
         Self {
             clauses: cfg
                 .clauses
@@ -148,7 +148,7 @@ pub struct LemmaDnfConfig {
 }
 
 impl LemmaQfConfig for LemmaDnfConfig {
-    fn new(cfg: &QalphaConfig) -> Self {
+    fn new(cfg: &QuantifierFreeConfig) -> Self {
         Self {
             cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
             cube_size: cfg
@@ -237,7 +237,7 @@ pub struct LemmaPDnfConfig {
 }
 
 impl LemmaQfConfig for LemmaPDnfConfig {
-    fn new(cfg: &QalphaConfig) -> Self {
+    fn new(cfg: &QuantifierFreeConfig) -> Self {
         Self {
             cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
             cube_size: cfg
@@ -415,7 +415,7 @@ pub struct LemmaPDnfBaselineConfig(LemmaPDnfConfig);
 pub struct LemmaPDnfBaseline(LemmaPDnf);
 
 impl LemmaQfConfig for LemmaPDnfBaselineConfig {
-    fn new(cfg: &QalphaConfig) -> Self {
+    fn new(cfg: &QuantifierFreeConfig) -> Self {
         Self(LemmaPDnfConfig::new(cfg))
     }
 
@@ -617,12 +617,10 @@ where
     lemmas: RwLock<LemmaManager<LemmaKey>>,
     /// The mapping from a key to the lemma's position in the ordering.
     key_to_idx: HashMap<LemmaKey, usize>,
-    /// The signature of the frame's lemmas.
-    signature: Arc<Signature>,
     /// The lemmas in the frame, maintained in a way that supports weakening them.
     weaken_lemmas: WeakenLemmaSet<E, L>,
     /// Whether to extend CTI traces, and how much.
-    sim_options: SimulationOptions,
+    sim_config: SimulationConfig,
     /// The time of creation of the frame (for logging purposes)
     start_time: Instant,
     /// The simulator to run simulations from reachable states or previous samples
@@ -641,19 +639,18 @@ where
         module: &'a Module,
         signature: Arc<Signature>,
         domains: Vec<Domain<L>>,
-        sim_options: SimulationOptions,
+        sim_config: SimulationConfig,
         property_directed: bool,
     ) -> Self {
-        let mut weaken_lemmas = WeakenLemmaSet::new(signature.clone(), domains);
+        let mut weaken_lemmas = WeakenLemmaSet::new(signature, domains);
         weaken_lemmas.init();
         let key_to_idx = weaken_lemmas.key_to_idx();
 
         InductionFrame {
             lemmas: RwLock::new(LemmaManager::new()),
             key_to_idx,
-            signature,
             weaken_lemmas,
-            sim_options,
+            sim_config,
             start_time: Instant::now(),
             simulator: MultiSimulator::new(module),
             property_directed,
@@ -816,28 +813,30 @@ where
     /// Extend simulations of traces in order to find a CTI for the current frame.
     pub fn extend<C: BasicCanceler>(
         &self,
-        samples: &mut Tasks<SamplePriority, Model>,
+        samples: &mut Tasks<TraversalDepth, Model>,
         canceler: C,
     ) -> Vec<Model> {
         self.log_info("Simulating CTI traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
         let results = ParallelWorker::new(
             samples,
-            |(_, t_depth, mut since_weaken), model| {
+            |t_depth, model| {
                 let unsat = !self.weaken_lemmas.unsat(model).is_empty();
+
+                let depth = if unsat && self.sim_config.guided {
+                    0
+                } else {
+                    t_depth.depth()
+                };
+
                 let cancel = if unsat {
-                    since_weaken = 0;
                     canceler.cancel();
                     true
                 } else {
                     canceler.is_canceled()
                 };
 
-                let new_samples = if let Some(p) = self.sim_options.sample_priority(
-                    &model.universe,
-                    t_depth.depth() + 1,
-                    since_weaken + 1,
-                ) {
+                let new_samples = if let Some(p) = sample_priority(&self.sim_config, depth + 1) {
                     let sim = self
                         .simulator
                         .simulate_new(model)
@@ -1101,30 +1100,12 @@ where
         }
     }
 
-    pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
-        let max_model_size = self
-            .sim_options
-            .max_size
-            .unwrap_or(defaults::MAX_MODEL_SIZE);
-        let universe_sizes = (0..self.signature.sorts.len())
-            .map(|_| 1..=self.sim_options.max_size.unwrap_or(max_model_size))
-            .multi_cartesian_product_fixed()
-            .filter(|u| u.iter().copied().sum::<usize>() <= max_model_size)
-            .sorted_by_key(|u| u.iter().copied().sorted().collect_vec());
-        let models = universe_sizes
-            .flat_map(|universe| self.simulator.initials_new(&universe))
-            .collect_vec();
-
+    pub fn initial_samples(&mut self) -> Tasks<TraversalDepth, Model> {
+        let models = self.simulator.initials_new(&self.sim_config.universe);
         self.weaken(&models);
-
         let mut samples = Tasks::new();
         for model in models {
-            samples.insert(
-                self.sim_options
-                    .sample_priority(&model.universe, 0, 0)
-                    .unwrap(),
-                model,
-            )
+            samples.insert(sample_priority(&self.sim_config, 0).unwrap(), model)
         }
 
         samples

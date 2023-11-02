@@ -5,7 +5,6 @@
 //! lemma domain.
 
 use fly::semantics::Model;
-use fly::syntax::Quantifier;
 use itertools::Itertools;
 use solver::basics::{BasicCanceler, MultiCanceler};
 use std::cmp::Ordering;
@@ -13,11 +12,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crate::basics::QfBody;
+use crate::basics::{QfBody, SimulationConfig};
+use crate::parallel::Tasks;
 use crate::{
     basics::{FOModule, QalphaConfig},
     qalpha::{
-        atoms::{generate_literals, restrict_by_prefix},
+        atoms::restrict_by_prefix,
         baseline::Baseline,
         lemma::{self, InductionFrame},
         subsume::{self, Element},
@@ -34,21 +34,11 @@ use solver::{
 use rayon::prelude::*;
 
 pub mod defaults {
-    use super::QfBody;
-    pub const MIN_DOMAIN_SIZE: usize = 100;
-    pub const DOMAIN_GROWTH_FACTOR: usize = 5;
-    pub const MAX_QUANT: usize = 6;
-    pub const MAX_EXIST: usize = 1;
+    pub const MAX_QUANT_SIZE: usize = 6;
+    pub const MAX_QUANT_EXIST: usize = 1;
     pub const MAX_SAME_SORT: usize = 3;
-    pub const QF_BODY: QfBody = QfBody::PDnf;
-    pub const MAX_CLAUSES: Option<usize> = Some(4);
-    pub const MAX_CLAUSE_SIZE: Option<usize> = Some(6);
-    pub const MAX_CUBES: Option<usize> = Some(6);
-    pub const MAX_CUBE_SIZE: Option<usize> = Some(3);
-    pub const MIN_NON_UNIT_SIZE: usize = 3;
-    pub const MAX_NON_UNIT: Option<usize> = Some(2);
     pub const MIN_DISJUNCTS: usize = 3;
-    pub const MAX_MODEL_SIZE: usize = 8;
+    pub const MIN_NON_UNIT_SIZE: usize = 3;
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -83,40 +73,15 @@ impl Ord for TraversalDepth {
     }
 }
 
-/// (ascending sort sizes, simulation depth, depth since weaken)
-pub type SamplePriority = (usize, TraversalDepth, usize);
-
-#[derive(Clone)]
-pub struct SimulationOptions {
-    pub max_size: Option<usize>,
-    pub max_depth: Option<usize>,
-    pub weaken_guided: bool,
-    pub bfs: bool,
-}
-
-impl SimulationOptions {
-    pub fn sample_priority(
-        &self,
-        universe: &[usize],
-        depth: usize,
-        since_weaken: usize,
-    ) -> Option<SamplePriority> {
-        if !self
-            .max_depth
-            .is_some_and(|d| depth > d && (!self.weaken_guided || since_weaken > d))
-        {
-            Some((
-                universe.iter().copied().sum(),
-                if self.bfs { Bfs(depth) } else { Dfs(depth) },
-                since_weaken,
-            ))
-        } else {
-            None
-        }
+pub fn sample_priority(cfg: &SimulationConfig, depth: usize) -> Option<TraversalDepth> {
+    if !cfg.depth.is_some_and(|d| depth > d) {
+        Some(if cfg.dfs { Dfs(depth) } else { Bfs(depth) })
+    } else {
+        None
     }
 }
 
-pub enum CtiOption {
+pub enum Strategy {
     None,
     Houdini,
     HoudiniPd,
@@ -124,15 +89,15 @@ pub enum CtiOption {
     WeakenPd,
 }
 
-impl Default for CtiOption {
+impl Default for Strategy {
     fn default() -> Self {
         Self::Weaken
     }
 }
 
-impl From<&str> for CtiOption {
-    fn from(value: &str) -> Self {
-        match value {
+impl From<&String> for Strategy {
+    fn from(value: &String) -> Self {
+        match value.as_str() {
             "none" => Self::None,
             "houdini" => Self::Houdini,
             "houdini-pd" => Self::HoudiniPd,
@@ -143,7 +108,7 @@ impl From<&str> for CtiOption {
     }
 }
 
-impl CtiOption {
+impl Strategy {
     fn property_directed(&self) -> bool {
         matches!(self, Self::HoudiniPd | Self::WeakenPd)
     }
@@ -270,30 +235,12 @@ fn fallback_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
     ])
 }
 
-pub fn qalpha<E, L, S>(infer_cfg: Arc<QalphaConfig>, m: &Module, solver: &S, print_invariant: bool)
+pub fn qalpha<E, L, S>(cfg: Arc<QalphaConfig>, m: &Module, solver: &S, print_invariant: bool)
 where
     E: Element,
     L: LemmaQf<Body = E>,
     S: BasicSolver,
 {
-    if infer_cfg
-        .cfg
-        .quantifiers
-        .iter()
-        .any(|q| matches!(q, Some(Quantifier::Exists)))
-    {
-        panic!("only existential quantification is not supported; quantify either with F or *");
-    }
-
-    let fo = FOModule::new(
-        m,
-        infer_cfg.disj,
-        infer_cfg.gradual_smt,
-        infer_cfg.minimal_smt,
-    );
-    log::debug!("Computing literals...");
-    let literals = Arc::new(generate_literals(&infer_cfg, &m.signature));
-
     let domain_size_of = |doms: &[Domain<L>]| {
         doms.iter()
             .map(|(_, lemma_qf, _)| lemma_qf.approx_space_size())
@@ -301,37 +248,27 @@ where
     };
 
     log::debug!("Computing predicate domains...");
-    let lemma_qf_config = Arc::new(L::Config::new(&infer_cfg));
-    let max_exist = if infer_cfg.cfg.is_universal() {
-        0
-    } else {
-        infer_cfg.max_exist
-    };
-    let domain_configs: Vec<((usize, usize), Arc<L::Config>)> = if infer_cfg.no_search {
-        vec![((max_exist, infer_cfg.max_size), lemma_qf_config)]
-    } else {
-        let lemma_qf_configs = lemma_qf_config
-            .sub_spaces()
-            .into_iter()
-            .map(|qf_cfg| Arc::new(qf_cfg));
-        (0..=max_exist)
-            .cartesian_product(0..=infer_cfg.max_size)
-            .cartesian_product(lemma_qf_configs)
-            .filter(|((e, s), qf_cfg)| e <= s && (*e > 0 || qf_cfg.is_universal()))
-            .collect()
-    };
+    let lemma_qf_cfg = L::Config::new(&cfg.qf_cfg);
+    let domain_configs: Vec<_> = cfg
+        .vary
+        .quant_sizes(&cfg)
+        .into_iter()
+        .cartesian_product(cfg.vary.quant_exists(&cfg))
+        .cartesian_product(cfg.vary.qf_configs(lemma_qf_cfg))
+        .filter(|((size, exist), qf)| exist <= size && (*exist > 0 || qf.is_universal()))
+        .collect();
 
     let domains: Vec<(_, Vec<Domain<_>>, usize)> = domain_configs
         .into_iter()
-        .map(|((e, s), qf_cfg)| {
-            let d: Vec<_> = infer_cfg
-                .cfg
-                .exact_prefixes(0, e, s)
+        .map(|((size, exist), qf_cfg)| {
+            let d: Vec<_> = cfg
+                .quant_cfg
+                .exact_prefixes(0, exist, size)
                 .into_iter()
                 .map(|prefix| {
                     let prefix = Arc::new(prefix);
                     let restricted =
-                        Arc::new(restrict_by_prefix(&literals, &infer_cfg.cfg, &prefix));
+                        Arc::new(restrict_by_prefix(&cfg.literals, &cfg.quant_cfg, &prefix));
                     let lemma_qf = Arc::new(L::new(
                         qf_cfg.clone(),
                         restricted.clone(),
@@ -342,7 +279,7 @@ where
                 .collect();
             let domain_size = domain_size_of(&d);
 
-            ((e, s, qf_cfg), d, domain_size)
+            ((exist, size, qf_cfg), d, domain_size)
         })
         .sorted_by_key(|(_, _, domain_size)| *domain_size)
         .collect();
@@ -368,76 +305,74 @@ where
         }
 
         let fixpoint =
-            run_qalpha::<E, L, S>(infer_cfg.clone(), solver, m, &fo, active_domains.clone());
+            run_qalpha::<E, L, S>(cfg.clone(), solver, m, &cfg.fo, active_domains.clone());
 
         fixpoint.report(print_invariant);
 
-        if fixpoint.safety_proof.is_some() && infer_cfg.until_safe {
+        if fixpoint.safety_proof.is_some() && cfg.until_safe {
             break;
         }
     }
 }
 
-pub fn qalpha_dynamic(infer_cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
-    match (&infer_cfg.qf_body, infer_cfg.fallback) {
-        (QfBody::CNF, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
-            infer_cfg.clone(),
+pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
+    match (&cfg.qf_cfg.qf_body, cfg.fallback) {
+        (QfBody::Cnf, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
+            cfg.clone(),
             m,
-            &parallel_solver(&infer_cfg),
+            &parallel_solver(&cfg),
             print_invariant,
         ),
         (QfBody::PDnf, false) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
-            infer_cfg.clone(),
+            cfg.clone(),
             m,
-            &parallel_solver(&infer_cfg),
+            &parallel_solver(&cfg),
             print_invariant,
         ),
         (QfBody::Dnf, false) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
-            infer_cfg.clone(),
+            cfg.clone(),
             m,
-            &parallel_solver(&infer_cfg),
+            &parallel_solver(&cfg),
             print_invariant,
         ),
-        (QfBody::PDnfBaseline, false) => {
-            qalpha::<Baseline<subsume::PDnf>, lemma::LemmaPDnfBaseline, _>(
-                infer_cfg.clone(),
-                m,
-                &parallel_solver(&infer_cfg),
-                print_invariant,
-            )
-        }
-        (QfBody::CNF, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
-            infer_cfg.clone(),
+        (QfBody::PDnfBaseline, false) => qalpha::<
+            Baseline<subsume::PDnf>,
+            lemma::LemmaPDnfBaseline,
+            _,
+        >(
+            cfg.clone(), m, &parallel_solver(&cfg), print_invariant
+        ),
+        (QfBody::Cnf, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
+            cfg.clone(),
             m,
-            &fallback_solver(&infer_cfg),
+            &fallback_solver(&cfg),
             print_invariant,
         ),
         (QfBody::PDnf, true) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
-            infer_cfg.clone(),
+            cfg.clone(),
             m,
-            &fallback_solver(&infer_cfg),
+            &fallback_solver(&cfg),
             print_invariant,
         ),
         (QfBody::Dnf, true) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
-            infer_cfg.clone(),
+            cfg.clone(),
             m,
-            &fallback_solver(&infer_cfg),
+            &fallback_solver(&cfg),
             print_invariant,
         ),
-        (QfBody::PDnfBaseline, true) => {
-            qalpha::<Baseline<subsume::PDnf>, lemma::LemmaPDnfBaseline, _>(
-                infer_cfg.clone(),
-                m,
-                &fallback_solver(&infer_cfg),
-                print_invariant,
-            )
-        }
+        (QfBody::PDnfBaseline, true) => qalpha::<
+            Baseline<subsume::PDnf>,
+            lemma::LemmaPDnfBaseline,
+            _,
+        >(
+            cfg.clone(), m, &fallback_solver(&cfg), print_invariant
+        ),
     }
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
 fn run_qalpha<E, L, S>(
-    infer_cfg: Arc<QalphaConfig>,
+    cfg: Arc<QalphaConfig>,
     solver: &S,
     m: &Module,
     fo: &FOModule,
@@ -454,30 +389,25 @@ where
         m,
         m.signature.clone(),
         domains,
-        infer_cfg.sim_options.clone(),
-        infer_cfg.cti_option.property_directed(),
+        cfg.sim.clone(),
+        cfg.strategy.property_directed(),
     );
-    let cti_option = &infer_cfg.cti_option;
-    let sim_options = &infer_cfg.sim_options;
 
     // Initialize simulations.
-    let mut samples = frame.initial_samples();
+    let mut samples: Tasks<TraversalDepth, Model> = frame.initial_samples();
 
     // Overapproximate initial states.
     loop {
         let mut ctis = frame.init_cex(fo, solver);
         if ctis.is_empty() {
             break;
-        } else if !cti_option.is_weaken() {
+        } else if !cfg.strategy.is_weaken() {
             panic!("overapproximation of initial states failed!")
         } else {
             ctis.retain(|cex| frame.see(cex));
             frame.weaken(&ctis);
             for cex in ctis {
-                samples.insert(
-                    sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                    cex,
-                );
+                samples.insert(sample_priority(&cfg.sim, 0).unwrap(), cex);
             }
         }
     }
@@ -487,7 +417,7 @@ where
     // Handle transition CTI's.
 
     let mut run_sim = !samples.is_empty();
-    let mut run_smt = cti_option.is_weaken() || (cti_option.is_houdini() && !run_sim);
+    let mut run_smt = cfg.strategy.is_weaken() || (cfg.strategy.is_houdini() && !run_sim);
     while run_sim || run_smt {
         let mut ctis: Vec<Model> = vec![];
         let canceler = MultiCanceler::new();
@@ -495,7 +425,7 @@ where
         let not_safe = thread::scope(|s| {
             let smt_handle = s.spawn(|| {
                 if run_smt {
-                    qalpha_cti(&infer_cfg, solver, fo, &frame, canceler.clone())
+                    qalpha_cti(&cfg, solver, fo, &frame, canceler.clone())
                 } else {
                     Some(vec![])
                 }
@@ -516,10 +446,7 @@ where
             let smt_cti = smt_cti.unwrap();
             for cex in &smt_cti {
                 if frame.see(cex) {
-                    samples.insert(
-                        sim_options.sample_priority(&cex.universe, 0, 0).unwrap(),
-                        cex.clone(),
-                    );
+                    samples.insert(sample_priority(&cfg.sim, 0).unwrap(), cex.clone());
                 }
             }
             ctis.extend(smt_cti);
@@ -545,16 +472,16 @@ where
             ));
         }
 
-        if infer_cfg.cti_option.is_houdini() && run_smt {
+        if cfg.strategy.is_houdini() && run_smt {
             frame.remove_unsat(&ctis);
         } else {
             frame.weaken(&ctis);
         }
 
         run_sim = !ctis.is_empty() && !samples.is_empty();
-        run_smt = if cti_option.is_weaken() {
+        run_smt = if cfg.strategy.is_weaken() {
             !ctis.is_empty()
-        } else if cti_option.is_houdini() {
+        } else if cfg.strategy.is_houdini() {
             (!run_smt && ctis.is_empty()) || (run_smt && !ctis.is_empty())
         } else {
             false
@@ -584,7 +511,7 @@ where
 /// the safety of the frame and returns `None` if the execution should abort. Otherwise, `Some(_)` is returned
 /// which contains a vector of counterexamples.
 fn qalpha_cti<E, L, S>(
-    infer_cfg: &QalphaConfig,
+    cfg: &QalphaConfig,
     solver: &S,
     fo: &FOModule,
     frame: &InductionFrame<'_, E, L>,
@@ -599,7 +526,7 @@ where
         return Some(vec![]);
     }
 
-    if infer_cfg.cti_option.property_directed() {
+    if cfg.strategy.property_directed() {
         frame.log_info("Checking safety...");
         if !frame.is_safe(fo, solver) {
             canceler.cancel();

@@ -8,7 +8,6 @@ use fly::{
 };
 
 use crate::{
-    basics::QalphaConfig,
     hashmap::HashSet,
     qalpha::{
         lemma::ids,
@@ -67,10 +66,14 @@ impl From<&Literal> for Term {
     }
 }
 
-pub fn generate_literals(infer_cfg: &QalphaConfig, signature: &Signature) -> Literals {
-    infer_cfg
-        .cfg
-        .atoms(signature, infer_cfg.nesting, infer_cfg.include_eq)
+pub fn generate_literals(
+    signature: &Signature,
+    quant_cfg: &QuantifierConfig,
+    nesting: Option<usize>,
+    include_eq: bool,
+) -> Literals {
+    quant_cfg
+        .atoms(signature, nesting, include_eq)
         .into_iter()
         // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
         // This is done to allow substitutions without creating equivalent equalities.

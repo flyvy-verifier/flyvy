@@ -11,8 +11,7 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::basics::QalphaConfig;
-use crate::qalpha::lemma;
+use crate::{basics::QalphaConfig, qalpha::lemma};
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
 
@@ -52,6 +51,30 @@ fn distribute(amount: usize, boxes: &[usize]) -> Vec<Vec<usize>> {
             })
             .collect_vec()
     }
+}
+
+pub fn parse_quantifier(
+    sig: &Signature,
+    s: &str,
+) -> Result<(Option<Quantifier>, Sort, usize), String> {
+    let mut parts = s.split_whitespace();
+
+    let quantifier = match parts.next().unwrap() {
+        "*" => None,
+        "F" => Some(Quantifier::Forall),
+        "E" => Some(Quantifier::Exists),
+        _ => return Err("invalid quantifier (choose F/E/*)".to_string()),
+    };
+
+    let sort_id = parts.next().unwrap().to_string();
+    let sort = if sig.sorts.contains(&sort_id) {
+        Sort::Uninterpreted(sort_id)
+    } else {
+        return Err(format!("invalid sort {sort_id}"));
+    };
+
+    let count = parts.next().unwrap().parse::<usize>().unwrap();
+    Ok((quantifier, sort, count))
 }
 
 /// A [`QuantifierSequence`] is a sequence where each position represents a sorted
@@ -211,11 +234,11 @@ impl<Q: Clone> QuantifierSequence<Q> {
 }
 
 impl QuantifierConfig {
-    pub fn all_prefixes(&self, infer_cfg: &QalphaConfig) -> Vec<QuantifierPrefix> {
+    pub fn all_prefixes(&self, config: &QalphaConfig) -> Vec<QuantifierPrefix> {
         let mut res = vec![];
 
-        for e in 0..=infer_cfg.max_exist {
-            for s in 0..=infer_cfg.max_size {
+        for e in 0..=config.max_exist {
+            for s in 0..=config.max_size {
                 res.append(&mut self.exact_prefixes(e, e, s));
             }
         }

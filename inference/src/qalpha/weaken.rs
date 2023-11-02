@@ -15,7 +15,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::{
-    basics::{OrderedTerms, QalphaConfig},
+    basics::{OrderedTerms, QuantifierFreeConfig},
     qalpha::{
         atoms::{sat_literals, Literal, Literals},
         quant::QuantifierPrefix,
@@ -55,7 +55,7 @@ fn extend_assignment(
 /// Defines a general configuation for quantifier-free bodies of lemmas,
 /// namely the attributes that do not depend on the atoms themselves.
 pub trait LemmaQfConfig: Clone + Sync + Send + Debug {
-    fn new(cfg: &QalphaConfig) -> Self;
+    fn new(cfg: &QuantifierFreeConfig) -> Self;
 
     fn is_universal(&self) -> bool;
 
