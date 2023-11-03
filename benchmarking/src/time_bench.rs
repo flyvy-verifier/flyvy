@@ -6,6 +6,7 @@
 //! a timeout.
 
 use std::{
+    env,
     ffi::{OsStr, OsString},
     io,
     os::fd::AsRawFd,
@@ -48,6 +49,12 @@ pub struct Time {
     /// Output in JSON rather than a human-readable format
     #[arg(long)]
     pub json: bool,
+    /// Directory to store stdout and stderr in
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// RUST_LOG level to set in child process
+    #[arg(long, default_value = "")]
+    pub rust_log: String,
     /// Program to run
     pub prog: OsString,
     /// Arguments to pass
@@ -237,9 +244,36 @@ impl Time {
             Ok(Fork::Child) => {
                 _ = setsid();
                 cvar.notify_one().unwrap();
-                let null = fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty())
-                    .expect("could not get /dev/null");
-                dup2(null, io::stdout().as_raw_fd()).expect("could not replace stdout with null");
+                match &self.output_dir {
+                    Some(dir) => {
+                        let stdout = fcntl::open(
+                            &dir.join("stdout"),
+                            OFlag::O_CREAT | OFlag::O_WRONLY,
+                            Mode::S_IRWXU,
+                        )
+                        .expect("could not open stdout file");
+                        dup2(stdout, io::stdout().as_raw_fd())
+                            .expect("could not replace stdout with file");
+                        let stderr = fcntl::open(
+                            &dir.join("stderr"),
+                            OFlag::O_CREAT | OFlag::O_WRONLY,
+                            Mode::S_IRWXU,
+                        )
+                        .expect("could not open stderr file");
+                        dup2(stderr, io::stderr().as_raw_fd())
+                            .expect("could not replace stderr with file");
+                    }
+                    None => {
+                        // suppress stdout (but not stderr)
+                        let null = fcntl::open("/dev/null", OFlag::O_WRONLY, Mode::empty())
+                            .expect("could not get /dev/null");
+                        dup2(null, io::stdout().as_raw_fd())
+                            .expect("could not replace stdout with null");
+                    }
+                }
+                if !self.rust_log.is_empty() {
+                    env::set_var("RUST_LOG", self.rust_log.clone());
+                }
                 let err = exec::Command::new(&self.prog).args(&self.args).exec();
                 eprintln!("exec failed: {err}");
                 // mimic `timeout(1)` (although it distinguishes the command
@@ -260,6 +294,8 @@ impl Time {
         Self {
             time_limit: None,
             json: true,
+            output_dir: None,
+            rust_log: "".to_string(),
             prog: prog.as_ref().to_owned(),
             args: vec![],
         }
@@ -268,6 +304,18 @@ impl Time {
     /// Set the time limit of `self`.
     pub fn timeout(&mut self, limit: Duration) -> &mut Self {
         self.time_limit = Some(limit.into());
+        self
+    }
+
+    /// Set the output directory of `self`.
+    pub fn output_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.output_dir = Some(dir.as_ref().to_owned());
+        self
+    }
+
+    /// Set the RUST_LOG for the child in `self`.
+    pub fn rust_log<S: AsRef<str>>(&mut self, level: S) -> &mut Self {
+        self.rust_log = level.as_ref().to_owned();
         self
     }
 

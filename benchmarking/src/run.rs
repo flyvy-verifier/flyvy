@@ -44,12 +44,16 @@ impl BenchmarkMeasurement {
         args: Vec<String>,
         file: PathBuf,
         time_limit: Duration,
+        output_dir: Option<PathBuf>,
     ) -> Self {
         let mut timer = flyvy_timer();
         timer.timeout(time_limit);
         timer.args(&command);
         timer.args(&args);
         timer.arg(&file);
+        if let Some(output_dir) = output_dir {
+            timer.output_dir(output_dir);
+        }
         let measurement = timer.run().expect("error getting timing");
         BenchmarkMeasurement {
             command,

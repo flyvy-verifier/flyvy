@@ -43,6 +43,7 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
                 vec![format!("--solver={solver}")],
                 file,
                 time_limit,
+                None, /* output_dir */
             )
         })
         .collect()
