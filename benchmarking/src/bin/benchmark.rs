@@ -14,6 +14,7 @@ use benchmarking::{
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
 use clap::Parser;
+use glob::Pattern;
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
@@ -29,6 +30,9 @@ enum Command {
         json: bool,
     },
     Qalpha {
+        /// Glob pattern over benchmark names to run
+        #[arg(short = 'F', long = "filter", default_value = "*")]
+        name_glob: String,
         /// Output directory to store results
         #[arg(long)]
         output_dir: PathBuf,
@@ -64,16 +68,27 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
         .collect()
 }
 
-fn run_qalpha(output_dir: &Path) -> Vec<BenchmarkMeasurement> {
+fn run_qalpha(name_glob: glob::Pattern, output_dir: &Path) -> Vec<BenchmarkMeasurement> {
     qalpha_benchmarks()
         .into_iter()
+        .filter(|(name, _)| name_glob.matches_path(name))
         .map(|(file, config)| {
-            eprintln!("qalpha {}", file);
-            BenchmarkMeasurement::run(
+            eprintln!("qalpha {}", file.display());
+            let result = BenchmarkMeasurement::run(
                 config,
                 Some("info".to_string()),
                 Some(output_dir.join(file)),
-            )
+            );
+            eprintln!(
+                "  took {:0.0}s{}",
+                result.measurement.real_time.as_secs_f64(),
+                if result.measurement.success {
+                    ""
+                } else {
+                    " (failed)"
+                }
+            );
+            result
         })
         .collect()
 }
@@ -97,9 +112,12 @@ impl App {
                     BenchmarkMeasurement::print_table(results);
                 }
             }
-            Command::Qalpha { output_dir } => {
-                let results = run_qalpha(output_dir);
-                println!("{}", BenchmarkMeasurement::to_json(&results));
+            Command::Qalpha {
+                name_glob,
+                output_dir,
+            } => {
+                let pattern = Pattern::new(name_glob).expect("could not parse pattern");
+                let _results = run_qalpha(pattern, output_dir);
             }
         }
     }

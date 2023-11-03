@@ -31,7 +31,7 @@ cd
 
 if [ ! -e ~/temporal-verifier ]; then
   # TODO: remove branch when qalpha is merged
-  git clone -b qalpha https://github.com/vmware-research/temporal-verifier
+  git clone -b qalpha-simulations https://github.com/vmware-research/temporal-verifier
 fi
 cd ~/temporal-verifier
 ./tools/download-solvers.sh

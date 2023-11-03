@@ -58,8 +58,10 @@ impl BenchmarkConfig {
 /// A benchmark configuration and its resulting measurement.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchmarkMeasurement {
-    config: BenchmarkConfig,
-    measurement: RunMeasurement,
+    /// The configuration used to run the benchmark.
+    pub config: BenchmarkConfig,
+    /// The measurements (time, success, etc) from the run.
+    pub measurement: RunMeasurement,
 }
 
 impl BenchmarkMeasurement {
