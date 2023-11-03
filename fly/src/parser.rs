@@ -193,6 +193,35 @@ grammar parser() for str {
   }
 }
 
+/// Parse a single term.
+pub fn term(s: &str) -> Term {
+    parser::term(s).expect("test term should parse")
+}
+
+/// Parse a signature.
+pub fn parse_signature(s: &str) -> Signature {
+    parser::signature(s.trim()).expect("invalid signature in test")
+}
+
+/// Parse a fly module, reporting a human-readable error on failure.
+pub fn parse(s: &str) -> Result<Module, ParseError<LineCol>> {
+    parser::module(s)
+}
+
+/// Convert an opaque FileId and error to a readable `Diagnostic`
+pub fn parse_error_diagnostic<FileId>(
+    file_id: FileId,
+    e: &ParseError<LineCol>,
+) -> Diagnostic<FileId> {
+    Diagnostic::error()
+        .with_message("could not parse file")
+        .with_labels(vec![Label::primary(
+            file_id,
+            e.location.offset..e.location.offset + 1,
+        )
+        .with_message(format!("expected {}", e.expected))])
+}
+
 #[cfg(test)]
 mod tests {
     use super::parser;
@@ -341,33 +370,4 @@ proof {
             term("a & (if x = y then a & b else (c & d))"),
         );
     }
-}
-
-/// Parse a single term.
-pub fn term(s: &str) -> Term {
-    parser::term(s).expect("test term should parse")
-}
-
-/// Parse a signature.
-pub fn parse_signature(s: &str) -> Signature {
-    parser::signature(s.trim()).expect("invalid signature in test")
-}
-
-/// Parse a fly module, reporting a human-readable error on failure.
-pub fn parse(s: &str) -> Result<Module, ParseError<LineCol>> {
-    parser::module(s)
-}
-
-/// Convert an opaque FileId and error to a readable `Diagnostic`
-pub fn parse_error_diagnostic<FileId>(
-    file_id: FileId,
-    e: &ParseError<LineCol>,
-) -> Diagnostic<FileId> {
-    Diagnostic::error()
-        .with_message("could not parse file")
-        .with_labels(vec![Label::primary(
-            file_id,
-            e.location.offset..e.location.offset + 1,
-        )
-        .with_message(format!("expected {}", e.expected))])
 }
