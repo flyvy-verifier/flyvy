@@ -151,9 +151,7 @@ impl LemmaQfConfig for LemmaDnfConfig {
     fn new(cfg: &QuantifierFreeConfig) -> Self {
         Self {
             cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
-            cube_size: cfg
-                .cube_size
-                .expect("Maximum size of non-unit cubes not provided."),
+            cube_size: cfg.cube_size.expect("Cube size not provided."),
         }
     }
 
