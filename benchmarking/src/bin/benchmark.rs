@@ -18,6 +18,7 @@ use glob::Pattern;
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
+    /// Run verification benchmarks with user-supplied invariants.
     Verify {
         /// Time limit for verifying each file.
         #[arg(long, default_value = "60s")]
@@ -29,6 +30,7 @@ enum Command {
         /// Output results in JSON format
         json: bool,
     },
+    /// Run invariant inference benchmarks with qalpha.
     Qalpha {
         /// Glob pattern over benchmark names to run
         #[arg(short = 'F', long = "filter", default_value = "*")]
