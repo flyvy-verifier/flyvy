@@ -12,5 +12,6 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod measurement;
+pub mod qalpha;
 pub mod run;
 pub mod time_bench;

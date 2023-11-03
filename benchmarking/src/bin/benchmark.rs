@@ -3,10 +3,14 @@
 
 //! Run all of the examples as benchmarks and report the results in a table.
 
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use benchmarking::{
-    run::{get_examples, BenchmarkMeasurement},
+    qalpha::qalpha_benchmarks,
+    run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
 use clap::Parser;
@@ -23,6 +27,11 @@ enum Command {
         #[arg(long)]
         /// Output results in JSON format
         json: bool,
+    },
+    Qalpha {
+        /// Output directory to store results
+        #[arg(long)]
+        output_dir: PathBuf,
     },
 }
 
@@ -42,11 +51,28 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
                 file.strip_prefix(REPO_ROOT_PATH()).unwrap().display()
             );
             BenchmarkMeasurement::run(
-                vec![String::from("verify")],
-                vec![format!("--solver={solver}")],
-                file,
-                time_limit,
+                BenchmarkConfig {
+                    command: vec![String::from("verify")],
+                    params: vec![format!("--solver={solver}")],
+                    file,
+                    time_limit,
+                },
+                None, /* rust_log */
                 None, /* output_dir */
+            )
+        })
+        .collect()
+}
+
+fn run_qalpha(output_dir: &Path) -> Vec<BenchmarkMeasurement> {
+    qalpha_benchmarks()
+        .into_iter()
+        .map(|(file, config)| {
+            eprintln!("qalpha {}", file);
+            BenchmarkMeasurement::run(
+                config,
+                Some("info".to_string()),
+                Some(output_dir.join(file)),
             )
         })
         .collect()
@@ -70,6 +96,10 @@ impl App {
                 } else {
                     BenchmarkMeasurement::print_table(results);
                 }
+            }
+            Command::Qalpha { output_dir } => {
+                let results = run_qalpha(output_dir);
+                println!("{}", BenchmarkMeasurement::to_json(&results));
             }
         }
     }

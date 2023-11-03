@@ -8,8 +8,9 @@
 use std::{
     env,
     ffi::{OsStr, OsString},
+    fs::File,
     io,
-    os::fd::AsRawFd,
+    os::fd::{AsRawFd, IntoRawFd},
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
     sync::{Arc, Mutex},
@@ -246,20 +247,14 @@ impl Time {
                 cvar.notify_one().unwrap();
                 match &self.output_dir {
                     Some(dir) => {
-                        let stdout = fcntl::open(
-                            &dir.join("stdout"),
-                            OFlag::O_CREAT | OFlag::O_WRONLY,
-                            Mode::S_IRWXU,
-                        )
-                        .expect("could not open stdout file");
+                        let stdout = File::create(dir.join("stdout"))
+                            .expect("could not create stdout file")
+                            .into_raw_fd();
                         dup2(stdout, io::stdout().as_raw_fd())
                             .expect("could not replace stdout with file");
-                        let stderr = fcntl::open(
-                            &dir.join("stderr"),
-                            OFlag::O_CREAT | OFlag::O_WRONLY,
-                            Mode::S_IRWXU,
-                        )
-                        .expect("could not open stderr file");
+                        let stderr = File::create(dir.join("stderr"))
+                            .expect("could not create stderr file")
+                            .into_raw_fd();
                         dup2(stderr, io::stderr().as_raw_fd())
                             .expect("could not replace stderr with file");
                     }
@@ -364,6 +359,13 @@ impl Time {
         if self.json {
             cmd.arg("--json");
         }
+        if let Some(output_dir) = self.output_dir.as_ref() {
+            cmd.arg("--output-dir");
+            cmd.arg(output_dir);
+        }
+        cmd.arg("--rust-log");
+        cmd.arg(&self.rust_log);
+
         cmd.arg("--");
         cmd.arg(&self.prog);
         cmd.args(&self.args);

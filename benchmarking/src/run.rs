@@ -3,7 +3,14 @@
 
 //! Library for running and reporting benchmark measurements.
 
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    fs::{self, File},
+    io::Write,
+    path::PathBuf,
+    time::Duration,
+};
 
 use crate::{
     measurement::RunMeasurement,
@@ -17,48 +24,74 @@ use tabled::settings::{
 };
 use walkdir::WalkDir;
 
+/// The setup for a benchmark
+///
+/// command + args form the arguments to temporal-verifier. These are split so
+/// the configuration is output in a more structured manner; `command` is something
+/// like `infer qalpha` while `args` has other configuration and quantifiers for
+/// each sort, for example.
+///
+/// file is added to the end of the argument list and also becomes a
+/// separate column in the results.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BenchmarkConfig {
+    /// Command gives the initial arguments to temporal-verifier (eg, "verify"
+    /// or "infer qalpha").
+    pub command: Vec<String>,
+    /// Params are any additional arguments to the subcommand.
+    pub params: Vec<String>,
+    /// File is the final argument
+    pub file: PathBuf,
+    /// Time limit before killing benchmark
+    pub time_limit: Duration,
+}
+
+impl BenchmarkConfig {
+    fn args(&self) -> Vec<String> {
+        let mut args = self.command.clone();
+        args.extend(self.params.iter().cloned());
+        args.push(self.file.to_str().unwrap().to_string());
+        args
+    }
+}
+
 /// A benchmark configuration and its resulting measurement.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchmarkMeasurement {
-    command: Vec<String>,
-    params: String,
-    file: PathBuf,
+    config: BenchmarkConfig,
     measurement: RunMeasurement,
 }
 
 impl BenchmarkMeasurement {
     /// Run flyvy on a single benchmark, isolated to its own process.
-    ///
-    /// command + args form the arguments to temporal-verifier. These are split
-    /// only for display purposes in the table; `command` is something like
-    /// `infer qalpha` while `args` has other configuration and quantifiers for
-    /// each sort, for example.
-    ///
-    /// file is added to the end of the argument list and also becomes a
-    /// separate column in the results.
-    ///
-    /// time_limit is a maximum time to wait for the benchmark before killing
-    /// it.
     pub fn run(
-        command: Vec<String>,
-        args: Vec<String>,
-        file: PathBuf,
-        time_limit: Duration,
+        config: BenchmarkConfig,
+        rust_log: Option<String>,
         output_dir: Option<PathBuf>,
     ) -> Self {
         let mut timer = flyvy_timer();
-        timer.timeout(time_limit);
-        timer.args(&command);
-        timer.args(&args);
-        timer.arg(&file);
-        if let Some(output_dir) = output_dir {
+        timer.timeout(config.time_limit);
+        timer.args(config.args());
+        timer.rust_log = rust_log.unwrap_or("".to_string());
+        if let Some(ref output_dir) = output_dir {
             timer.output_dir(output_dir);
+            fs::create_dir_all(output_dir).expect("could not create output directory");
+            let mut f = File::create(output_dir.join("command"))
+                .expect("could not create file for command");
+            writeln!(&mut f, "{}", timer.cmdline()).expect("could not write command");
+            let mut f = File::create(output_dir.join("config.json")).unwrap();
+            serde_json::to_writer(&mut f, &config).expect("could not serialize config");
+            _ = writeln!(&mut f);
         }
         let measurement = timer.run().expect("error getting timing");
+        if let Some(ref output_dir) = output_dir {
+            let mut f = File::create(output_dir.join("measurement.json"))
+                .expect("could not create file for measurement");
+            serde_json::to_writer(&mut f, &measurement).expect("could not serialize measurement");
+            _ = writeln!(&mut f);
+        }
         BenchmarkMeasurement {
-            command,
-            params: args.join(" "),
-            file,
+            config,
             measurement,
         }
     }
@@ -85,20 +118,21 @@ impl BenchmarkMeasurement {
 
     fn row(&self) -> Vec<String> {
         let file_name = self
+            .config
             .file
             .strip_prefix(REPO_ROOT_PATH().join("temporal-verifier/examples"))
-            .unwrap_or(self.file.strip_prefix(REPO_ROOT_PATH()).unwrap());
+            .unwrap_or(self.config.file.strip_prefix(REPO_ROOT_PATH()).unwrap());
         let measure = &self.measurement;
         let real_time = measure.real_time.as_secs_f64();
         vec![
-            format!("{}", self.command.join(" ")),
+            format!("{}", self.config.command.join(" ")),
             format!("{}", file_name.display()),
             format!("{}", self.success()),
             format!("{real_time:0.1}"),
             format!("{:0.1}×", measure.cpu_utilization()),
             format!("{:0.0}%", measure.subprocess_utilization() * 100.0),
             format!("{}MB", measure.max_mem_mb()),
-            format!("{}", self.params),
+            format!("{}", self.config.params.join(" ")),
         ]
     }
 
