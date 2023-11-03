@@ -18,7 +18,7 @@ use tabled::settings::{
 use walkdir::WalkDir;
 
 /// A benchmark configuration and its resulting measurement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchmarkMeasurement {
     command: Vec<String>,
     params: String,
@@ -135,6 +135,15 @@ fail:     {fail}",
             timeout = success_counts.get("timeout").unwrap_or(&0),
             fail = success_counts.get("fail").unwrap_or(&0)
         );
+    }
+
+    /// Convert a list of results to newline-separated JSON.
+    pub fn to_json(results: &[Self]) -> String {
+        results
+            .iter()
+            .map(|r| serde_json::to_string(r).expect("could not serialize `RunResult`"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 

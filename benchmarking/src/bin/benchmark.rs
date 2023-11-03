@@ -20,6 +20,9 @@ enum Command {
         /// Solver to use
         #[arg(long, default_value = "z3")]
         solver: String,
+        #[arg(long)]
+        /// Output results in JSON format
+        json: bool,
     },
 }
 
@@ -56,9 +59,17 @@ impl App {
         // make sure `temporal-verifier` is available
         compile_flyvy_bin();
         match &self.command {
-            Command::Verify { time_limit, solver } => {
+            Command::Verify {
+                time_limit,
+                solver,
+                json,
+            } => {
                 let results = benchmark_verify((*time_limit).into(), solver);
-                BenchmarkMeasurement::print_table(results);
+                if *json {
+                    println!("{}", BenchmarkMeasurement::to_json(&results));
+                } else {
+                    BenchmarkMeasurement::print_table(results);
+                }
             }
         }
     }
