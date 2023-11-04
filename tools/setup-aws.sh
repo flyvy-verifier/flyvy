@@ -16,6 +16,8 @@ sudo yum -y install python
 
 # install rustup (-y disables confirmation)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# don't try to read this file
+# shellcheck disable=SC1091
 source "$HOME/.cargo/env"
 
 if [ ! -e ~/temporal-verifier ]; then
