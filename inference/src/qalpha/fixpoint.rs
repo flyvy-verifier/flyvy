@@ -34,9 +34,9 @@ use solver::{
 use rayon::prelude::*;
 
 pub mod defaults {
-    pub const MAX_QUANT_SIZE: usize = 6;
-    pub const MAX_QUANT_EXIST: usize = 1;
-    pub const MAX_SAME_SORT: usize = 3;
+    pub const QUANT_LAST_EXIST: usize = 1;
+    pub const QUANT_SAME_SORT: usize = 3;
+    pub const SIMULATION_SORT_SIZE: usize = 2;
     pub const MIN_DISJUNCTS: usize = 3;
     pub const MIN_NON_UNIT_SIZE: usize = 3;
 }
@@ -73,9 +73,17 @@ impl Ord for TraversalDepth {
     }
 }
 
-pub fn sample_priority(cfg: &SimulationConfig, depth: usize) -> Option<TraversalDepth> {
+/// (product of universe sizes, simulation depth)
+pub type SamplePriority = (usize, TraversalDepth);
+
+pub fn sample_priority(
+    cfg: &SimulationConfig,
+    universe: &[usize],
+    depth: usize,
+) -> Option<SamplePriority> {
+    let prod: usize = universe.iter().product();
     if !cfg.depth.is_some_and(|d| depth > d) {
-        Some(if cfg.dfs { Dfs(depth) } else { Bfs(depth) })
+        Some((prod, if cfg.dfs { Dfs(depth) } else { Bfs(depth) }))
     } else {
         None
     }
@@ -251,19 +259,21 @@ where
     let lemma_qf_cfg = L::Config::new(&cfg.qf_cfg);
     let domain_configs: Vec<_> = cfg
         .vary
+        // Get all requested prefix sizes
         .quant_sizes(&cfg)
         .into_iter()
         .cartesian_product(cfg.vary.quant_exists(&cfg))
         .cartesian_product(cfg.vary.qf_configs(lemma_qf_cfg))
-        .filter(|((size, exist), qf)| exist <= size && (*exist > 0 || qf.is_universal()))
+        .filter(|((quant, exist), qf)| {
+            *exist <= quant.non_universal_count() && (*exist > 0 || qf.is_universal())
+        })
         .collect();
 
     let domains: Vec<(_, Vec<Domain<_>>, usize)> = domain_configs
         .into_iter()
-        .map(|((size, exist), qf_cfg)| {
-            let d: Vec<_> = cfg
-                .quant_cfg
-                .exact_prefixes(0, exist, size)
+        .map(|((quant, exist), qf_cfg)| {
+            let d: Vec<_> = quant
+                .prefixes(quant.num_vars(), exist)
                 .into_iter()
                 .map(|prefix| {
                     let prefix = Arc::new(prefix);
@@ -279,21 +289,23 @@ where
                 .collect();
             let domain_size = domain_size_of(&d);
 
-            ((exist, size, qf_cfg), d, domain_size)
+            ((quant, exist, qf_cfg), d, domain_size)
         })
         .sorted_by_key(|(_, _, domain_size)| *domain_size)
         .collect();
 
     println!("Number of individual domains: {}", domains.len());
 
-    for (iteration, ((e, s, qf), active_domains, domain_size)) in domains.into_iter().enumerate() {
+    for (iteration, ((quant, e, qf), active_domains, domain_size)) in
+        domains.into_iter().enumerate()
+    {
         println!();
         println!("({iteration}) Running qalpha algorithm...");
         println!(
             "Approximate domain size: 10^{:.2} ({domain_size})",
             (domain_size as f64).log10()
         );
-        println!("Prefixes: size = {s}, exist = {e}, qf = {qf:?}):");
+        println!("Prefixes: cfg = {quant:?}, last_exist = {e}, qf = {qf:?}):");
         for (prefix, lemma_qf, literals) in &active_domains {
             println!(
                 "    {:?} --- {} literals --- {:?} ~ {}",
@@ -394,7 +406,7 @@ where
     );
 
     // Initialize simulations.
-    let mut samples: Tasks<TraversalDepth, Model> = frame.initial_samples();
+    let mut samples: Tasks<SamplePriority, Model> = frame.initial_samples();
 
     // Overapproximate initial states.
     loop {
@@ -407,7 +419,7 @@ where
             ctis.retain(|cex| frame.see(cex));
             frame.weaken(&ctis);
             for cex in ctis {
-                samples.insert(sample_priority(&cfg.sim, 0).unwrap(), cex);
+                samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
             }
         }
     }
@@ -446,7 +458,10 @@ where
             let smt_cti = smt_cti.unwrap();
             for cex in &smt_cti {
                 if frame.see(cex) {
-                    samples.insert(sample_priority(&cfg.sim, 0).unwrap(), cex.clone());
+                    samples.insert(
+                        sample_priority(&cfg.sim, &cex.universe, 0).unwrap(),
+                        cex.clone(),
+                    );
                 }
             }
             ctis.extend(smt_cti);

@@ -688,19 +688,21 @@ pub struct VariationConfig {
 }
 
 impl VariationConfig {
-    pub fn quant_sizes(&self, cfg: &QalphaConfig) -> Vec<usize> {
+    pub fn quant_sizes(&self, cfg: &QalphaConfig) -> Vec<Arc<QuantifierConfig>> {
         if self.quant {
-            (0..=cfg.max_size).collect()
+            (0..cfg.quant_cfg.num_vars())
+                .flat_map(|size| cfg.quant_cfg.subsequences(size).into_iter().map(Arc::new))
+                .collect()
         } else {
-            vec![cfg.max_size]
+            vec![(cfg.quant_cfg.clone())]
         }
     }
 
     pub fn quant_exists(&self, cfg: &QalphaConfig) -> Vec<usize> {
         if self.quant {
-            (0..=cfg.max_exist).collect()
+            (0..=cfg.last_exist).collect()
         } else {
-            vec![cfg.max_exist]
+            vec![cfg.last_exist]
         }
     }
 
@@ -729,9 +731,8 @@ pub struct QalphaConfig {
     pub fname: String,
     pub fo: FOModule,
 
-    pub quant_cfg: QuantifierConfig,
-    pub max_size: usize,
-    pub max_exist: usize,
+    pub quant_cfg: Arc<QuantifierConfig>,
+    pub last_exist: usize,
 
     pub qf_cfg: QuantifierFreeConfig,
 

@@ -79,7 +79,7 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
     ) -> Self;
 
     /// Return weakenings of the given [`Self::Body`] which satisfy the given cube.
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
     where
         I: Fn(&Self::Body) -> bool + Sync;
 
@@ -313,7 +313,7 @@ where
         let mut added = vec![];
         let mut to_weaken = get_to_weaken(self, unsat);
         while !to_weaken.is_empty() {
-            let weakened: Vec<E> = to_weaken
+            let weakened: HashSet<E> = to_weaken
                 .into_par_iter()
                 .flat_map_iter(|(body, structure)| {
                     self.lemma_qf

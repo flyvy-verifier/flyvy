@@ -3,6 +3,7 @@
 
 //! Implement simple components, lemma domains and data structures for use in inference.
 
+use fly::ouritertools::OurItertools;
 use itertools::Itertools;
 use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler};
 use std::fmt::{Debug, Display};
@@ -24,7 +25,7 @@ use crate::{
     qalpha::{
         atoms::Literals,
         baseline::Baseline,
-        fixpoint::{defaults, sample_priority, TraversalDepth},
+        fixpoint::{defaults, sample_priority, SamplePriority},
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
         weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
     },
@@ -112,7 +113,7 @@ impl LemmaQf for LemmaCnf {
         Self { cfg, literals }
     }
 
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
     where
         I: Fn(&Self::Body) -> bool,
     {
@@ -123,7 +124,7 @@ impl LemmaQf for LemmaCnf {
         body.weaken(&cfg, structure)
             .into_iter()
             .filter(|cnf| !ignore(cnf))
-            .collect_vec()
+            .collect()
     }
 
     fn approx_space_size(&self) -> usize {
@@ -201,7 +202,7 @@ impl LemmaQf for LemmaDnf {
         Self { cfg, literals }
     }
 
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
     where
         I: Fn(&Self::Body) -> bool,
     {
@@ -209,7 +210,7 @@ impl LemmaQf for LemmaDnf {
         body.weaken(&cfg, structure)
             .into_iter()
             .filter(|dnf| !ignore(dnf))
-            .collect_vec()
+            .collect()
     }
 
     fn approx_space_size(&self) -> usize {
@@ -333,7 +334,7 @@ impl LemmaQf for LemmaPDnf {
         }
     }
 
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
     where
         I: Fn(&Self::Body) -> bool + Sync,
     {
@@ -446,7 +447,7 @@ impl LemmaQf for LemmaPDnfBaseline {
         ))
     }
 
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> Vec<Self::Body>
+    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
     where
         I: Fn(&Self::Body) -> bool + Sync,
     {
@@ -811,14 +812,14 @@ where
     /// Extend simulations of traces in order to find a CTI for the current frame.
     pub fn extend<C: BasicCanceler>(
         &self,
-        samples: &mut Tasks<TraversalDepth, Model>,
+        samples: &mut Tasks<SamplePriority, Model>,
         canceler: C,
     ) -> Vec<Model> {
-        self.log_info("Simulating CTI traces...");
+        self.log_info("Simulating traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
         let results = ParallelWorker::new(
             samples,
-            |t_depth, model| {
+            |(_, t_depth), model| {
                 let unsat = !self.weaken_lemmas.unsat(model).is_empty();
 
                 let depth = if unsat && self.sim_config.guided {
@@ -834,7 +835,9 @@ where
                     canceler.is_canceled()
                 };
 
-                let new_samples = if let Some(p) = sample_priority(&self.sim_config, depth + 1) {
+                let new_samples = if let Some(p) =
+                    sample_priority(&self.sim_config, &model.universe, depth + 1)
+                {
                     let sim = self
                         .simulator
                         .simulate_new(model)
@@ -853,15 +856,19 @@ where
         )
         .run();
 
-        let models = results
+        let unsat = results
             .into_iter()
             .filter(|(_, unsat)| *unsat)
             .map(|(m, _)| m)
             .collect_vec();
 
-        self.log_info(format!("{} simulated CTI(s) found.", models.len()));
+        self.log_info(format!("{} simulated CTI(s) found.", unsat.len()));
 
-        models
+        if !unsat.is_empty() {
+            canceler.cancel();
+        }
+
+        unsat
     }
 
     /// Make sure that all lemmas overapproximate initial states and remove the corresponding proofs.
@@ -1098,12 +1105,22 @@ where
         }
     }
 
-    pub fn initial_samples(&mut self) -> Tasks<TraversalDepth, Model> {
-        let models = self.simulator.initials_new(&self.sim_config.universe);
+    pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
+        let models = self
+            .sim_config
+            .universe
+            .iter()
+            .map(|c| 1..=*c)
+            .multi_cartesian_product_fixed()
+            .flat_map(|u| self.simulator.initials_new(&u))
+            .collect_vec();
         self.weaken(&models);
         let mut samples = Tasks::new();
         for model in models {
-            samples.insert(sample_priority(&self.sim_config, 0).unwrap(), model)
+            samples.insert(
+                sample_priority(&self.sim_config, &model.universe, 0).unwrap(),
+                model,
+            )
         }
 
         samples

@@ -11,7 +11,7 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::{basics::QalphaConfig, qalpha::lemma};
+use crate::qalpha::lemma;
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
 
@@ -30,27 +30,46 @@ pub fn vars(signature: &Signature, sorts: &[usize], counts: &[usize]) -> Vec<Vec
     vars
 }
 
+fn push_front<T>(mut v: Vec<T>, t: T) -> Vec<T> {
+    v.insert(0, t);
+    v
+}
+
+/// Returns all possible distributions of `amount` into `boxes` of the specified sizes.
 fn distribute(amount: usize, boxes: &[usize]) -> Vec<Vec<usize>> {
-    assert!(!boxes.is_empty());
-    if boxes.len() == 1 {
-        if amount <= boxes[0] {
-            vec![vec![amount]]
-        } else {
-            vec![]
+    if boxes.is_empty() {
+        match amount {
+            0 => vec![vec![]],
+            _ => vec![],
         }
     } else {
         (0..=amount.min(boxes[0]))
             .flat_map(|c| {
                 distribute(amount - c, &boxes[1..])
                     .into_iter()
-                    .map(|mut v| {
-                        v.insert(0, c);
-                        v
-                    })
+                    .map(|v| push_front(v, c))
                     .collect_vec()
             })
             .collect_vec()
     }
+}
+
+/// Return a vector whose position `i` is `boxes[i][..sizes[i]]`.
+fn sub_boxes<T: Clone>(sizes: &[usize], boxes: &[Vec<T>]) -> Vec<Vec<T>> {
+    assert_eq!(sizes.len(), boxes.len());
+    sizes
+        .iter()
+        .enumerate()
+        .map(|(i, size)| boxes[i][..*size].to_vec())
+        .collect()
+}
+
+/// Find the first location `i` such that the sum of `boxes[i..]` is less than or equal to `max`.
+fn select_last(max: usize, boxes: &[usize]) -> usize {
+    (1..=boxes.len())
+        .rev()
+        .find(|i| boxes[(i - 1)..].iter().sum::<usize>() > max)
+        .unwrap_or(0)
 }
 
 pub fn parse_quantifier(
@@ -114,6 +133,10 @@ impl<Q: Clone> QuantifierSequence<Q> {
     /// Get the length of the [`QuantifierSequence`].
     pub fn len(&self) -> usize {
         self.quantifiers.len()
+    }
+
+    pub fn counts(&self) -> Vec<usize> {
+        self.names.iter().map(|n| n.len()).collect()
     }
 
     /// Return whether the sequence is empty.
@@ -231,71 +254,88 @@ impl<Q: Clone> QuantifierSequence<Q> {
             names: self.names.clone(),
         }
     }
+
+    pub fn subsequences(&self, size: usize) -> Vec<Self> {
+        distribute(size, &self.counts())
+            .iter()
+            .map(|size_dist| Self {
+                quantifiers: self.quantifiers.clone(),
+                sorts: self.sorts.clone(),
+                names: sub_boxes(size_dist, &self.names),
+            })
+            .collect()
+    }
 }
 
 impl QuantifierConfig {
-    pub fn all_prefixes(&self, config: &QalphaConfig) -> Vec<QuantifierPrefix> {
+    /// Return all prefixes of the given configuration without any redundancy in terms of containment.
+    pub fn prefixes(&self, max_size: usize, last_exist: usize) -> Vec<QuantifierPrefix> {
         let mut res = vec![];
 
-        for e in 0..=config.max_exist {
-            for s in 0..=config.max_size {
-                res.append(&mut self.exact_prefixes(e, e, s));
+        // Go over all prefix of exact size and existential count, from largest to smallest, and add
+        // those that aren't contained by previously added prefixes. Since we go from largest to smallest
+        // we will not have any containment between any two prefixes in the result.
+        for size in (0..=max_size).rev() {
+            for prefix in self.exact_prefixes(size, last_exist) {
+                if !res.iter().any(|p: &QuantifierPrefix| p.contains(&prefix)) {
+                    res.push(prefix);
+                }
             }
         }
 
         res
     }
 
-    pub fn exact_prefixes(
-        &self,
-        min_existentials: usize,
-        max_existentials: usize,
-        size: usize,
-    ) -> Vec<QuantifierPrefix> {
-        if self.is_empty() {
-            return vec![QuantifierPrefix {
-                quantifiers: vec![],
-                sorts: vec![],
-                names: vec![],
-            }];
-        }
-
-        let counts = self.names.iter().map(|n| n.len()).collect_vec();
-        let sum = counts.iter().sum();
-
-        distribute(size.min(sum), &counts)
+    /// Returns all sub-prefixes of exactly length `size` and `exist` existentials
+    pub fn exact_prefixes(&self, size: usize, last_exist: usize) -> Vec<QuantifierPrefix> {
+        distribute(size, &self.counts())
             .iter()
-            .flat_map(|dist| {
-                self.quantifiers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, q)| match q {
-                        None => {
-                            if dist[i] != 0 {
-                                vec![Quantifier::Forall, Quantifier::Exists]
-                            } else {
-                                vec![Quantifier::Forall]
-                            }
+            .flat_map(|size_dist| {
+                let exist_limit = select_last(last_exist, size_dist);
+                (0..size_dist.len())
+                    .map(|i| {
+                        if i >= exist_limit && size_dist[i] > 0 {
+                            vec![false, true]
+                        } else {
+                            vec![false]
                         }
-                        Some(q) => vec![*q],
                     })
                     .multi_cartesian_product_fixed()
-                    .map(|quantifiers| QuantifierPrefix {
-                        quantifiers,
-                        sorts: self.sorts.clone(),
-                        names: self
-                            .names
+                    .filter(|exist_select| {
+                        exist_select.iter().enumerate().all(|(i, e)| {
+                            // Existential selection must conform with configuration in non-zero places.
+                            match (self.quantifiers[i], size_dist[i]) {
+                                (None, _) | (_, 0) => true,
+                                (Some(Quantifier::Forall), _) => !e,
+                                (Some(Quantifier::Exists), _) => *e,
+                            }
+                        })
+                    })
+                    .map(|exist_select| QuantifierPrefix {
+                        quantifiers: exist_select
                             .iter()
-                            .enumerate()
-                            .map(|(i, n)| n[..dist[i]].to_vec())
-                            .collect_vec(),
+                            .map(|e| match e {
+                                true => Quantifier::Exists,
+                                false => Quantifier::Forall,
+                            })
+                            .collect(),
+                        sorts: self.sorts.clone(),
+                        names: sub_boxes(size_dist, &self.names),
                     })
-                    .filter(|prefix| {
-                        let e = prefix.existentials();
-                        e >= min_existentials && e <= max_existentials
-                    })
+                    .collect_vec()
             })
-            .collect_vec()
+            .collect()
+    }
+
+    pub fn non_universal_count(&self) -> usize {
+        self.quantifiers
+            .iter()
+            .enumerate()
+            .map(|(i, quantifier)| match quantifier {
+                Some(Quantifier::Forall) => 0,
+                _ => self.names[i].len(),
+            })
+            .sum()
     }
 
     pub fn non_universal_vars(&self) -> HashSet<String> {
@@ -322,7 +362,7 @@ impl Debug for QuantifierConfig {
             if !self.names[i].is_empty() {
                 let q_vec = vec![
                     match self.quantifiers[i] {
-                        None => "******".to_string(),
+                        None => "***".to_string(),
                         Some(Quantifier::Exists) => "exists".to_string(),
                         Some(Quantifier::Forall) => "forall".to_string(),
                     },

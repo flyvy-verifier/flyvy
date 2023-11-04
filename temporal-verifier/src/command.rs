@@ -102,12 +102,8 @@ struct QuantifierConfigArgs {
     quantifier: Vec<String>,
 
     #[arg(long)]
-    /// Defines the maximal size of the quantifier prefix
-    max_size: Option<usize>,
-
-    #[arg(long)]
-    /// Defines the maximal number of existential quantifiers
-    max_exist: Option<usize>,
+    /// Defines the last position (from the end of a prefix) where an existential quantifier is allowed to appear
+    last_exist: Option<usize>,
 
     #[arg(long)]
     /// Vary the quantifier prefix gradually up to the specified configuration
@@ -122,7 +118,7 @@ impl QuantifierConfigArgs {
         if !self.custom_quant {
             sorts = (0..sig.sorts.len()).collect();
             quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
+            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         } else if !self.sort.is_empty() {
             sorts = self
                 .sort
@@ -130,7 +126,7 @@ impl QuantifierConfigArgs {
                 .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
                 .collect();
             quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::MAX_SAME_SORT; sorts.len()];
+            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         } else {
             quantifiers = vec![];
             sorts = vec![];
@@ -295,23 +291,23 @@ impl QalphaArgs {
             (false, false)
         };
 
-        let universe_map = get_universe(&m.signature, &self.sim_cfg.bound);
-        let universe = m.signature.sorts.iter().map(|s| universe_map[s]).collect();
+        let universe = if self.sim_cfg.bound.is_empty() {
+            vec![defaults::SIMULATION_SORT_SIZE; m.signature.sorts.len()]
+        } else {
+            let universe_map = get_universe(&m.signature, &self.sim_cfg.bound);
+            m.signature.sorts.iter().map(|s| universe_map[s]).collect()
+        };
         QalphaConfig {
             fname,
             fo: FOModule::new(m, !self.infer_cfg.no_disj, gradual, minimal),
 
-            quant_cfg: self.infer_cfg.quant_cfg.to_cfg(&m.signature),
-            max_size: self
+            quant_cfg: Arc::new(self.infer_cfg.quant_cfg.to_cfg(&m.signature)),
+
+            last_exist: self
                 .infer_cfg
                 .quant_cfg
-                .max_size
-                .unwrap_or(defaults::MAX_QUANT_SIZE),
-            max_exist: self
-                .infer_cfg
-                .quant_cfg
-                .max_exist
-                .unwrap_or(defaults::MAX_QUANT_EXIST),
+                .last_exist
+                .unwrap_or(defaults::QUANT_LAST_EXIST),
 
             qf_cfg: self.qf_cfg.to_cfg(),
 
