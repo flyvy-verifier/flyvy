@@ -303,11 +303,7 @@ impl QalphaArgs {
 
             quant_cfg: Arc::new(self.infer_cfg.quant_cfg.to_cfg(&m.signature)),
 
-            last_exist: self
-                .infer_cfg
-                .quant_cfg
-                .last_exist
-                .unwrap_or(defaults::QUANT_LAST_EXIST),
+            last_exist: self.infer_cfg.quant_cfg.last_exist,
 
             qf_cfg: self.qf_cfg.to_cfg(),
 

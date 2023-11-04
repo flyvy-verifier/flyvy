@@ -34,7 +34,6 @@ use solver::{
 use rayon::prelude::*;
 
 pub mod defaults {
-    pub const QUANT_LAST_EXIST: usize = 1;
     pub const QUANT_SAME_SORT: usize = 3;
     pub const SIMULATION_SORT_SIZE: usize = 2;
     pub const MIN_DISJUNCTS: usize = 3;
@@ -262,11 +261,9 @@ where
         // Get all requested prefix sizes
         .quant_sizes(&cfg)
         .into_iter()
-        .cartesian_product(cfg.vary.quant_exists(&cfg))
+        .flat_map(|quant| cfg.vary.quant_exists(&cfg, quant))
         .cartesian_product(cfg.vary.qf_configs(lemma_qf_cfg))
-        .filter(|((quant, exist), qf)| {
-            *exist <= quant.non_universal_count() && (*exist > 0 || qf.is_universal())
-        })
+        .filter(|((_, exist), qf)| *exist > 0 || qf.is_universal())
         .collect();
 
     let domains: Vec<(_, Vec<Domain<_>>, usize)> = domain_configs
@@ -504,7 +501,7 @@ where
     }
 
     frame.log_info("Checking safety...");
-    frame.is_safe(fo, solver);
+    frame.is_safe(fo, solver, None);
     let time_taken = start.elapsed();
     let proof = frame.proof();
     let reduced_proof = frame.reduced_proof();
@@ -543,16 +540,15 @@ where
 
     if cfg.strategy.property_directed() {
         frame.log_info("Checking safety...");
-        if !frame.is_safe(fo, solver) {
-            canceler.cancel();
-            return None;
+        match frame.is_safe(fo, solver, Some(canceler.clone())) {
+            None => return Some(vec![]),
+            Some(false) => {
+                canceler.cancel();
+                return None;
+            }
+            Some(true) => frame.log_info("Safety verified."),
         }
-        frame.log_info("Safety verified.");
     }
 
-    if !canceler.is_canceled() {
-        Some(frame.trans_cex(fo, solver, canceler))
-    } else {
-        Some(vec![])
-    }
+    Some(frame.trans_cex(fo, solver, canceler))
 }

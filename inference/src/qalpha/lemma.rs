@@ -733,6 +733,14 @@ where
                     }
                 }
 
+                if let Some(blocking_core) = self.weaken_lemmas.get_implying(key) {
+                    {
+                        let mut manager = self.lemmas.write().unwrap();
+                        manager.add_blocked(*key, Blocked::Consequence(blocking_core));
+                    }
+                    return (None, vec![], false);
+                }
+
                 let term = self.weaken_lemmas.key_to_term(key);
                 let res = fo.init_cex(solver, &term);
                 let found = res.is_some();
@@ -875,7 +883,10 @@ where
     pub fn finish_initial(&self) {
         let mut manager = self.lemmas.write().unwrap();
         for key in self.weaken_lemmas.keys() {
-            assert_eq!(manager.blocked_to_core.get(key), Some(&Blocked::Initial));
+            assert!(matches!(
+                manager.blocked_to_core.get(key),
+                Some(Blocked::Initial) | Some(Blocked::Consequence(_))
+            ));
         }
         manager.blocked_to_core = HashMap::default();
         manager.core_to_blocked = HashMap::default();
@@ -1069,28 +1080,43 @@ where
 
     /// Return whether the current frame inductively implies the safety assertions
     /// of the given module.
-    pub fn is_safe<S: BasicSolver>(&self, fo: &FOModule, solver: &S) -> bool {
+    pub fn is_safe<S: BasicSolver>(
+        &self,
+        fo: &FOModule,
+        solver: &S,
+        cancelers: Option<MultiCanceler<MultiCanceler<S::Canceler>>>,
+    ) -> Option<bool> {
         let mut manager = self.lemmas.write().unwrap();
         if manager.safety_core.is_some() {
-            return true;
+            return Some(true);
         }
 
         let start_time = Instant::now();
         let hyp = self.weaken_lemmas.hypotheses(None, vec![]);
-        if let CexResult::UnsatCore(core) = fo.safe_implication_cex(solver, &hyp) {
-            log::info!(
-                "{:>8}ms. Safety implied with {} formulas in core",
-                start_time.elapsed().as_millis(),
-                core.len()
-            );
-            manager.safety_core = Some(Blocked::Consequence(HashSet::from_iter(core)));
-            return true;
+        match fo.safe_implication_cex(solver, &hyp, cancelers.clone()) {
+            CexResult::UnsatCore(core) => {
+                log::info!(
+                    "{:>8}ms. Safety implied with {} formulas in core",
+                    start_time.elapsed().as_millis(),
+                    core.len()
+                );
+                manager.safety_core = Some(Blocked::Consequence(HashSet::from_iter(core)));
+                return Some(true);
+            }
+            CexResult::Canceled => {
+                log::info!(
+                    "{:>8}ms. Safety implication check canceled",
+                    start_time.elapsed().as_millis()
+                );
+                return None;
+            }
+            _ => (),
         }
 
-        match fo.trans_safe_cex(solver, &hyp) {
+        match fo.trans_safe_cex(solver, &hyp, cancelers) {
             CexResult::Cex(_) => {
                 log::info!("{:>8}ms. Safety violated", start_time.elapsed().as_millis());
-                false
+                Some(false)
             }
             CexResult::UnsatCore(core) => {
                 log::info!(
@@ -1099,7 +1125,14 @@ where
                     core.len()
                 );
                 manager.safety_core = Some(Blocked::Transition(HashSet::from_iter(core)));
-                true
+                Some(true)
+            }
+            CexResult::Canceled => {
+                log::info!(
+                    "{:>8}ms. Safety transition check canceled",
+                    start_time.elapsed().as_millis()
+                );
+                None
             }
             _ => panic!("safety check failed"),
         }

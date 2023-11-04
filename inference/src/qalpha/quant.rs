@@ -327,17 +327,6 @@ impl QuantifierConfig {
             .collect()
     }
 
-    pub fn non_universal_count(&self) -> usize {
-        self.quantifiers
-            .iter()
-            .enumerate()
-            .map(|(i, quantifier)| match quantifier {
-                Some(Quantifier::Forall) => 0,
-                _ => self.names[i].len(),
-            })
-            .sum()
-    }
-
     pub fn non_universal_vars(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| !matches!(self.quantifiers[*i], Some(Quantifier::Forall))) {
             Some(first_exists) => self.names[first_exists..]

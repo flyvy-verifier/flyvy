@@ -374,19 +374,21 @@ where
     type Key = LemmaKey;
 
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
-        let unsat = self.set.unsat(model);
-
-        if let Some(key) = self.try_first.iter().find(|key| unsat.contains(key)) {
-            return Some((*key, self.set.key_to_term(key)));
-        }
-
-        if let Some(key) = unsat.first() {
-            if !self.before.as_ref().is_some_and(|before| key >= before) {
-                return Some((*key, self.set.key_to_term(key)));
-            }
-        }
-
-        None
+        self.try_first
+            .iter()
+            .map(|k| (k, &self.set.key_to_term[k]))
+            .chain(if let Some(b) = self.before {
+                self.set.key_to_term.range(..b)
+            } else {
+                self.set.key_to_term.range(..)
+            })
+            .find_map(|(k, term)| {
+                if model.eval(term) == 0 {
+                    Some((*k, term.clone()))
+                } else {
+                    None
+                }
+            })
     }
 
     fn all_terms(self) -> BTreeMap<Self::Key, Term> {

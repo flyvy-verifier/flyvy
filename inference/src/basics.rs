@@ -602,14 +602,20 @@ impl FOModule {
         }
     }
 
-    pub fn safe_implication_cex<H: OrderedTerms, B: BasicSolver>(
+    pub fn safe_implication_cex<H, B, C>(
         &self,
         solver: &B,
         hyp: H,
-    ) -> CexResult<H::Key> {
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
+    ) -> CexResult<H::Key>
+    where
+        H: OrderedTerms,
+        C: BasicCanceler,
+        B: BasicSolver<Canceler = C>,
+    {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            match self.implication_cex(solver, hyp, &s.safety.x, None, false) {
+            match self.implication_cex(solver, hyp, &s.safety.x, cancelers.clone(), false) {
                 CexResult::UnsatCore(new_core) => core.extend(new_core),
                 res => return res,
             }
@@ -618,14 +624,20 @@ impl FOModule {
         CexResult::UnsatCore(core)
     }
 
-    pub fn trans_safe_cex<H: OrderedTerms, B: BasicSolver>(
+    pub fn trans_safe_cex<H, C, B>(
         &self,
         solver: &B,
         hyp: H,
-    ) -> CexResult<H::Key> {
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
+    ) -> CexResult<H::Key>
+    where
+        H: OrderedTerms,
+        C: BasicCanceler,
+        B: BasicSolver<Canceler = C>,
+    {
         let mut core = HashSet::new();
         for s in self.module.proofs.iter() {
-            match self.trans_cex(solver, hyp, &s.safety.x, true, None, false) {
+            match self.trans_cex(solver, hyp, &s.safety.x, true, cancelers.clone(), false) {
                 CexResult::UnsatCore(new_core) => core.extend(new_core),
                 res => return res,
             }
@@ -698,11 +710,34 @@ impl VariationConfig {
         }
     }
 
-    pub fn quant_exists(&self, cfg: &QalphaConfig) -> Vec<usize> {
+    pub fn quant_exists(
+        &self,
+        cfg: &QalphaConfig,
+        quant: Arc<QuantifierConfig>,
+    ) -> Vec<(Arc<QuantifierConfig>, usize)> {
+        let num_vars = quant.num_vars();
         if self.quant {
-            (0..=cfg.last_exist).collect()
+            let mut options = vec![];
+            let mut total = 0;
+            for i in 0..quant.len() {
+                if !matches!(quant.quantifiers[i], Some(Quantifier::Forall)) {
+                    for j in 0..quant.names[i].len() {
+                        let last_exist = num_vars - total - j;
+                        if !cfg.last_exist.is_some_and(|l| l < last_exist) {
+                            options.push((quant.clone(), last_exist));
+                        }
+                    }
+                }
+                total += quant.names[i].len();
+            }
+
+            options
         } else {
-            vec![cfg.last_exist]
+            let first = (0..quant.len())
+                .find(|i| !matches!(quant.quantifiers[*i], Some(Quantifier::Forall)))
+                .unwrap_or(num_vars);
+            let default_last_exist = quant.counts()[first..].iter().sum();
+            vec![(quant, cfg.last_exist.unwrap_or(default_last_exist))]
         }
     }
 
@@ -732,7 +767,7 @@ pub struct QalphaConfig {
     pub fo: FOModule,
 
     pub quant_cfg: Arc<QuantifierConfig>,
-    pub last_exist: usize,
+    pub last_exist: Option<usize>,
 
     pub qf_cfg: QuantifierFreeConfig,
 
