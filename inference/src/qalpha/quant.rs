@@ -338,9 +338,10 @@ impl QuantifierConfig {
     }
 
     pub fn is_universal(&self) -> bool {
-        self.quantifiers
+        self.names
             .iter()
-            .all(|q| matches!(q, Some(Quantifier::Forall)))
+            .zip(self.quantifiers.iter())
+            .all(|(ns, q)| ns.is_empty() || matches!(q, Some(Quantifier::Forall)))
     }
 }
 
@@ -441,6 +442,13 @@ impl QuantifierPrefix {
                 .collect(),
             None => HashSet::default(),
         }
+    }
+
+    pub fn is_universal(&self) -> bool {
+        self.names
+            .iter()
+            .zip(self.quantifiers.iter())
+            .all(|(ns, q)| ns.is_empty() || matches!(q, Quantifier::Forall))
     }
 }
 

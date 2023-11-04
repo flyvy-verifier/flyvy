@@ -25,7 +25,8 @@ use fly::semantics::models_to_string;
 use fly::syntax::{Module, Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{
-    FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, VariationConfig,
+    FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
+    VariationConfig,
 };
 use inference::houdini;
 use inference::qalpha::{
@@ -88,11 +89,6 @@ struct VerifyArgs {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierConfigArgs {
-    #[arg(long)]
-    /// Use a custom prefix, given either by the sort ordering (via `--sort`) or by exact quantifiers (via `--quantifier`).
-    /// Otherwise, use the sort ordering found in the loaded module with three universal/existential quantifiers per sort.
-    custom_quant: bool,
-
     #[arg(short, long)]
     /// Sorts in the order they should appear in the quantifier prefix
     sort: Vec<String>,
@@ -115,19 +111,7 @@ impl QuantifierConfigArgs {
         let mut quantifiers;
         let mut sorts: Vec<usize>;
         let mut counts: Vec<usize>;
-        if !self.custom_quant {
-            sorts = (0..sig.sorts.len()).collect();
-            quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
-        } else if !self.sort.is_empty() {
-            sorts = self
-                .sort
-                .iter()
-                .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
-                .collect();
-            quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
-        } else {
+        if !self.quantifier.is_empty() {
             quantifiers = vec![];
             sorts = vec![];
             counts = vec![];
@@ -142,6 +126,18 @@ impl QuantifierConfigArgs {
                     Err(err) => panic!("{err}"),
                 }
             }
+        } else if !self.sort.is_empty() {
+            sorts = self
+                .sort
+                .iter()
+                .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
+                .collect();
+            quantifiers = vec![None; sorts.len()];
+            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
+        } else {
+            sorts = (0..sig.sorts.len()).collect();
+            quantifiers = vec![None; sorts.len()];
+            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         }
         QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
     }
@@ -239,12 +235,8 @@ struct InferenceConfigArgs {
     no_disj: bool,
 
     #[arg(long)]
-    /// Perform SMT queries gradually
-    gradual_smt: bool,
-
-    #[arg(long)]
-    /// Perform SMT queries gradually and minimally
-    minimal_smt: bool,
+    /// How to perform the SMT queries (full/gradual/minimal)
+    smt_tactic: Option<String>,
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -283,14 +275,6 @@ impl QalphaArgs {
             !self.qf_cfg.no_include_eq,
         );
 
-        let (gradual, minimal) = if self.infer_cfg.minimal_smt {
-            (true, true)
-        } else if self.infer_cfg.gradual_smt {
-            (true, false)
-        } else {
-            (false, false)
-        };
-
         let universe = if self.sim_cfg.bound.is_empty() {
             vec![defaults::SIMULATION_SORT_SIZE; m.signature.sorts.len()]
         } else {
@@ -299,7 +283,14 @@ impl QalphaArgs {
         };
         QalphaConfig {
             fname,
-            fo: FOModule::new(m, !self.infer_cfg.no_disj, gradual, minimal),
+            fo: FOModule::new(
+                m,
+                !self.infer_cfg.no_disj,
+                self.infer_cfg
+                    .smt_tactic
+                    .as_ref()
+                    .map_or(SmtTactic::default(), |s| s.into()),
+            ),
 
             quant_cfg: Arc::new(self.infer_cfg.quant_cfg.to_cfg(&m.signature)),
 

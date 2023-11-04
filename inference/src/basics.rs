@@ -210,18 +210,16 @@ pub struct FOModule {
     signature: Arc<Signature>,
     pub module: DestructuredModule,
     disj: bool,
-    gradual: bool,
-    minimal: bool,
+    smt_tactic: SmtTactic,
 }
 
 impl FOModule {
-    pub fn new(m: &Module, disj: bool, gradual: bool, minimal: bool) -> Self {
+    pub fn new(m: &Module, disj: bool, smt_tactic: SmtTactic) -> Self {
         FOModule {
             signature: m.signature.clone(),
             module: extract(m).unwrap(),
             disj,
-            gradual,
-            minimal,
+            smt_tactic,
         }
     }
 
@@ -294,10 +292,10 @@ impl FOModule {
                 .into_iter()
                 .map(|transition| {
                     s.spawn(|| {
-                        let mut core = if self.gradual {
-                            Core::new(hyp, BTreeMap::new(), self.minimal)
-                        } else {
-                            Core::new(hyp, hyp.all_terms(), self.minimal)
+                        let mut core = match self.smt_tactic {
+                            SmtTactic::Full => Core::new(hyp, hyp.all_terms(), false),
+                            SmtTactic::Gradual => Core::new(hyp, BTreeMap::new(), false),
+                            SmtTactic::Minimal => Core::new(hyp, BTreeMap::new(), true),
                         };
 
                         let mut local_assertions = assertions.clone();
@@ -398,10 +396,10 @@ impl FOModule {
             return CexResult::Canceled;
         }
 
-        let mut core = if self.gradual {
-            Core::new(hyp, BTreeMap::new(), self.minimal)
-        } else {
-            Core::new(hyp, hyp.all_terms(), self.minimal)
+        let mut core = match self.smt_tactic {
+            SmtTactic::Full => Core::new(hyp, hyp.all_terms(), false),
+            SmtTactic::Gradual => Core::new(hyp, BTreeMap::new(), false),
+            SmtTactic::Minimal => Core::new(hyp, BTreeMap::new(), true),
         };
 
         let query_conf = QueryConf {
@@ -654,6 +652,29 @@ impl FOModule {
         }
 
         None
+    }
+}
+
+pub enum SmtTactic {
+    Full,
+    Gradual,
+    Minimal,
+}
+
+impl Default for SmtTactic {
+    fn default() -> Self {
+        Self::Gradual
+    }
+}
+
+impl From<&String> for SmtTactic {
+    fn from(value: &String) -> Self {
+        match value.as_str() {
+            "gradual" => Self::Gradual,
+            "minimal" => Self::Minimal,
+            "full" => Self::Full,
+            _ => panic!("invalid choice of SMT technique!"),
+        }
     }
 }
 

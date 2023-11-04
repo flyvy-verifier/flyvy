@@ -502,10 +502,11 @@ where
     }
 
     fn redundant(&self, id: &LemmaId) -> bool {
-        let prefix = self.sets[id.0]
-            .prefix
-            .restrict(self.sets[id.0].by_id[&id.1].ids());
-        self.sets[..id.0].iter().any(|s| s.prefix.contains(&prefix))
+        let body = &self.sets[id.0].by_id[&id.1];
+        let prefix = self.sets[id.0].prefix.restrict(body.ids());
+
+        (prefix.is_universal() && !body.is_clause())
+            || self.sets[..id.0].iter().any(|s| s.prefix.contains(&prefix))
     }
 
     pub fn first_subsuming(
@@ -553,11 +554,6 @@ where
         let multi_clause = clauses.len() > 1;
 
         if multi_clause {
-            // Universal multi-clause formulas are always redundant.
-            if prefix.existentials() == 0 {
-                return Some(HashSet::default());
-            }
-
             let universal_prefix = prefix.as_universal();
             let subsuming = clauses
                 .iter()
