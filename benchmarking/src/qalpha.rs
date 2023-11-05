@@ -7,6 +7,27 @@ use std::{
 
 use crate::run::BenchmarkConfig;
 
+/// Return a list of configured qalpha benchmarks for the examples.
+///
+/// Each benchmark is represented as a tuple of a name and a configuration. The
+/// name is used as the output directory so it should be unique across
+/// benchmarks.
+pub fn qalpha_benchmarks() -> Vec<(PathBuf, BenchmarkConfig)> {
+    let configs = vec![QalphaConfig {
+        file: PathBuf::from("lockserver.fly"),
+        bounds: sort_bounds("node=3"),
+        cubes: 3,
+        cube_size: 3,
+        non_unit: 3,
+        last_exist: 1,
+        time_limit: Duration::from_secs(60),
+    }];
+
+    let benchmarks = named_benchmarks(configs);
+    check_unique_benchmarks(&benchmarks);
+    benchmarks
+}
+
 fn example_path(file: &Path) -> PathBuf {
     PathBuf::from("temporal-verifier/examples").join(file)
 }
@@ -16,6 +37,7 @@ struct SortBound {
     bound: usize,
 }
 
+/// A configuration for a run of qalpha
 struct QalphaConfig {
     file: PathBuf,
     bounds: Vec<SortBound>,
@@ -98,27 +120,6 @@ fn named_benchmarks(config: Vec<QalphaConfig>) -> Vec<(PathBuf, BenchmarkConfig)
             }
         })
         .collect()
-}
-
-/// Return a list of configured qalpha benchmarks for the examples.
-///
-/// Each benchmark is represented as a tuple of a name and a configuration. The
-/// name is used as the output directory so it should be unique across
-/// benchmarks.
-pub fn qalpha_benchmarks() -> Vec<(PathBuf, BenchmarkConfig)> {
-    let configs = vec![QalphaConfig {
-        file: PathBuf::from("lockserver.fly"),
-        bounds: sort_bounds("node=3"),
-        cubes: 3,
-        cube_size: 3,
-        non_unit: 3,
-        last_exist: 1,
-        time_limit: Duration::from_secs(60),
-    }];
-
-    let benchmarks = named_benchmarks(configs);
-    check_unique_benchmarks(&benchmarks);
-    benchmarks
 }
 
 /// Check that the names for all the benchmarks are unique (to avoid results
