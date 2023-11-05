@@ -612,6 +612,8 @@ where
     E: Element,
     L: LemmaQf<Body = E>,
 {
+    /// The signature of the module associated with this induction frame.
+    signature: Arc<Signature>,
     /// Manages lemmas inductively proven by the frame.
     lemmas: RwLock<LemmaManager<LemmaKey>>,
     /// The mapping from a key to the lemma's position in the ordering.
@@ -641,11 +643,12 @@ where
         sim_config: SimulationConfig,
         property_directed: bool,
     ) -> Self {
-        let mut weaken_lemmas = WeakenLemmaSet::new(signature, domains);
+        let mut weaken_lemmas = WeakenLemmaSet::new(signature.clone(), domains);
         weaken_lemmas.init();
         let key_to_idx = weaken_lemmas.key_to_idx();
 
         InductionFrame {
+            signature,
             lemmas: RwLock::new(LemmaManager::new()),
             key_to_idx,
             weaken_lemmas,
@@ -1139,13 +1142,26 @@ where
     }
 
     pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
-        let models = self
-            .sim_config
-            .universe
-            .iter()
-            .map(|c| 1..=*c)
-            .multi_cartesian_product_fixed()
-            .flat_map(|u| self.simulator.initials_new(&u))
+        let universes = if let Some(p) = self.sim_config.sum {
+            (0..self.signature.sorts.len())
+                .map(|_| (1..=p))
+                .multi_cartesian_product_fixed()
+                .filter(|v| v.iter().sum::<usize>() <= p)
+                .collect()
+        } else {
+            self.sim_config
+                .universe
+                .iter()
+                .map(|c| 1..=*c)
+                .multi_cartesian_product_fixed()
+                .collect_vec()
+        };
+        let models = universes
+            .into_iter()
+            .flat_map(|u| {
+                self.log_info(format!("Gathering initial states with universe {:?}", &u));
+                self.simulator.initials_new(&u)
+            })
             .collect_vec();
         self.weaken(&models);
         let mut samples = Tasks::new();

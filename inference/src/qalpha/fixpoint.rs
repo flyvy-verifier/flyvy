@@ -36,8 +36,8 @@ use rayon::prelude::*;
 pub mod defaults {
     pub const QUANT_SAME_SORT: usize = 3;
     pub const SIMULATION_SORT_SIZE: usize = 2;
-    pub const MIN_DISJUNCTS: usize = 3;
-    pub const MIN_NON_UNIT_SIZE: usize = 3;
+    pub const MIN_DISJUNCTS: usize = 2;
+    pub const MIN_NON_UNIT_SIZE: usize = 2;
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -159,7 +159,7 @@ fn invariant_cover<S: BasicSolver>(
 }
 
 /// An inductive fixpoint
-pub struct FoundFixpoint {
+struct FoundFixpoint {
     /// The last frame of the fixpoint computation.
     /// This is inductive iff `reduced_proof` is not `None`
     proof: Vec<Term>,
@@ -169,15 +169,41 @@ pub struct FoundFixpoint {
     /// A subset of the (reduced) fixpoint term which suffices to prove safety.
     /// If None, the last frame is unsafe
     safety_proof: Option<Vec<Term>>,
-    /// Total time for fixpoint calculation
-    time_taken: Duration,
-    /// Number of terms of handwritten invariant covered by the (reduced) fixpoint result
-    /// and total number of terms in the handwritten invariant
-    covering: Option<(usize, usize)>,
+    /// Statistics for this execution
+    stats: FixpointStats,
 }
 
 impl FoundFixpoint {
-    pub fn report(&self, print_invariant: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        time: Duration,
+        success: bool,
+        proof: Vec<Term>,
+        reduced_proof: Option<Vec<Term>>,
+        safety_proof: Option<Vec<Term>>,
+        covering: Option<(usize, usize)>,
+        processed_states: usize,
+        generated_states: usize,
+    ) -> Self {
+        let stats = FixpointStats {
+            time_sec: time.as_secs_f64(),
+            success,
+            size: proof.len(),
+            reduced: reduced_proof.as_ref().map(|r| r.len()),
+            safety: safety_proof.as_ref().map(|r| r.len()),
+            covering,
+            processed_states,
+            generated_states,
+        };
+        FoundFixpoint {
+            proof,
+            reduced_proof,
+            safety_proof,
+            stats,
+        }
+    }
+
+    fn report(&self, print_invariant: bool) {
         let print_inv = |name: &str, size: usize, inv: &[Term]| {
             println!("{name} (size={size}) {{");
             for lemma in inv {
@@ -192,8 +218,6 @@ impl FoundFixpoint {
                 self.proof.len(),
                 reduced_proof.len()
             );
-            let (covered_handwritten, size_handwritten) = self.covering.unwrap();
-            println!("Covers {covered_handwritten} / {size_handwritten} of handwritten invariant.");
         } else {
             println!("Fixpoint NOT reached! frame_size={}", self.proof.len());
         }
@@ -205,7 +229,6 @@ impl FoundFixpoint {
         }
 
         if print_invariant {
-            println!("Runtime = {:.2}s", self.time_taken.as_secs_f64());
             print_inv("frame", self.proof.len(), &self.proof);
             if let Some(reduced_proof) = &self.reduced_proof {
                 print_inv("reduced", reduced_proof.len(), reduced_proof);
@@ -214,7 +237,35 @@ impl FoundFixpoint {
                 print_inv("safety", safety_proof.len(), safety_proof);
             }
         }
+
+        println!("==============================");
+        println!(
+            "stats_json: {}",
+            serde_json::to_string(&self.stats).unwrap()
+        );
+        println!("==============================");
     }
+}
+
+#[derive(serde::Serialize)]
+struct FixpointStats {
+    /// Total runtime
+    time_sec: f64,
+    /// Whether the task finished successfully
+    success: bool,
+    /// The number of formulas in the final frame
+    size: usize,
+    /// The number of formulas in reduced form (if available)
+    reduced: Option<usize>,
+    /// The number of formulas in the safety proof (if available)
+    safety: Option<usize>,
+    /// Number of lemmas in the handwritten invariant covered by the result
+    /// and the total number of lemmas in the handwritten invariants
+    covering: Option<(usize, usize)>,
+    /// The number of states processed during the execution
+    processed_states: usize,
+    /// The number of states generated during the execution (some might not have been processed)
+    generated_states: usize,
 }
 
 fn parallel_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
@@ -404,6 +455,7 @@ where
 
     // Initialize simulations.
     let mut samples: Tasks<SamplePriority, Model> = frame.initial_samples();
+    let mut full_houdini_frame: Option<Vec<Term>> = None;
 
     // Overapproximate initial states.
     loop {
@@ -430,7 +482,7 @@ where
     while run_sim || run_smt {
         let mut ctis: Vec<Model> = vec![];
         let canceler = MultiCanceler::new();
-        // Get new samples and CTI's, and if enable, check the safety of the frame.
+        // Get new samples and CTI's, and if enabled, check the safety of the frame.
         let not_safe = thread::scope(|s| {
             let smt_handle = s.spawn(|| {
                 if run_smt {
@@ -467,13 +519,16 @@ where
         });
 
         if not_safe {
-            return FoundFixpoint {
-                proof: frame.proof(),
-                reduced_proof: None,
-                safety_proof: None,
-                time_taken: start.elapsed(),
-                covering: None,
-            };
+            return FoundFixpoint::new(
+                start.elapsed(),
+                false,
+                frame.proof(),
+                None,
+                None,
+                None,
+                samples.total() - samples.len(),
+                samples.total(),
+            );
         }
 
         if run_sim {
@@ -494,6 +549,10 @@ where
         run_smt = if cfg.strategy.is_weaken() {
             !ctis.is_empty()
         } else if cfg.strategy.is_houdini() {
+            if !run_smt && ctis.is_empty() {
+                full_houdini_frame = Some(frame.proof());
+            }
+
             (!run_smt && ctis.is_empty()) || (run_smt && !ctis.is_empty())
         } else {
             false
@@ -502,21 +561,35 @@ where
 
     frame.log_info("Checking safety...");
     frame.is_safe(fo, solver, None);
-    let time_taken = start.elapsed();
-    let proof = frame.proof();
+    let time = start.elapsed();
+    let proof = if cfg.strategy.is_houdini() {
+        full_houdini_frame.unwrap()
+    } else {
+        frame.proof()
+    };
     let reduced_proof = frame.reduced_proof();
     let safety_proof = frame.safety_proof();
     let covering = reduced_proof
         .as_ref()
         .map(|reduced| invariant_cover(m, solver, fo, reduced));
+    let success = match cfg.strategy {
+        Strategy::None => true,
+        Strategy::Houdini => reduced_proof.is_some(),
+        Strategy::HoudiniPd => safety_proof.is_some(),
+        Strategy::Weaken => reduced_proof.is_some(),
+        Strategy::WeakenPd => safety_proof.is_some(),
+    };
 
-    FoundFixpoint {
+    FoundFixpoint::new(
+        time,
+        success,
         proof,
         reduced_proof,
         safety_proof,
-        time_taken,
         covering,
-    }
+        samples.total() - samples.len(),
+        samples.total(),
+    )
 }
 
 /// Attempt to find a transition CTI for the current frame. If enabled by the configuration, this also checks

@@ -202,6 +202,10 @@ struct SimulationConfigArgs {
     #[arg(long)]
     bound: Vec<String>,
 
+    /// Instead of a bound for each sort, bound the sum of sort sizes
+    #[arg(long)]
+    bound_sum: Option<usize>,
+
     #[arg(long)]
     /// Run simulations up to this depth
     depth: Option<usize>,
@@ -275,7 +279,7 @@ impl QalphaArgs {
             !self.qf_cfg.no_include_eq,
         );
 
-        let universe = if self.sim_cfg.bound.is_empty() {
+        let universe = if self.sim_cfg.bound.is_empty() || self.sim_cfg.bound_sum.is_some() {
             vec![defaults::SIMULATION_SORT_SIZE; m.signature.sorts.len()]
         } else {
             let universe_map = get_universe(&m.signature, &self.sim_cfg.bound);
@@ -300,6 +304,7 @@ impl QalphaArgs {
 
             sim: SimulationConfig {
                 universe,
+                sum: self.sim_cfg.bound_sum,
                 depth: self.sim_cfg.depth,
                 guided: self.sim_cfg.guided,
                 dfs: self.sim_cfg.dfs,

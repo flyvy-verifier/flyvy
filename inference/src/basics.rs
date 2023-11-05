@@ -778,6 +778,7 @@ impl VariationConfig {
 #[derive(Clone)]
 pub struct SimulationConfig {
     pub universe: Vec<usize>,
+    pub sum: Option<usize>,
     pub depth: Option<usize>,
     pub guided: bool,
     pub dfs: bool,

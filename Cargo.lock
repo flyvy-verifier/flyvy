@@ -653,6 +653,8 @@ dependencies = [
  "itertools",
  "log",
  "rayon",
+ "serde",
+ "serde_json",
  "smtlib",
  "solver",
  "thiserror",
