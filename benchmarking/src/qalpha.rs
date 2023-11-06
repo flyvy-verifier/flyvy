@@ -7,15 +7,15 @@ use std::{
 
 use crate::run::BenchmarkConfig;
 
-const SAFETY_TIME_LIMIT: Duration = Duration::from_secs(600);
-const FIXPOINT_TIME_LIMIT: Duration = Duration::from_secs(600);
-
 /// Return a list of configured qalpha benchmarks for the examples.
 ///
 /// Each benchmark is represented as a tuple of a name and a configuration. The
 /// name is used as the output directory so it should be unique across
 /// benchmarks.
-pub fn qalpha_benchmarks() -> Vec<(PathBuf, BenchmarkConfig)> {
+pub fn qalpha_benchmarks(
+    safety_time_limit: Duration,
+    fixpoint_time_limit: Duration,
+) -> Vec<(PathBuf, BenchmarkConfig)> {
     let configs = vec![
         QalphaConfig {
             file: PathBuf::from("fol/lockserv.fly"),
@@ -145,7 +145,7 @@ pub fn qalpha_benchmarks() -> Vec<(PathBuf, BenchmarkConfig)> {
         },
     ];
 
-    let benchmarks = named_benchmarks(configs);
+    let benchmarks = named_benchmarks(configs, safety_time_limit, fixpoint_time_limit);
     check_unique_benchmarks(&benchmarks);
     benchmarks
 }
@@ -224,7 +224,11 @@ impl QalphaConfig {
         args
     }
 
-    pub fn benchmarks(&self) -> Vec<(PathBuf, BenchmarkConfig)> {
+    pub fn benchmarks(
+        &self,
+        safety_time_limit: Duration,
+        fixpoint_time_limit: Duration,
+    ) -> Vec<(PathBuf, BenchmarkConfig)> {
         vec![
             // Safety benchmark (property directed)
             (
@@ -233,7 +237,7 @@ impl QalphaConfig {
                     command: command(),
                     params: self.params(&self.bound, "weaken-pd"),
                     file: example_path(&self.file),
-                    time_limit: SAFETY_TIME_LIMIT,
+                    time_limit: safety_time_limit,
                 },
             ),
             // Fixpoint benchmark
@@ -243,7 +247,7 @@ impl QalphaConfig {
                     command: command(),
                     params: self.params(&self.bound, "weaken"),
                     file: example_path(&self.file),
-                    time_limit: FIXPOINT_TIME_LIMIT,
+                    time_limit: fixpoint_time_limit,
                 },
             ),
         ]
@@ -260,10 +264,14 @@ impl QalphaConfig {
 ///
 /// Automatically names multiple configurations for the same fly file using
 /// [`QalphaConfig::full_path`].
-fn named_benchmarks(config: Vec<QalphaConfig>) -> Vec<(PathBuf, BenchmarkConfig)> {
-    config
+fn named_benchmarks(
+    configs: Vec<QalphaConfig>,
+    safety_time_limit: Duration,
+    fixpoint_time_limit: Duration,
+) -> Vec<(PathBuf, BenchmarkConfig)> {
+    configs
         .into_iter()
-        .flat_map(|config| config.benchmarks())
+        .flat_map(|config| config.benchmarks(safety_time_limit, fixpoint_time_limit))
         .collect()
 }
 

@@ -3,18 +3,29 @@
 
 //! Run all of the examples as benchmarks and report the results in a table.
 
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use benchmarking::{
     qalpha::qalpha_benchmarks,
     run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
-use clap::Parser;
+use clap::{Args, Parser};
 use glob::Pattern;
+
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+struct QalphaParams {
+    /// Glob pattern over benchmark names to run
+    #[arg(short = 'F', long = "filter", default_value = "*")]
+    name_glob: String,
+    /// Output directory to store results
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long, default_value = "600s")]
+    safety_time_limit: humantime::Duration,
+    #[arg(long, default_value = "600s")]
+    fixpoint_time_limit: humantime::Duration,
+}
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
@@ -31,14 +42,7 @@ enum Command {
         json: bool,
     },
     /// Run invariant inference benchmarks with qalpha.
-    Qalpha {
-        /// Glob pattern over benchmark names to run
-        #[arg(short = 'F', long = "filter", default_value = "*")]
-        name_glob: String,
-        /// Output directory to store results
-        #[arg(long)]
-        output_dir: PathBuf,
-    },
+    Qalpha(#[command(flatten)] QalphaParams),
 }
 
 #[derive(clap::Parser, Debug)]
@@ -70,29 +74,33 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
         .collect()
 }
 
-fn run_qalpha(name_glob: glob::Pattern, output_dir: &Path) -> Vec<BenchmarkMeasurement> {
-    qalpha_benchmarks()
-        .into_iter()
-        .filter(|(name, _)| name_glob.matches_path(name))
-        .map(|(file, config)| {
-            eprintln!("qalpha {}", file.display());
-            let result = BenchmarkMeasurement::run(
-                config,
-                Some("info".to_string()),
-                Some(output_dir.join(file)),
-            );
-            eprintln!(
-                "  took {:0.0}s{}",
-                result.measurement.real_time.as_secs_f64(),
-                if result.measurement.success {
-                    ""
-                } else {
-                    " (failed)"
-                }
-            );
-            result
-        })
-        .collect()
+fn run_qalpha(params: &QalphaParams) -> Vec<BenchmarkMeasurement> {
+    let name_glob = Pattern::new(&params.name_glob).expect("could not parse pattern");
+    qalpha_benchmarks(
+        params.safety_time_limit.into(),
+        params.fixpoint_time_limit.into(),
+    )
+    .into_iter()
+    .filter(|(name, _)| name_glob.matches_path(name))
+    .map(|(file, config)| {
+        eprintln!("qalpha {}", file.display());
+        let result = BenchmarkMeasurement::run(
+            config,
+            Some("info".to_string()),
+            Some(params.output_dir.join(file)),
+        );
+        eprintln!(
+            "  took {:0.0}s{}",
+            result.measurement.real_time.as_secs_f64(),
+            if result.measurement.success {
+                ""
+            } else {
+                " (failed)"
+            }
+        );
+        result
+    })
+    .collect()
 }
 
 impl App {
@@ -114,12 +122,8 @@ impl App {
                     BenchmarkMeasurement::print_table(results);
                 }
             }
-            Command::Qalpha {
-                name_glob,
-                output_dir,
-            } => {
-                let pattern = Pattern::new(name_glob).expect("could not parse pattern");
-                let _results = run_qalpha(pattern, output_dir);
+            Command::Qalpha(params) => {
+                let _results = run_qalpha(params);
             }
         }
     }
