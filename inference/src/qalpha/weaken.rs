@@ -72,11 +72,7 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
     type Config: LemmaQfConfig;
 
     /// Create a new instance given the following configuration.
-    fn new(
-        cfg: Arc<Self::Config>,
-        literals: Arc<Literals>,
-        non_universal_vars: &HashSet<String>,
-    ) -> Self;
+    fn new(cfg: Arc<Self::Config>, literals: Arc<Literals>, prefix: Arc<QuantifierPrefix>) -> Self;
 
     /// Return weakenings of the given [`Self::Body`] which satisfy the given cube.
     fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
@@ -103,21 +99,6 @@ where
     bodies: Box<E::Map<usize>>,
     by_id: HashMap<usize, E>,
     next: usize,
-}
-
-#[derive(Clone)]
-enum Ignore<'a, T> {
-    Contained(&'a HashMap<usize, T>),
-    NotContained(&'a HashMap<usize, T>),
-}
-
-impl<'a, T> Ignore<'a, T> {
-    fn ignore(&self, i: &usize) -> bool {
-        match self {
-            Ignore::Contained(hm) => hm.contains_key(i),
-            Ignore::NotContained(hm) => !hm.contains_key(i),
-        }
-    }
 }
 
 impl<E, L> PrefixLemmaSet<E, L>
@@ -233,7 +214,6 @@ where
         model: &Model,
         assignment: &Assignment,
         index: usize,
-        ignore: &[Ignore<'_, HashSet<im::HashSet<Literal>>>],
     ) -> HashMap<usize, HashSet<im::HashSet<Literal>>> {
         if index >= self.prefix.len() {
             let structure = sat_literals(&self.literals, model, assignment);
@@ -243,13 +223,12 @@ where
                 .bodies
                 .get_unsatisfied_by(&structure)
                 .into_iter()
-                .filter(|(_, i)| !ignore.iter().any(|ig| ig.ignore(i)))
                 .map(|(_, i)| (*i, HashSet::from_iter([im_structure.clone()])))
                 .collect();
         }
 
         if self.prefix.names[index].is_empty() {
-            return self.unsat(model, assignment, index + 1, ignore);
+            return self.unsat(model, assignment, index + 1);
         }
 
         let extended_assignments = extend_assignment(
@@ -259,37 +238,44 @@ where
         );
 
         if self.prefix.quantifiers[index] == Quantifier::Forall {
-            let mut unsat: HashMap<usize, HashSet<im::HashSet<Literal>>> = HashMap::default();
-            for asgn in &extended_assignments {
-                let mut new_ignore = ignore.to_vec();
-                new_ignore.push(Ignore::Contained(&unsat));
-
-                let new_unsat = self.unsat(model, asgn, index + 1, &new_ignore);
-                for (i, structures) in new_unsat {
-                    unsat.insert(i, structures);
-                }
-            }
-
-            unsat
+            extended_assignments
+                .par_iter()
+                .map(|asgn| self.unsat(model, asgn, index + 1))
+                .reduce(
+                    || HashMap::default(),
+                    |mut m1, m2| {
+                        for (k, v2) in m2 {
+                            if !m1.get(&k).is_some_and(|v1| v1.len() <= v2.len()) {
+                                m1.insert(k, v2);
+                            }
+                        }
+                        m1
+                    },
+                )
         } else {
-            let mut unsat: Option<HashMap<usize, HashSet<im::HashSet<Literal>>>> = None;
-            for asgn in &extended_assignments {
-                let mut new_ignore = ignore.to_vec();
-                if let Some(unsat_ref) = &unsat {
-                    new_ignore.push(Ignore::NotContained(unsat_ref));
-                }
-
-                let mut new_unsat = self.unsat(model, asgn, index + 1, &new_ignore);
-                if let Some(prev_unsat) = unsat {
-                    for (i, structures) in &mut new_unsat {
-                        structures.extend(prev_unsat[i].iter().cloned());
-                    }
-                }
-
-                unsat = Some(new_unsat);
-            }
-
-            unsat.unwrap()
+            extended_assignments
+                .par_iter()
+                .map(|asgn| Some(self.unsat(model, asgn, index + 1)))
+                .reduce(
+                    || None,
+                    |x, y| match (x, y) {
+                        (Some(m1), Some(m2)) => {
+                            let (mut shorter, mut longer) = if m1.len() <= m2.len() {
+                                (m1, m2)
+                            } else {
+                                (m2, m1)
+                            };
+                            shorter.retain(|i, _| longer.contains_key(i));
+                            shorter
+                                .iter_mut()
+                                .for_each(|(k, v)| v.extend(longer.remove(k).unwrap()));
+                            Some(shorter)
+                        }
+                        (Some(m), None) | (None, Some(m)) => Some(m),
+                        (None, None) => None,
+                    },
+                )
+                .unwrap()
         }
     }
 
@@ -308,7 +294,7 @@ where
                     .collect_vec()
             };
 
-        let mut unsat = self.unsat(model, &Assignment::new(), 0, &[]);
+        let mut unsat = self.unsat(model, &Assignment::new(), 0);
         let removed = unsat.keys().cloned().collect();
         let mut added = vec![];
         let mut to_weaken = get_to_weaken(self, unsat);
@@ -325,7 +311,7 @@ where
                 weakened_min.insert_minimized(new_body, 0);
             }
 
-            unsat = weakened_min.unsat(model, &Assignment::new(), 0, &[]);
+            unsat = weakened_min.unsat(model, &Assignment::new(), 0);
             to_weaken = get_to_weaken(&mut weakened_min, unsat);
             for (_, body) in weakened_min.by_id {
                 added.push(self.insert(body));
@@ -382,13 +368,9 @@ where
             } else {
                 self.set.key_to_term.range(..)
             })
-            .find_map(|(k, term)| {
-                if model.eval(term) == 0 {
-                    Some((*k, term.clone()))
-                } else {
-                    None
-                }
-            })
+            .par_bridge()
+            .find_first(|(_, term)| model.eval(term) == 0)
+            .map(|(k, term)| (*k, term.clone()))
     }
 
     fn all_terms(self) -> BTreeMap<Self::Key, Term> {
@@ -599,10 +581,10 @@ where
 
     pub fn unsat(&self, model: &Model) -> BTreeSet<LemmaKey> {
         self.sets
-            .iter()
+            .par_iter()
             .enumerate()
-            .flat_map(|(i, set)| {
-                set.unsat(model, &Assignment::new(), 0, &[])
+            .flat_map_iter(|(i, set)| {
+                set.unsat(model, &Assignment::new(), 0)
                     .keys()
                     .filter_map(move |j| self.id_to_key.get(&LemmaId(i, *j)).cloned())
                     .collect_vec()
@@ -646,7 +628,7 @@ where
             .par_iter_mut()
             .enumerate()
             .flat_map_iter(|(i, set)| {
-                set.unsat(model, &Assignment::new(), 0, &[])
+                set.unsat(model, &Assignment::new(), 0)
                     .iter()
                     .map(|(j, _)| {
                         set.remove(j);

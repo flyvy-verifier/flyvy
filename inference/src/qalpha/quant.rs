@@ -434,7 +434,7 @@ impl QuantifierPrefix {
             .sum()
     }
 
-    pub fn non_universal_vars(&self) -> HashSet<String> {
+    pub fn vars_after_first_exist(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| matches!(self.quantifiers[*i], Quantifier::Exists)) {
             Some(first_exists) => self.names[first_exists..]
                 .iter()

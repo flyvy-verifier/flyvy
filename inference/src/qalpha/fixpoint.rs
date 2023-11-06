@@ -327,11 +327,8 @@ where
                     let prefix = Arc::new(prefix);
                     let restricted =
                         Arc::new(restrict_by_prefix(&cfg.literals, &cfg.quant_cfg, &prefix));
-                    let lemma_qf = Arc::new(L::new(
-                        qf_cfg.clone(),
-                        restricted.clone(),
-                        &prefix.non_universal_vars(),
-                    ));
+                    let lemma_qf =
+                        Arc::new(L::new(qf_cfg.clone(), restricted.clone(), prefix.clone()));
                     (prefix, lemma_qf, restricted)
                 })
                 .collect();

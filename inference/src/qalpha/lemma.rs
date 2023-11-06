@@ -16,9 +16,8 @@ use fly::syntax::{Module, Signature, Term};
 
 use bounded::simulator::MultiSimulator;
 
-use crate::basics::SimulationConfig;
 use crate::{
-    basics::{CexResult, FOModule, QuantifierFreeConfig},
+    basics::{CexResult, FOModule, QuantifierFreeConfig, SimulationConfig},
     hashmap::{HashMap, HashSet},
     parallel::Tasks,
     parallel::{paralllelism, ParallelWorker},
@@ -26,6 +25,7 @@ use crate::{
         atoms::Literals,
         baseline::Baseline,
         fixpoint::{defaults, sample_priority, SamplePriority},
+        quant::QuantifierPrefix,
         subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
         weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
     },
@@ -104,9 +104,9 @@ impl LemmaQf for LemmaCnf {
     fn new(
         mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
-        non_universal_vars: &HashSet<String>,
+        prefix: Arc<QuantifierPrefix>,
     ) -> Self {
-        if non_universal_vars.is_empty() {
+        if prefix.is_universal() {
             cfg = Arc::new(cfg.as_universal());
         }
 
@@ -193,9 +193,9 @@ impl LemmaQf for LemmaDnf {
     fn new(
         mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
-        non_universal_vars: &HashSet<String>,
+        prefix: Arc<QuantifierPrefix>,
     ) -> Self {
-        if non_universal_vars.is_empty() {
+        if prefix.is_universal() {
             cfg = Arc::new(cfg.as_universal());
         };
 
@@ -284,7 +284,7 @@ impl LemmaQfConfig for LemmaPDnfConfig {
 pub struct LemmaPDnf {
     cfg: Arc<LemmaPDnfConfig>,
     literals: Arc<Literals>,
-    non_universal_literals: Arc<Literals>,
+    literals_after_exist: Arc<Literals>,
 }
 
 impl Debug for LemmaPDnf {
@@ -309,9 +309,9 @@ impl LemmaQf for LemmaPDnf {
     fn new(
         mut cfg: Arc<Self::Config>,
         literals: Arc<Literals>,
-        non_universal_vars: &HashSet<String>,
+        prefix: Arc<QuantifierPrefix>,
     ) -> Self {
-        if non_universal_vars.is_empty() {
+        if prefix.is_universal() {
             cfg = Arc::new(cfg.as_universal());
         }
 
@@ -319,10 +319,12 @@ impl LemmaQf for LemmaPDnf {
         assert!(cfg.non_unit == 0 || cfg.cube_size > 1);
         assert!(cfg.non_unit > 0 || cfg.cube_size <= 1);
 
-        let non_universal_literals = Arc::new(
+        let vars_after_first_exist = prefix.vars_after_first_exist();
+        // let exist_vars = prefix.exist_vars();
+        let literals_after_exist = Arc::new(
             literals
                 .iter()
-                .filter(|lit| !lit.ids().is_disjoint(non_universal_vars))
+                .filter(|lit| !lit.ids().is_disjoint(&vars_after_first_exist))
                 .cloned()
                 .collect(),
         );
@@ -330,7 +332,7 @@ impl LemmaQf for LemmaPDnf {
         Self {
             cfg,
             literals,
-            non_universal_literals,
+            literals_after_exist,
         }
     }
 
@@ -354,7 +356,7 @@ impl LemmaQf for LemmaPDnf {
                 .collect(),
         );
         let dnf_literals = Arc::new(
-            self.non_universal_literals
+            self.literals_after_exist
                 .iter()
                 .filter(|lit| !base.0.contains(&lit.negate().into()))
                 .cloned()
@@ -384,7 +386,7 @@ impl LemmaQf for LemmaPDnf {
                 let clauses =
                     choose_combinations(self.literals.len(), self.cfg.cubes - non_unit, 1);
                 let dnfs = choose_combinations(
-                    self.non_universal_literals.len(),
+                    self.literals_after_exist.len(),
                     self.cfg.cube_size,
                     non_unit,
                 );
@@ -399,8 +401,8 @@ impl LemmaQf for LemmaPDnf {
             && self.cfg.cube_size >= other.cfg.cube_size
             && self.literals.is_superset(&other.literals)
             && self
-                .non_universal_literals
-                .is_superset(&other.non_universal_literals)
+                .literals_after_exist
+                .is_superset(&other.literals_after_exist)
     }
 
     fn body_from_clause(clause: Clause) -> Self::Body {
@@ -435,16 +437,8 @@ impl LemmaQf for LemmaPDnfBaseline {
     type Body = Baseline<PDnf>;
     type Config = LemmaPDnfBaselineConfig;
 
-    fn new(
-        cfg: Arc<Self::Config>,
-        literals: Arc<Literals>,
-        non_universal_vars: &HashSet<String>,
-    ) -> Self {
-        Self(LemmaPDnf::new(
-            Arc::new(cfg.0.clone()),
-            literals,
-            non_universal_vars,
-        ))
+    fn new(cfg: Arc<Self::Config>, literals: Arc<Literals>, prefix: Arc<QuantifierPrefix>) -> Self {
+        Self(LemmaPDnf::new(Arc::new(cfg.0.clone()), literals, prefix))
     }
 
     fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
@@ -947,11 +941,11 @@ where
                     let query_start = Instant::now();
                     // Begin with a syntactic implication check.
                     if let Some(blocking_core) = self.weaken_lemmas.get_implying(key) {
-                        log::info!(
+                        self.log_info(format!(
                             "{:>8}ms. ({idx}) Syntactic implication found UNSAT with {} formulas in core",
                             query_start.elapsed().as_millis(),
                             blocking_core.len(),
-                        );
+                        ));
                         let core_tasks = blocking_core.iter().cloned().map(|k| ((1, k), k)).collect();
                         let core = blocking_core.iter().cloned().collect();
                         {
@@ -971,11 +965,11 @@ where
                         false,
                     );
                     if let CexResult::UnsatCore(core) = &res {
-                        log::info!(
+                        self.log_info(format!(
                             "{:>8}ms. ({idx}) Semantic implication found UNSAT with {} formulas in core",
                             query_start.elapsed().as_millis(),
                             core.len(),
-                        );
+                        ));
                         let blocking_core = Blocked::Consequence(core.iter().cloned().collect());
                         {
                             let mut manager = self.lemmas.write().unwrap();
@@ -1005,18 +999,18 @@ where
                                 *first_sat_lock = Some(Instant::now());
                             }
                         }
-                        log::info!(
+                        self.log_info(format!(
                             "{:>8}ms. ({idx}) Transition found SAT",
                             query_start.elapsed().as_millis()
-                        );
+                        ));
                         (Some(res), vec![], true)
                     }
                     CexResult::UnsatCore(core) => {
-                        log::info!(
+                        self.log_info(format!(
                             "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
                             start_time.elapsed().as_millis(),
                             core.len()
-                        );
+                        ));
                         let core = Blocked::Transition(core.iter().cloned().collect());
                         let core_tasks = core
                             .constituents()
@@ -1031,10 +1025,10 @@ where
                     }
                     CexResult::Canceled => (Some(res), vec![], true),
                     CexResult::Unknown(reason) => {
-                        log::info!(
+                        self.log_info(format!(
                             "{:>8}ms. ({idx}) Transition found unknown: {reason}",
                             query_start.elapsed().as_millis()
-                        );
+                        ));
                         (Some(res), vec![], false)
                     }
                 }
@@ -1069,13 +1063,13 @@ where
             panic!("SMT queries got 'unknown' and no SAT results.")
         }
 
-        log::info!(
+        self.log_info(format!(
             "    SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
             (Instant::now() - start_time).as_secs_f64(),
             (first_sat.into_inner().unwrap().unwrap_or(start_time) - start_time).as_secs_f64(),
             total_sat,
             total_unsat,
-        );
+        ));
         self.log_info(format!("{} transition CTI(s) found.", ctis.len()));
 
         ctis
@@ -1098,19 +1092,19 @@ where
         let hyp = self.weaken_lemmas.hypotheses(None, vec![]);
         match fo.safe_implication_cex(solver, &hyp, cancelers.clone()) {
             CexResult::UnsatCore(core) => {
-                log::info!(
+                self.log_info(format!(
                     "{:>8}ms. Safety implied with {} formulas in core",
                     start_time.elapsed().as_millis(),
                     core.len()
-                );
+                ));
                 manager.safety_core = Some(Blocked::Consequence(HashSet::from_iter(core)));
                 return Some(true);
             }
             CexResult::Canceled => {
-                log::info!(
+                self.log_info(format!(
                     "{:>8}ms. Safety implication check canceled",
                     start_time.elapsed().as_millis()
-                );
+                ));
                 return None;
             }
             _ => (),
@@ -1118,23 +1112,26 @@ where
 
         match fo.trans_safe_cex(solver, &hyp, cancelers) {
             CexResult::Cex(_) => {
-                log::info!("{:>8}ms. Safety violated", start_time.elapsed().as_millis());
+                self.log_info(format!(
+                    "{:>8}ms. Safety violated",
+                    start_time.elapsed().as_millis()
+                ));
                 Some(false)
             }
             CexResult::UnsatCore(core) => {
-                log::info!(
+                self.log_info(format!(
                     "{:>8}ms. Safety proven using transition with {} formulas in core",
                     start_time.elapsed().as_millis(),
                     core.len()
-                );
+                ));
                 manager.safety_core = Some(Blocked::Transition(HashSet::from_iter(core)));
                 Some(true)
             }
             CexResult::Canceled => {
-                log::info!(
+                self.log_info(format!(
                     "{:>8}ms. Safety transition check canceled",
                     start_time.elapsed().as_millis()
-                );
+                ));
                 None
             }
             _ => panic!("safety check failed"),
