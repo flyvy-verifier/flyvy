@@ -138,7 +138,7 @@ impl Module {
         }))
     }
 
-    /// Given a model from a module which underwent [`convert_non_bool_relations`],
+    /// Given a model from a module which underwent [`Module::convert_non_bool_relations`],
     /// convert it to one with the original non-boolean relations.
     /// It is assumed that the calling [`Module`] (`self`) is a copy of the original, non-converted module.
     pub fn to_non_bool_model(&self, model: &Model) -> Model {
