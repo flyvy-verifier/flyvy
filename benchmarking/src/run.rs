@@ -4,7 +4,6 @@
 //! Library for running and reporting benchmark measurements.
 
 use std::{
-    collections::HashMap,
     ffi::OsStr,
     fs::{self, File},
     io::Write,
@@ -17,11 +16,6 @@ use crate::{
     time_bench::{Time, REPO_ROOT_PATH},
 };
 
-use tabled::settings::{
-    object::{Columns, Object, Rows},
-    width::MinWidth,
-    Alignment, Color, Modify, Style, Width,
-};
 use walkdir::WalkDir;
 
 /// The setup for a benchmark
@@ -33,7 +27,7 @@ use walkdir::WalkDir;
 ///
 /// file is added to the end of the argument list and also becomes a
 /// separate column in the results.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BenchmarkConfig {
     /// Command gives the initial arguments to temporal-verifier (eg, "verify"
     /// or "infer qalpha").
@@ -56,7 +50,7 @@ impl BenchmarkConfig {
 }
 
 /// A benchmark configuration and its resulting measurement.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BenchmarkMeasurement {
     /// The configuration used to run the benchmark.
     pub config: BenchmarkConfig,
@@ -96,81 +90,6 @@ impl BenchmarkMeasurement {
             config,
             measurement,
         }
-    }
-
-    /// Header used for printing table. Make sure this stays in sync with [`Self::row`].
-    fn header() -> Vec<String> {
-        [
-            "command", "file", "outcome", "time s", "cpu util", "solver %", "mem", "params",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
-    }
-
-    fn success(&self) -> &'static str {
-        if self.measurement.timed_out {
-            "timeout"
-        } else if self.measurement.success {
-            ""
-        } else {
-            "fail"
-        }
-    }
-
-    fn row(&self) -> Vec<String> {
-        let file_name = self
-            .config
-            .file
-            .strip_prefix(REPO_ROOT_PATH().join("temporal-verifier/examples"))
-            .unwrap_or(self.config.file.strip_prefix(REPO_ROOT_PATH()).unwrap());
-        let measure = &self.measurement;
-        let real_time = measure.real_time.as_secs_f64();
-        vec![
-            format!("{}", self.config.command.join(" ")),
-            format!("{}", file_name.display()),
-            format!("{}", self.success()),
-            format!("{real_time:0.1}"),
-            format!("{:0.1}×", measure.cpu_utilization()),
-            format!("{:0.0}%", measure.subprocess_utilization() * 100.0),
-            format!("{}MB", measure.max_mem_mb()),
-            format!("{}", self.config.params.join(" ")),
-        ]
-    }
-
-    /// Print a nicely-formatting table from a list of results.
-    pub fn print_table(results: Vec<Self>) {
-        let mut success_counts = HashMap::<&str, usize>::new();
-        for r in &results {
-            let mut key = r.success();
-            if key == "" {
-                key = "ok";
-            }
-            *success_counts.entry(key).or_default() += 1;
-        }
-        let total = results.len();
-
-        let mut rows = vec![Self::header()];
-        rows.extend(results.iter().map(|r| r.row()));
-
-        let mut table = tabled::builder::Builder::from(rows).build();
-        let numerical_columns = Columns::new(3..=6);
-        table
-            .with(Style::rounded())
-            .with(Modify::new(Columns::single(2).not(Rows::first())).with(Color::FG_RED))
-            .with(Modify::new(numerical_columns).with(Alignment::right()))
-            .with(MinWidth::new(150))
-            .with(Width::truncate(300));
-        println!("{table}");
-        println!(
-            "total:    {total}
-ok:       {ok}
-timeout:  {timeout}
-fail:     {fail}",
-            ok = success_counts.get("ok").unwrap_or(&0),
-            timeout = success_counts.get("timeout").unwrap_or(&0),
-            fail = success_counts.get("fail").unwrap_or(&0)
-        );
     }
 
     /// Convert a list of results to newline-separated JSON.

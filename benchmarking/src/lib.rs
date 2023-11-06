@@ -13,5 +13,6 @@
 
 pub mod measurement;
 pub mod qalpha;
+pub mod report;
 pub mod run;
 pub mod time_bench;

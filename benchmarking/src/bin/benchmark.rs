@@ -7,6 +7,7 @@ use std::{path::PathBuf, time::Duration};
 
 use benchmarking::{
     qalpha::qalpha_benchmarks,
+    report,
     run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
@@ -43,6 +44,11 @@ enum Command {
     },
     /// Run invariant inference benchmarks with qalpha.
     Qalpha(#[command(flatten)] QalphaParams),
+    /// Load and report a previously gathered set of results.
+    Report {
+        /// Directory to load from (recursively)
+        dir: PathBuf,
+    },
 }
 
 #[derive(clap::Parser, Debug)]
@@ -124,6 +130,10 @@ impl App {
             }
             Command::Qalpha(params) => {
                 let _results = run_qalpha(params);
+            }
+            Command::Report { dir } => {
+                let results = report::load_results(dir);
+                BenchmarkMeasurement::print_table(results);
             }
         }
     }
