@@ -1,3 +1,6 @@
+// Copyright 2022-2023 VMware, Inc.
+// SPDX-License-Identifier: BSD-2-Clause
+
 //! Parse and report benchmarking measurement results.
 
 use std::fs;
