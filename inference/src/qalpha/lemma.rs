@@ -1008,7 +1008,7 @@ where
                     CexResult::UnsatCore(core) => {
                         self.log_info(format!(
                             "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
-                            start_time.elapsed().as_millis(),
+                            query_start.elapsed().as_millis(),
                             core.len()
                         ));
                         let core = Blocked::Transition(core.iter().cloned().collect());

@@ -361,16 +361,18 @@ where
 
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
         self.try_first
-            .iter()
+            .par_iter()
             .map(|k| (k, &self.set.key_to_term[k]))
-            .chain(if let Some(b) = self.before {
-                self.set.key_to_term.range(..b)
-            } else {
-                self.set.key_to_term.range(..)
+            .find_first(|(_, t)| model.eval(t) == 0)
+            .or_else(|| {
+                let is_after = |k| self.before.as_ref().is_some_and(|b| k >= b);
+                self.set
+                    .key_to_term
+                    .par_iter()
+                    .find_first(|(k, t)| is_after(*k) || model.eval(t) == 0)
+                    .filter(|(k, _)| !is_after(*k))
             })
-            .par_bridge()
-            .find_first(|(_, term)| model.eval(term) == 0)
-            .map(|(k, term)| (*k, term.clone()))
+            .map(|(k, t)| (*k, t.clone()))
     }
 
     fn all_terms(self) -> BTreeMap<Self::Key, Term> {
