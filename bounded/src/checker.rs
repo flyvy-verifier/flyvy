@@ -52,6 +52,9 @@ pub enum CheckerError {
     /// Conflicting parallel guards
     #[error("found two parallel guards that conflict\n{0}\n{1}")]
     ParallelGuards(String, String),
+    /// `STATE_LEN` is too small
+    #[error("STATE_LEN is too small")]
+    StateLenTooSmall,
 
     // smt.rs
     /// See solver::SolveError

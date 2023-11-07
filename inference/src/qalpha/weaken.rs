@@ -241,17 +241,14 @@ where
             extended_assignments
                 .par_iter()
                 .map(|asgn| self.unsat(model, asgn, index + 1))
-                .reduce(
-                    || HashMap::default(),
-                    |mut m1, m2| {
-                        for (k, v2) in m2 {
-                            if !m1.get(&k).is_some_and(|v1| v1.len() <= v2.len()) {
-                                m1.insert(k, v2);
-                            }
+                .reduce(HashMap::default, |mut m1, m2| {
+                    for (k, v2) in m2 {
+                        if !m1.get(&k).is_some_and(|v1| v1.len() <= v2.len()) {
+                            m1.insert(k, v2);
                         }
-                        m1
-                    },
-                )
+                    }
+                    m1
+                })
         } else {
             extended_assignments
                 .par_iter()

@@ -35,7 +35,7 @@ use rayon::prelude::*;
 
 pub mod defaults {
     pub const QUANT_SAME_SORT: usize = 3;
-    pub const SIMULATION_SORT_SIZE: usize = 2;
+    pub const SIMULATION_SORT_SIZE: usize = 3;
     pub const MIN_DISJUNCTS: usize = 2;
     pub const MIN_NON_UNIT_SIZE: usize = 2;
 }
@@ -72,7 +72,7 @@ impl Ord for TraversalDepth {
     }
 }
 
-/// (product of universe sizes, simulation depth)
+/// (sum of universe sizes, simulation depth)
 pub type SamplePriority = (usize, TraversalDepth);
 
 pub fn sample_priority(
@@ -80,9 +80,9 @@ pub fn sample_priority(
     universe: &[usize],
     depth: usize,
 ) -> Option<SamplePriority> {
-    let prod: usize = universe.iter().product();
+    let sum: usize = universe.iter().product();
     if !cfg.depth.is_some_and(|d| depth > d) {
-        Some((prod, if cfg.dfs { Dfs(depth) } else { Bfs(depth) }))
+        Some((sum, if cfg.dfs { Dfs(depth) } else { Bfs(depth) }))
     } else {
         None
     }

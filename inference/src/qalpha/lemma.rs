@@ -1159,6 +1159,7 @@ where
                 self.log_info(format!("Gathering initial states with universe {:?}", &u));
                 self.simulator.initials_new(&u)
             })
+            .sorted_by_key(|model| sample_priority(&self.sim_config, &model.universe, 0).unwrap())
             .collect_vec();
         self.weaken(&models);
         let mut samples = Tasks::new();

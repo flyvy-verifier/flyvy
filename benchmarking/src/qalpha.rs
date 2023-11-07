@@ -27,7 +27,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 0,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv.fly"),
@@ -36,7 +36,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 0,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/learning_switch.fly"),
@@ -45,7 +45,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 0,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("consensus_forall.fly"),
@@ -54,7 +54,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 0,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
@@ -63,7 +63,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_epr.fly"),
@@ -72,7 +72,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_epr.fly"),
@@ -81,7 +81,7 @@ pub fn qalpha_benchmarks(
             cube_size: 1,
             non_unit: 0,
             last_exist: 3,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_ae.fly"),
@@ -90,7 +90,7 @@ pub fn qalpha_benchmarks(
             cube_size: 2,
             non_unit: 1,
             last_exist: 1,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/paxos_epr.fly"),
@@ -99,7 +99,7 @@ pub fn qalpha_benchmarks(
             cube_size: 3,
             non_unit: 1,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/flexible_paxos_epr.fly"),
@@ -108,7 +108,7 @@ pub fn qalpha_benchmarks(
             cube_size: 3,
             non_unit: 1,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/fast_paxos_epr.fly"),
@@ -117,7 +117,7 @@ pub fn qalpha_benchmarks(
             cube_size: 3,
             non_unit: 1,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/firewall.fly"),
@@ -126,7 +126,7 @@ pub fn qalpha_benchmarks(
             cube_size: 2,
             non_unit: 1,
             last_exist: 1,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_db_ae.fly"),
@@ -135,7 +135,7 @@ pub fn qalpha_benchmarks(
             cube_size: 2,
             non_unit: 1,
             last_exist: 1,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
         QalphaConfig {
             file: PathBuf::from("fol/hybrid_reliable_broadcast_cisa.fly"),
@@ -144,7 +144,7 @@ pub fn qalpha_benchmarks(
             cube_size: 4,
             non_unit: 2,
             last_exist: 2,
-            bound: SimulationBound::None,
+            sim: Default::default(),
         },
     ];
 
@@ -184,6 +184,35 @@ impl SimulationBound {
     }
 }
 
+struct SimulationConfig {
+    bound: SimulationBound,
+    depth: Option<usize>,
+    guided: bool,
+}
+
+impl SimulationConfig {
+    fn params(&self) -> Vec<String> {
+        let mut params = self.bound.params();
+        if let Some(d) = self.depth {
+            params.push(format!("--depth={d}"));
+        }
+        if self.guided {
+            params.push("--guided".to_string())
+        }
+        params
+    }
+}
+
+impl Default for SimulationConfig {
+    fn default() -> Self {
+        Self {
+            bound: SimulationBound::None,
+            depth: Some(5),
+            guided: true,
+        }
+    }
+}
+
 /// A configuration for a run of qalpha
 struct QalphaConfig {
     file: PathBuf,
@@ -192,7 +221,7 @@ struct QalphaConfig {
     cube_size: usize,
     non_unit: usize,
     last_exist: usize,
-    bound: SimulationBound,
+    sim: SimulationConfig,
 }
 
 fn command() -> Vec<String> {
@@ -213,7 +242,7 @@ fn sort_counts(spec: &str) -> Vec<SortCount> {
 }
 
 impl QalphaConfig {
-    fn params(&self, bound: &SimulationBound, strategy: &str) -> Vec<String> {
+    fn params(&self, sim: &SimulationConfig, strategy: &str) -> Vec<String> {
         let mut args = vec![];
         for SortCount { sort, count } in &self.quantifiers {
             args.extend(["--quantifier".to_string(), format!("* {sort} {count}")]);
@@ -222,7 +251,7 @@ impl QalphaConfig {
         args.push(format!("--cube-size={}", self.cube_size));
         args.push(format!("--non-unit={}", self.non_unit));
         args.push(format!("--last-exist={}", self.last_exist));
-        args.extend(bound.params());
+        args.extend(sim.params());
         args.push(format!("--strategy={strategy}"));
         args
     }
@@ -238,7 +267,7 @@ impl QalphaConfig {
                 self.full_path("safety"),
                 BenchmarkConfig {
                     command: command(),
-                    params: self.params(&self.bound, "weaken-pd"),
+                    params: self.params(&self.sim, "weaken-pd"),
                     file: example_path(&self.file),
                     time_limit: safety_time_limit,
                 },
@@ -248,7 +277,7 @@ impl QalphaConfig {
                 self.full_path("fixpoint"),
                 BenchmarkConfig {
                     command: command(),
-                    params: self.params(&self.bound, "weaken"),
+                    params: self.params(&self.sim, "weaken"),
                     file: example_path(&self.file),
                     time_limit: fixpoint_time_limit,
                 },

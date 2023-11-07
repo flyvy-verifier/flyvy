@@ -253,6 +253,12 @@ pub fn translate(
     }
 
     let indices = Indices::new(module.signature.clone(), universe, 1);
+    if indices
+        .iter()
+        .any(|(_, rest)| rest.values().any(|(i, _)| i >= &STATE_LEN))
+    {
+        return Err(CheckerError::StateLenTooSmall);
+    }
 
     for sort in &module.signature.sorts {
         if !universe.contains_key(sort) {
