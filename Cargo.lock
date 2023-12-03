@@ -639,6 +639,7 @@ dependencies = [
  "biodivine-lib-bdd",
  "bounded",
  "cadical",
+ "codespan-reporting",
  "fly",
  "fxhash",
  "im",

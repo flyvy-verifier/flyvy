@@ -406,6 +406,12 @@ enum Command {
         #[command(flatten)]
         solver: SolverArgs,
     },
+    FiniteInfer {
+        #[command(flatten)]
+        bounded: BoundedArgs, // depth bound is unused
+        #[command(flatten)]
+        solver: SolverArgs,
+    },
 }
 
 impl InferCommand {
@@ -435,6 +441,10 @@ impl Command {
                 ..
             } => file,
             Command::SmtCheck {
+                bounded: BoundedArgs { file, .. },
+                ..
+            } => file,
+            Command::FiniteInfer {
                 bounded: BoundedArgs { file, .. },
                 ..
             } => file,
@@ -745,6 +755,47 @@ impl App {
                         println!("answer: safe up to depth {depth} for given sort bounds")
                     }
                     Ok(CheckerAnswer::Convergence(())) => unreachable!(),
+                    Err(error) => eprintln!("{error}"),
+                }
+            }
+            Command::FiniteInfer { bounded, solver } => {
+                m.inline_defs();
+                let back_convert_model = m.convert_non_bool_relations();
+                match inference::finite::invariant(
+                    &m,
+                    bounded.get_universe(&m.signature),
+                    &solver.get_solver_conf(&file),
+                    bounded.print_timing.unwrap_or(true),
+                ) {
+                    Ok(inference::finite::FiniteAnswer::BddCounterexample(models)) => {
+                        println!(
+                            "found counterexample:\n{}",
+                            models_to_string(models.iter().map(back_convert_model))
+                        )
+                    }
+                    Ok(inference::finite::FiniteAnswer::InvariantFail(term, err)) => {
+                        eprintln!("invariant wasn't inductive: {term}");
+                        for fail in &err.fails {
+                            use verify::error::*;
+                            match fail.reason {
+                                FailureType::InitInv => println!("not implied by init:"),
+                                FailureType::NotInductive => println!("not inductive:"),
+                                FailureType::Unsupported => println!("unsupported:"),
+                            }
+                            match &fail.error {
+                                QueryError::Sat(models) => {
+                                    println!(
+                                        "{}",
+                                        models_to_string(models.iter().map(&back_convert_model))
+                                    )
+                                }
+                                QueryError::Unknown(message) => eprintln!("{message}"),
+                            }
+                        }
+                    }
+                    Ok(inference::finite::FiniteAnswer::InvariantInferred(term)) => {
+                        println!("found inductive invariant: {term}");
+                    }
                     Err(error) => eprintln!("{error}"),
                 }
             }
