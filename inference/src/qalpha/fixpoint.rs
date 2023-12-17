@@ -35,7 +35,7 @@ use rayon::prelude::*;
 
 pub mod defaults {
     pub const QUANT_SAME_SORT: usize = 3;
-    pub const SIMULATION_SORT_SIZE: usize = 3;
+    pub const SIMULATION_SORT_SIZE: usize = 2;
     pub const MIN_DISJUNCTS: usize = 2;
     pub const MIN_NON_UNIT_SIZE: usize = 2;
 }

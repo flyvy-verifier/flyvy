@@ -230,11 +230,6 @@ struct InferenceConfigArgs {
     fallback: bool,
 
     #[arg(long)]
-    /// Do not search gradually for the quantified search space needed to find an invariant,
-    /// and instead begin with the maximal domain matching the specification.
-    no_search: bool,
-
-    #[arg(long)]
     /// Do not try to decompose the transition relation disjunctively
     no_disj: bool,
 
