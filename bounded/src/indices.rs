@@ -28,6 +28,8 @@ pub struct Indices {
     pub num_mutable_copies: usize,
     /// The number of indices in one copy of the mutable relations
     pub num_mutables: usize,
+    /// The total number of indices that are used in a state
+    pub num_indices: usize,
     /// The total number of indices that are tracked
     pub num_vars: usize,
     /// Data used by the BDD library to build new BDDs
@@ -86,6 +88,7 @@ impl Indices {
             universe: universe.clone(),
             num_mutable_copies,
             num_mutables,
+            num_indices: num_vars,
             num_vars,
             bdd_context,
             bdd_variables,

@@ -14,7 +14,7 @@ use std::time::Instant;
 use fly::semantics::Model;
 use fly::syntax::{Module, Signature, Term};
 
-use bounded::simulator::MultiSimulator;
+use bounded::simulator::{MultiSimulator, SatSimulator};
 
 use crate::{
     basics::{CexResult, FOModule, QuantifierFreeConfig, SimulationConfig},
@@ -619,7 +619,7 @@ where
     /// The time of creation of the frame (for logging purposes)
     start_time: Instant,
     /// The simulator to run simulations from reachable states or previous samples
-    simulator: MultiSimulator<'a>,
+    simulator: MultiSimulator<'a, SatSimulator>,
     /// Whether the search for the invariant is property-directed
     property_directed: bool,
 }

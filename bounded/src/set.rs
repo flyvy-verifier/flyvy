@@ -51,7 +51,7 @@ pub fn check(
 }
 
 /// Compile-time upper bound on the bounded universe size.
-const STATE_LEN: usize = 128;
+const STATE_LEN: usize = 256;
 
 /// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the
@@ -75,21 +75,23 @@ impl PartialEq for BoundedState {
 }
 
 impl BoundedState {
-    const ZERO: BoundedState = BoundedState(BitArray::ZERO);
+    /// A bounded state with all zeros.
+    pub const ZERO: BoundedState = BoundedState(BitArray::ZERO);
 
     fn get(&self, index: usize) -> bool {
         assert!(index < STATE_LEN, "STATE_LEN is too small");
         self.0[index]
     }
 
-    fn set(&mut self, index: usize, value: bool) {
+    /// Set the bit at the given index of the bounded state to the given value.
+    pub fn set(&mut self, index: usize, value: bool) {
         assert!(index < STATE_LEN, "STATE_LEN is too small");
         self.0.set(index, value);
     }
 
     /// Convert this [`BoundedState`] into a flyvy [`Model`].
-    pub fn to_model(&self, indices: &Indices) -> Model {
-        indices.model(0, |i| self.get(i) as Element)
+    pub fn to_model(&self, indices: &Indices, primes: usize) -> Model {
+        indices.model(primes, |i| self.get(i) as Element)
     }
 
     /// Convert this flyvy [`Model`] into a [`BoundedState`].
