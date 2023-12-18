@@ -303,7 +303,7 @@ impl SmtProc {
     }
 
     /// A marker for determining end of solver response.
-    const DONE: &str = "<<DONE>>";
+    const DONE: &'static str = "<<DONE>>";
 
     fn write_stdin(&mut self, line: &str) -> std::result::Result<(), io::Error> {
         writeln!(self.stdin, "{line}")?;
