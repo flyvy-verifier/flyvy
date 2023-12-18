@@ -360,13 +360,13 @@ fn translate<'a>(
         let guards_with_no_updates: Vec<_> = trs[i]
             .guards
             .iter()
-            .cloned()
-            .filter(|guard| {
+            .filter(|&guard| {
                 !trs[i]
                     .updates
                     .iter()
                     .any(|update| update.index == guard.index)
             })
+            .cloned()
             .collect();
         let true_or_false_updates: Vec<_> = trs[i]
             .updates
