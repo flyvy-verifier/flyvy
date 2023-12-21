@@ -478,6 +478,29 @@ impl Term {
         let body = body.into();
         Self::quantify(Quantifier::Exists, binders, body)
     }
+
+    /// Return whether the sort of the term is [`Sort::Bool`] in the given signature.
+    /// Variables are considered non-bool.
+    pub fn is_bool(&self, signature: &Signature) -> bool {
+        match self {
+            Term::Literal(_)
+            | Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually, _)
+            | Term::BinOp(_, _, _)
+            | Term::NAryOp(_, _)
+            | Term::Quantified { .. } => true,
+            Term::Id(name) | Term::App(name, _, _) => {
+                signature.contains_relation(&name)
+                    && matches!(signature.relation_decl(&name).sort, Sort::Bool)
+            }
+            Term::UnaryOp(UOp::Prime | UOp::Next | UOp::Previous, t) => t.is_bool(signature),
+            Term::Ite { then, else_, .. } => {
+                let then_is_bool = then.is_bool(signature);
+                let else_is_bool = else_.is_bool(signature);
+                assert_eq!(then_is_bool, else_is_bool);
+                then_is_bool
+            }
+        }
+    }
 }
 
 /// Leftovers that should be eliminated
