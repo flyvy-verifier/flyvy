@@ -315,7 +315,7 @@ fn get_const_sort(sig: &Signature, term: &Term) -> Sort {
 
 fn is_var(sig: &Signature, term: &Term) -> bool {
     match term {
-        Term::Id(name) => !sig.contains_relation(&name),
+        Term::Id(name) => !sig.contains_relation(name),
         _ => false,
     }
 }
@@ -425,7 +425,7 @@ fn flatten_term_rec(
             binders,
             body,
         } => Term::Quantified {
-            quantifier: quantifier.clone(),
+            quantifier: *quantifier,
             binders: binders.clone(),
             body: Box::new(flatten_term_rec(sig, body, subterm_vars, false)),
         },

@@ -261,7 +261,7 @@ impl Simulator for SatSimulator {
         }
 
         while solver.solve().expect("simulations solver failed") {
-            let double_state = get_state(&self.double_indices, &mut solver);
+            let double_state = get_state(&self.double_indices, &solver);
             let model = state_to_model(&self.double_indices, &double_state, 1);
             let single_state = model_to_state(&self.single_indices, &model);
             block_model(&self.double_indices, &mut solver, &model, 1);
@@ -284,7 +284,7 @@ impl Simulator for SatSimulator {
 
         let mut states = vec![];
         while solver.solve().expect("simulations solver failed") {
-            let state = get_state(&self.single_indices, &mut solver);
+            let state = get_state(&self.single_indices, &solver);
             let model = state_to_model(&self.single_indices, &state, 0);
             block_model(&self.single_indices, &mut solver, &model, 0);
             states.push((state, model));

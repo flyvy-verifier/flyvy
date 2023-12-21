@@ -489,8 +489,8 @@ impl Term {
             | Term::NAryOp(_, _)
             | Term::Quantified { .. } => true,
             Term::Id(name) | Term::App(name, _, _) => {
-                signature.contains_relation(&name)
-                    && matches!(signature.relation_decl(&name).sort, Sort::Bool)
+                signature.contains_relation(name)
+                    && matches!(signature.relation_decl(name).sort, Sort::Bool)
             }
             Term::UnaryOp(UOp::Prime | UOp::Next | UOp::Previous, t) => t.is_bool(signature),
             Term::Ite { then, else_, .. } => {

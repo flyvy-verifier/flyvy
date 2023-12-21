@@ -76,7 +76,7 @@ pub fn qalpha_benchmarks(
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_wo_decide.fly"),
-            quantifiers: sort_counts("node=3 value=1"),
+            quantifiers: sort_counts("node=3"),
             cubes: 3,
             cube_size: 1,
             non_unit: 0,

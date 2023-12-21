@@ -238,41 +238,33 @@ where
         );
 
         if self.prefix.quantifiers[index] == Quantifier::Forall {
-            extended_assignments
-                .par_iter()
-                .map(|asgn| self.unsat(model, asgn, index + 1))
-                .reduce(HashMap::default, |mut m1, m2| {
-                    for (k, v2) in m2 {
-                        if !m1.get(&k).is_some_and(|v1| v1.len() <= v2.len()) {
-                            m1.insert(k, v2);
-                        }
+            let mut unsat: HashMap<usize, HashSet<im::HashSet<Literal>>> = HashMap::default();
+            for asgn in &extended_assignments {
+                for (i, structures) in self.unsat(model, asgn, index + 1) {
+                    if !unsat.get(&i).is_some_and(|st| st.len() <= structures.len()) {
+                        unsat.insert(i, structures);
                     }
-                    m1
-                })
+                }
+            }
+
+            unsat
         } else {
-            extended_assignments
-                .par_iter()
-                .map(|asgn| Some(self.unsat(model, asgn, index + 1)))
-                .reduce(
-                    || None,
-                    |x, y| match (x, y) {
-                        (Some(m1), Some(m2)) => {
-                            let (mut shorter, mut longer) = if m1.len() <= m2.len() {
-                                (m1, m2)
-                            } else {
-                                (m2, m1)
-                            };
-                            shorter.retain(|i, _| longer.contains_key(i));
-                            shorter
-                                .iter_mut()
-                                .for_each(|(k, v)| v.extend(longer.remove(k).unwrap()));
-                            Some(shorter)
-                        }
-                        (Some(m), None) | (None, Some(m)) => Some(m),
-                        (None, None) => None,
-                    },
-                )
-                .unwrap()
+            let mut unsat: Option<HashMap<usize, HashSet<im::HashSet<Literal>>>> = None;
+            for asgn in &extended_assignments {
+                let mut new_unsat = self.unsat(model, asgn, index + 1);
+                if let Some(mut other_unsat) = unsat {
+                    if new_unsat.len() > other_unsat.len() {
+                        (new_unsat, other_unsat) = (other_unsat, new_unsat);
+                    }
+                    new_unsat.retain(|i, _| other_unsat.contains_key(i));
+                    for (i, structures) in &mut new_unsat {
+                        structures.extend(other_unsat[i].iter().cloned());
+                    }
+                }
+                unsat = Some(new_unsat);
+            }
+
+            unsat.unwrap()
         }
     }
 
