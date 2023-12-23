@@ -84,7 +84,7 @@ pub fn qalpha_benchmarks(
             sim: Default::default(),
         },
         QalphaConfig {
-            file: PathBuf::from("consensus_forall.fly"),
+            file: PathBuf::from("fol/consensus_forall.fly"),
             quantifiers: sort_counts("node=3 value=1"),
             cubes: 3,
             cube_size: 1,
