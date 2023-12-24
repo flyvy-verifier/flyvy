@@ -743,9 +743,8 @@ where
                 let found = res.is_some();
                 return (res, vec![], found);
             },
-            paralllelism(),
         )
-        .run();
+        .run(paralllelism());
 
         let mut ctis = vec![];
         let mut manager = self.lemmas.write().unwrap();
@@ -822,27 +821,24 @@ where
     ) -> Vec<Model> {
         self.log_info("Simulating traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
-        let results = ParallelWorker::new(
-            samples,
-            |(_, t_depth), model| {
-                let unsat = !self.weaken_lemmas.unsat(model).is_empty();
+        let results = ParallelWorker::new(samples, |(_, t_depth), model| {
+            let unsat = !self.weaken_lemmas.unsat(model).is_empty();
 
-                let depth = if unsat && self.sim_config.guided {
-                    0
-                } else {
-                    t_depth.depth()
-                };
+            let depth = if unsat && self.sim_config.guided {
+                0
+            } else {
+                t_depth.depth()
+            };
 
-                let cancel = if unsat {
-                    canceler.cancel();
-                    true
-                } else {
-                    canceler.is_canceled()
-                };
+            let cancel = if unsat {
+                canceler.cancel();
+                true
+            } else {
+                canceler.is_canceled()
+            };
 
-                let new_samples = if let Some(p) =
-                    sample_priority(&self.sim_config, &model.universe, depth + 1)
-                {
+            let new_samples =
+                if let Some(p) = sample_priority(&self.sim_config, &model.universe, depth + 1) {
                     let sim = self
                         .simulator
                         .simulate_new(model)
@@ -855,11 +851,9 @@ where
                     vec![]
                 };
 
-                (unsat, new_samples, cancel)
-            },
-            paralllelism(),
-        )
-        .run();
+            (unsat, new_samples, cancel)
+        })
+        .run(paralllelism());
 
         let unsat = results
             .into_iter()
@@ -1033,9 +1027,8 @@ where
                     }
                 }
             },
-            paralllelism(),
         )
-        .run();
+        .run(paralllelism());
 
         cancelers.cancel();
 

@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::sync::Mutex;
 
-use std::thread::{self, Scope};
+use std::thread;
+use std::time::Duration;
 
 /// A set of tasks for parallel execution, ordered by priority.
 pub struct Tasks<P: Ord + Clone, T: Eq + Hash> {
@@ -85,9 +86,7 @@ where
     running: HashSet<T>,
     /// Finished tasks and their result.
     results: HashMap<T, R>,
-    /// Number of unused threads available for processing.
-    max_workers: usize,
-    /// Number of threads currently processing tasks.
+    /// Number of tasks currently being processed.
     processing: usize,
     /// Whether this batch of tasks has been canceled.
     cancel: bool,
@@ -101,7 +100,7 @@ where
     /// Gets a highest-priority task that wasn't seen yet, if processing power is available.
     /// This also increments the processing count.
     fn get_task(&mut self) -> Option<(P, T)> {
-        if !self.cancel && self.processing < self.max_workers {
+        if !self.cancel {
             while let Some((p, t)) = self.tasks.pop() {
                 if self.unseen(&t) {
                     self.processing += 1;
@@ -116,7 +115,7 @@ where
 
     /// Handle a result to a task.
     /// This also deducts one from the processing count, and returns the number of workers that should be launched next.
-    fn handle_result(&mut self, task: T, res: TaskResult<P, T, R>) -> usize {
+    fn handle_result(&mut self, task: T, res: TaskResult<P, T, R>) {
         self.processing -= 1;
         self.running.remove(&task);
         let (result, new_tasks, cancel) = res;
@@ -126,12 +125,6 @@ where
         }
 
         self.cancel |= cancel;
-
-        if self.cancel || self.tasks.is_empty() {
-            0
-        } else {
-            (self.max_workers - self.processing).min(self.tasks.len())
-        }
     }
 
     /// Check whether the given task has been seen (started or executed) yet.
@@ -172,12 +165,11 @@ where
     F: Fn(&P, &T) -> TaskResult<P, T, R> + Send + Sync,
 {
     /// Create a new worker with the given tasks and work closure.
-    pub fn new(tasks: &'a mut Tasks<P, T>, work: F, max_workers: usize) -> Self {
+    pub fn new(tasks: &'a mut Tasks<P, T>, work: F) -> Self {
         let exec = Mutex::new(ParallelExecution {
             tasks,
             running: HashSet::default(),
             results: HashMap::default(),
-            max_workers,
             processing: 0,
             cancel: false,
         });
@@ -186,50 +178,38 @@ where
     }
 
     /// Run the worker and perform tasks in parallel.
-    pub fn run(self) -> HashMap<T, R> {
-        let num_workers;
-        {
-            let exec = self.exec.lock().unwrap();
-            assert_eq!(exec.processing, 0);
-            num_workers = exec.max_workers.min(exec.tasks.len());
-        };
-
-        thread::scope(|s| self.launch_workers(num_workers, s));
+    pub fn run(self, num_workers: usize) -> HashMap<T, R> {
+        thread::scope(|s| {
+            for _ in 0..num_workers {
+                s.spawn(|| self.worker());
+            }
+        });
 
         let exec = self.exec.into_inner().unwrap();
         exec.results
     }
 
     /// Run a single-threaded worker which gets the next task and performs it.
-    fn worker<'b>(&'b self, s: &'b Scope<'b, '_>) {
+    fn worker(&self) {
         loop {
             let task;
             {
                 let mut exec = self.exec.lock().unwrap();
                 task = exec.get_task();
-            }
-
-            if task.is_none() {
-                return;
-            }
-
-            let (p, t) = task.unwrap();
-            let res: TaskResult<P, T, R> = (self.work)(&p, &t);
-
-            {
-                let mut exec = self.exec.lock().unwrap();
-                match exec.handle_result(t, res) {
-                    0 => return,
-                    n => self.launch_workers(n - 1, s),
+                if task.is_none() && (exec.cancel || exec.processing == 0) {
+                    return;
                 }
             }
-        }
-    }
 
-    /// Launch the given number of worker threads in the given [`Scope`].
-    fn launch_workers<'b>(&'b self, n: usize, s: &'b Scope<'b, '_>) {
-        for _ in 0..n {
-            s.spawn(|| self.worker(s));
+            if let Some((p, t)) = task {
+                let res: TaskResult<P, T, R> = (self.work)(&p, &t);
+                {
+                    let mut exec = self.exec.lock().unwrap();
+                    exec.handle_result(t, res);
+                }
+            } else {
+                thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 }
