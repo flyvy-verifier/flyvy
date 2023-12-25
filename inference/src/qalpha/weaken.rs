@@ -516,9 +516,13 @@ where
 
         let mut removed = vec![];
         let mut added = vec![];
+        let mut total_removed = 0;
+        let mut total_added = 0;
         let mut stats = WeakenStats::ZERO;
         let mut lang_times = vec![];
         for (i, (r, a, st), lang_time) in &results {
+            total_removed += r.len();
+            total_added += a.len();
             stats += *st;
             lang_times.push(lang_time.as_millis());
             removed.extend(r.iter().filter_map(|j| {
@@ -543,7 +547,7 @@ where
 
         if !removed.is_empty() {
             log::info!(
-                "[{}] Weakened: {} removed, {} added, total_time={}ms ({})",
+                "[{}] Weakened: removed={}({total_removed}), added={}({total_added}), total_time={}ms ({})",
                 self.len(),
                 removed.len(),
                 added.len(),
@@ -551,7 +555,7 @@ where
                 stats.to_string()
             );
             lang_times.sort_by(|t1, t2| t2.cmp(t1));
-            log::info!("        Time per language (ms, sorted): {:?}", lang_times);
+            log::info!("        Time per language, ms, sorted: {:?}", lang_times);
         }
 
         (removed, added)
