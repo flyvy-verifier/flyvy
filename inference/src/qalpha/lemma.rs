@@ -766,13 +766,7 @@ where
     pub fn weaken(&mut self, models: &[Model]) -> bool {
         let removed = models
             .iter()
-            .flat_map(|model| {
-                let rem = self.weaken_lemmas.weaken(model).0;
-                if !rem.is_empty() {
-                    self.log_info("Weakened.");
-                }
-                rem
-            })
+            .flat_map(|model| self.weaken_lemmas.weaken(model).0)
             .collect_vec();
         if removed.is_empty() {
             false
@@ -1154,6 +1148,7 @@ where
             })
             .sorted_by_key(|model| sample_priority(&self.sim_config, &model.universe, 0).unwrap())
             .collect_vec();
+        self.log_info(format!("Gathered {} initial states.", models.len()));
         self.weaken(&models);
         let mut samples = Tasks::new();
         for model in models {

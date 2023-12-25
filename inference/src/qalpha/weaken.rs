@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
+use std::ops::AddAssign;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::hashmap::{HashMap, HashSet};
 
@@ -26,6 +28,14 @@ use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Signature, Term},
 };
+
+macro_rules! timed {
+    ($blk:block) => {{
+        let start = Instant::now();
+        $blk
+        start.elapsed()
+    }};
+}
 
 pub type Domain<L> = (Arc<QuantifierPrefix>, Arc<L>, Arc<Literals>);
 
@@ -84,6 +94,43 @@ pub trait LemmaQf: Clone + Sync + Send + Debug {
     fn contains(&self, other: &Self) -> bool;
 
     fn body_from_clause(clause: Clause) -> Self::Body;
+}
+
+#[derive(Clone, Copy)]
+struct WeakenStats {
+    /// Time elapsed while finding unsatified formulas
+    unsat_time: Duration,
+    /// Time elapsed during formula weakening operations
+    weaken_time: Duration,
+    /// Time elapsed while updating data sturctures
+    update_time: Duration,
+}
+
+impl WeakenStats {
+    const ZERO: Self = Self {
+        unsat_time: Duration::ZERO,
+        weaken_time: Duration::ZERO,
+        update_time: Duration::ZERO,
+    };
+}
+
+impl AddAssign for WeakenStats {
+    fn add_assign(&mut self, rhs: Self) {
+        self.unsat_time += rhs.unsat_time;
+        self.weaken_time += rhs.weaken_time;
+        self.update_time += rhs.update_time;
+    }
+}
+
+impl ToString for WeakenStats {
+    fn to_string(&self) -> String {
+        format!(
+            "unsat={}ms, weaken={}ms, update={}ms",
+            self.unsat_time.as_millis(),
+            self.weaken_time.as_millis(),
+            self.update_time.as_millis(),
+        )
+    }
 }
 
 /// Manages lemmas with a shared quantifier-prefix.
@@ -269,7 +316,13 @@ where
     }
 
     /// Weakens and returns (IDs of removed lemmas, IDs of added lemmas).
-    pub fn weaken(&mut self, model: &Model) -> (Vec<usize>, Vec<usize>) {
+    fn weaken(&mut self, model: &Model) -> (Vec<usize>, Vec<usize>, WeakenStats) {
+        let mut stats = WeakenStats::ZERO;
+        let mut unsat;
+        let mut to_weaken;
+        let mut weakened: HashSet<E>;
+        let mut weakened_min: PrefixLemmaSet<E, L>;
+
         let get_to_weaken =
             |set: &mut Self, unsat: HashMap<usize, HashSet<im::HashSet<Literal>>>| {
                 unsat
@@ -283,31 +336,48 @@ where
                     .collect_vec()
             };
 
-        let mut unsat = self.unsat(model, &Assignment::new(), 0);
+        stats.unsat_time += timed!({
+            unsat = self.unsat(model, &Assignment::new(), 0);
+        });
+
         let removed = unsat.keys().cloned().collect();
         let mut added = vec![];
-        let mut to_weaken = get_to_weaken(self, unsat);
-        while !to_weaken.is_empty() {
-            let weakened: HashSet<E> = to_weaken
-                .into_par_iter()
-                .flat_map_iter(|(body, structure)| {
-                    self.lemma_qf
-                        .weaken(body, &structure, |b| self.subsumes(b, 0))
-                })
-                .collect();
-            let mut weakened_min = self.clone_empty();
-            for new_body in weakened {
-                weakened_min.insert_minimized(new_body, 0);
-            }
 
-            unsat = weakened_min.unsat(model, &Assignment::new(), 0);
-            to_weaken = get_to_weaken(&mut weakened_min, unsat);
-            for (_, body) in weakened_min.by_id {
-                added.push(self.insert(body));
-            }
+        stats.update_time += timed!({
+            to_weaken = get_to_weaken(self, unsat);
+        });
+
+        while !to_weaken.is_empty() {
+            stats.weaken_time += timed!({
+                weakened = to_weaken
+                    .into_par_iter()
+                    .flat_map_iter(|(body, structure)| {
+                        self.lemma_qf
+                            .weaken(body, &structure, |b| self.subsumes(b, 0))
+                    })
+                    .collect();
+            });
+
+            stats.update_time += timed!({
+                weakened_min = self.clone_empty();
+                for new_body in weakened {
+                    weakened_min.insert_minimized(new_body, 0);
+                }
+            });
+
+            stats.unsat_time += timed!({
+                unsat = weakened_min.unsat(model, &Assignment::new(), 0);
+            });
+
+            stats.update_time += timed!({
+                to_weaken = get_to_weaken(&mut weakened_min, unsat);
+                for (_, body) in weakened_min.by_id {
+                    added.push(self.insert(body));
+                }
+            });
         }
 
-        (removed, added)
+        (removed, added, stats)
     }
 }
 
@@ -430,19 +500,27 @@ where
     }
 
     pub fn weaken(&mut self, model: &Model) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
+        let start_time = Instant::now();
         let results: Vec<_> = self
             .sets
             .par_iter_mut()
             .enumerate()
             .map(|(i, set)| {
-                let (removed, added) = set.weaken(model);
-                (i, removed, added)
+                let weakened;
+                let lang_time = timed!({
+                    weakened = set.weaken(model);
+                });
+                (i, weakened, lang_time)
             })
             .collect();
 
         let mut removed = vec![];
         let mut added = vec![];
-        for (i, r, a) in &results {
+        let mut stats = WeakenStats::ZERO;
+        let mut lang_times = vec![];
+        for (i, (r, a, st), lang_time) in &results {
+            stats += *st;
+            lang_times.push(lang_time.as_millis());
             removed.extend(r.iter().filter_map(|j| {
                 let key = self.id_to_key.remove(&LemmaId(*i, *j));
                 if let Some(k) = &key {
@@ -461,6 +539,19 @@ where
                     None
                 }
             }));
+        }
+
+        if !removed.is_empty() {
+            log::info!(
+                "[{}] Weakened: {} removed, {} added, total_time={}ms ({})",
+                self.len(),
+                removed.len(),
+                added.len(),
+                start_time.elapsed().as_millis(),
+                stats.to_string()
+            );
+            lang_times.sort_by(|t1, t2| t2.cmp(t1));
+            log::info!("        Time per language (ms, sorted): {:?}", lang_times);
         }
 
         (removed, added)

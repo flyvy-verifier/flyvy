@@ -123,7 +123,6 @@ pub struct MultiSimulator<'a, S: Simulator> {
     bool_module: Module,
     dest_bool_module: DestructuredModule,
     sims: RwLock<HashMap<Vec<usize>, S>>,
-    total: Mutex<usize>,
 }
 
 impl Simulator for SetSimulator {
@@ -317,7 +316,6 @@ impl<'a, S: Simulator> MultiSimulator<'a, S> {
             bool_module,
             dest_bool_module,
             sims: RwLock::new(HashMap::new()),
-            total: Mutex::new(0),
         }
     }
 
@@ -356,24 +354,13 @@ impl<'a, S: Simulator> MultiSimulator<'a, S> {
     /// Simulate all transitions from the given model and return those that weren't see before.
     pub fn simulate_new(&self, model: &Model) -> Vec<Model> {
         if self.create_sim(&model.universe).is_ok() {
-            let res: Vec<Model> = {
-                let sims = self.sims.read().unwrap();
-                let sim = &sims[&model.universe];
-                let bool_model = self.bool_module.to_bool_model(model);
-                sim.simulate_new(&bool_model)
-                    .iter()
-                    .map(|bool_m| self.module.to_non_bool_model(bool_m))
-                    .collect()
-            };
-            {
-                let mut total = self.total.lock().unwrap();
-                let prev = *total;
-                *total += res.len();
-                if prev / 100 != *total / 100 {
-                    log::debug!("Total simulated states = {total}");
-                }
-            }
-            res
+            let sims = self.sims.read().unwrap();
+            let sim = &sims[&model.universe];
+            let bool_model = self.bool_module.to_bool_model(model);
+            sim.simulate_new(&bool_model)
+                .iter()
+                .map(|bool_m| self.module.to_non_bool_model(bool_m))
+                .collect()
         } else {
             vec![]
         }
@@ -397,23 +384,12 @@ impl<'a, S: Simulator> MultiSimulator<'a, S> {
     /// Return all initial states of the given universe size that weren't see before.
     pub fn initials_new(&self, universe: &Vec<usize>) -> Vec<Model> {
         if self.create_sim(universe).is_ok() {
-            let res: Vec<Model> = {
-                let sims = self.sims.read().unwrap();
-                let sim = &sims[universe];
-                sim.initials_new()
-                    .iter()
-                    .map(|bool_m| self.module.to_non_bool_model(bool_m))
-                    .collect()
-            };
-            {
-                let mut total = self.total.lock().unwrap();
-                let prev = *total;
-                *total += res.len();
-                if prev / 100 != *total / 100 {
-                    log::debug!("Total simulated states = {total}");
-                }
-            }
-            res
+            let sims = self.sims.read().unwrap();
+            let sim = &sims[universe];
+            sim.initials_new()
+                .iter()
+                .map(|bool_m| self.module.to_non_bool_model(bool_m))
+                .collect()
         } else {
             vec![]
         }
