@@ -17,453 +17,16 @@ use fly::syntax::{Module, Signature, Term};
 use bounded::simulator::{MultiSimulator, SatSimulator};
 
 use crate::{
-    basics::{CexResult, FOModule, QuantifierFreeConfig, SimulationConfig},
+    basics::{CexResult, FOModule, SimulationConfig},
     hashmap::{HashMap, HashSet},
     parallel::Tasks,
     parallel::{paralllelism, ParallelWorker},
     qalpha::{
-        atoms::Literals,
-        baseline::Baseline,
-        fixpoint::{defaults, sample_priority, SamplePriority},
-        quant::QuantifierPrefix,
-        subsume::{Clause, Cnf, Dnf, Element, PDnf, Structure},
-        weaken::{Domain, LemmaKey, LemmaQf, LemmaQfConfig, WeakenLemmaSet},
+        fixpoint::{sample_priority, SamplePriority},
+        language::BoundedLanguage,
+        lemmas::{LemmaKey, WeakenLemmaSet},
     },
 };
-
-fn choose(n: usize, k: usize) -> usize {
-    if n < k {
-        0
-    } else {
-        ((n - k + 1)..=n).product::<usize>() / (1..=k).product::<usize>()
-    }
-}
-
-fn choose_combinations(n: usize, k: usize, count: usize) -> usize {
-    let combinations: usize = (0..=k).map(|i| choose(n, i)).sum();
-    choose(combinations, count)
-}
-
-#[derive(Clone, Debug)]
-pub struct LemmaCnfConfig {
-    clauses: usize,
-    clause_size: usize,
-}
-
-impl LemmaQfConfig for LemmaCnfConfig {
-    fn new(cfg: &QuantifierFreeConfig) -> Self {
-        Self {
-            clauses: cfg
-                .clauses
-                .expect("Maximum number of clauses not provided."),
-            clause_size: cfg
-                .clause_size
-                .expect("Maximum number of literals per clause not provided."),
-        }
-    }
-
-    fn is_universal(&self) -> bool {
-        self.clauses <= 1
-    }
-
-    fn as_universal(&self) -> Self {
-        return Self {
-            clauses: 1,
-            clause_size: self.clause_size,
-        };
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        (1..=self.clauses)
-            .flat_map(|clauses| {
-                (defaults::MIN_DISJUNCTS..=self.clause_size).map(move |clause_size| Self {
-                    clauses,
-                    clause_size,
-                })
-            })
-            .collect_vec()
-    }
-}
-
-#[derive(Clone)]
-pub struct LemmaCnf {
-    cfg: Arc<LemmaCnfConfig>,
-    literals: Arc<Literals>,
-}
-
-impl Debug for LemmaCnf {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.cfg.fmt(f)
-    }
-}
-
-impl LemmaQf for LemmaCnf {
-    type Body = Cnf;
-    type Config = LemmaCnfConfig;
-
-    fn new(
-        mut cfg: Arc<Self::Config>,
-        literals: Arc<Literals>,
-        prefix: Arc<QuantifierPrefix>,
-    ) -> Self {
-        if prefix.is_universal() {
-            cfg = Arc::new(cfg.as_universal());
-        }
-
-        Self { cfg, literals }
-    }
-
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
-    where
-        I: Fn(&Self::Body) -> bool,
-    {
-        let cfg = (
-            self.cfg.clauses,
-            (self.cfg.clause_size, self.literals.clone()),
-        );
-        body.weaken(&cfg, structure)
-            .into_iter()
-            .filter(|cnf| !ignore(cnf))
-            .collect()
-    }
-
-    fn approx_space_size(&self) -> usize {
-        choose_combinations(self.literals.len(), self.cfg.clause_size, self.cfg.clauses)
-    }
-
-    fn contains(&self, other: &Self) -> bool {
-        self.cfg.clauses >= other.cfg.clauses
-            && self.cfg.clause_size >= other.cfg.clause_size
-            && self.literals.is_superset(&other.literals)
-    }
-
-    fn body_from_clause(clause: Clause) -> Self::Body {
-        clause.to_cnf()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct LemmaDnfConfig {
-    cubes: usize,
-    cube_size: usize,
-}
-
-impl LemmaQfConfig for LemmaDnfConfig {
-    fn new(cfg: &QuantifierFreeConfig) -> Self {
-        Self {
-            cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
-            cube_size: cfg.cube_size.expect("Cube size not provided."),
-        }
-    }
-
-    fn is_universal(&self) -> bool {
-        self.cube_size <= 1
-    }
-
-    fn as_universal(&self) -> Self {
-        Self {
-            cubes: self.cubes,
-            cube_size: 1,
-        }
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        (defaults::MIN_DISJUNCTS..=self.cubes)
-            .flat_map(|cubes| (1..=self.cube_size).map(move |cube_size| Self { cubes, cube_size }))
-            .collect_vec()
-    }
-}
-
-#[derive(Clone)]
-pub struct LemmaDnf {
-    cfg: Arc<LemmaDnfConfig>,
-    literals: Arc<Literals>,
-}
-
-impl Debug for LemmaDnf {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.cfg.fmt(f)
-    }
-}
-
-impl LemmaQf for LemmaDnf {
-    type Body = Dnf;
-    type Config = LemmaDnfConfig;
-
-    fn new(
-        mut cfg: Arc<Self::Config>,
-        literals: Arc<Literals>,
-        prefix: Arc<QuantifierPrefix>,
-    ) -> Self {
-        if prefix.is_universal() {
-            cfg = Arc::new(cfg.as_universal());
-        };
-
-        Self { cfg, literals }
-    }
-
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
-    where
-        I: Fn(&Self::Body) -> bool,
-    {
-        let cfg = (self.cfg.cubes, (self.cfg.cube_size, self.literals.clone()));
-        body.weaken(&cfg, structure)
-            .into_iter()
-            .filter(|dnf| !ignore(dnf))
-            .collect()
-    }
-
-    fn approx_space_size(&self) -> usize {
-        choose_combinations(self.literals.len(), self.cfg.cube_size, self.cfg.cubes)
-    }
-
-    fn contains(&self, other: &Self) -> bool {
-        self.cfg.cubes >= other.cfg.cubes
-            && self.cfg.cube_size >= other.cfg.cube_size
-            && self.literals.is_superset(&other.literals)
-    }
-
-    fn body_from_clause(clause: Clause) -> Self::Body {
-        clause.to_dnf()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct LemmaPDnfConfig {
-    cubes: usize,
-    cube_size: usize,
-    non_unit: usize,
-}
-
-impl LemmaQfConfig for LemmaPDnfConfig {
-    fn new(cfg: &QuantifierFreeConfig) -> Self {
-        Self {
-            cubes: cfg.cubes.expect("Maximum number of cubes not provided."),
-            cube_size: cfg
-                .cube_size
-                .expect("Maximum size of non-unit cubes not provided."),
-            non_unit: cfg
-                .non_unit
-                .expect("Number of pDNF non-unit cubes not provided."),
-        }
-    }
-
-    fn is_universal(&self) -> bool {
-        self.non_unit == 0
-    }
-
-    fn as_universal(&self) -> Self {
-        Self {
-            cubes: self.cubes,
-            cube_size: 1,
-            non_unit: 0,
-        }
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        (0..=self.non_unit)
-            .flat_map(|non_unit| {
-                (defaults::MIN_DISJUNCTS.max(non_unit)..=self.cubes).flat_map(move |cubes| {
-                    let min_cube_size = match non_unit {
-                        0 => 1,
-                        _ => defaults::MIN_NON_UNIT_SIZE,
-                    };
-                    let max_cube_size = if non_unit == 0 { 1 } else { self.cube_size };
-                    (min_cube_size..=max_cube_size).map(move |cube_size| Self {
-                        cubes,
-                        cube_size,
-                        non_unit,
-                    })
-                })
-            })
-            .collect_vec()
-    }
-}
-
-#[derive(Clone)]
-pub struct LemmaPDnf {
-    cfg: Arc<LemmaPDnfConfig>,
-    literals: Arc<Literals>,
-    literals_after_exist: Arc<Literals>,
-}
-
-impl Debug for LemmaPDnf {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.cfg.fmt(f)
-    }
-}
-
-fn unit_resolution(mut base: <PDnf as Element>::Base) -> <PDnf as Element>::Base {
-    let neg_clause: Vec<_> = base.0.iter().map(|literal| literal.negate()).collect();
-
-    for cube in &mut base.1 {
-        cube.retain(|literal| !neg_clause.contains(literal));
-    }
-
-    base
-}
-
-impl LemmaQf for LemmaPDnf {
-    type Body = PDnf;
-    type Config = LemmaPDnfConfig;
-    fn new(
-        mut cfg: Arc<Self::Config>,
-        literals: Arc<Literals>,
-        prefix: Arc<QuantifierPrefix>,
-    ) -> Self {
-        if prefix.is_universal() {
-            cfg = Arc::new(cfg.as_universal());
-        }
-
-        assert!(cfg.cubes >= cfg.non_unit);
-        assert!(cfg.non_unit == 0 || cfg.cube_size > 1);
-        assert!(cfg.non_unit > 0 || cfg.cube_size <= 1);
-
-        let vars_after_first_exist = prefix.vars_after_first_exist();
-        // let exist_vars = prefix.exist_vars();
-        let literals_after_exist = Arc::new(
-            literals
-                .iter()
-                .filter(|lit| !lit.ids().is_disjoint(&vars_after_first_exist))
-                .cloned()
-                .collect(),
-        );
-
-        Self {
-            cfg,
-            literals,
-            literals_after_exist,
-        }
-    }
-
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
-    where
-        I: Fn(&Self::Body) -> bool + Sync,
-    {
-        let base = body.to_base(true);
-        let clause_literals = Arc::new(
-            self.literals
-                .iter()
-                .filter(|lit| {
-                    !lit.is_neq()
-                        && !base.0.contains(&lit.negate().into())
-                        && !base
-                            .1
-                            .iter()
-                            .any(|cube| cube.contains(&(*lit).clone().into()))
-                })
-                .cloned()
-                .collect(),
-        );
-        let dnf_literals = Arc::new(
-            self.literals_after_exist
-                .iter()
-                .filter(|lit| !base.0.contains(&lit.negate().into()))
-                .cloned()
-                .collect(),
-        );
-        let clause_cfg = (self.cfg.cubes - base.1.len(), clause_literals);
-        let dnf_cfg = (
-            self.cfg.non_unit.min(self.cfg.cubes - base.0.len()),
-            (self.cfg.cube_size, dnf_literals),
-        );
-
-        body.weaken(&(clause_cfg, dnf_cfg), structure)
-            .into_iter()
-            .map(|pdnf| unit_resolution(pdnf.to_base(true)))
-            .filter(|base| {
-                assert!(base.0.len() + base.1.len() <= self.cfg.cubes);
-                base.1.iter().all(|cube| cube.len() > 1)
-            })
-            .map(|base| PDnf::from_base(base, true))
-            .filter(|pdnf| !ignore(pdnf))
-            .collect()
-    }
-
-    fn approx_space_size(&self) -> usize {
-        (0..=self.cfg.non_unit)
-            .map(|non_unit| {
-                let clauses =
-                    choose_combinations(self.literals.len(), self.cfg.cubes - non_unit, 1);
-                let dnfs = choose_combinations(
-                    self.literals_after_exist.len(),
-                    self.cfg.cube_size,
-                    non_unit,
-                );
-                clauses * dnfs
-            })
-            .sum()
-    }
-
-    fn contains(&self, other: &Self) -> bool {
-        self.cfg.cubes >= other.cfg.cubes
-            && self.cfg.non_unit >= other.cfg.non_unit
-            && self.cfg.cube_size >= other.cfg.cube_size
-            && self.literals.is_superset(&other.literals)
-            && self
-                .literals_after_exist
-                .is_superset(&other.literals_after_exist)
-    }
-
-    fn body_from_clause(clause: Clause) -> Self::Body {
-        (clause, Dnf::bottom()).into()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct LemmaPDnfBaselineConfig(LemmaPDnfConfig);
-#[derive(Clone, Debug)]
-pub struct LemmaPDnfBaseline(LemmaPDnf);
-
-impl LemmaQfConfig for LemmaPDnfBaselineConfig {
-    fn new(cfg: &QuantifierFreeConfig) -> Self {
-        Self(LemmaPDnfConfig::new(cfg))
-    }
-
-    fn is_universal(&self) -> bool {
-        self.0.is_universal()
-    }
-
-    fn as_universal(&self) -> Self {
-        Self(self.0.as_universal())
-    }
-
-    fn sub_spaces(&self) -> Vec<Self> {
-        self.0.sub_spaces().into_iter().map(Self).collect()
-    }
-}
-
-impl LemmaQf for LemmaPDnfBaseline {
-    type Body = Baseline<PDnf>;
-    type Config = LemmaPDnfBaselineConfig;
-
-    fn new(cfg: Arc<Self::Config>, literals: Arc<Literals>, prefix: Arc<QuantifierPrefix>) -> Self {
-        Self(LemmaPDnf::new(Arc::new(cfg.0.clone()), literals, prefix))
-    }
-
-    fn weaken<I>(&self, body: Self::Body, structure: &Structure, ignore: I) -> HashSet<Self::Body>
-    where
-        I: Fn(&Self::Body) -> bool + Sync,
-    {
-        self.0
-            .weaken(body.0, structure, |b| ignore(&Baseline(b.clone())))
-            .into_iter()
-            .map(Baseline)
-            .collect()
-    }
-
-    fn approx_space_size(&self) -> usize {
-        self.0.approx_space_size()
-    }
-
-    fn contains(&self, other: &Self) -> bool {
-        self.0.contains(&other.0)
-    }
-
-    fn body_from_clause(clause: Clause) -> Self::Body {
-        Baseline(LemmaPDnf::body_from_clause(clause))
-    }
-}
 
 /// Compute the names of [`Term::Id`]'s present in the given term.
 ///
@@ -483,13 +46,13 @@ pub fn ids(term: &Term) -> HashSet<String> {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-enum Blocked<I: Eq + Hash> {
+enum Blocked<I: Eq + Hash + Clone> {
     Initial,
     Consequence(HashSet<I>),
     Transition(HashSet<I>),
 }
 
-impl<I: Eq + Hash + Copy> Blocked<I> {
+impl<I: Eq + Hash + Clone> Blocked<I> {
     fn constituents(&self) -> HashSet<I> {
         match self {
             Blocked::Initial => HashSet::default(),
@@ -601,11 +164,7 @@ impl<I: Hash + Eq + Copy> LemmaManager<I> {
 }
 
 /// A [`InductionFrame`] maintains quantified formulas during invariant inference.
-pub struct InductionFrame<'a, E, L>
-where
-    E: Element,
-    L: LemmaQf<Body = E>,
-{
+pub struct InductionFrame<'a, L: BoundedLanguage> {
     /// The signature of the module associated with this induction frame.
     signature: Arc<Signature>,
     /// Manages lemmas inductively proven by the frame.
@@ -613,7 +172,7 @@ where
     /// The mapping from a key to the lemma's position in the ordering.
     key_to_idx: HashMap<LemmaKey, usize>,
     /// The lemmas in the frame, maintained in a way that supports weakening them.
-    weaken_lemmas: WeakenLemmaSet<E, L>,
+    pub weaken_lemmas: WeakenLemmaSet<L>,
     /// Whether to extend CTI traces, and how much.
     sim_config: SimulationConfig,
     /// The time of creation of the frame (for logging purposes)
@@ -624,20 +183,16 @@ where
     property_directed: bool,
 }
 
-impl<'a, E, L> InductionFrame<'a, E, L>
-where
-    E: Element,
-    L: LemmaQf<Body = E>,
-{
+impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     /// Create a new frame using the given configuration.
     pub fn new(
         module: &'a Module,
         signature: Arc<Signature>,
-        domains: Vec<Domain<L>>,
+        lang: Arc<L>,
         sim_config: SimulationConfig,
         property_directed: bool,
     ) -> Self {
-        let mut weaken_lemmas = WeakenLemmaSet::new(signature.clone(), domains);
+        let mut weaken_lemmas = WeakenLemmaSet::new(lang);
         weaken_lemmas.init();
         let key_to_idx = weaken_lemmas.key_to_idx();
 
@@ -665,12 +220,12 @@ where
         let mut indices = vec![];
         for (i, (t, id)) in self.weaken_lemmas.to_terms_keys().enumerate() {
             // Not inductive
-            if !manager.blocked_to_core.contains_key(&id) {
+            if !manager.blocked_to_core.contains_key(id) {
                 return None;
             }
             // Necessary
-            if manager.inductively_proven(&id) {
-                reduced_proof.push(t);
+            if manager.inductively_proven(id) {
+                reduced_proof.push(t.clone());
                 indices.push(i);
             }
         }
@@ -704,10 +259,10 @@ where
     /// Add details about the frame to the given [`Display`].
     pub fn add_details<D: Display>(&self, d: D) -> String {
         format!(
-            "[{:.5}s] [{} | {}] {}",
+            "[{:.2}s] [{} ~> {}] {}",
             self.start_time.elapsed().as_secs_f64(),
             self.weaken_lemmas.len(),
-            self.weaken_lemmas.full_len(),
+            self.weaken_lemmas.simplified_len(),
             d,
         )
     }
@@ -728,14 +283,6 @@ where
                     if manager.blocked_to_core.contains_key(key) {
                         return (None, vec![], false);
                     }
-                }
-
-                if let Some(blocking_core) = self.weaken_lemmas.get_implying(key) {
-                    {
-                        let mut manager = self.lemmas.write().unwrap();
-                        manager.add_blocked(*key, Blocked::Consequence(blocking_core));
-                    }
-                    return (None, vec![], false);
                 }
 
                 let term = self.weaken_lemmas.key_to_term(key);
@@ -764,19 +311,20 @@ where
 
     /// Weaken the lemmas in the frame.
     pub fn weaken(&mut self, models: &[Model]) -> bool {
-        let removed = models
-            .iter()
-            .flat_map(|model| self.weaken_lemmas.weaken(model).0)
-            .collect_vec();
-        if removed.is_empty() {
-            false
-        } else {
-            self.remove_by_keys(&removed);
+        let mut changed = false;
+        for model in models {
+            let (r, a) = self.weaken_lemmas.weaken(model);
+            if !r.is_empty() {
+                self.remove_by_keys(&r);
+            }
+            changed |= !r.is_empty() || !a.is_empty();
+        }
+        if changed {
             self.log_info("Cores updated.");
             self.key_to_idx = self.weaken_lemmas.key_to_idx();
             self.log_info("Indices updated.");
-            true
         }
+        changed
     }
 
     pub fn remove_unsat(&mut self, models: &[Model]) {
@@ -816,7 +364,7 @@ where
         self.log_info("Simulating traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
         let results = ParallelWorker::new(samples, |(_, t_depth), model| {
-            let unsat = !self.weaken_lemmas.unsat(model).is_empty();
+            let unsat = self.weaken_lemmas.unsat(model);
 
             let depth = if unsat && self.sim_config.guided {
                 0
@@ -908,6 +456,7 @@ where
         let results = ParallelWorker::new(
             &mut tasks,
             |(check_implied, _), key| {
+                let previous: Vec<LemmaKey>;
                 {
                     let blocked = self.lemmas.read().unwrap();
                     if let Some(core) = blocked.blocked_to_core.get(key) {
@@ -920,34 +469,23 @@ where
                             false,
                         );
                     }
+                    previous = blocked.core_to_blocked.keys().cloned().sorted().collect();
                 }
+
+                let (mut permanent, try_first): (Vec<_>, Vec<_>) = previous.into_iter().partition(|k| k.is_universal());
+                let permanent_imply = permanent.iter().filter(|k| *k < key).cloned().collect();
+                let try_first_imply = try_first.iter().filter(|k| *k < key).cloned().collect();
 
                 let idx = self.key_to_idx[key];
                 let term = self.weaken_lemmas.key_to_term(key);
+                self.log_info(format!("            ({idx}) Checking formula (permanent={}): {term}", permanent.len()));
                 // Check if the lemma is implied by the lemmas preceding it.
                 if *check_implied == 1 {
-                    let query_start = Instant::now();
-                    // Begin with a syntactic implication check.
-                    if let Some(blocking_core) = self.weaken_lemmas.get_implying(key) {
-                        self.log_info(format!(
-                            "{:>8}ms. ({idx}) Syntactic implication found UNSAT with {} formulas in core",
-                            query_start.elapsed().as_millis(),
-                            blocking_core.len(),
-                        ));
-                        let core_tasks = blocking_core.iter().cloned().map(|k| ((1, k), k)).collect();
-                        let core = blocking_core.iter().cloned().collect();
-                        {
-                            let mut manager = self.lemmas.write().unwrap();
-                            manager.add_blocked(*key, Blocked::Consequence(blocking_core));
-                        }
-                        return (Some(CexResult::UnsatCore(core)), core_tasks, false);
-                    }
-
                     let query_start = Instant::now();
                     // If that fails, use a semantic implication check.
                     let res = fo.implication_cex(
                         solver,
-                        &self.weaken_lemmas.hypotheses(Some(*key), vec![]),
+                        &self.weaken_lemmas.hypotheses(permanent_imply, Some(*key), try_first_imply),
                         &term,
                         Some(cancelers.clone()),
                         false,
@@ -969,10 +507,13 @@ where
                 }
 
                 // Check if the lemma is inductively implied by the entire frame.
+                if !permanent.contains(key) {
+                    permanent.push(*key);
+                }
                 let query_start = Instant::now();
                 let res = fo.trans_cex(
                     solver,
-                    &self.weaken_lemmas.hypotheses(None, vec![*key]),
+                    &self.weaken_lemmas.hypotheses(permanent, None, try_first),
                     &term,
                     false,
                     Some(cancelers.clone()),
@@ -1074,9 +615,10 @@ where
         if manager.safety_core.is_some() {
             return Some(true);
         }
+        let permanent = manager.blocked_to_core.keys().cloned().sorted().collect();
 
         let start_time = Instant::now();
-        let hyp = self.weaken_lemmas.hypotheses(None, vec![]);
+        let hyp = self.weaken_lemmas.hypotheses(permanent, None, vec![]);
         match fo.safe_implication_cex(solver, &hyp, cancelers.clone()) {
             CexResult::UnsatCore(core) => {
                 self.log_info(format!(

@@ -128,7 +128,7 @@ impl Model {
     ///
     /// The term should be closed (that is, have no free logical variables).
     pub fn eval(&self, t: &Term) -> Element {
-        self.eval_assign(t, Assignment::new())
+        self.eval_assign(t, &Assignment::new())
     }
 
     /// Evaluate a term to a model element, given an assignment of
@@ -136,8 +136,8 @@ impl Model {
     ///
     /// The assignment is unsorted, and so is the return value of this
     /// function.
-    pub fn eval_assign(&self, t: &Term, assignment: Assignment) -> Element {
-        let go = |t: &Term| self.eval_assign(t, assignment.clone());
+    pub fn eval_assign(&self, t: &Term, assignment: &Assignment) -> Element {
+        let go = |t: &Term| self.eval_assign(t, assignment);
         match t {
             Term::Literal(false) => 0,
             Term::Literal(true) => 1,
@@ -230,7 +230,7 @@ impl Model {
                         for (name, element) in names.iter().zip(elements) {
                             assignment.insert(name.to_string(), element);
                         }
-                        self.eval_assign(body, assignment) == 1
+                        self.eval_assign(body, &assignment) == 1
                     });
                 let result = match quantifier {
                     Forall => iter.all(|x| x),
@@ -252,9 +252,9 @@ impl Model {
 
     /// Negate the necessary terms in order to make all given terms hold
     /// on the model and the given assignment.
-    pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: Assignment) {
+    pub fn flip_to_sat(&self, terms: &mut Vec<Term>, assignment: &Assignment) {
         for term in terms {
-            if self.eval_assign(term, assignment.clone()) == 0 {
+            if self.eval_assign(term, assignment) == 0 {
                 *term = Term::negate(term.clone());
             }
         }
@@ -299,7 +299,7 @@ impl Model {
 
         // Get depth=1 terms (without inequalities).
         let mut terms = self.signature.terms_by_sort(&exists_vars, Some(1), false);
-        self.flip_to_sat(&mut terms[sort_cnt], assignment.clone());
+        self.flip_to_sat(&mut terms[sort_cnt], &assignment);
 
         for i in 0..sort_cnt {
             let mut new_terms = vec![];
@@ -314,7 +314,7 @@ impl Model {
             }
             // Add equalities for the other terms of sort i.
             for j in self.universe[i]..terms[i].len() {
-                let elem = self.eval_assign(&terms[i][j], assignment.clone());
+                let elem = self.eval_assign(&terms[i][j], &assignment);
                 new_terms.push(Term::BinOp(
                     BinOp::Equals,
                     Box::new(terms[i][j].clone()),

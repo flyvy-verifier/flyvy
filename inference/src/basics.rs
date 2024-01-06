@@ -10,9 +10,7 @@ use std::{
     thread,
 };
 
-use crate::qalpha::{
-    atoms::Literals, fixpoint::Strategy, quant::QuantifierConfig, weaken::LemmaQfConfig,
-};
+use crate::qalpha::{fixpoint::Strategy, quant::QuantifierConfig};
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
@@ -125,7 +123,7 @@ impl<H: OrderedTerms> Core<H> {
     ///
     /// Returns `true` if the core has been reduced, or `false` otherwise.
     fn reduce(&mut self) -> bool {
-        if let Some(key) = self.participants.keys().copied().rev().find(|p_idx| {
+        if let Some(key) = self.participants.keys().cloned().rev().find(|p_idx| {
             self.to_counter_models[p_idx]
                 .iter()
                 .all(|m_idx| self.to_participants[m_idx].len() > 1)
@@ -145,8 +143,11 @@ impl<H: OrderedTerms> Core<H> {
     /// This yields a map which maps each participant index to its [`Term`] and Boolean assumption,
     /// in this case always `true`.
     fn to_assumptions(&self) -> HashMap<usize, (Term, bool)> {
-        self.participants
-            .values()
+        self.formulas
+            .permanent()
+            .into_iter()
+            .map(|(_, t)| t)
+            .chain(self.participants.values())
             .enumerate()
             .map(|(i, term)| (i, (term.clone(), true)))
             .collect()
@@ -157,8 +158,11 @@ impl<H: OrderedTerms> Core<H> {
     where
         O: FromIterator<H::Key>,
     {
-        self.participants
-            .keys()
+        self.formulas
+            .permanent()
+            .into_iter()
+            .map(|(k, _)| k)
+            .chain(self.participants.keys())
             .enumerate()
             .filter_map(|(i, key)| if core.contains(&i) { Some(*key) } else { None })
             .collect()
@@ -179,6 +183,8 @@ pub enum CexOrCore {
 pub trait OrderedTerms: Copy + Send + Sync {
     type Key: Ord + Hash + Eq + Clone + Copy + Send + Sync;
 
+    fn permanent(&self) -> Vec<(&Self::Key, &Term)>;
+
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)>;
 
     fn all_terms(self) -> BTreeMap<Self::Key, Term>;
@@ -186,6 +192,10 @@ pub trait OrderedTerms: Copy + Send + Sync {
 
 impl<V: AsRef<[Term]> + Copy + Send + Sync> OrderedTerms for V {
     type Key = usize;
+
+    fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
+        vec![]
+    }
 
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
         self.as_ref().iter().enumerate().find_map(|(i, t)| {
@@ -682,7 +692,6 @@ pub enum QfBody {
     Cnf,
     PDnf,
     Dnf,
-    PDnfBaseline,
 }
 
 impl Default for QfBody {
@@ -697,7 +706,6 @@ impl From<&String> for QfBody {
             "cnf" => QfBody::Cnf,
             "dnf" => QfBody::Dnf,
             "pdnf" => QfBody::PDnf,
-            "pdnf-baseline" => QfBody::PDnfBaseline,
             _ => panic!("invalid choice of quantifier-free body!"),
         }
     }
@@ -761,18 +769,6 @@ impl VariationConfig {
             vec![(quant, cfg.last_exist.unwrap_or(default_last_exist))]
         }
     }
-
-    pub fn qf_configs<C: LemmaQfConfig>(&self, lemma_qf_cfg: C) -> Vec<Arc<C>> {
-        if self.qf {
-            lemma_qf_cfg
-                .sub_spaces()
-                .into_iter()
-                .map(|qf| Arc::new(qf))
-                .collect()
-        } else {
-            vec![Arc::new(lemma_qf_cfg)]
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -797,11 +793,11 @@ pub struct QalphaConfig {
 
     pub sim: SimulationConfig,
 
-    pub literals: Literals,
-
     pub strategy: Strategy,
 
     pub until_safe: bool,
 
     pub fallback: bool,
+
+    pub baseline: bool,
 }

@@ -30,7 +30,6 @@ use inference::basics::{
 };
 use inference::houdini;
 use inference::qalpha::{
-    atoms::generate_literals,
     fixpoint::{self, qalpha_dynamic, Strategy},
     quant::{parse_quantifier, QuantifierConfig},
 };
@@ -109,7 +108,7 @@ struct QuantifierConfigArgs {
 impl QuantifierConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
         let mut quantifiers;
-        let mut sorts: Vec<usize>;
+        let mut sorts: Vec<Sort>;
         let mut counts: Vec<usize>;
         if !self.quantifier.is_empty() {
             quantifiers = vec![];
@@ -120,7 +119,7 @@ impl QuantifierConfigArgs {
                 match r {
                     Ok((q, sort, count)) => {
                         quantifiers.push(q);
-                        sorts.push(sig.sort_idx(&sort));
+                        sorts.push(sort);
                         counts.push(count);
                     }
                     Err(err) => panic!("{err}"),
@@ -130,12 +129,12 @@ impl QuantifierConfigArgs {
             sorts = self
                 .sort
                 .iter()
-                .map(|s| sig.sort_idx(&Sort::Uninterpreted(s.clone())))
+                .map(|s| Sort::Uninterpreted(s.clone()))
                 .collect();
             quantifiers = vec![None; sorts.len()];
             counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         } else {
-            sorts = (0..sig.sorts.len()).collect();
+            sorts = sig.sorts.iter().map(|s| Sort::uninterpreted(s)).collect();
             quantifiers = vec![None; sorts.len()];
             counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         }
@@ -250,6 +249,10 @@ struct QalphaArgs {
     qf_cfg: QuantifierFreeConfigArgs,
 
     #[arg(long)]
+    /// Use the baseline implementation the data structures in qalpha
+    baseline: bool,
+
+    #[arg(long)]
     /// Determines the strategy that is used in addition to the simulations.
     /// Options are "weaken", "weaken-pd", "houdini", "houdini-pd", or "none".
     /// "pd" indicates a property-directed strategy.
@@ -265,15 +268,6 @@ struct QalphaArgs {
 
 impl QalphaArgs {
     fn to_cfg(&self, m: &Module, fname: String) -> QalphaConfig {
-        let quant_cfg = self.infer_cfg.quant_cfg.to_cfg(&m.signature);
-
-        let literals = generate_literals(
-            &m.signature,
-            &quant_cfg,
-            self.qf_cfg.nesting,
-            !self.qf_cfg.no_include_eq,
-        );
-
         let universe = if self.sim_cfg.bound.is_empty() || self.sim_cfg.bound_sum.is_some() {
             vec![defaults::SIMULATION_SORT_SIZE; m.signature.sorts.len()]
         } else {
@@ -310,14 +304,13 @@ impl QalphaArgs {
                 qf: self.qf_cfg.vary_qf,
             },
 
-            literals,
-
             strategy: self
                 .strategy
                 .as_ref()
                 .map_or(Strategy::default(), |s| s.into()),
             until_safe: self.until_safe,
             fallback: self.infer_cfg.fallback,
+            baseline: self.baseline,
         }
     }
 }

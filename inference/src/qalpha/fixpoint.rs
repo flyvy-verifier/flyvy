@@ -5,23 +5,19 @@
 //! lemma domain.
 
 use fly::semantics::Model;
-use itertools::Itertools;
 use solver::basics::{BasicCanceler, MultiCanceler};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::basics::{QfBody, SimulationConfig};
-use crate::parallel::Tasks;
 use crate::{
-    basics::{FOModule, QalphaConfig},
+    basics::{FOModule, QalphaConfig, QfBody, SimulationConfig},
+    parallel::Tasks,
     qalpha::{
-        atoms::restrict_by_prefix,
-        baseline::Baseline,
-        lemma::{self, InductionFrame},
-        subsume::{self, Element},
-        weaken::{Domain, LemmaQf, LemmaQfConfig},
+        atoms::generate_literals,
+        frame::InductionFrame,
+        language::{advanced, baseline, BoundedLanguage},
     },
 };
 use fly::syntax::{Module, Term, ThmStmt};
@@ -32,6 +28,14 @@ use solver::{
 };
 
 use rayon::prelude::*;
+
+macro_rules! timed {
+    ($blk:block) => {{
+        let start = Instant::now();
+        $blk
+        start.elapsed()
+    }};
+}
 
 pub mod defaults {
     pub const QUANT_SAME_SORT: usize = 3;
@@ -179,6 +183,7 @@ impl FoundFixpoint {
         time: Duration,
         success: bool,
         proof: Vec<Term>,
+        full_size: usize,
         reduced_proof: Option<Vec<Term>>,
         safety_proof: Option<Vec<Term>>,
         covering: Option<(usize, usize)>,
@@ -188,7 +193,8 @@ impl FoundFixpoint {
         let stats = FixpointStats {
             time_sec: time.as_secs_f64(),
             success,
-            size: proof.len(),
+            simplified_size: proof.len(),
+            full_size,
             reduced: reduced_proof.as_ref().map(|r| r.len()),
             safety: safety_proof.as_ref().map(|r| r.len()),
             covering,
@@ -238,12 +244,8 @@ impl FoundFixpoint {
             }
         }
 
-        println!("==============================");
-        println!(
-            "stats_json: {}",
-            serde_json::to_string(&self.stats).unwrap()
-        );
-        println!("==============================");
+        println!("=============== JSON ===============");
+        println!("{}", serde_json::to_string(&self.stats).unwrap());
     }
 }
 
@@ -253,9 +255,11 @@ struct FixpointStats {
     time_sec: f64,
     /// Whether the task finished successfully
     success: bool,
-    /// The number of formulas in the final frame
-    size: usize,
-    /// The number of formulas in reduced form (if available)
+    /// The number of formulas in the simplified final frame
+    simplified_size: usize,
+    /// The number of formulas in the final weaken frame, containing unsimplified formulas
+    full_size: usize,
+    /// The number of formulas in reduced by implication checks (if available)
     reduced: Option<usize>,
     /// The number of formulas in the safety proof (if available)
     safety: Option<usize>,
@@ -268,14 +272,15 @@ struct FixpointStats {
     generated_states: usize,
 }
 
-fn parallel_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
+fn parallel_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     ParallelSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 0),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 0, 0),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 0),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, 0),
     ])
 }
 
-fn fallback_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
+#[allow(dead_code)]
+fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     // For the solvers in fallback fashion we alternate between Z3 and CVC5
     // with increasing timeouts and varying seeds, ending with a Z3 solver with
     // no timeout. The idea is to try both Z3 and CVC5 with some timeout to see if any
@@ -283,169 +288,133 @@ fn fallback_solver(infer_cfg: &QalphaConfig) -> impl BasicSolver {
     // ending with no timeout at all. The seed changes are meant to add some
     // variation vis-a-vis previous attempts.
     FallbackSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Cvc5, true, &infer_cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Z3, true, &infer_cfg.fname, 0, 3),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, 0),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, 0),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, 1),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, 1),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, 2),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, 2),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 3),
     ])
 }
 
-pub fn qalpha<E, L, S>(cfg: Arc<QalphaConfig>, m: &Module, solver: &S, print_invariant: bool)
-where
-    E: Element,
-    L: LemmaQf<Body = E>,
+pub fn qalpha<L, S>(
+    cfg: Arc<QalphaConfig>,
+    lang: Arc<L>,
+    m: &Module,
+    solver: &S,
+    print_invariant: bool,
+) where
+    L: BoundedLanguage,
     S: BasicSolver,
 {
-    let domain_size_of = |doms: &[Domain<L>]| {
-        doms.iter()
-            .map(|(_, lemma_qf, _)| lemma_qf.approx_space_size())
-            .sum::<usize>()
-    };
+    println!("Running qalpha algorithm...");
+    let log_domain_size = lang.log_size();
+    println!("Approximate domain size: 10^{log_domain_size:.2}");
 
-    log::debug!("Computing predicate domains...");
-    let lemma_qf_cfg = L::Config::new(&cfg.qf_cfg);
-    let domain_configs: Vec<_> = cfg
-        .vary
-        // Get all requested prefix sizes
-        .quant_sizes(&cfg)
-        .into_iter()
-        .flat_map(|quant| cfg.vary.quant_exists(&cfg, quant))
-        .cartesian_product(cfg.vary.qf_configs(lemma_qf_cfg))
-        .filter(|((_, exist), qf)| *exist > 0 || qf.is_universal())
-        .collect();
-
-    let domains: Vec<(_, Vec<Domain<_>>, usize)> = domain_configs
-        .into_iter()
-        .map(|((quant, exist), qf_cfg)| {
-            let d: Vec<_> = quant
-                .prefixes(quant.num_vars(), exist)
-                .into_iter()
-                .map(|prefix| {
-                    let prefix = Arc::new(prefix);
-                    let restricted =
-                        Arc::new(restrict_by_prefix(&cfg.literals, &cfg.quant_cfg, &prefix));
-                    let lemma_qf =
-                        Arc::new(L::new(qf_cfg.clone(), restricted.clone(), prefix.clone()));
-                    (prefix, lemma_qf, restricted)
-                })
-                .collect();
-            let domain_size = domain_size_of(&d);
-
-            ((quant, exist, qf_cfg), d, domain_size)
-        })
-        .sorted_by_key(|(_, _, domain_size)| *domain_size)
-        .collect();
-
-    println!("Number of individual domains: {}", domains.len());
-
-    for (iteration, ((quant, e, qf), active_domains, domain_size)) in
-        domains.into_iter().enumerate()
-    {
-        println!();
-        println!("({iteration}) Running qalpha algorithm...");
-        println!(
-            "Approximate domain size: 10^{:.2} ({domain_size})",
-            (domain_size as f64).log10()
-        );
-        println!("Prefixes: cfg = {quant:?}, last_exist = {e}, qf = {qf:?}):");
-        for (prefix, lemma_qf, literals) in &active_domains {
-            println!(
-                "    {:?} --- {} literals --- {:?} ~ {}",
-                prefix,
-                literals.len(),
-                lemma_qf,
-                lemma_qf.approx_space_size()
-            );
-        }
-
-        let fixpoint =
-            run_qalpha::<E, L, S>(cfg.clone(), solver, m, &cfg.fo, active_domains.clone());
-
-        fixpoint.report(print_invariant);
-
-        if fixpoint.safety_proof.is_some() && cfg.until_safe {
-            break;
-        }
-    }
+    let fixpoint = run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo);
+    fixpoint.report(print_invariant);
 }
 
 pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
-    match (&cfg.qf_cfg.qf_body, cfg.fallback) {
-        (QfBody::Cnf, false) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
+    // TODO: add fallback solver option or remove it from command arguments
+    let solver = parallel_solver(&cfg);
+
+    // TODO: make nesting and include_eq configurable or remove them from command arguments
+    println!("Generating literals...");
+    let literals: Vec<_>;
+    let gen_time = timed!({
+        literals = generate_literals(&m.signature, &cfg.quant_cfg, None, true, &cfg.fo, &solver)
+    });
+    let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
+    let cube_literals: Vec<_> = literals
+        .iter()
+        .filter(|literal| !literal.ids().is_disjoint(&non_universal_vars))
+        .cloned()
+        .collect();
+    println!(
+        "Generated {} literals in {}ms ({} containing variables after first existential)",
+        literals.len(),
+        gen_time.as_millis(),
+        cube_literals.len()
+    );
+
+    match (&cfg.qf_cfg.qf_body, cfg.baseline) {
+        (QfBody::Cnf, true) => qalpha(
             cfg.clone(),
+            baseline::cnf_language(cfg.qf_cfg.clause_size.unwrap(), literals),
             m,
-            &parallel_solver(&cfg),
+            &solver,
             print_invariant,
         ),
-        (QfBody::PDnf, false) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
+        (QfBody::Cnf, false) => qalpha(
             cfg.clone(),
+            advanced::cnf_language(cfg.qf_cfg.clause_size.unwrap(), literals),
             m,
-            &parallel_solver(&cfg),
+            &solver,
             print_invariant,
         ),
-        (QfBody::Dnf, false) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
+        (QfBody::PDnf, true) => qalpha(
             cfg.clone(),
+            baseline::quant_pdnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.clause_size.unwrap(),
+                cfg.qf_cfg.cubes.unwrap(),
+                literals,
+                cube_literals,
+            ),
             m,
-            &parallel_solver(&cfg),
+            &solver,
             print_invariant,
         ),
-        (QfBody::PDnfBaseline, false) => qalpha::<
-            Baseline<subsume::PDnf>,
-            lemma::LemmaPDnfBaseline,
-            _,
-        >(
-            cfg.clone(), m, &parallel_solver(&cfg), print_invariant
-        ),
-        (QfBody::Cnf, true) => qalpha::<subsume::Cnf, lemma::LemmaCnf, _>(
+        (QfBody::PDnf, false) => qalpha(
             cfg.clone(),
+            advanced::quant_pdnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.clause_size.unwrap(),
+                cfg.qf_cfg.cubes.unwrap(),
+                literals,
+                cube_literals,
+            ),
             m,
-            &fallback_solver(&cfg),
+            &solver,
             print_invariant,
         ),
-        (QfBody::PDnf, true) => qalpha::<subsume::PDnf, lemma::LemmaPDnf, _>(
+        (QfBody::Dnf, true) => qalpha(
             cfg.clone(),
+            baseline::dnf_language(cfg.qf_cfg.cubes.unwrap(), literals),
             m,
-            &fallback_solver(&cfg),
+            &solver,
             print_invariant,
         ),
-        (QfBody::Dnf, true) => qalpha::<subsume::Dnf, lemma::LemmaDnf, _>(
+        (QfBody::Dnf, false) => qalpha(
             cfg.clone(),
+            advanced::dnf_language(cfg.qf_cfg.cubes.unwrap(), literals),
             m,
-            &fallback_solver(&cfg),
+            &solver,
             print_invariant,
-        ),
-        (QfBody::PDnfBaseline, true) => qalpha::<
-            Baseline<subsume::PDnf>,
-            lemma::LemmaPDnfBaseline,
-            _,
-        >(
-            cfg.clone(), m, &fallback_solver(&cfg), print_invariant
         ),
     }
 }
 
 /// Run the qalpha algorithm on the configured lemma domains.
-fn run_qalpha<E, L, S>(
+fn run_qalpha<L, S>(
     cfg: Arc<QalphaConfig>,
+    lang: Arc<L>,
     solver: &S,
     m: &Module,
     fo: &FOModule,
-    domains: Vec<Domain<L>>,
 ) -> FoundFixpoint
 where
-    E: Element,
-    L: LemmaQf<Body = E>,
+    L: BoundedLanguage,
     S: BasicSolver,
 {
     let start = std::time::Instant::now();
 
-    let mut frame: InductionFrame<E, L> = InductionFrame::new(
+    let mut frame: InductionFrame<L> = InductionFrame::new(
         m,
         m.signature.clone(),
-        domains,
+        lang,
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
     );
@@ -473,7 +442,6 @@ where
     frame.finish_initial();
 
     // Handle transition CTI's.
-
     let mut run_sim = !samples.is_empty();
     let mut run_smt = cfg.strategy.is_weaken() || (cfg.strategy.is_houdini() && !run_sim);
     while run_sim || run_smt {
@@ -520,6 +488,7 @@ where
                 start.elapsed(),
                 false,
                 frame.proof(),
+                frame.weaken_lemmas.len(),
                 None,
                 None,
                 None,
@@ -581,6 +550,7 @@ where
         time,
         success,
         proof,
+        frame.weaken_lemmas.len(),
         reduced_proof,
         safety_proof,
         covering,
@@ -592,16 +562,15 @@ where
 /// Attempt to find a transition CTI for the current frame. If enabled by the configuration, this also checks
 /// the safety of the frame and returns `None` if the execution should abort. Otherwise, `Some(_)` is returned
 /// which contains a vector of counterexamples.
-fn qalpha_cti<E, L, S>(
+fn qalpha_cti<L, S>(
     cfg: &QalphaConfig,
     solver: &S,
     fo: &FOModule,
-    frame: &InductionFrame<'_, E, L>,
+    frame: &InductionFrame<'_, L>,
     canceler: MultiCanceler<MultiCanceler<S::Canceler>>,
 ) -> Option<Vec<Model>>
 where
-    E: Element,
-    L: LemmaQf<Body = E>,
+    L: BoundedLanguage,
     S: BasicSolver,
 {
     if canceler.is_canceled() {

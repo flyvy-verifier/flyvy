@@ -3,7 +3,7 @@
 
 //! Manage quantifiers used in inference.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, hash::Hash};
 
 use crate::hashmap::HashSet;
 use fly::ouritertools::OurItertools;
@@ -11,7 +11,7 @@ use itertools::Itertools;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::qalpha::lemma;
+use crate::qalpha::frame;
 use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
 use fly::term::subst::Substitution;
 
@@ -100,10 +100,10 @@ pub fn parse_quantifier(
 /// quantifier with a certain number of quantified variables.
 /// Note that this is a generic structure with a generic quantifier.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct QuantifierSequence<Q: Clone> {
+pub struct QuantifierSequence<Q: Clone + Hash + Eq> {
     pub quantifiers: Vec<Q>,
-    pub sorts: Vec<usize>,
-    pub names: Vec<Vec<String>>,
+    pub sorts: Arc<Vec<Sort>>,
+    pub names: Arc<Vec<Vec<String>>>,
 }
 
 /// A [`QuantifierSequence`] where each quantifier is either [`None`], [`Some(Quantifier::Forall)`],
@@ -114,19 +114,20 @@ pub type QuantifierConfig = QuantifierSequence<Option<Quantifier>>;
 /// i.e. a classical quantifier prefix.
 pub type QuantifierPrefix = QuantifierSequence<Quantifier>;
 
-impl<Q: Clone> QuantifierSequence<Q> {
+impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
     pub fn new(
         signature: Arc<Signature>,
         quantifiers: Vec<Q>,
-        sorts: Vec<usize>,
+        sorts: Vec<Sort>,
         counts: &[usize],
     ) -> Self {
-        let names = vars(&signature, &sorts, counts);
+        let sort_indices: Vec<usize> = sorts.iter().map(|sort| signature.sort_idx(sort)).collect();
+        let names = vars(&signature, &sort_indices, counts);
 
         QuantifierSequence {
             quantifiers,
-            sorts,
-            names,
+            sorts: Arc::new(sorts),
+            names: Arc::new(names),
         }
     }
 
@@ -149,11 +150,12 @@ impl<Q: Clone> QuantifierSequence<Q> {
         Self {
             quantifiers: self.quantifiers.clone(),
             sorts: self.sorts.clone(),
-            names: self
-                .names
-                .iter()
-                .map(|n| n.iter().filter(|id| ids.contains(*id)).cloned().collect())
-                .collect(),
+            names: Arc::new(
+                self.names
+                    .iter()
+                    .map(|n| n.iter().filter(|id| ids.contains(*id)).cloned().collect())
+                    .collect(),
+            ),
         }
     }
 
@@ -175,8 +177,8 @@ impl<Q: Clone> QuantifierSequence<Q> {
         include_eq: bool,
     ) -> Vec<Term> {
         let mut sorted_vars = vec![vec![]; signature.sorts.len()];
-        for (i, mut v) in self.names.iter().cloned().enumerate() {
-            sorted_vars[self.sorts[i]].append(&mut v);
+        for (i, v) in self.names.iter().enumerate() {
+            sorted_vars[signature.sort_idx(&self.sorts[i])].extend(v.iter().cloned());
         }
 
         signature
@@ -261,7 +263,7 @@ impl<Q: Clone> QuantifierSequence<Q> {
             .map(|size_dist| Self {
                 quantifiers: self.quantifiers.clone(),
                 sorts: self.sorts.clone(),
-                names: sub_boxes(size_dist, &self.names),
+                names: Arc::new(sub_boxes(size_dist, &self.names)),
             })
             .collect()
     }
@@ -320,14 +322,14 @@ impl QuantifierConfig {
                             })
                             .collect(),
                         sorts: self.sorts.clone(),
-                        names: sub_boxes(size_dist, &self.names),
+                        names: Arc::new(sub_boxes(size_dist, &self.names)),
                     })
                     .collect_vec()
             })
             .collect()
     }
 
-    pub fn non_universal_vars(&self) -> HashSet<String> {
+    pub fn vars_after_first_exist(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| !matches!(self.quantifiers[*i], Some(Quantifier::Forall))) {
             Some(first_exists) => self.names[first_exists..]
                 .iter()
@@ -349,18 +351,16 @@ impl Debug for QuantifierConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut parts = vec![];
         for i in 0..self.len() {
-            if !self.names[i].is_empty() {
-                let q_vec = vec![
-                    match self.quantifiers[i] {
-                        None => "***".to_string(),
-                        Some(Quantifier::Exists) => "exists".to_string(),
-                        Some(Quantifier::Forall) => "forall".to_string(),
-                    },
-                    self.names[i].iter().join(", "),
-                ];
+            let q_vec = vec![
+                match self.quantifiers[i] {
+                    None => "***".to_string(),
+                    Some(Quantifier::Exists) => "exists".to_string(),
+                    Some(Quantifier::Forall) => "forall".to_string(),
+                },
+                self.names[i].iter().join(", "),
+            ];
 
-                parts.push(q_vec.into_iter().join(" "));
-            }
+            parts.push(q_vec.into_iter().join(" "));
         }
 
         write!(f, "{}", parts.iter().join(" . "))
@@ -369,8 +369,8 @@ impl Debug for QuantifierConfig {
 
 impl QuantifierPrefix {
     /// Quantify the given term according to this [`QuantifierPrefix`].
-    pub fn quantify(&self, signature: &Signature, mut term: Term) -> Term {
-        let present_ids = lemma::ids(&term);
+    pub fn quantify(&self, mut term: Term) -> Term {
+        let present_ids = frame::ids(&term);
         for (i, v) in self.names.iter().enumerate().rev() {
             let binders = v
                 .iter()
@@ -378,7 +378,7 @@ impl QuantifierPrefix {
                     if present_ids.contains(name) {
                         Some(Binder {
                             name: name.clone(),
-                            sort: Sort::Uninterpreted(signature.sorts[self.sorts[i]].clone()),
+                            sort: self.sorts[i].clone(),
                         })
                     } else {
                         None
@@ -456,17 +456,15 @@ impl Debug for QuantifierPrefix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut parts = vec![];
         for i in 0..self.len() {
-            if !self.names[i].is_empty() {
-                let q_vec = vec![
-                    match self.quantifiers[i] {
-                        Quantifier::Exists => "exists".to_string(),
-                        Quantifier::Forall => "forall".to_string(),
-                    },
-                    self.names[i].iter().join(", "),
-                ];
+            let q_vec = vec![
+                match self.quantifiers[i] {
+                    Quantifier::Exists => "exists".to_string(),
+                    Quantifier::Forall => "forall".to_string(),
+                },
+                self.names[i].iter().join(", "),
+            ];
 
-                parts.push(q_vec.into_iter().join(" "));
-            }
+            parts.push(q_vec.into_iter().join(" "));
         }
 
         write!(f, "{}", parts.iter().join(". "))
@@ -526,10 +524,11 @@ sort C
             .trim(),
         );
 
+        let sort = |name| Sort::uninterpreted(name);
         let config = QuantifierConfig::new(
             Arc::new(signature),
             vec![None, None, None],
-            vec![0, 1, 2],
+            vec![sort("A"), sort("B"), sort("C")],
             &[2, 1, 2],
         );
         let a = |i: usize| format!("A_{i}");
