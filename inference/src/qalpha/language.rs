@@ -1051,7 +1051,11 @@ where
             .collect();
 
         let and = L::minimize(sat.into_iter().cloned(), conj_weakenings);
-        HashSet::from_iter([And(Arc::new(and.into_iter().sorted().collect()))])
+        if and.is_empty() {
+            HashSet::default()
+        } else {
+            HashSet::from_iter([And(Arc::new(and.into_iter().sorted().collect()))])
+        }
     }
 
     fn filter_map(&self, f: Self::Formula) -> Option<Self::Formula> {
@@ -1897,28 +1901,6 @@ pub mod baseline {
     pub type PDnfLanguage = BinOrLanguage<ClauseLanguage, DnfLanguage, BaselineSet<PDnf>>;
     pub type QuantPDnfLanguage = QuantLanguage<PDnfLanguage, BaselineSet<Quant<PDnf>>>;
 
-    fn simplify_quant_pdnf() -> simplify_type!(QuantPDnfLanguage, Quant<PDnf>) {
-        Some(Arc::new(|_, f| {
-            // If there are no cubes, there is nothing to simplify.
-            if f.body.1 .0.is_empty() {
-                return vec![f.to_term()];
-            }
-
-            let mut simple = f.clone();
-            // Variables appearing after the first existential (inclusive)
-            let non_univeral_vars = f.prefix.vars_after_first_exist();
-            for cube in Arc::make_mut(&mut simple.body.1 .0) {
-                Arc::make_mut(&mut cube.0)
-                    .retain(|literal| !literal.free_ids().is_disjoint(&non_univeral_vars));
-                if cube.0.is_empty() {
-                    return vec![];
-                }
-            }
-
-            vec![simple.to_term()]
-        }))
-    }
-
     pub fn literal_language(literals: Vec<Literal>) -> Arc<LiteralLanguage> {
         LiteralLanguage::new((), literals, trivial_fmap(), None)
     }
@@ -1972,7 +1954,7 @@ pub mod baseline {
             pdnf_language(clause_size, cube_count, clause_literals, cube_literals),
             cfg,
             trivial_fmap(),
-            simplify_quant_pdnf(),
+            None,
         )
     }
 }
@@ -1996,28 +1978,6 @@ pub mod advanced {
     pub type PDnfLanguage = BinOrLanguage<ClauseLanguage, DnfLanguage, PDnfSet>;
     pub type QuantPDnfLanguage = QuantLanguage<PDnfLanguage, QuantPDnfSet>;
 
-    fn simplify_quant_pdnf() -> simplify_type!(QuantPDnfLanguage, Quant<PDnf>) {
-        Some(Arc::new(|_, f| {
-            // If there are no cubes, there is nothing to simplify.
-            if f.body.1 .0.is_empty() {
-                return vec![f.to_term()];
-            }
-
-            let mut simple = f.clone();
-            // Variables appearing after the first existential (inclusive)
-            let non_univeral_vars = f.prefix.vars_after_first_exist();
-            for cube in Arc::make_mut(&mut simple.body.1 .0) {
-                Arc::make_mut(&mut cube.0)
-                    .retain(|literal| !literal.free_ids().is_disjoint(&non_univeral_vars));
-                if cube.0.is_empty() {
-                    return vec![];
-                }
-            }
-
-            vec![simple.to_term()]
-        }))
-    }
-
     pub fn literal_language(literals: Vec<Literal>) -> Arc<LiteralLanguage> {
         LiteralLanguage::new((), literals, trivial_fmap(), None)
     }
@@ -2071,7 +2031,7 @@ pub mod advanced {
             pdnf_language(clause_size, cube_count, clause_literals, cube_literals),
             cfg,
             trivial_fmap(),
-            simplify_quant_pdnf(),
+            None,
         )
     }
 }

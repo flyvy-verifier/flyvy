@@ -201,7 +201,6 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
             for f in weakenings.into_iter().sorted() {
                 if !self.set.contains(&f) && self.set.get_subsuming(&f).is_empty() {
                     total_added += 1;
-
                     added.append(&mut self.insert(f));
                 }
             }
