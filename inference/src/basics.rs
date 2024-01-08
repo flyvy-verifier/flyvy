@@ -797,6 +797,8 @@ pub struct QalphaConfig {
 
     pub until_safe: bool,
 
+    pub seeds: usize,
+
     pub fallback: bool,
 
     pub baseline: bool,

@@ -26,6 +26,8 @@ struct QalphaParams {
     safety_time_limit: humantime::Duration,
     #[arg(long, default_value = "600s")]
     fixpoint_time_limit: humantime::Duration,
+    #[arg(long, default_value = "600s")]
+    scalability_time_limit: humantime::Duration,
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
@@ -85,6 +87,7 @@ fn run_qalpha(params: &QalphaParams) -> Vec<BenchmarkMeasurement> {
     qalpha_benchmarks(
         params.safety_time_limit.into(),
         params.fixpoint_time_limit.into(),
+        params.scalability_time_limit.into(),
     )
     .into_iter()
     .filter(|(name, _)| name_glob.matches_path(name))

@@ -224,6 +224,10 @@ struct InferenceConfigArgs {
     quant_cfg: QuantifierConfigArgs,
 
     #[arg(long)]
+    /// Number of different seeds to try the solvers with
+    seeds: Option<usize>,
+
+    #[arg(long)]
     /// Instead on parallizing the solvers for each query, try them one by one
     /// in a sequential fallback fashion.
     fallback: bool,
@@ -309,6 +313,7 @@ impl QalphaArgs {
                 .as_ref()
                 .map_or(Strategy::default(), |s| s.into()),
             until_safe: self.until_safe,
+            seeds: self.infer_cfg.seeds.unwrap_or(1),
             fallback: self.infer_cfg.fallback,
             baseline: self.baseline,
         }

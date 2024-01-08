@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 //! Define the qalpha experiments
+use itertools::Itertools;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -18,6 +19,7 @@ use crate::run::BenchmarkConfig;
 pub fn qalpha_benchmarks(
     safety_time_limit: Duration,
     fixpoint_time_limit: Duration,
+    scalability_time_limit: Duration,
 ) -> Vec<(PathBuf, BenchmarkConfig)> {
     let configs = vec![
         QalphaConfig {
@@ -26,6 +28,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_forall.fly"),
@@ -33,6 +36,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id.fly"),
@@ -40,6 +44,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv.fly"),
@@ -47,6 +52,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ticket.fly"),
@@ -54,6 +60,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/learning_switch.fly"),
@@ -61,6 +68,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_wo_decide.fly"),
@@ -68,6 +76,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_forall.fly"),
@@ -75,6 +84,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/cache.fly"),
@@ -82,6 +92,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
@@ -89,6 +100,7 @@ pub fn qalpha_benchmarks(
             clause_size: 2,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_epr.fly"),
@@ -96,6 +108,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_epr.fly"),
@@ -103,6 +116,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_ae.fly"),
@@ -110,6 +124,7 @@ pub fn qalpha_benchmarks(
             clause_size: 1,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/paxos_epr.fly"),
@@ -117,6 +132,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: Some("round=3 value=2 quorum=2 node=2".to_string()),
         },
         QalphaConfig {
             file: PathBuf::from("fol/flexible_paxos_epr.fly"),
@@ -124,6 +140,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/multi_paxos_epr.fly"),
@@ -131,6 +148,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/stoppable_paxos_epr.fly"),
@@ -138,6 +156,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/fast_paxos_epr.fly"),
@@ -145,6 +164,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/vertical_paxos_epr.fly"),
@@ -152,6 +172,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 2,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/bosco_3t_safety.fly"),
@@ -159,6 +180,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 2,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/firewall.fly"),
@@ -166,6 +188,7 @@ pub fn qalpha_benchmarks(
             clause_size: 1,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id_not_dead.fly"),
@@ -173,6 +196,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 3,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_db_ae.fly"),
@@ -180,6 +204,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/hybrid_reliable_broadcast_cisa.fly"),
@@ -187,6 +212,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 2,
             sim: Default::default(),
+            scalability_bound: None,
         },
         QalphaConfig {
             file: PathBuf::from("fol/block_cache_system_frozen_async.fly"),
@@ -194,10 +220,16 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 1,
             sim: Default::default(),
+            scalability_bound: None,
         },
     ];
 
-    let benchmarks = named_benchmarks(configs, safety_time_limit, fixpoint_time_limit);
+    let benchmarks = named_benchmarks(
+        configs,
+        safety_time_limit,
+        fixpoint_time_limit,
+        scalability_time_limit,
+    );
     check_unique_benchmarks(&benchmarks);
     benchmarks
 }
@@ -269,6 +301,7 @@ struct QalphaConfig<'a> {
     clause_size: usize,
     cubes: usize,
     sim: SimulationConfig,
+    scalability_bound: Option<String>,
 }
 
 fn command() -> Vec<String> {
@@ -303,15 +336,89 @@ impl<'a> QalphaConfig<'a> {
         args.push(format!("--cubes={}", self.cubes));
         args.extend(sim.params());
         args.push(format!("--strategy={strategy}"));
+        args.push("--seeds=2".to_string());
         args
+    }
+
+    fn scalability_benchmarks(
+        &self,
+        scalability_time_limit: Duration,
+    ) -> Vec<(PathBuf, BenchmarkConfig)> {
+        if let Some(bound_str) = &self.scalability_bound {
+            let sim = SimulationConfig {
+                bound: SimulationBound::Exact(sort_counts(bound_str)),
+                depth: None,
+                guided: false,
+            };
+            let quantifiers: Vec<&str> = self
+                .quantifiers
+                .split("; ")
+                .map(|q| {
+                    let mut q_iter = q.split(' ');
+                    q_iter.next().unwrap();
+                    q_iter.next().unwrap()
+                })
+                .collect();
+
+            let quant_params = |size: usize| {
+                quantifiers
+                    .iter()
+                    .flat_map(|q| ["--quantifier".to_string(), format!("* {q} {size}")])
+                    .collect::<Vec<_>>()
+            };
+
+            let quant_sizes = 1..=3;
+            let clause_sizes = 0..=4;
+            let cubes = 0..=2;
+
+            [quant_sizes, clause_sizes, cubes]
+                .into_iter()
+                .multi_cartesian_product()
+                .flat_map(|p| {
+                    let (q, cl, cb) = (p[0], p[1], p[2]);
+                    let mut params = quant_params(q);
+                    params.push(format!("--clause-size={cl}"));
+                    params.push(format!("--cubes={cb}"));
+                    params.extend(sim.params());
+                    params.push("--strategy=none".to_string());
+
+                    let mut baseline_params = params.clone();
+                    baseline_params.push("--baseline".to_string());
+                    [
+                        (
+                            self.full_path(format!("scalability-{q}-{cl}-{cb}").as_str()),
+                            BenchmarkConfig {
+                                command: command(),
+                                params,
+                                file: example_path(&self.file),
+                                time_limit: scalability_time_limit,
+                            },
+                        ),
+                        (
+                            self.full_path(format!("scalability-{q}-{cl}-{cb}-baseline").as_str()),
+                            BenchmarkConfig {
+                                command: command(),
+                                params: baseline_params,
+                                file: example_path(&self.file),
+                                time_limit: scalability_time_limit,
+                            },
+                        ),
+                    ]
+                })
+                .collect()
+        } else {
+            vec![]
+        }
     }
 
     pub fn benchmarks(
         &self,
         safety_time_limit: Duration,
         fixpoint_time_limit: Duration,
+        scalability_time_limit: Duration,
     ) -> Vec<(PathBuf, BenchmarkConfig)> {
-        vec![
+        let mut benchmarks = self.scalability_benchmarks(scalability_time_limit);
+        benchmarks.extend([
             // Safety benchmark (property directed)
             (
                 self.full_path("safety"),
@@ -332,7 +439,8 @@ impl<'a> QalphaConfig<'a> {
                     time_limit: fixpoint_time_limit,
                 },
             ),
-        ]
+        ]);
+        benchmarks
     }
 
     /// Give this benchmark a systematic path that includes enough information
@@ -350,10 +458,17 @@ fn named_benchmarks(
     configs: Vec<QalphaConfig>,
     safety_time_limit: Duration,
     fixpoint_time_limit: Duration,
+    scalability_time_limit: Duration,
 ) -> Vec<(PathBuf, BenchmarkConfig)> {
     configs
         .into_iter()
-        .flat_map(|config| config.benchmarks(safety_time_limit, fixpoint_time_limit))
+        .flat_map(|config| {
+            config.benchmarks(
+                safety_time_limit,
+                fixpoint_time_limit,
+                scalability_time_limit,
+            )
+        })
         .collect()
 }
 

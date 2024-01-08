@@ -13,10 +13,11 @@ use std::time::{Duration, Instant};
 
 use crate::{
     basics::{FOModule, QalphaConfig, QfBody, SimulationConfig},
+    parallel::parallelism,
     parallel::Tasks,
     qalpha::{
         atoms::generate_literals,
-        frame::InductionFrame,
+        frame::{InductionFrame, OperationStats},
         language::{advanced, baseline, BoundedLanguage},
     },
 };
@@ -39,7 +40,7 @@ macro_rules! timed {
 
 pub mod defaults {
     pub const QUANT_SAME_SORT: usize = 3;
-    pub const SIMULATION_SORT_SIZE: usize = 2;
+    pub const SIMULATION_SORT_SIZE: usize = 0;
     pub const MIN_DISJUNCTS: usize = 2;
     pub const MIN_NON_UNIT_SIZE: usize = 2;
 }
@@ -189,6 +190,8 @@ impl FoundFixpoint {
         covering: Option<(usize, usize)>,
         processed_states: usize,
         generated_states: usize,
+        weaken_stats: OperationStats,
+        get_unsat_stats: OperationStats,
     ) -> Self {
         let stats = FixpointStats {
             time_sec: time.as_secs_f64(),
@@ -200,6 +203,8 @@ impl FoundFixpoint {
             covering,
             processed_states,
             generated_states,
+            weaken_stats,
+            get_unsat_stats,
         };
         FoundFixpoint {
             proof,
@@ -270,13 +275,23 @@ struct FixpointStats {
     processed_states: usize,
     /// The number of states generated during the execution (some might not have been processed)
     generated_states: usize,
+    /// Statistics regarding frame weaken operations
+    weaken_stats: OperationStats,
+    /// Statistics regarding frame get_unsat operations
+    get_unsat_stats: OperationStats,
 }
 
-fn parallel_solver(cfg: &QalphaConfig) -> impl BasicSolver {
-    ParallelSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 0),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, 0),
-    ])
+fn parallel_solver(cfg: &QalphaConfig, seeds: usize) -> impl BasicSolver {
+    ParallelSolvers::new(
+        (0..seeds)
+            .flat_map(|seed| {
+                [
+                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, seed),
+                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, seed),
+                ]
+            })
+            .collect(),
+    )
 }
 
 #[allow(dead_code)]
@@ -318,7 +333,7 @@ pub fn qalpha<L, S>(
 
 pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
     // TODO: add fallback solver option or remove it from command arguments
-    let solver = parallel_solver(&cfg);
+    let solver = parallel_solver(&cfg, cfg.seeds);
 
     // TODO: make nesting and include_eq configurable or remove them from command arguments
     println!("Generating literals...");
@@ -417,6 +432,7 @@ where
         lang,
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
+        parallelism() / (2 * cfg.seeds),
     );
 
     // Initialize simulations.
@@ -424,22 +440,21 @@ where
     let mut full_houdini_frame: Option<Vec<Term>> = None;
 
     // Overapproximate initial states.
-    loop {
-        let mut ctis = frame.init_cex(fo, solver);
-        if ctis.is_empty() {
-            break;
-        } else if !cfg.strategy.is_weaken() {
-            panic!("overapproximation of initial states failed!")
-        } else {
+    if cfg.strategy.is_weaken() {
+        loop {
+            let mut ctis = frame.init_cex(fo, solver);
+            if ctis.is_empty() {
+                break;
+            }
             ctis.retain(|cex| frame.see(cex));
             frame.weaken(&ctis);
             for cex in ctis {
                 samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
             }
         }
-    }
 
-    frame.finish_initial();
+        frame.finish_initial();
+    }
 
     // Handle transition CTI's.
     let mut run_sim = !samples.is_empty();
@@ -494,6 +509,8 @@ where
                 None,
                 samples.total() - samples.len(),
                 samples.total(),
+                frame.weaken_stats(),
+                frame.get_unsat_stats(),
             );
         }
 
@@ -556,6 +573,8 @@ where
         covering,
         samples.total() - samples.len(),
         samples.total(),
+        frame.weaken_stats(),
+        frame.get_unsat_stats(),
     )
 }
 

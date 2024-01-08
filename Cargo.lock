@@ -80,6 +80,7 @@ dependencies = [
  "fork",
  "glob",
  "humantime",
+ "itertools",
  "nix",
  "process-sync",
  "serde",

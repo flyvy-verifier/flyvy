@@ -9,7 +9,7 @@ use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fly::semantics::Model;
 use fly::syntax::{Module, Signature, Term};
@@ -19,14 +19,21 @@ use bounded::simulator::{MultiSimulator, SatSimulator};
 use crate::{
     basics::{CexResult, FOModule, SimulationConfig},
     hashmap::{HashMap, HashSet},
-    parallel::Tasks,
-    parallel::{paralllelism, ParallelWorker},
+    parallel::{parallelism, ParallelWorker, Tasks},
     qalpha::{
         fixpoint::{sample_priority, SamplePriority},
         language::BoundedLanguage,
         lemmas::{LemmaKey, WeakenLemmaSet},
     },
 };
+
+macro_rules! timed {
+    ($blk:block) => {{
+        let start = Instant::now();
+        $blk
+        start.elapsed()
+    }};
+}
 
 /// Compute the names of [`Term::Id`]'s present in the given term.
 ///
@@ -181,6 +188,29 @@ pub struct InductionFrame<'a, L: BoundedLanguage> {
     simulator: MultiSimulator<'a, SatSimulator>,
     /// Whether the search for the invariant is property-directed
     property_directed: bool,
+    /// The amount of parallelism to use when launching solvers in parallel
+    solver_parallelism: usize,
+    /// Statistics about weakening operations
+    weaken_stats: OperationStats,
+    /// Statistics about retrieving unsafistied formulas in simulations
+    get_unsat_stats: Mutex<OperationStats>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct OperationStats {
+    total_duration: Duration,
+    total_calls: usize,
+    effective_calls: usize,
+}
+
+impl Default for OperationStats {
+    fn default() -> Self {
+        Self {
+            total_duration: Duration::ZERO,
+            total_calls: 0,
+            effective_calls: 0,
+        }
+    }
 }
 
 impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
@@ -191,7 +221,9 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         lang: Arc<L>,
         sim_config: SimulationConfig,
         property_directed: bool,
+        parallelism_count: usize,
     ) -> Self {
+        assert!(parallelism_count > 0);
         let mut weaken_lemmas = WeakenLemmaSet::new(lang);
         weaken_lemmas.init();
         let key_to_idx = weaken_lemmas.key_to_idx();
@@ -205,6 +237,9 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
             start_time: Instant::now(),
             simulator: MultiSimulator::new(module),
             property_directed,
+            solver_parallelism: parallelism_count,
+            weaken_stats: OperationStats::default(),
+            get_unsat_stats: Mutex::new(OperationStats::default()),
         }
     }
 
@@ -291,7 +326,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                 return (res, vec![], found);
             },
         )
-        .run(paralllelism());
+        .run(self.solver_parallelism);
 
         let mut ctis = vec![];
         let mut manager = self.lemmas.write().unwrap();
@@ -313,11 +348,20 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     pub fn weaken(&mut self, models: &[Model]) -> bool {
         let mut changed = false;
         for model in models {
-            let (r, a) = self.weaken_lemmas.weaken(model);
+            let r;
+            let a;
+            let weaken_time = timed!({
+                (r, a) = self.weaken_lemmas.weaken(model);
+            });
             if !r.is_empty() {
                 self.remove_by_keys(&r);
             }
-            changed |= !r.is_empty() || !a.is_empty();
+            self.weaken_stats.total_duration += weaken_time;
+            self.weaken_stats.total_calls += 1;
+            if !r.is_empty() || !a.is_empty() {
+                changed |= true;
+                self.weaken_stats.effective_calls += 1;
+            }
         }
         if changed {
             self.log_info("Cores updated.");
@@ -364,7 +408,10 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         self.log_info("Simulating traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
         let results = ParallelWorker::new(samples, |(_, t_depth), model| {
-            let unsat = self.weaken_lemmas.unsat(model);
+            let unsat;
+            let unsat_time = timed!({
+                unsat = self.weaken_lemmas.unsat(model);
+            });
 
             let depth = if unsat && self.sim_config.guided {
                 0
@@ -393,17 +440,31 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                     vec![]
                 };
 
-            (unsat, new_samples, cancel)
+            ((unsat, unsat_time), new_samples, cancel)
         })
-        .run(paralllelism());
+        .run(parallelism());
+
+        let unsat_dur = results.iter().map(|(_, (_, dur))| dur).sum();
+        let unsat_calls = results.len();
+        let unsat_count = results.iter().filter(|(_, (unsat, _))| *unsat).count();
+        {
+            let mut unsat_stats = self.get_unsat_stats.lock().unwrap();
+            unsat_stats.total_duration += unsat_dur;
+            unsat_stats.total_calls += unsat_calls;
+            unsat_stats.effective_calls += unsat_count;
+        }
 
         let unsat = results
             .into_iter()
-            .filter(|(_, unsat)| *unsat)
+            .filter(|(_, (unsat, _))| *unsat)
             .map(|(m, _)| m)
             .collect_vec();
 
-        self.log_info(format!("{} simulated CTI(s) found.", unsat.len()));
+        self.log_info(format!(
+            "{} simulated CTI(s) found (unsat_call={unsat_calls}, unsat_duration={}ms).",
+            unsat_count,
+            unsat_dur.as_millis()
+        ));
 
         if !unsat.is_empty() {
             canceler.cancel();
@@ -563,7 +624,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                 }
             },
         )
-        .run(paralllelism());
+        .run(self.solver_parallelism);
 
         cancelers.cancel();
 
@@ -705,5 +766,13 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
 
     pub fn see(&self, model: &Model) -> bool {
         self.simulator.see(model)
+    }
+
+    pub fn weaken_stats(&self) -> OperationStats {
+        self.weaken_stats.clone()
+    }
+
+    pub fn get_unsat_stats(&self) -> OperationStats {
+        self.get_unsat_stats.lock().unwrap().clone()
     }
 }

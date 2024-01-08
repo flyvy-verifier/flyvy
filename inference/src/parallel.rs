@@ -139,7 +139,7 @@ where
 type TaskResult<P, T, R> = (R, Vec<(P, T)>, bool);
 
 /// Available parallelism.
-pub fn paralllelism() -> usize {
+pub fn parallelism() -> usize {
     std::thread::available_parallelism().unwrap().get()
 }
 
