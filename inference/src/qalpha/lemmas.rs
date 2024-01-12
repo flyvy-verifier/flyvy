@@ -6,18 +6,19 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::iter::empty;
 use std::ops::AddAssign;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::hashmap::{HashMap, HashSet};
+use crate::hashmap::HashMap;
 
 use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::{
     basics::OrderedTerms,
-    qalpha::language::{BoundedLanguage, FormulaSet},
+    qalpha::language::{BoundedLanguage, FormulaId, FormulaSet},
 };
 use fly::{
     semantics::{Assignment, Model},
@@ -37,8 +38,8 @@ pub struct WeakenLemmaSet<L: BoundedLanguage> {
     lang: Arc<L>,
     set: L::Set,
     sorted: BTreeMap<LemmaKey, Term>,
-    rev_sorted: HashMap<Term, (LemmaKey, usize)>,
-    total: usize,
+    rev_sorted: HashMap<Term, (LemmaKey, FormulaId)>,
+    total: FormulaId,
 }
 pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
     set: &'a WeakenLemmaSet<L>,
@@ -145,9 +146,8 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
     }
 
     fn remove(&mut self, f: &L::Formula) -> Vec<LemmaKey> {
-        self.set.remove(f);
         self.lang
-            .simplify(f)
+            .simplify(&f)
             .iter()
             .filter_map(|term| {
                 let (_, count) = self.rev_sorted.get_mut(term).unwrap();
@@ -174,50 +174,49 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
         let unsat;
         let mut removed: Vec<LemmaKey> = vec![];
-        let mut total_removed = 0_usize;
         let mut added: Vec<LemmaKey> = vec![];
         let mut total_added = 0_usize;
 
-        let unsat_time = timed!({
-            unsat = self.set.get_unsat(model, &empty_assigment);
-        });
-
-        let removal_time = timed!({
+        let unsat_removal_time = timed!({
+            unsat = self.set.get_unsat_formulas(model, &empty_assigment);
             for f in &unsat {
-                total_removed += 1;
                 removed.append(&mut self.remove(f));
             }
         });
 
-        let weakenings: HashSet<_>;
+        let ignore = |f: &L::Formula| !self.set.get_subsuming(f).is_empty();
+
+        let weakenings: Vec<_>;
         let weaken_time = timed!({
-            weakenings = unsat
-                .par_iter()
-                .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment))
-                .collect();
+            weakenings = L::minimize(
+                empty(),
+                unsat
+                    .par_iter()
+                    .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment, ignore))
+                    .collect::<Vec<_>>(),
+            );
         });
 
+        let weakenings_count = weakenings.len();
         let insertion_time = timed!({
             for f in weakenings.into_iter().sorted() {
-                if !self.set.contains(&f) && self.set.get_subsuming(&f).is_empty() {
-                    total_added += 1;
-                    added.append(&mut self.insert(f));
-                }
+                total_added += 1;
+                added.append(&mut self.insert(f));
             }
         });
 
         if !removed.is_empty() {
             log::info!(
-                "[{} ~> {}] Weakened: removed={}({}), added={}({}), total_time={}ms (unsat={}ms, removal={}ms, weaken={}ms, insertion={}ms)",
+                "[{} ~> {}] Weakened: removed={}({}), added={}/{}({}), total_time={}ms (unsat+removal={}ms, weaken={}ms, insertion={}ms)",
                 self.len(),
                 self.simplified_len(),
-                total_removed,
+                unsat.len(),
                 removed.len(),
                 total_added,
                 added.len(),
+                weakenings_count,
                 start_time.elapsed().as_millis(),
-                unsat_time.as_millis(),
-                removal_time.as_millis(),
+                unsat_removal_time.as_millis(),
                 weaken_time.as_millis(),
                 insertion_time.as_millis(),
             );
@@ -232,27 +231,18 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
         let unsat;
         let mut removed: Vec<LemmaKey> = vec![];
-        let mut total_removed = 0_usize;
 
-        let unsat_time = timed!({
-            unsat = self.set.get_unsat(model, &empty_assigment);
-        });
-
-        let removal_time = timed!({
-            for f in &unsat {
-                total_removed += 1;
-                removed.append(&mut self.remove(f));
-            }
-        });
+        unsat = self.set.get_unsat_formulas(model, &empty_assigment);
+        for f in &unsat {
+            removed.append(&mut self.remove(f));
+        }
 
         if !removed.is_empty() {
             log::info!(
-                "[{}] Removed UNSAT: removed={}, total_time={}ms (unsat={}ms, removal={}ms)",
+                "[{}] Removed UNSAT: removed={}, total_time={}ms",
                 self.len(),
-                total_removed,
+                unsat.len(),
                 start_time.elapsed().as_millis(),
-                unsat_time.as_millis(),
-                removal_time.as_millis(),
             );
         }
 
@@ -293,10 +283,10 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 pub struct LemmaComplexity(usize, usize, usize);
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
-pub struct LemmaKey(LemmaComplexity, usize);
+pub struct LemmaKey(LemmaComplexity, FormulaId);
 
 impl LemmaKey {
-    fn key(term: &Term, id: usize) -> Self {
+    fn key(term: &Term, id: FormulaId) -> Self {
         LemmaKey(LemmaComplexity::complexity(term), id)
     }
 

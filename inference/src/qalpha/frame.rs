@@ -461,7 +461,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
             .collect_vec();
 
         self.log_info(format!(
-            "{} simulated CTI(s) found (unsat_call={unsat_calls}, unsat_duration={}ms).",
+            "{} simulated CTI(s) found (unsat_calls={unsat_calls}, unsat_duration={}ms).",
             unsat_count,
             unsat_dur.as_millis()
         ));

@@ -26,7 +26,6 @@ use fly::syntax::{Module, Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{
     FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
-    VariationConfig,
 };
 use inference::houdini;
 use inference::qalpha::{
@@ -95,14 +94,6 @@ struct QuantifierConfigArgs {
     #[arg(short, long)]
     /// Quantifiers in the form `<quantifier: F/E/*> <sort> <count>`
     quantifier: Vec<String>,
-
-    #[arg(long)]
-    /// Defines the last position (from the end of a prefix) where an existential quantifier is allowed to appear
-    last_exist: Option<usize>,
-
-    #[arg(long)]
-    /// Vary the quantifier prefix gradually up to the specified configuration
-    vary_quant: bool,
 }
 
 impl QuantifierConfigArgs {
@@ -149,29 +140,12 @@ struct QuantifierFreeConfigArgs {
     qf: Option<String>,
 
     #[arg(long)]
-    /// Vary the quantifier-free structure gradually up to the specified configuration
-    vary_qf: bool,
-
-    #[arg(long)]
-    /// For a quantifier-free body in CNF, determines the maximal number of clauses
-    clauses: Option<usize>,
-
-    #[arg(long)]
-    /// For a quantifier-free body in CNF, determines the maximal size of each clause
+    /// Determines the maximal size of each clause
     clause_size: Option<usize>,
 
     #[arg(long)]
-    /// For a quantifier-free body in DNF, determines the maximal number of cubes
+    /// Determines the maximal number of cubes in disjunction
     cubes: Option<usize>,
-
-    #[arg(long)]
-    /// For a quantifier-free body in DNF, determines the maximal size of each cube
-    cube_size: Option<usize>,
-
-    #[arg(long)]
-    /// For a quantifier-free body which supports unit clauses/cubes, like pDNF,
-    /// this determines the maximal size of non-unit clauses/cubes
-    non_unit: Option<usize>,
 
     #[arg(long)]
     /// The maximal nesting depth of terms in the vocabulary (unbounded if not provided)
@@ -186,11 +160,8 @@ impl QuantifierFreeConfigArgs {
     fn to_cfg(&self) -> QuantifierFreeConfig {
         QuantifierFreeConfig {
             qf_body: self.qf.as_ref().map_or(QfBody::default(), |qf| qf.into()),
-            clauses: self.clauses,
             clause_size: self.clause_size,
             cubes: self.cubes,
-            cube_size: self.cube_size,
-            non_unit: self.non_unit,
         }
     }
 }
@@ -226,11 +197,6 @@ struct InferenceConfigArgs {
     #[arg(long)]
     /// Number of different seeds to try the solvers with
     seeds: Option<usize>,
-
-    #[arg(long)]
-    /// Instead on parallizing the solvers for each query, try them one by one
-    /// in a sequential fallback fashion.
-    fallback: bool,
 
     #[arg(long)]
     /// Do not try to decompose the transition relation disjunctively
@@ -291,8 +257,6 @@ impl QalphaArgs {
 
             quant_cfg: Arc::new(self.infer_cfg.quant_cfg.to_cfg(&m.signature)),
 
-            last_exist: self.infer_cfg.quant_cfg.last_exist,
-
             qf_cfg: self.qf_cfg.to_cfg(),
 
             sim: SimulationConfig {
@@ -303,18 +267,12 @@ impl QalphaArgs {
                 dfs: self.sim_cfg.dfs,
             },
 
-            vary: VariationConfig {
-                quant: self.infer_cfg.quant_cfg.vary_quant,
-                qf: self.qf_cfg.vary_qf,
-            },
-
             strategy: self
                 .strategy
                 .as_ref()
                 .map_or(Strategy::default(), |s| s.into()),
             until_safe: self.until_safe,
             seeds: self.infer_cfg.seeds.unwrap_or(1),
-            fallback: self.infer_cfg.fallback,
             baseline: self.baseline,
         }
     }

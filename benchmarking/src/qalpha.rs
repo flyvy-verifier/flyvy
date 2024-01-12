@@ -367,18 +367,21 @@ impl<'a> QalphaConfig<'a> {
                     .collect::<Vec<_>>()
             };
 
-            let quant_sizes = 1..=3;
-            let clause_sizes = 0..=4;
-            let cubes = 0..=2;
-
-            [quant_sizes, clause_sizes, cubes]
-                .into_iter()
-                .multi_cartesian_product()
-                .flat_map(|p| {
-                    let (q, cl, cb) = (p[0], p[1], p[2]);
-                    let mut params = quant_params(q);
-                    params.push(format!("--clause-size={cl}"));
-                    params.push(format!("--cubes={cb}"));
+            (1..=2)
+                .cartesian_product([
+                    ("pdnf", Some(3), Some(1)),
+                    ("cnf", Some(3), None),
+                    ("dnf", None, Some(3)),
+                ])
+                .flat_map(|(quant, (qf, clause_size, cubes))| {
+                    let mut params = quant_params(quant);
+                    params.push(format!("--qf={qf}"));
+                    if let Some(cl) = clause_size {
+                        params.push(format!("--clause-size={cl}"));
+                    }
+                    if let Some(cb) = cubes {
+                        params.push(format!("--cubes={cb}"));
+                    }
                     params.extend(sim.params());
                     params.push("--strategy=none".to_string());
 
@@ -386,7 +389,7 @@ impl<'a> QalphaConfig<'a> {
                     baseline_params.push("--baseline".to_string());
                     [
                         (
-                            self.full_path(format!("scalability-{q}-{cl}-{cb}").as_str()),
+                            self.full_path(format!("scalability-{quant}q-{qf}").as_str()),
                             BenchmarkConfig {
                                 command: command(),
                                 params,
@@ -395,7 +398,7 @@ impl<'a> QalphaConfig<'a> {
                             },
                         ),
                         (
-                            self.full_path(format!("scalability-{q}-{cl}-{cb}-baseline").as_str()),
+                            self.full_path(format!("scalability-{quant}q-{qf}-baseline").as_str()),
                             BenchmarkConfig {
                                 command: command(),
                                 params: baseline_params,

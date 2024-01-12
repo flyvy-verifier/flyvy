@@ -357,14 +357,22 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
     match (&cfg.qf_cfg.qf_body, cfg.baseline) {
         (QfBody::Cnf, true) => qalpha(
             cfg.clone(),
-            baseline::cnf_language(cfg.qf_cfg.clause_size.unwrap(), literals),
+            baseline::quant_cnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.clause_size.unwrap(),
+                literals,
+            ),
             m,
             &solver,
             print_invariant,
         ),
         (QfBody::Cnf, false) => qalpha(
             cfg.clone(),
-            advanced::cnf_language(cfg.qf_cfg.clause_size.unwrap(), literals),
+            advanced::quant_cnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.clause_size.unwrap(),
+                literals,
+            ),
             m,
             &solver,
             print_invariant,
@@ -397,14 +405,22 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
         ),
         (QfBody::Dnf, true) => qalpha(
             cfg.clone(),
-            baseline::dnf_language(cfg.qf_cfg.cubes.unwrap(), literals),
+            baseline::quant_dnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.cubes.unwrap(),
+                literals,
+            ),
             m,
             &solver,
             print_invariant,
         ),
         (QfBody::Dnf, false) => qalpha(
             cfg.clone(),
-            advanced::dnf_language(cfg.qf_cfg.cubes.unwrap(), literals),
+            advanced::quant_dnf_language(
+                cfg.quant_cfg.clone(),
+                cfg.qf_cfg.cubes.unwrap(),
+                literals,
+            ),
             m,
             &solver,
             print_invariant,
@@ -542,8 +558,10 @@ where
         }
     }
 
-    frame.log_info("Checking safety...");
-    frame.is_safe(fo, solver, None);
+    if !matches!(cfg.strategy, Strategy::None) {
+        frame.log_info("Checking safety...");
+        frame.is_safe(fo, solver, None);
+    }
     let time = start.elapsed();
     let proof = if cfg.strategy.is_houdini() {
         full_houdini_frame.unwrap()

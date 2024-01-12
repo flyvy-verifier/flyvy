@@ -713,62 +713,8 @@ impl From<&String> for QfBody {
 
 pub struct QuantifierFreeConfig {
     pub qf_body: QfBody,
-
-    pub clauses: Option<usize>,
     pub clause_size: Option<usize>,
-
     pub cubes: Option<usize>,
-    pub cube_size: Option<usize>,
-
-    pub non_unit: Option<usize>,
-}
-
-pub struct VariationConfig {
-    pub quant: bool,
-    pub qf: bool,
-}
-
-impl VariationConfig {
-    pub fn quant_sizes(&self, cfg: &QalphaConfig) -> Vec<Arc<QuantifierConfig>> {
-        if self.quant {
-            (0..cfg.quant_cfg.num_vars())
-                .flat_map(|size| cfg.quant_cfg.subsequences(size).into_iter().map(Arc::new))
-                .collect()
-        } else {
-            vec![(cfg.quant_cfg.clone())]
-        }
-    }
-
-    pub fn quant_exists(
-        &self,
-        cfg: &QalphaConfig,
-        quant: Arc<QuantifierConfig>,
-    ) -> Vec<(Arc<QuantifierConfig>, usize)> {
-        let num_vars = quant.num_vars();
-        if self.quant {
-            let mut options = vec![];
-            let mut total = 0;
-            for i in 0..quant.len() {
-                if !matches!(quant.quantifiers[i], Some(Quantifier::Forall)) {
-                    for j in 0..quant.names[i].len() {
-                        let last_exist = num_vars - total - j;
-                        if !cfg.last_exist.is_some_and(|l| l < last_exist) {
-                            options.push((quant.clone(), last_exist));
-                        }
-                    }
-                }
-                total += quant.names[i].len();
-            }
-
-            options
-        } else {
-            let first = (0..quant.len())
-                .find(|i| !matches!(quant.quantifiers[*i], Some(Quantifier::Forall)))
-                .unwrap_or(num_vars);
-            let default_last_exist = quant.counts()[first..].iter().sum();
-            vec![(quant, cfg.last_exist.unwrap_or(default_last_exist))]
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -785,11 +731,8 @@ pub struct QalphaConfig {
     pub fo: FOModule,
 
     pub quant_cfg: Arc<QuantifierConfig>,
-    pub last_exist: Option<usize>,
 
     pub qf_cfg: QuantifierFreeConfig,
-
-    pub vary: VariationConfig,
 
     pub sim: SimulationConfig,
 
@@ -798,8 +741,6 @@ pub struct QalphaConfig {
     pub until_safe: bool,
 
     pub seeds: usize,
-
-    pub fallback: bool,
 
     pub baseline: bool,
 }
