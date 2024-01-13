@@ -363,6 +363,12 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                 self.weaken_stats.effective_calls += 1;
             }
         }
+        self.log_info(format!(
+            "Weaken aggregated statistics: total_duration={}s, total_calls={}, effective_calls={}",
+            self.weaken_stats.total_duration.as_secs_f64(),
+            self.weaken_stats.total_calls,
+            self.weaken_stats.effective_calls,
+        ));
         if changed {
             self.log_info("Cores updated.");
             self.key_to_idx = self.weaken_lemmas.key_to_idx();

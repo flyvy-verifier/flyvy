@@ -28,6 +28,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -36,6 +37,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -44,6 +46,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -52,6 +55,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -60,6 +64,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -68,6 +73,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -76,6 +82,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -84,6 +91,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -92,6 +100,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Universal,
             scalability: vec![],
         },
         QalphaConfig {
@@ -100,6 +109,7 @@ pub fn qalpha_benchmarks(
             clause_size: 2,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -108,6 +118,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -116,6 +127,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 0,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -124,6 +136,7 @@ pub fn qalpha_benchmarks(
             clause_size: 1,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -132,6 +145,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![
                 Scalability {
                     quantifiers: "F round 2; F value 2; * quorum 1; * node 1".to_string(),
@@ -162,6 +176,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -170,6 +185,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -178,6 +194,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -186,6 +203,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -194,6 +212,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 2,
             sim: Default::default(),
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -202,6 +221,7 @@ pub fn qalpha_benchmarks(
             clause_size: 5,
             cubes: 2,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
         QalphaConfig {
@@ -210,6 +230,7 @@ pub fn qalpha_benchmarks(
             clause_size: 1,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
         QalphaConfig {
@@ -218,6 +239,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 3,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
         QalphaConfig {
@@ -226,6 +248,7 @@ pub fn qalpha_benchmarks(
             clause_size: 3,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
         QalphaConfig {
@@ -234,6 +257,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 2,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
         QalphaConfig {
@@ -242,6 +266,7 @@ pub fn qalpha_benchmarks(
             clause_size: 4,
             cubes: 1,
             sim: Default::default(),
+            fragment: Fragment::None,
             scalability: vec![],
         },
     ];
@@ -258,6 +283,22 @@ pub fn qalpha_benchmarks(
 
 fn example_path(file: &Path) -> PathBuf {
     PathBuf::from("temporal-verifier/examples").join(file)
+}
+
+enum Fragment {
+    Universal,
+    Epr,
+    None,
+}
+
+impl ToString for Fragment {
+    fn to_string(&self) -> String {
+        match self {
+            Fragment::Universal => "univ".to_string(),
+            Fragment::Epr => "epr".to_string(),
+            Fragment::None => "none".to_string(),
+        }
+    }
 }
 
 struct SortCount {
@@ -331,6 +372,7 @@ struct QalphaConfig<'a> {
     clause_size: usize,
     cubes: usize,
     sim: SimulationConfig,
+    fragment: Fragment,
     scalability: Vec<Scalability>,
 }
 
@@ -451,7 +493,11 @@ impl<'a> QalphaConfig<'a> {
     /// Give this benchmark a systematic path that includes enough information
     /// to (hopefully) make it unique.
     fn full_path(&self, sub_name: &str) -> PathBuf {
-        PathBuf::from(format!("{}/{sub_name}", self.file.display()))
+        PathBuf::from(format!(
+            "{}/{}-{sub_name}",
+            self.file.display(),
+            self.fragment.to_string(),
+        ))
     }
 }
 

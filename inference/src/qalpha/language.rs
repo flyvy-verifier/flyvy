@@ -889,7 +889,7 @@ impl<F: BoundedFormula> BoundedFormula for Or<F> {
 impl<S: FormulaSet> Clone for Trie<S> {
     fn clone(&self) -> Self {
         Self {
-            value: self.value.clone(),
+            value: self.value,
             next: self.next.clone(),
             edges: self.edges.clone(),
         }
@@ -933,7 +933,7 @@ impl<S: FormulaSet> Trie<S> {
         match seq.split_first() {
             None => self.value.take().unwrap(),
             Some((first, rest)) => {
-                let first_id = *self.next.get_id(&first).unwrap();
+                let first_id = *self.next.get_id(first).unwrap();
                 let next_trie = self.edges.get_mut(&first_id).unwrap();
                 let id = next_trie.remove(rest);
                 if next_trie.is_empty() {

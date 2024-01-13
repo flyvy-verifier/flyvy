@@ -147,7 +147,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
     fn remove(&mut self, f: &L::Formula) -> Vec<LemmaKey> {
         self.lang
-            .simplify(&f)
+            .simplify(f)
             .iter()
             .filter_map(|term| {
                 let (_, count) = self.rev_sorted.get_mut(term).unwrap();
@@ -229,10 +229,9 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let start_time = Instant::now();
         let empty_assigment = Assignment::new();
 
-        let unsat;
+        let unsat = self.set.get_unsat_formulas(model, &empty_assigment);
         let mut removed: Vec<LemmaKey> = vec![];
 
-        unsat = self.set.get_unsat_formulas(model, &empty_assigment);
         for f in &unsat {
             removed.append(&mut self.remove(f));
         }
