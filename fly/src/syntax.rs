@@ -654,9 +654,15 @@ impl Signature {
             }
         }
 
-        // Generate constants.
+        // Indicates whether nullary functions have already been generated.
+        let mut generated_nullary = false;
+
+        // If depth is bounded, this maintains the terms for depth - 1 to be used in equality terms.
+        let mut terms_depth_minus_one: Option<Vec<Vec<Term>>> = None;
+
+        // Generate Boolean nullary relations.
         for rel_decl in &self.relations {
-            if rel_decl.args.is_empty() {
+            if rel_decl.args.is_empty() && matches!(rel_decl.sort, Sort::Bool) {
                 new_terms[sort_idx(&rel_decl.sort)].push(Term::Id(rel_decl.name.clone()));
             }
         }
@@ -668,19 +674,24 @@ impl Signature {
             }
 
             let mut new_new_terms = vec![vec![]; self.sorts.len() + 1];
-            for rel_decl in &self.relations {
+            'rel_loop: for rel_decl in &self.relations {
                 if rel_decl.args.is_empty() {
-                    continue;
+                    match (&rel_decl.sort, generated_nullary) {
+                        (Sort::Bool, _) | (_, true) => (),
+                        _ => new_new_terms[sort_idx(&rel_decl.sort)]
+                            .push(Term::Id(rel_decl.name.clone())),
+                    }
+                    continue 'rel_loop;
                 }
 
-                for new_ind in (0..rel_decl.args.len())
+                'ind_loop: for new_ind in (0..rel_decl.args.len())
                     .map(|_| [false, true])
                     .multi_cartesian_product_fixed()
                 {
                     // Only generate terms where at least one argument is a newly generated term,
                     // to make sure each term is generated exactly once.
                     if !new_ind.iter().any(|&x| x) {
-                        continue;
+                        continue 'ind_loop;
                     }
 
                     let mut arg_terms = vec![];
@@ -709,10 +720,16 @@ impl Signature {
                 }
             }
 
+            generated_nullary = true;
+
             for (i, ts) in new_terms.iter_mut().enumerate() {
                 terms[i].append(ts);
             }
             new_terms = new_new_terms
+        }
+
+        if include_eq && depth.is_some() {
+            terms_depth_minus_one = Some(terms.clone());
         }
 
         for (i, vt) in new_terms.iter_mut().enumerate() {
@@ -721,8 +738,9 @@ impl Signature {
 
         // Generate equality terms.
         if include_eq {
+            let terms_for_eq = terms_depth_minus_one.as_ref().unwrap_or(&terms);
             let mut eq_terms = vec![];
-            for term in terms.iter().take(self.sorts.len()) {
+            for term in terms_for_eq.iter().take(self.sorts.len()) {
                 eq_terms.append(
                     &mut term
                         .iter()

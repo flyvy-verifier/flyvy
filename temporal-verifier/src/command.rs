@@ -162,6 +162,7 @@ impl QuantifierFreeConfigArgs {
             qf_body: self.qf.as_ref().map_or(QfBody::default(), |qf| qf.into()),
             clause_size: self.clause_size,
             cubes: self.cubes,
+            nesting: self.nesting,
         }
     }
 }

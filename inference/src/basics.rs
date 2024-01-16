@@ -715,6 +715,7 @@ pub struct QuantifierFreeConfig {
     pub qf_body: QfBody,
     pub clause_size: Option<usize>,
     pub cubes: Option<usize>,
+    pub nesting: Option<usize>,
 }
 
 #[derive(Clone)]

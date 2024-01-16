@@ -185,6 +185,7 @@ impl FoundFixpoint {
         success: bool,
         proof: Vec<Term>,
         full_size: usize,
+        max_size: usize,
         reduced_proof: Option<Vec<Term>>,
         safety_proof: Option<Vec<Term>>,
         covering: Option<(usize, usize)>,
@@ -198,6 +199,7 @@ impl FoundFixpoint {
             success,
             simplified_size: proof.len(),
             full_size,
+            max_size,
             reduced: reduced_proof.as_ref().map(|r| r.len()),
             safety: safety_proof.as_ref().map(|r| r.len()),
             covering,
@@ -264,6 +266,8 @@ struct FixpointStats {
     simplified_size: usize,
     /// The number of formulas in the final weaken frame, containing unsimplified formulas
     full_size: usize,
+    /// The maximal number of formulas encountered in the weaken frame,
+    max_size: usize,
     /// The number of formulas in reduced by implication checks (if available)
     reduced: Option<usize>,
     /// The number of formulas in the safety proof (if available)
@@ -340,7 +344,14 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
     let mut literals: Vec<_>;
     let cube_literals: Vec<_>;
     let gen_time = timed!({
-        literals = generate_literals(&m.signature, &cfg.quant_cfg, None, true, &cfg.fo, &solver);
+        literals = generate_literals(
+            &m.signature,
+            &cfg.quant_cfg,
+            cfg.qf_cfg.nesting,
+            true,
+            &cfg.fo,
+            &solver,
+        );
         let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
         cube_literals = literals
             .iter()
@@ -357,8 +368,11 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
                 _ => true,
             },
             _ => true,
-        })
+        });
     });
+    for lit in &literals {
+        println!("{}, {}", lit.0, lit.1);
+    }
     println!(
         "Generated {} literals in {}ms ({} containing variables after first existential)",
         literals.len(),
@@ -532,6 +546,7 @@ where
                 false,
                 frame.proof(),
                 frame.weaken_lemmas.len(),
+                frame.weaken_lemmas.max_size,
                 None,
                 None,
                 None,
@@ -598,6 +613,7 @@ where
         success,
         proof,
         frame.weaken_lemmas.len(),
+        frame.weaken_lemmas.max_size,
         reduced_proof,
         safety_proof,
         covering,

@@ -40,6 +40,7 @@ pub struct WeakenLemmaSet<L: BoundedLanguage> {
     sorted: BTreeMap<LemmaKey, Term>,
     rev_sorted: HashMap<Term, (LemmaKey, FormulaId)>,
     total: FormulaId,
+    pub max_size: usize,
 }
 pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
     set: &'a WeakenLemmaSet<L>,
@@ -92,6 +93,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
             sorted: BTreeMap::new(),
             rev_sorted: HashMap::default(),
             total: 0,
+            max_size: 0,
         }
     }
 
@@ -122,6 +124,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
     pub fn init(&mut self) {
         self.insert(self.lang.bottom());
+        self.max_size = self.max_size.max(self.len());
     }
 
     fn insert(&mut self, f: L::Formula) -> Vec<LemmaKey> {
@@ -196,7 +199,6 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
         let minimization_time = timed!({ weakenings = L::minimize(empty(), weakenings) });
 
-        let weakenings_count = weakenings.len();
         let insertion_time = timed!({
             for f in weakenings.into_iter().sorted() {
                 total_added += 1;
@@ -204,16 +206,18 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
             }
         });
 
-        if !removed.is_empty() {
+        self.max_size = self.max_size.max(self.len());
+
+        if !unsat.is_empty() {
             log::info!(
-                "[{} ~> {}] Weakened: removed={}({}), added={}/{}({}), total_time={}ms (unsat={}ms, weaken={}ms, min={}ms, insertion={}ms)",
+                "[{} ~> {} | {}] Weakened: removed={}({}), added={}({}), total_time={}ms (unsat={}ms, weaken={}ms, min={}ms, insertion={}ms)",
                 self.len(),
                 self.simplified_len(),
+                self.max_size,
                 unsat.len(),
                 removed.len(),
                 total_added,
                 added.len(),
-                weakenings_count,
                 start_time.elapsed().as_millis(),
                 unsat_time.as_millis(),
                 weaken_time.as_millis(),

@@ -1185,7 +1185,7 @@ where
         }
 
         let and = apply_reduction(&self.1, self, And(Arc::new(v)));
-        if and.first().is_some_and(|a| ignore(a)) {
+        if and.first().is_some_and(ignore) {
             vec![]
         } else {
             and

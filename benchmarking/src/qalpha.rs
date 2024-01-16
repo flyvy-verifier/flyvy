@@ -27,8 +27,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 2",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -36,8 +37,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 1; F value 2",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -45,8 +47,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 3",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -54,8 +57,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F key 1; F node 2; F value 2",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -63,8 +67,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F thread 2; F ticket 2",
             clause_size: 5,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -72,8 +77,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 4",
             clause_size: 4,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -81,8 +87,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 3",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -90,17 +97,9 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 3; F value 1",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
-            fragment: Fragment::Universal,
-            scalability: vec![],
-        },
-        QalphaConfig {
-            file: PathBuf::from("fol/cache.fly"),
-            quantifiers: "F address 2; F core 2; F value 2",
-            clause_size: 5,
-            cubes: 0,
-            sim: Default::default(),
-            fragment: Fragment::Universal,
+            fragment: Fragment::Epr,
             scalability: vec![],
         },
         QalphaConfig {
@@ -108,6 +107,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F key 1; * node 1; * value 1",
             clause_size: 2,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -117,6 +117,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F value 2; * quorum 1; F node 1",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -126,6 +127,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "* quorum 1; F node 3; F value 1",
             clause_size: 3,
             cubes: 0,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -135,6 +137,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 1; F response 1; * request 1",
             clause_size: 1,
             cubes: 1,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -144,6 +147,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F round 2; F value 2; * quorum 1; * node 1",
             clause_size: 3,
             cubes: 1,
+            nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![
@@ -175,6 +179,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F round 2; F value 2; * quorum_2 1; * node 1",
             clause_size: 3,
             cubes: 1,
+            nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -184,15 +189,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F inst 1; F round 2; F value 2; * quorum 1; * node 2",
             clause_size: 3,
             cubes: 1,
-            sim: Default::default(),
-            fragment: Fragment::Epr,
-            scalability: vec![],
-        },
-        QalphaConfig {
-            file: PathBuf::from("fol/stoppable_paxos_epr.fly"),
-            quantifiers: "F inst 2; F votemap 1; F round 2; F value 2; * quorum 1; * node 2",
-            clause_size: 5,
-            cubes: 1,
+            nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -202,6 +199,17 @@ pub fn qalpha_benchmarks(
             quantifiers: "F round 2; F value 2; * quorum_c 1; * quorum_f 1; * node 1",
             clause_size: 4,
             cubes: 1,
+            nesting: Some(1),
+            sim: Default::default(),
+            fragment: Fragment::Epr,
+            scalability: vec![],
+        },
+        QalphaConfig {
+            file: PathBuf::from("fol/stoppable_paxos_epr.fly"),
+            quantifiers: "F inst 2; F votemap 1; F round 2; F value 2; * quorum 1; * node 2",
+            clause_size: 5,
+            cubes: 1,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -211,6 +219,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F round 2; F value 2; * config 1; * quorum 1; * node 1",
             clause_size: 5,
             cubes: 2,
+            nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
             scalability: vec![],
@@ -220,6 +229,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F value 1; * value 2; * quorum_b 1; * node 2",
             clause_size: 5,
             cubes: 2,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -229,6 +239,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 1; * node 1",
             clause_size: 1,
             cubes: 1,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -238,6 +249,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "* node 2; F node 1; * id 1",
             clause_size: 3,
             cubes: 3,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -247,6 +259,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F db_request_id 1; F node 2; F response 1; * request 1; * node 1",
             clause_size: 3,
             cubes: 1,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -256,6 +269,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "* quorum_a 1; F node 1; * quorum_b 1; * node 1",
             clause_size: 4,
             cubes: 2,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -265,6 +279,7 @@ pub fn qalpha_benchmarks(
             quantifiers: "F node 2; F req_id 2; F ref 1; F location 1; * ref 1; * location 1",
             clause_size: 4,
             cubes: 1,
+            nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
             scalability: vec![],
@@ -286,7 +301,6 @@ fn example_path(file: &Path) -> PathBuf {
 }
 
 enum Fragment {
-    Universal,
     Epr,
     None,
 }
@@ -294,7 +308,6 @@ enum Fragment {
 impl ToString for Fragment {
     fn to_string(&self) -> String {
         match self {
-            Fragment::Universal => "univ".to_string(),
             Fragment::Epr => "epr".to_string(),
             Fragment::None => "none".to_string(),
         }
@@ -371,6 +384,7 @@ struct QalphaConfig<'a> {
     quantifiers: &'a str,
     clause_size: usize,
     cubes: usize,
+    nesting: Option<usize>,
     sim: SimulationConfig,
     fragment: Fragment,
     scalability: Vec<Scalability>,
@@ -406,9 +420,11 @@ impl<'a> QalphaConfig<'a> {
         args.extend(quantifier_param(self.quantifiers));
         args.push(format!("--clause-size={}", self.clause_size));
         args.push(format!("--cubes={}", self.cubes));
+        if let Some(n) = self.nesting {
+            args.push(format!("--nesting={n}"));
+        }
         args.extend(sim.params());
         args.push(format!("--strategy={strategy}"));
-        args.push("--seeds=2".to_string());
         args
     }
 

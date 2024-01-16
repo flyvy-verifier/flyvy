@@ -294,10 +294,11 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     /// Add details about the frame to the given [`Display`].
     pub fn add_details<D: Display>(&self, d: D) -> String {
         format!(
-            "[{:.2}s] [{} ~> {}] {}",
+            "[{:.2}s] [{} ~> {} | {}] {}",
             self.start_time.elapsed().as_secs_f64(),
             self.weaken_lemmas.len(),
             self.weaken_lemmas.simplified_len(),
+            self.weaken_lemmas.max_size,
             d,
         )
     }
@@ -347,33 +348,32 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     /// Weaken the lemmas in the frame.
     pub fn weaken(&mut self, models: &[Model]) -> bool {
         let mut changed = false;
-        for model in models {
-            let r;
-            let a;
-            let weaken_time = timed!({
-                (r, a) = self.weaken_lemmas.weaken(model);
-            });
-            if !r.is_empty() {
-                self.remove_by_keys(&r);
+        let weaken_time = timed!({
+            for model in models {
+                let (r, a) = self.weaken_lemmas.weaken(model);
+
+                if !r.is_empty() {
+                    self.remove_by_keys(&r);
+                }
+                self.weaken_stats.total_calls += 1;
+                if !r.is_empty() || !a.is_empty() {
+                    changed |= true;
+                    self.weaken_stats.effective_calls += 1;
+                }
             }
-            self.weaken_stats.total_duration += weaken_time;
-            self.weaken_stats.total_calls += 1;
-            if !r.is_empty() || !a.is_empty() {
-                changed |= true;
-                self.weaken_stats.effective_calls += 1;
+            if changed {
+                self.log_info("Cores updated.");
+                self.key_to_idx = self.weaken_lemmas.key_to_idx();
+                self.log_info("Indices updated.");
             }
-        }
+        });
+        self.weaken_stats.total_duration += weaken_time;
         self.log_info(format!(
             "Weaken aggregated statistics: total_duration={}s, total_calls={}, effective_calls={}",
             self.weaken_stats.total_duration.as_secs_f64(),
             self.weaken_stats.total_calls,
             self.weaken_stats.effective_calls,
         ));
-        if changed {
-            self.log_info("Cores updated.");
-            self.key_to_idx = self.weaken_lemmas.key_to_idx();
-            self.log_info("Indices updated.");
-        }
         changed
     }
 
