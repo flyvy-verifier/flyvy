@@ -24,7 +24,7 @@ use crate::{
     indices::Indices,
     quant_enum::{enumerate_quantifiers, Enumerated, UniverseBounds},
     sat::{tseytin, Cnf},
-    set::{translate, BoundedProgram, BoundedState, IsoStateSet, Transitions},
+    set::{translate, BoundedProgram, BoundedState, IsoStateSet, Transitions, STATE_LEN},
 };
 
 /// Get the [`UniverseBounds`] for the given universe sizes in the given signature.
@@ -197,6 +197,10 @@ impl Simulator for SatSimulator {
         let mut single_indices = Indices::new(module.signature.clone(), universe, 1);
         let mut double_indices = Indices::new(module.signature.clone(), universe, 2);
 
+        if double_indices.num_indices >= STATE_LEN {
+            return Err(CheckerError::StateLenTooSmall);
+        }
+
         let init_enum = dest_module
             .inits
             .iter()
@@ -368,16 +372,15 @@ impl<'a, S: Simulator> MultiSimulator<'a, S> {
 
     /// Register the given model as already seen by the simulator.
     ///
-    /// Returns `true` if this model is seen for the first time, or `false` if seen before or
-    /// if a simulator couldn't be created for this model.
-    pub fn see(&self, model: &Model) -> bool {
+    /// Returns whether this model is seen for the first time, or None if a simulator couldn't be created for this model.
+    pub fn see(&self, model: &Model) -> Option<bool> {
         if self.create_sim(&model.universe).is_ok() {
             let sims = self.sims.read().unwrap();
             let sim = &sims[&model.universe];
             let bool_model = self.bool_module.to_bool_model(model);
-            sim.see(&bool_model)
+            Some(sim.see(&bool_model))
         } else {
-            false
+            None
         }
     }
 

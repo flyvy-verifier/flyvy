@@ -51,7 +51,7 @@ pub fn check(
 }
 
 /// Compile-time upper bound on the bounded universe size.
-const STATE_LEN: usize = 256;
+pub const STATE_LEN: usize = 256;
 
 /// A state in the bounded system. Conceptually, this is an interpretation of the signature on the
 /// bounded universe. We represent states concretely as a bitvector, where each bit represents the

@@ -770,7 +770,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         samples
     }
 
-    pub fn see(&self, model: &Model) -> bool {
+    pub fn see(&self, model: &Model) -> Option<bool> {
         self.simulator.see(model)
     }
 

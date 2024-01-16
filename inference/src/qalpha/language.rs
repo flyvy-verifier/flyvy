@@ -30,9 +30,9 @@ use std::{cmp::Ordering, fmt::Debug, hash::Hash, iter::empty, marker::PhantomDat
 
 // ========== Utilities ==========
 
-macro_rules! fmap_type {
-    ($f:ty) => {
-        Option<Arc<dyn Fn($f) -> Option<$f> + Send + Sync>>
+macro_rules! reduction_type {
+    ($lang:ty, $f:ty) => {
+        Option<Arc<dyn Fn(&$lang, $f) -> Vec<$f> + Send + Sync>>
     };
 }
 
@@ -95,10 +95,10 @@ fn extend_assignment(
         .collect()
 }
 
-fn apply_fmap<F>(fmap: &fmap_type!(F), f: F) -> Option<F> {
-    match fmap.as_ref() {
-        Some(func) => func(f),
-        None => Some(f),
+fn apply_reduction<L, F>(reduction: &reduction_type!(L, F), lang: &L, f: F) -> Vec<F> {
+    match reduction.as_ref() {
+        Some(func) => func(lang, f),
+        None => vec![f],
     }
 }
 
@@ -147,7 +147,7 @@ pub trait BoundedLanguage: Sync + Send {
     fn new(
         sub: Self::SubLanguages,
         cfg: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self>;
 
@@ -281,7 +281,7 @@ fn set_into_iter<S: FormulaSet>(set: S) -> impl Iterator<Item = S::Formula> {
 // ========== EqLanguage (Basis) ==========
 pub struct EqLanguage<L: Hash + Ord + Clone, S>(
     Vec<Bounded<L>>,
-    fmap_type!(Bounded<L>),
+    reduction_type!(Self, Bounded<L>),
     simplify_type!(Self, Bounded<L>),
     PhantomData<S>,
 );
@@ -307,12 +307,12 @@ impl<S: FormulaSet<Formula = Bounded<Literal>>> BoundedLanguage for EqLanguage<L
     fn new(
         _: Self::SubLanguages,
         cfg: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self> {
         Arc::new(Self(
             cfg.into_iter().map(Bounded::Some).collect(),
-            fmap,
+            reduction,
             simplify,
             PhantomData,
         ))
@@ -338,7 +338,7 @@ impl<S: FormulaSet<Formula = Bounded<Literal>>> BoundedLanguage for EqLanguage<L
                 .iter()
                 .filter(|literal| literal.eval(model, assignment))
                 .cloned()
-                .filter_map(|literal| apply_fmap(&self.1, literal))
+                .flat_map(|literal| apply_reduction(&self.1, self, literal))
                 .filter(|literal| !ignore(literal))
                 .collect(),
             _ => vec![],
@@ -478,7 +478,7 @@ impl FormulaSet for EqSet<Literal> {
 pub struct BinOrLanguage<L1: BoundedLanguage, L2: BoundedLanguage, S>(
     Arc<L1>,
     Arc<L2>,
-    fmap_type!(BinOr<L1::Formula, L2::Formula>),
+    reduction_type!(Self, BinOr<L1::Formula, L2::Formula>),
     simplify_type!(Self, BinOr<L1::Formula, L2::Formula>),
     PhantomData<S>,
 );
@@ -508,10 +508,10 @@ where
     fn new(
         sub: Self::SubLanguages,
         _: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self> {
-        Arc::new(Self(sub.0, sub.1, fmap, simplify, PhantomData))
+        Arc::new(Self(sub.0, sub.1, reduction, simplify, PhantomData))
     }
 
     fn bottom(&self) -> Self::Formula {
@@ -536,7 +536,7 @@ where
         w0.into_iter()
             .map(|f0| BinOr(f0, f.1.clone()))
             .chain(w1.into_iter().map(|f1| BinOr(f.0.clone(), f1)))
-            .filter_map(|x| apply_fmap(&self.2, x))
+            .flat_map(|x| apply_reduction(&self.2, self, x))
             .filter(|x| !ignore(x))
             .collect()
     }
@@ -701,13 +701,13 @@ impl<S1: FormulaSet, S2: FormulaSet> FormulaSet for BinOrSet<S1, S2> {
 
 // ========== N-ary OR ==========
 
-pub struct OrLanugage<L: BoundedLanguage, S>(
-    usize,
-    Arc<L>,
-    fmap_type!(Or<L::Formula>),
-    simplify_type!(Self, Or<L::Formula>),
-    PhantomData<S>,
-);
+pub struct OrLanugage<L: BoundedLanguage, S> {
+    size: usize,
+    language: Arc<L>,
+    reduction: reduction_type!(Self, Or<L::Formula>),
+    simplify: simplify_type!(Self, Or<L::Formula>),
+    set: PhantomData<S>,
+}
 
 #[derive(Hash, Clone, PartialEq, Eq, Debug)]
 pub struct Or<F: BoundedFormula>(Arc<Vec<F>>);
@@ -738,10 +738,16 @@ where
     fn new(
         sub: Self::SubLanguages,
         cfg: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self> {
-        Arc::new(Self(cfg, sub, fmap, simplify, PhantomData))
+        Arc::new(Self {
+            size: cfg,
+            language: sub,
+            reduction,
+            simplify,
+            set: PhantomData,
+        })
     }
 
     fn bottom(&self) -> Self::Formula {
@@ -759,9 +765,9 @@ where
         I: Fn(&Self::Formula) -> bool + Send + Sync,
     {
         // If possible, add a weakening of bottom to the disjunction.
-        let bottom_weakenings: Vec<Self::Formula> = if f.0.len() < self.0 {
-            self.1
-                .weaken(&self.1.bottom(), model, assignment, |_| false)
+        let bottom_weakenings: Vec<Self::Formula> = if f.0.len() < self.size {
+            self.language
+                .weaken(&self.language.bottom(), model, assignment, |_| false)
                 .into_iter()
                 .map(|bot_w| {
                     let mut w = f.clone();
@@ -782,7 +788,7 @@ where
                 .flat_map_iter(|(i, disj)| {
                     let mut f_removed = f.clone();
                     Arc::make_mut(&mut f_removed.0).remove(i);
-                    self.1
+                    self.language
                         .weaken(disj, model, assignment, |_| false)
                         .into_iter()
                         .map(move |disj_w| (f_removed.clone(), disj_w))
@@ -801,14 +807,14 @@ where
             empty(),
             bottom_weakenings
                 .into_iter()
-                .filter_map(|x| apply_fmap(&self.2, x))
+                .flat_map(|x| apply_reduction(&self.reduction, self, x))
                 .filter(|x| !ignore(x))
                 .chain(disj_weakenings),
         )
     }
 
     fn simplify(&self, f: &Self::Formula) -> Vec<Term> {
-        match self.3.as_ref() {
+        match self.simplify.as_ref() {
             Some(simplify) => (simplify)(self, f),
             None => vec![f.to_term()],
         }
@@ -817,7 +823,7 @@ where
     fn log_size(&self) -> f64 {
         // The size is approximated as n^k, where n is the sub-language size and k is the length of the disjunction.
         // With this, log10(n^k) = k * log10(n).
-        (self.0 as f64) * self.1.log_size()
+        (self.size as f64) * self.language.log_size()
     }
 }
 
@@ -1114,7 +1120,7 @@ impl<S: FormulaSet> FormulaSet for OrSet<S> {
 
 pub struct AndLanugage<L: BoundedLanguage, S>(
     Arc<L>,
-    fmap_type!(And<L::Formula>),
+    reduction_type!(Self, And<L::Formula>),
     simplify_type!(Self, And<L::Formula>),
     PhantomData<S>,
 );
@@ -1145,10 +1151,10 @@ where
     fn new(
         sub: Self::SubLanguages,
         _: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self> {
-        Arc::new(Self(sub, fmap, simplify, PhantomData))
+        Arc::new(Self(sub, reduction, simplify, PhantomData))
     }
 
     fn bottom(&self) -> Self::Formula {
@@ -1178,10 +1184,11 @@ where
             return vec![];
         }
 
-        let and = apply_fmap(&self.1, And(Arc::new(v)));
-        match and {
-            Some(a) if !ignore(&a) => vec![a],
-            _ => vec![],
+        let and = apply_reduction(&self.1, self, And(Arc::new(v)));
+        if and.first().is_some_and(|a| ignore(a)) {
+            vec![]
+        } else {
+            and
         }
     }
 
@@ -1375,7 +1382,7 @@ impl<S: FormulaSet> FormulaSet for AndSet<S> {
 pub struct QuantLanguage<L: BoundedLanguage, S> {
     cfg: Arc<QuantifierConfig>,
     language: Arc<L>,
-    fmap: fmap_type!(Quant<L::Formula>),
+    reduction: reduction_type!(Self, Quant<L::Formula>),
     simplify: simplify_type!(Self, Quant<L::Formula>),
     set_type: PhantomData<S>,
 }
@@ -1566,13 +1573,13 @@ where
     fn new(
         sub: Self::SubLanguages,
         cfg: Self::Config,
-        fmap: fmap_type!(Self::Formula),
+        reduction: reduction_type!(Self, Self::Formula),
         simplify: simplify_type!(Self, Self::Formula),
     ) -> Arc<Self> {
         Arc::new(Self {
             cfg,
             language: sub,
-            fmap,
+            reduction,
             simplify,
             set_type: PhantomData,
         })
@@ -1607,7 +1614,7 @@ where
         I: Fn(&Self::Formula) -> bool + Send + Sync,
     {
         // Currently not supporting fmap at this level; not very well defined.
-        assert!(self.fmap.is_none());
+        assert!(self.reduction.is_none());
 
         let mut bodies = L::Set::default();
         bodies.insert(f.body.clone());
@@ -2075,22 +2082,22 @@ type Cnf = And<Clause>;
 type Dnf = Or<Cube>;
 type PDnf = BinOr<Clause, Dnf>;
 
-fn clause_fmap() -> fmap_type!(Clause) {
-    Some(Arc::new(|f| {
+fn clause_reduction<L>() -> reduction_type!(L, Clause) {
+    Some(Arc::new(|_, f| {
         // Disallow a literal and its negation in the same clause, and disallow inequalities.
         if f.0.iter().all(|l| match l {
             Bounded::Bottom => true,
-            Bounded::Some(l) => !l.is_neq() && !f.0.contains(&Bounded::Some(l.negate())),
+            Bounded::Some(l) => !f.0.contains(&Bounded::Some(l.negate())),
         }) {
-            Some(f)
+            vec![f]
         } else {
-            None
+            vec![]
         }
     }))
 }
 
-fn pdnf_fmap() -> fmap_type!(PDnf) {
-    Some(Arc::new(|mut f| {
+fn pdnf_reduction<L>() -> reduction_type!(L, PDnf) {
+    Some(Arc::new(|_, mut f| {
         // Remove all negations of clause literals from cubes.
         let neg_literals: HashSet<_> =
             f.0 .0
@@ -2106,12 +2113,13 @@ fn pdnf_fmap() -> fmap_type!(PDnf) {
             let cube_literals = Arc::make_mut(&mut new_cube.0);
             cube_literals.retain(|l| !neg_literals.contains(l));
             if cube_literals.is_empty() {
-                return None;
+                return vec![];
             }
             new_cubes.insert(new_cube);
         }
         f.1 .0 = Arc::new(new_cubes.into_iter().sorted().collect());
-        Some(f)
+
+        vec![f]
     }))
 }
 
@@ -2133,7 +2141,12 @@ pub mod baseline {
     }
 
     pub fn clause_language(clause_size: usize, literals: Vec<Literal>) -> Arc<ClauseLanguage> {
-        ClauseLanguage::new(literal_language(literals), clause_size, clause_fmap(), None)
+        ClauseLanguage::new(
+            literal_language(literals),
+            clause_size,
+            clause_reduction(),
+            None,
+        )
     }
 
     pub fn cube_language(literals: Vec<Literal>) -> Arc<CubeLanguage> {
@@ -2160,7 +2173,7 @@ pub mod baseline {
                 dnf_language(cube_count, cube_literals),
             ),
             (),
-            pdnf_fmap(),
+            pdnf_reduction(),
             None,
         )
     }
@@ -2225,7 +2238,12 @@ pub mod advanced {
     }
 
     pub fn clause_language(clause_size: usize, literals: Vec<Literal>) -> Arc<ClauseLanguage> {
-        ClauseLanguage::new(literal_language(literals), clause_size, clause_fmap(), None)
+        ClauseLanguage::new(
+            literal_language(literals),
+            clause_size,
+            clause_reduction(),
+            None,
+        )
     }
 
     pub fn cube_language(literals: Vec<Literal>) -> Arc<CubeLanguage> {
@@ -2252,7 +2270,7 @@ pub mod advanced {
                 dnf_language(cube_count, cube_literals),
             ),
             (),
-            pdnf_fmap(),
+            pdnf_reduction(),
             None,
         )
     }

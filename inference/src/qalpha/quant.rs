@@ -329,6 +329,18 @@ impl QuantifierConfig {
             .collect()
     }
 
+    pub fn strictly_universal_vars(&self) -> HashSet<String> {
+        self.quantifiers
+            .iter()
+            .zip(self.names.iter())
+            .filter_map(|(q, ns)| match q {
+                Some(Quantifier::Forall) => Some(ns.iter().cloned()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     pub fn vars_after_first_exist(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| !matches!(self.quantifiers[*i], Some(Quantifier::Forall))) {
             Some(first_exists) => self.names[first_exists..]

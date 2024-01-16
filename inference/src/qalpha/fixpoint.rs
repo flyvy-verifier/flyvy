@@ -21,7 +21,7 @@ use crate::{
         language::{advanced, baseline, BoundedLanguage},
     },
 };
-use fly::syntax::{Module, Term, ThmStmt};
+use fly::syntax::{BinOp, Module, Term, ThmStmt};
 use solver::{
     backends::SolverType,
     basics::{BasicSolver, FallbackSolvers, ParallelSolvers},
@@ -337,16 +337,28 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
 
     // TODO: make nesting and include_eq configurable or remove them from command arguments
     println!("Generating literals...");
-    let literals: Vec<_>;
+    let mut literals: Vec<_>;
+    let cube_literals: Vec<_>;
     let gen_time = timed!({
-        literals = generate_literals(&m.signature, &cfg.quant_cfg, None, true, &cfg.fo, &solver)
+        literals = generate_literals(&m.signature, &cfg.quant_cfg, None, true, &cfg.fo, &solver);
+        let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
+        cube_literals = literals
+            .iter()
+            .filter(|literal| !literal.ids().is_disjoint(&non_universal_vars))
+            .cloned()
+            .collect();
+        let universal_vars = cfg.quant_cfg.strictly_universal_vars();
+        literals.retain(|lit| match (lit.0.as_ref(), lit.1) {
+            (Term::BinOp(BinOp::Equals, t1, t2), false) => match (t1.as_ref(), t2.as_ref()) {
+                (Term::Id(name1), Term::Id(name2)) => {
+                    !universal_vars.contains(name1) && !universal_vars.contains(name2)
+                }
+                (Term::Id(name), _) | (_, Term::Id(name)) => !universal_vars.contains(name),
+                _ => true,
+            },
+            _ => true,
+        })
     });
-    let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
-    let cube_literals: Vec<_> = literals
-        .iter()
-        .filter(|literal| !literal.ids().is_disjoint(&non_universal_vars))
-        .cloned()
-        .collect();
     println!(
         "Generated {} literals in {}ms ({} containing variables after first existential)",
         literals.len(),
@@ -458,13 +470,13 @@ where
     // Overapproximate initial states.
     if cfg.strategy.is_weaken() {
         loop {
-            let mut ctis = frame.init_cex(fo, solver);
+            let ctis = frame.init_cex(fo, solver);
             if ctis.is_empty() {
                 break;
             }
-            ctis.retain(|cex| frame.see(cex));
             frame.weaken(&ctis);
             for cex in ctis {
+                frame.see(&cex);
                 samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
             }
         }
@@ -502,7 +514,7 @@ where
 
             let smt_cti = smt_cti.unwrap();
             for cex in &smt_cti {
-                if frame.see(cex) {
+                if !matches!(frame.see(cex), Some(false)) {
                     samples.insert(
                         sample_priority(&cfg.sim, &cex.universe, 0).unwrap(),
                         cex.clone(),

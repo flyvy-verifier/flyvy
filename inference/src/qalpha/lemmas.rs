@@ -177,25 +177,24 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let mut added: Vec<LemmaKey> = vec![];
         let mut total_added = 0_usize;
 
-        let unsat_removal_time = timed!({
+        let unsat_time = timed!({
             unsat = self.set.get_unsat_formulas(model, &empty_assigment);
-            for f in &unsat {
-                removed.append(&mut self.remove(f));
-            }
         });
+        for f in &unsat {
+            removed.append(&mut self.remove(f));
+        }
 
         let ignore = |f: &L::Formula| !self.set.get_subsuming(f).is_empty();
 
-        let weakenings: Vec<_>;
+        let mut weakenings: Vec<_>;
         let weaken_time = timed!({
-            weakenings = L::minimize(
-                empty(),
-                unsat
-                    .par_iter()
-                    .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment, ignore))
-                    .collect::<Vec<_>>(),
-            );
+            weakenings = unsat
+                .par_iter()
+                .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment, ignore))
+                .collect::<Vec<_>>();
         });
+
+        let minimization_time = timed!({ weakenings = L::minimize(empty(), weakenings) });
 
         let weakenings_count = weakenings.len();
         let insertion_time = timed!({
@@ -207,7 +206,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
         if !removed.is_empty() {
             log::info!(
-                "[{} ~> {}] Weakened: removed={}({}), added={}/{}({}), total_time={}ms (unsat+removal={}ms, weaken={}ms, insertion={}ms)",
+                "[{} ~> {}] Weakened: removed={}({}), added={}/{}({}), total_time={}ms (unsat={}ms, weaken={}ms, min={}ms, insertion={}ms)",
                 self.len(),
                 self.simplified_len(),
                 unsat.len(),
@@ -216,8 +215,9 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
                 added.len(),
                 weakenings_count,
                 start_time.elapsed().as_millis(),
-                unsat_removal_time.as_millis(),
+                unsat_time.as_millis(),
                 weaken_time.as_millis(),
+                minimization_time.as_millis(),
                 insertion_time.as_millis(),
             );
         }
