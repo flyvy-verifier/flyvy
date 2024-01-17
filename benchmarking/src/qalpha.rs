@@ -103,6 +103,16 @@ pub fn qalpha_benchmarks(
             scalability: vec![],
         },
         QalphaConfig {
+            file: PathBuf::from("fol/cache.fly"),
+            quantifiers: "F address 2; F core 2; F value 2",
+            clause_size: 5,
+            cubes: 0,
+            nesting: None,
+            sim: Default::default(),
+            fragment: Fragment::Epr,
+            scalability: vec![],
+        },
+        QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
             quantifiers: "F key 1; * node 1; * value 1",
             clause_size: 2,
