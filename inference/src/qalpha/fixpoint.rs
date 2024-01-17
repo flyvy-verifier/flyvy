@@ -370,9 +370,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             _ => true,
         });
     });
-    for lit in &literals {
-        println!("{}, {}", lit.0, lit.1);
-    }
     println!(
         "Generated {} literals in {}ms ({} containing variables after first existential)",
         literals.len(),
