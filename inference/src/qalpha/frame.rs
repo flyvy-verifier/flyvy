@@ -587,7 +587,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                     false,
                 );
                 match &res {
-                    CexResult::Cex(_) => {
+                    CexResult::Cex(models) => {
                         cancelers.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
@@ -596,8 +596,9 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                             }
                         }
                         self.log_info(format!(
-                            "{:>8}ms. ({idx}) Transition found SAT",
-                            query_start.elapsed().as_millis()
+                            "{:>8}ms. ({idx}) Transition found SAT with universe size {:?}",
+                            query_start.elapsed().as_millis(),
+                            models[0].universe
                         ));
                         (Some(res), vec![], true)
                     }

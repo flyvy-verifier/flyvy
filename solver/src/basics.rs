@@ -27,15 +27,18 @@ fn check_sat_conf(
     assertions: &[Term],
     assumptions: &HashMap<usize, (Term, bool)>,
 ) -> Result<BasicSolverResp, SolverError> {
+    let assump_sizes: Vec<_> = assumptions.values().map(|(t, _)| t.size()).collect();
     let start_time = std::time::Instant::now();
     let log_result = |res: String| {
         log::debug!(
-            "            {:?}(timeout={}) returned {res} after {}ms ({} assertions, {} assumptions)",
+            "            {:?}(timeout={}) returned {res} after {}ms ({} assertions, {} assumptions: max_lit={}, sum_lit={})",
             solver_conf.solver_type(),
             solver_conf.get_timeout_ms().unwrap_or(0) / 1000,
             start_time.elapsed().as_millis(),
             assertions.len(),
             assumptions.len(),
+            assump_sizes.iter().max().unwrap_or(&0),
+            assump_sizes.iter().sum::<usize>()
         );
     };
     let mut solver = solver_conf.solver(query_conf.sig, query_conf.n_states);
@@ -60,16 +63,26 @@ fn check_sat_conf(
 
     let resp = match solver.check_sat(solver_assumptions) {
         Ok(SatResp::Sat) => {
-            log_result("SAT".to_string());
+            let get_model_start = std::time::Instant::now();
             let get_model_resp = if query_conf.minimal_model {
                 solver.get_minimal_model()
             } else {
                 solver.get_model()
             };
-            get_model_resp.map(BasicSolverResp::Sat)
+            let res = get_model_resp.map(BasicSolverResp::Sat);
+            match &res {
+                Ok(BasicSolverResp::Sat(models)) => log_result(format!(
+                    "SAT({}ms, {:?})",
+                    get_model_start.elapsed().as_millis(),
+                    models[0].universe
+                )),
+                Err(err) => log_result(format!("error: {err}")),
+                _ => unreachable!(),
+            }
+            res
         }
         Ok(SatResp::Unsat) => solver.get_unsat_core().map(|core| {
-            log_result("UNSAT".to_string());
+            log_result(format!("UNSAT({})", core.len()));
             BasicSolverResp::Unsat(
                 core.into_iter()
                     .map(|ind| match ind.0 {

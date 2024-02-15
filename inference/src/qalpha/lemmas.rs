@@ -280,7 +280,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
 /// Lemma complexity consists of
 /// - the number of existentials,
-/// - the number of literal,
+/// - the number of literals,
 /// - the number of quantified variables
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct LemmaComplexity(usize, usize, usize);

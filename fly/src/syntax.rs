@@ -478,7 +478,10 @@ impl Term {
         let body = body.into();
         Self::quantify(Quantifier::Exists, binders, body)
     }
+}
 
+/// Utilities for getting information about a given [`Term`]
+impl Term {
     /// Return whether the sort of the term is [`Sort::Bool`] in the given signature.
     /// Variables are considered non-bool.
     pub fn is_bool(&self, signature: &Signature) -> bool {
@@ -499,6 +502,22 @@ impl Term {
                 assert_eq!(then_is_bool, else_is_bool);
                 then_is_bool
             }
+        }
+    }
+
+    /// Return the number of atomic formulas in the term.
+    pub fn size(&self) -> usize {
+        match self {
+            Term::Literal(_) | Term::Id(_) | Term::App(_, _, _) => 1,
+            Term::UnaryOp(_, t) => t.size(),
+            Term::BinOp(_, t1, t2) => t1.size() + t2.size(),
+            Term::NAryOp(_, ts) => ts.iter().map(Term::size).sum(),
+            Term::Ite { cond, then, else_ } => cond.size() + then.size() + else_.size(),
+            Term::Quantified {
+                quantifier: _,
+                binders: _,
+                body,
+            } => body.size(),
         }
     }
 }
