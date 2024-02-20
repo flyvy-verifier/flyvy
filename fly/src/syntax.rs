@@ -897,10 +897,16 @@ mod tests {
         let mut terms = sig.terms_by_sort(&sorted_vars, Some(0), true);
         assert_eq!(
             terms,
+            vec![vec![term("a1"), term("a2"),], vec![term("b"),], vec![]]
+        );
+
+        terms = sig.terms_by_sort(&sorted_vars, Some(1), true);
+        assert_eq!(
+            terms,
             vec![
-                vec![term("a1"), term("a2"), term("c1"),],
-                vec![term("b"), term("c2"),],
-                vec![term("a1=a2"), term("a1=c1"), term("a2=c1"), term("b=c2"),]
+                vec![term("a1"), term("a2"), term("c1"), term("f21(b)"),],
+                vec![term("b"), term("c2"), term("f12(a1)"), term("f12(a2)"),],
+                vec![term("r(b, a1)"), term("r(b, a2)"), term("a1=a2"),]
             ]
         );
 
@@ -916,7 +922,6 @@ mod tests {
                     term("f21(c2)"),
                     term("f21(f12(a1))"),
                     term("f21(f12(a2))"),
-                    term("f21(f12(c1))"),
                 ],
                 vec![
                     term("b"),
@@ -925,34 +930,24 @@ mod tests {
                     term("f12(a2)"),
                     term("f12(c1)"),
                     term("f12(f21(b))"),
-                    term("f12(f21(c2))"),
                 ],
                 vec![
                     term("r(b, a1)"),
                     term("r(b, a2)"),
                     term("r(b, c1)"),
+                    term("r(b, f21(b))"),
                     term("r(c2, a1)"),
                     term("r(c2, a2)"),
-                    term("r(c2, c1)"),
-                    term("r(b, f21(b))"),
-                    term("r(b, f21(c2))"),
-                    term("r(c2, f21(b))"),
-                    term("r(c2, f21(c2))"),
                     term("r(f12(a1), a1)"),
                     term("r(f12(a1), a2)"),
-                    term("r(f12(a1), c1)"),
                     term("r(f12(a2), a1)"),
                     term("r(f12(a2), a2)"),
-                    term("r(f12(a2), c1)"),
-                    term("r(f12(c1), a1)"),
-                    term("r(f12(c1), a2)"),
-                    term("r(f12(c1), c1)"),
+                    term("r(c2, c1)"),
+                    term("r(c2, f21(b))"),
+                    term("r(f12(a1), c1)"),
                     term("r(f12(a1), f21(b))"),
-                    term("r(f12(a1), f21(c2))"),
+                    term("r(f12(a2), c1)"),
                     term("r(f12(a2), f21(b))"),
-                    term("r(f12(a2), f21(c2))"),
-                    term("r(f12(c1), f21(b))"),
-                    term("r(f12(c1), f21(c2))"),
                 ]
             ]
         );
@@ -1005,12 +1000,12 @@ mod tests {
                     term("r(b, c1)"),
                     term("r(c2, a1)"),
                     term("r(c2, a2)"),
-                    term("r(c2, c1)"),
                     term("r(f12(a1), a1)"),
                     term("r(f12(a1), a2)"),
-                    term("r(f12(a1), c1)"),
                     term("r(f12(a2), a1)"),
                     term("r(f12(a2), a2)"),
+                    term("r(c2, c1)"),
+                    term("r(f12(a1), c1)"),
                     term("r(f12(a2), c1)"),
                     term("r(f12(c1), a1)"),
                     term("r(f12(c1), a2)"),

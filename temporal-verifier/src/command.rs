@@ -300,8 +300,8 @@ struct InferArgs {
     time: bool,
 
     #[arg(long)]
-    /// Don't print the found invariant (for testing)
-    no_print_invariant: bool,
+    /// Don't print non-deterministic details about the run, e.g., the found invariant or timing information (for testing)
+    no_print_nondet: bool,
 
     #[command(subcommand)]
     infer_cmd: InferCommand,
@@ -591,7 +591,7 @@ impl App {
             ) => {
                 m.inline_defs();
                 let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                qalpha_dynamic(infer_cfg, &m, !args.no_print_invariant);
+                qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
                 if args.time {
                     timing::report();
                 }

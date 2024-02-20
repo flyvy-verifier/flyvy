@@ -216,7 +216,7 @@ impl FoundFixpoint {
         }
     }
 
-    fn report(&self, print_invariant: bool) {
+    fn report(&self, print_nondet: bool) {
         let print_inv = |name: &str, size: usize, inv: &[Term]| {
             println!("{name} (size={size}) {{");
             for lemma in inv {
@@ -241,7 +241,7 @@ impl FoundFixpoint {
             println!("Safety NOT verified.");
         }
 
-        if print_invariant {
+        if print_nondet {
             print_inv("frame", self.proof.len(), &self.proof);
             if let Some(reduced_proof) = &self.reduced_proof {
                 print_inv("reduced", reduced_proof.len(), reduced_proof);
@@ -249,10 +249,10 @@ impl FoundFixpoint {
             if let Some(safety_proof) = &self.safety_proof {
                 print_inv("safety", safety_proof.len(), safety_proof);
             }
-        }
 
-        println!("=============== JSON ===============");
-        println!("{}", serde_json::to_string(&self.stats).unwrap());
+            println!("=============== JSON ===============");
+            println!("{}", serde_json::to_string(&self.stats).unwrap());
+        }
     }
 }
 
@@ -322,7 +322,7 @@ pub fn qalpha<L, S>(
     lang: Arc<L>,
     m: &Module,
     solver: &S,
-    print_invariant: bool,
+    print_nondet: bool,
 ) where
     L: BoundedLanguage,
     S: BasicSolver,
@@ -332,10 +332,10 @@ pub fn qalpha<L, S>(
     println!("Approximate domain size: 10^{log_domain_size:.2}");
 
     let fixpoint = run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo);
-    fixpoint.report(print_invariant);
+    fixpoint.report(print_nondet);
 }
 
-pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool) {
+pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
     // TODO: add fallback solver option or remove it from command arguments
     let solver = parallel_solver(&cfg, cfg.seeds);
 
@@ -370,10 +370,15 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             _ => true,
         });
     });
+
     println!(
         "Generated {} literals in {}ms ({} containing variables after first existential)",
         literals.len(),
-        gen_time.as_millis(),
+        if print_nondet {
+            gen_time.as_millis()
+        } else {
+            0
+        },
         cube_literals.len()
     );
 
@@ -387,7 +392,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
         (QfBody::Cnf, false) => qalpha(
             cfg.clone(),
@@ -398,7 +403,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
         (QfBody::PDnf, true) => qalpha(
             cfg.clone(),
@@ -411,7 +416,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
         (QfBody::PDnf, false) => qalpha(
             cfg.clone(),
@@ -424,7 +429,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
         (QfBody::Dnf, true) => qalpha(
             cfg.clone(),
@@ -435,7 +440,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
         (QfBody::Dnf, false) => qalpha(
             cfg.clone(),
@@ -446,7 +451,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_invariant: bool)
             ),
             m,
             &solver,
-            print_invariant,
+            print_nondet,
         ),
     }
 }
