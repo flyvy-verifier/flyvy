@@ -143,13 +143,9 @@ impl<H: OrderedTerms> Core<H> {
     /// This yields a map which maps each participant index to its [`Term`] and Boolean assumption,
     /// in this case always `true`.
     fn to_assumptions(&self) -> HashMap<usize, (Term, bool)> {
-        self.formulas
-            .permanent()
-            .into_iter()
-            .map(|(_, t)| t)
-            .chain(self.participants.values())
+        self.present()
             .enumerate()
-            .map(|(i, term)| (i, (term.clone(), true)))
+            .map(|(i, (_, t))| (i, (t.clone(), true)))
             .collect()
     }
 
@@ -158,14 +154,24 @@ impl<H: OrderedTerms> Core<H> {
     where
         O: FromIterator<H::Key>,
     {
-        self.formulas
-            .permanent()
-            .into_iter()
-            .map(|(k, _)| k)
-            .chain(self.participants.keys())
+        self.present()
             .enumerate()
-            .filter_map(|(i, key)| if core.contains(&i) { Some(*key) } else { None })
+            .filter_map(|(i, (k, _))| if core.contains(&i) { Some(*k) } else { None })
             .collect()
+    }
+
+    /// Get the keys and terms currently present in the core.
+    fn present(&self) -> impl Iterator<Item = (&H::Key, &Term)> {
+        let permanent = self.formulas.permanent();
+        let seen: HashSet<H::Key> = permanent.iter().map(|(k, _)| **k).collect();
+        permanent
+            .into_iter()
+            .chain(
+                self.participants
+                    .iter()
+                    .filter(move |(k, _)| !seen.contains(k)),
+            )
+            .unique()
     }
 }
 

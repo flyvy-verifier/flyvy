@@ -313,11 +313,11 @@ fn get_const_sort(sig: &Signature, term: &Term) -> Sort {
     }
 }
 
-fn is_var(sig: &Signature, term: &Term) -> bool {
-    match term {
-        Term::Id(name) => !sig.contains_relation(name),
-        _ => false,
-    }
+fn is_flat(term: &Term) -> bool {
+    matches!(
+        term,
+        Term::Id(_) | Term::UnaryOp(UOp::Next | UOp::Previous | UOp::Prime, _)
+    )
 }
 
 /// A recursive helper function to get rid of nested functions. `subterm_vars` maintains a mapping
@@ -329,7 +329,7 @@ fn is_var(sig: &Signature, term: &Term) -> bool {
 /// used in the flattening are added to `subterm_vars` as a mapping from their corresponding terms.
 /// These variables are kept up to the deepest boolean level, where they are quantified accordingly.
 /// If `make_var` is false, the topmost level will not be converted into a fresh variable; this is useful
-/// for equalities, where we need to replace just one side with a variable.
+/// for equalities, where we need to replace at most one side with a variable.
 fn flatten_term_rec(
     sig: &Signature,
     term: &Term,
@@ -339,7 +339,7 @@ fn flatten_term_rec(
     match term {
         // Literals are flat
         Term::Literal(_) => term.clone(),
-        // A non-boolean constant is replaced with a fresh variable.
+        // A non-boolean constant is replaced with a fresh variable if necessary.
         Term::Id(s) => match sig.relations.iter().find(|r| &r.name == s) {
             Some(r) if make_var && matches!(r.sort, Sort::Uninterpreted(_)) => {
                 flat_var_for_term(subterm_vars, term.clone(), r.sort.clone())
@@ -347,7 +347,7 @@ fn flatten_term_rec(
             _ => term.clone(),
         },
         // A boolean function application is flattened, then quantified accordingly.
-        // A non-boolean function application is just flattened, and added a new variable for itself.
+        // A non-boolean function application is just flattened, and adds a new variable for itself.
         Term::App(f, n_primes, args) => {
             let sort = sig.relation_decl(f).sort.clone();
             if matches!(sort, Sort::Bool) {
@@ -371,8 +371,8 @@ fn flatten_term_rec(
                 }
             }
         }
-        // If a unary operation produced a bool, is it just flattened recursively.
-        // Otherwise, we assume it's a constant, and make a variable for it depending on `make_var`.
+        // If a unary operation produced a bool, it is flattened recursively.
+        // Otherwise, we assume it is a constant, and make a variable for it depending on `make_var`.
         Term::UnaryOp(op, t) if term.is_bool(sig) => {
             Term::UnaryOp(*op, Box::new(flatten_term_rec(sig, t, subterm_vars, false)))
         }
@@ -380,7 +380,7 @@ fn flatten_term_rec(
             flat_var_for_term(subterm_vars, term.clone(), get_const_sort(sig, term))
         }
         Term::UnaryOp(_, _) => term.clone(),
-        // Equalities and inequalities are flattened by flattening both side. Note that only one of the sides
+        // Equalities and inequalities are flattened by flattening both sides. Note that at most one of the sides
         // needs to be replaced with a variable at this level. By default this is the lefthand side, unless
         // the righthand side is already a variable.
         Term::BinOp(op, t1, t2) if matches!(op, BinOp::Equals | BinOp::NotEquals) => {
@@ -391,7 +391,7 @@ fn flatten_term_rec(
                     sig,
                     t1,
                     &mut new_subterm_vars,
-                    !is_var(sig, t2),
+                    !is_flat(t2),
                 )),
                 Box::new(flatten_term_rec(sig, t2, &mut new_subterm_vars, false)),
             );
@@ -678,7 +678,7 @@ mutable f(bool): s
     }
 
     #[test]
-    fn test_flattern_term() {
+    fn test_flatten_term() {
         let sort_name = |i: usize| format!("s{i}");
         let sort = |i: usize| Sort::Uninterpreted(sort_name(i));
 
