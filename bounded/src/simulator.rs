@@ -28,7 +28,7 @@ use crate::{
 };
 
 /// Get the [`UniverseBounds`] for the given universe sizes in the given signature.
-fn universe_bounds(signature: &Signature, universe: &Vec<usize>) -> UniverseBounds {
+fn universe_bounds(signature: &Signature, universe: &[usize]) -> UniverseBounds {
     assert_eq!(signature.sorts.len(), universe.len());
     signature
         .sorts

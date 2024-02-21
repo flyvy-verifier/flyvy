@@ -122,7 +122,7 @@ impl Module {
                             return interp.clone();
                         }
 
-                        let shape = r
+                        let shape: Vec<_> = r
                             .args
                             .iter()
                             .map(|s| model.cardinality(s))
@@ -162,7 +162,7 @@ impl Module {
                     }
                     assert_eq!(r.args.len(), interp.shape.len() - 2);
 
-                    let shape = r
+                    let shape: Vec<_> = r
                         .args
                         .iter()
                         .map(|s| model.cardinality(s))
@@ -202,7 +202,7 @@ impl Module {
                     }
                     assert_eq!(r.args.len(), interp.shape.len());
 
-                    let shape = r
+                    let shape: Vec<_> = r
                         .args
                         .iter()
                         .map(|s| model.cardinality(s))

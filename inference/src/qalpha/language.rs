@@ -1443,7 +1443,7 @@ where
         }
     }
 
-    fn add_prefix(&self, body: L::Formula, prefix: &Vec<Quantifier>) -> Quant<L::Formula> {
+    fn add_prefix(&self, body: L::Formula, prefix: &[Quantifier]) -> Quant<L::Formula> {
         assert_eq!(prefix.len(), self.cfg.len());
 
         let free_ids = body.free_ids();
@@ -1461,7 +1461,7 @@ where
 
         Quant {
             prefix: QuantifierPrefix {
-                quantifiers: prefix.clone(),
+                quantifiers: prefix.to_owned(),
                 sorts: self.cfg.sorts.clone(),
                 names: Arc::new(names),
             },

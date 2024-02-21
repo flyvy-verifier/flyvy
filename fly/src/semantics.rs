@@ -51,7 +51,7 @@ impl Interpretation {
 
     /// Create a new interpretation of a given shape based on a function, by
     /// calling the function on all possible input tuple
-    pub fn new(shape: &Vec<usize>, f: impl Fn(&[Element]) -> Element) -> Self {
+    pub fn new(shape: &[usize], f: impl Fn(&[Element]) -> Element) -> Self {
         let args = &shape[..shape.len() - 1];
         let ret_card = shape[shape.len() - 1];
         // wrap f just to add this assertion
@@ -67,7 +67,7 @@ impl Interpretation {
             .map(|args| f(&args))
             .collect();
         Self {
-            shape: shape.clone(),
+            shape: shape.to_owned(),
             data,
         }
     }

@@ -161,7 +161,7 @@ impl Indices {
                 .relations
                 .iter()
                 .map(|r| {
-                    let shape = r
+                    let shape: Vec<_> = r
                         .args
                         .iter()
                         .map(|s| cardinality(&self.universe, s))
