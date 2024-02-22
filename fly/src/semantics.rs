@@ -499,18 +499,18 @@ mod tests {
 
     #[test]
     fn test_interp_new() {
-        let interp = Interpretation::new(&vec![3], |_| 2);
+        let interp = Interpretation::new(&[3], |_| 2);
         assert_eq!(interp.get(&[]), 2);
         assert_eq!(interp.data, vec![2]);
 
-        let interp = Interpretation::new(&vec![3, 2, 4], |es| es[0] + es[1]);
+        let interp = Interpretation::new(&[3, 2, 4], |es| es[0] + es[1]);
         for i in 0..3 {
             for j in 0..2 {
                 assert_eq!(interp.get(&[i, j]), i + j, "wrong value at {i}, {j}");
             }
         }
 
-        let interp = Interpretation::new(&vec![3, 2, 4, 7], |es| es[0] + es[1] * es[2]);
+        let interp = Interpretation::new(&[3, 2, 4, 7], |es| es[0] + es[1] * es[2]);
         for i in 0..3 {
             for j in 0..2 {
                 for k in 0..4 {

@@ -536,7 +536,7 @@ sort C
             .trim(),
         );
 
-        let sort = |name| Sort::uninterpreted(name);
+        let sort = Sort::uninterpreted;
         let config = QuantifierConfig::new(
             Arc::new(signature),
             vec![None, None, None],

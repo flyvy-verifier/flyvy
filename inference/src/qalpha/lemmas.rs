@@ -33,7 +33,7 @@ macro_rules! timed {
     }};
 }
 
-/// Manages multiple instances of [`PrefixLemmaSet`] and allows weakening them all simultaneously.
+/// Manages lemmas from a [`BoundedLanguage`] and allows weakening them simultaneously.
 pub struct WeakenLemmaSet<L: BoundedLanguage> {
     lang: Arc<L>,
     set: L::Set,

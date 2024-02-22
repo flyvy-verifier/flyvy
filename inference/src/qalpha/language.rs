@@ -2497,10 +2497,10 @@ mod tests {
         assert_eq!(
             weakenings,
             HashSet::from_iter([
-                clause(vec![lit("a", true).into(), lit("b", false)]),
-                clause(vec![lit("a", true).into(), lit("c", false)]),
-                clause(vec![lit("b", true).into(), lit("a", false)]),
-                clause(vec![lit("b", true).into(), lit("c", false)]),
+                clause(vec![lit("a", true), lit("b", false)]),
+                clause(vec![lit("a", true), lit("c", false)]),
+                clause(vec![lit("b", true), lit("a", false)]),
+                clause(vec![lit("b", true), lit("c", false)]),
             ])
         );
 
@@ -2631,8 +2631,8 @@ mod tests {
             signature: sig.as_ref().clone(),
             universe: vec![t_count, s_count],
             interp: vec![
-                Interpretation::new(&vec![t_count, 2], |e| in_p.contains(&e[0]) as usize),
-                Interpretation::new(&vec![s_count, 2], |e| in_q.contains(&e[0]) as usize),
+                Interpretation::new(&[t_count, 2], |e| in_p.contains(&e[0]) as usize),
+                Interpretation::new(&[s_count, 2], |e| in_q.contains(&e[0]) as usize),
             ],
         };
 
@@ -2651,7 +2651,7 @@ mod tests {
         let weakenings = q_lang.weaken(&f, &m, &Assignment::new(), |_| false);
         for w in weakenings.iter().permutations(2) {
             assert!(w[0].eval(&m, &Assignment::new()));
-            assert!(!w[0].subsumes(&w[1]) || w[0] == w[1]);
+            assert!(!w[0].subsumes(w[1]) || w[0] == w[1]);
         }
     }
 }

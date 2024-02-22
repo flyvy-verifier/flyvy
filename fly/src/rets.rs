@@ -651,20 +651,23 @@ mutable f(bool): s
         let model1 = Model::new(
             &module.signature,
             &vec![3],
-            vec![Interpretation::new(&vec![2, 3], |xs| {
-                if xs[0] == 0 {
-                    2
-                } else {
-                    0
-                }
-            })],
+            vec![Interpretation::new(
+                &[2, 3],
+                |xs| {
+                    if xs[0] == 0 {
+                        2
+                    } else {
+                        0
+                    }
+                },
+            )],
         );
 
         let back_convert_model = module.convert_non_bool_relations()?;
         let model2 = Model::new(
             &module.signature,
             &vec![3],
-            vec![Interpretation::new(&vec![2, 3, 2], |xs| match xs {
+            vec![Interpretation::new(&[2, 3, 2], |xs| match xs {
                 [0, 2] | [1, 0] => 1,
                 _ => 0,
             })],
