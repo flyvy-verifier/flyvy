@@ -135,6 +135,11 @@ impl CvcConf {
         }
     }
 
+    /// Enable only finite model finding.
+    pub fn fmf(&mut self) {
+        self.cmd.option("finite-model-find", "true");
+    }
+
     /// Enable interleaving enumerative instantiation with other techniques.
     pub fn interleave_enumerative_instantiation(&mut self) {
         if self.version5 {

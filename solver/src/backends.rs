@@ -31,6 +31,7 @@ pub enum SolverType {
     Z3,
     Cvc4,
     Cvc5,
+    Cvc5Fmf,
 }
 
 impl SolverType {
@@ -38,7 +39,7 @@ impl SolverType {
     pub fn bin_name(&self) -> &'static str {
         match self {
             SolverType::Z3 => "z3",
-            SolverType::Cvc5 => "cvc5",
+            SolverType::Cvc5 | SolverType::Cvc5Fmf => "cvc5",
             SolverType::Cvc4 => "cvc4",
         }
     }
@@ -136,6 +137,15 @@ impl Backend for &GenericBackend {
                 }
                 conf.done()
             }
+            SolverType::Cvc5Fmf => {
+                let mut conf = CvcConf::new_cvc5(&self.bin);
+                conf.fmf();
+                conf.timeout_ms(self.opts.timeout_ms);
+                if self.opts.seed != 0 {
+                    conf.options().option("seed", format!("{}", self.opts.seed));
+                }
+                conf.done()
+            }
         }
     }
 
@@ -150,7 +160,7 @@ impl Backend for &GenericBackend {
         let model = match self.solver_type {
             SolverType::Z3 => models::parse_z3(model),
             SolverType::Cvc4 => models::parse_cvc(model, false),
-            SolverType::Cvc5 => models::parse_cvc(model, true),
+            SolverType::Cvc5 | SolverType::Cvc5Fmf => models::parse_cvc(model, true),
         };
 
         let universe: HashMap<String, usize> = model
@@ -249,7 +259,7 @@ impl Backend for &GenericBackend {
         // TODO: make sure CVC4 and CVC5 return minimal models
         match self.solver_type {
             SolverType::Z3 => false,
-            SolverType::Cvc4 | SolverType::Cvc5 => true,
+            SolverType::Cvc4 | SolverType::Cvc5 | SolverType::Cvc5Fmf => true,
         }
     }
 }

@@ -292,6 +292,7 @@ fn parallel_solver(cfg: &QalphaConfig, seeds: usize) -> impl BasicSolver {
                 [
                     SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, seed),
                     SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, seed),
+                    SolverConf::new(SolverType::Cvc5Fmf, true, &cfg.fname, 0, 0),
                 ]
             })
             .collect(),
@@ -476,7 +477,7 @@ where
         lang,
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
-        parallelism() / (2 * cfg.seeds),
+        parallelism().div_ceil(3 * cfg.seeds),
     );
 
     // Initialize simulations.
