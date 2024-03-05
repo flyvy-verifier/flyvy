@@ -1,0 +1,7 @@
+[package]
+name = "vampire-smt"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+smtlib = { path = "../smtlib" }

@@ -8,6 +8,7 @@ members = [
 	"verify",
 	"temporal-verifier",
 	"benchmarking",
+	"vampire-smt",
 ]
 resolver = "2"
 
