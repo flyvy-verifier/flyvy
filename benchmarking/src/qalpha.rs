@@ -425,7 +425,7 @@ fn quantifier_param(spec: &str) -> impl Iterator<Item = String> + '_ {
 }
 
 impl<'a> QalphaConfig<'a> {
-    fn params(&self, sim: &SimulationConfig, strategy: &str) -> Vec<String> {
+    fn params(&self, sim: &SimulationConfig, strategy: &str, baseline: bool) -> Vec<String> {
         let mut args = vec![];
         args.extend(quantifier_param(self.quantifiers));
         args.push(format!("--clause-size={}", self.clause_size));
@@ -435,6 +435,9 @@ impl<'a> QalphaConfig<'a> {
         }
         args.extend(sim.params());
         args.push(format!("--strategy={strategy}"));
+        if baseline {
+            args.push("--baseline".to_string());
+        }
         args
     }
 
@@ -497,7 +500,7 @@ impl<'a> QalphaConfig<'a> {
                 self.full_path("safety"),
                 BenchmarkConfig {
                     command: command(),
-                    params: self.params(&self.sim, "weaken-pd"),
+                    params: self.params(&self.sim, "weaken-pd", false),
                     file: example_path(&self.file),
                     time_limit: safety_time_limit,
                 },
@@ -507,7 +510,17 @@ impl<'a> QalphaConfig<'a> {
                 self.full_path("fixpoint"),
                 BenchmarkConfig {
                     command: command(),
-                    params: self.params(&self.sim, "weaken"),
+                    params: self.params(&self.sim, "weaken", false),
+                    file: example_path(&self.file),
+                    time_limit: fixpoint_time_limit,
+                },
+            ),
+            // Fixpoint benchmark with baseline datastructure
+            (
+                self.full_path("fixpoint-baseline"),
+                BenchmarkConfig {
+                    command: command(),
+                    params: self.params(&self.sim, "weaken", true),
                     file: example_path(&self.file),
                     time_limit: fixpoint_time_limit,
                 },

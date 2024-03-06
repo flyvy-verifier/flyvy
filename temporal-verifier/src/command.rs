@@ -136,7 +136,7 @@ impl QuantifierConfigArgs {
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierFreeConfigArgs {
     #[arg(long)]
-    /// Defines the type of quantifier-free body (cnf/dnf/pdnf/pdnf-baseline)
+    /// Defines the type of quantifier-free body (cnf/dnf/pdnf)
     qf: Option<String>,
 
     #[arg(long)]
