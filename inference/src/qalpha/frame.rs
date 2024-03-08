@@ -633,7 +633,11 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         )
         .run(self.solver_parallelism);
 
-        cancelers.cancel();
+        // TODO: fix this logic, not clear how this interacts with simulations
+        let was_canceled = cancelers.is_canceled();
+        if !was_canceled {
+            cancelers.cancel();
+        }
 
         let mut ctis = vec![];
         let mut total_sat = 0_usize;
@@ -655,7 +659,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
             }
         }
 
-        if ctis.is_empty() && unknown {
+        if !was_canceled && ctis.is_empty() && unknown {
             panic!("SMT queries got 'unknown' and no SAT results.")
         }
 

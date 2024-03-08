@@ -5,7 +5,7 @@
 //! lemma domain.
 
 use fly::semantics::Model;
-use solver::basics::{BasicCanceler, MultiCanceler};
+use solver::vampire::{VampireMode, VampireOptions};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::thread;
@@ -24,7 +24,7 @@ use crate::{
 use fly::syntax::{BinOp, Module, Term, ThmStmt};
 use solver::{
     backends::SolverType,
-    basics::{BasicSolver, FallbackSolvers, ParallelSolvers},
+    basics::{BasicCanceler, BasicSolver, MultiCanceler, ParallelSolvers, SingleSolver},
     conf::SolverConf,
 };
 
@@ -285,36 +285,12 @@ struct FixpointStats {
     get_unsat_stats: OperationStats,
 }
 
-fn parallel_solver(cfg: &QalphaConfig, seeds: usize) -> impl BasicSolver {
-    ParallelSolvers::new(
-        (0..seeds)
-            .flat_map(|seed| {
-                [
-                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, seed),
-                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, seed),
-                    SolverConf::new(SolverType::Cvc5Fmf, true, &cfg.fname, 0, 0),
-                ]
-            })
-            .collect(),
-    )
-}
-
-#[allow(dead_code)]
-fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
-    // For the solvers in fallback fashion we alternate between Z3 and CVC5
-    // with increasing timeouts and varying seeds, ending with a Z3 solver with
-    // no timeout. The idea is to try both Z3 and CVC5 with some timeout to see if any
-    // of them solve the query, and gradually increase the timeout for both,
-    // ending with no timeout at all. The seed changes are meant to add some
-    // variation vis-a-vis previous attempts.
-    FallbackSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 3),
+fn parallel_solver(cfg: &QalphaConfig) -> impl BasicSolver {
+    ParallelSolvers::new(vec![
+        SingleSolver::conf(SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 0)),
+        SingleSolver::conf(SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, 0)),
+        SingleSolver::vampire(VampireOptions::new(VampireMode::None)),
+        SingleSolver::vampire(VampireOptions::new(VampireMode::Fmb)),
     ])
 }
 
@@ -338,7 +314,7 @@ pub fn qalpha<L, S>(
 
 pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
     // TODO: add fallback solver option or remove it from command arguments
-    let solver = parallel_solver(&cfg, cfg.seeds);
+    let solver = parallel_solver(&cfg);
 
     // TODO: make nesting and include_eq configurable or remove them from command arguments
     println!("Generating literals...");
@@ -477,7 +453,7 @@ where
         lang,
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
-        parallelism().div_ceil(3 * cfg.seeds),
+        parallelism().div_ceil(4),
     );
 
     // Initialize simulations.

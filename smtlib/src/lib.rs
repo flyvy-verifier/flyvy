@@ -23,4 +23,4 @@ pub mod conf;
 pub mod path;
 pub mod proc;
 pub mod sexp;
-mod tee;
+pub mod tee;

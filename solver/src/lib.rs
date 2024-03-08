@@ -20,6 +20,8 @@ pub mod conf;
 pub mod imp;
 pub mod models;
 pub mod sexp;
+mod tptp;
+pub mod vampire;
 
 pub use smtlib::path::{log_dir, solver_path};
 pub use smtlib::proc::{SatResp, SmtPid};

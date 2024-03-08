@@ -602,7 +602,7 @@ impl App {
                 println!("{}", printer::fmt(&m));
             }
             Command::UpdrVerify(ref args @ VerifyArgs { .. }) => {
-                let conf = Arc::new(SingleSolver::new(args.get_solver_conf()));
+                let conf = Arc::new(SingleSolver::conf(args.get_solver_conf()));
                 let mut updr = Updr::new(conf);
                 let _result = updr.search(&m);
             }

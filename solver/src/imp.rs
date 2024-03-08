@@ -458,7 +458,8 @@ impl<B: Backend> Solver<B> {
 }
 
 impl FOModel {
-    fn into_trace(self, signature: &Signature, n_states: usize) -> Vec<Model> {
+    /// Convert the [`FOModel`] into a trace of single-state [`Model`] instances
+    pub fn into_trace(self, signature: &Signature, n_states: usize) -> Vec<Model> {
         let universe: Universe = signature
             .sorts
             .iter()

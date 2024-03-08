@@ -15,6 +15,7 @@ use fly::{
 use smtlib::proc::{SatResp, SmtPid, SolverError};
 
 use crate::conf::SolverConf;
+use crate::vampire::VampireOptions;
 
 /// Check the following SMT query with the given solver configuration.
 /// The query is defined by the query configuration, a sequence of assertions,
@@ -236,17 +237,20 @@ impl BasicCanceler for NeverCanceler {
 }
 
 /// A basic solver which uses a single solver configuration
-pub struct SingleSolver(SolverConf);
+pub enum SingleSolver {
+    Conf(SolverConf),
+    Vampire(VampireOptions),
+}
 
 /// A set of solvers used in a fallback fashion: on each query the solvers
 /// are tried sequentially until (1) one of them returns a sat/unsat/error response,
 /// (2) the query is canceled, or (3) all solvers return unknown.
-pub struct FallbackSolvers(Vec<SolverConf>);
+pub struct FallbackSolvers(Vec<SingleSolver>);
 
 /// A set of solvers used in a parallel fashion: on each query the solvers
 /// are tried in parallel until (1) one of them returns a sat/unsat/error response,
 /// (2) the query is canceled, or (3) all solvers return unknown.
-pub struct ParallelSolvers(Vec<SolverConf>);
+pub struct ParallelSolvers(Vec<SingleSolver>);
 
 impl BasicCanceler for SmtPid {
     fn cancel(&self) {
@@ -260,13 +264,20 @@ impl BasicCanceler for SmtPid {
 
 impl SingleSolver {
     /// Create a new solver with the given configuration.
-    pub fn new(conf: SolverConf) -> Self {
-        Self(conf)
+    pub fn conf(conf: SolverConf) -> Self {
+        Self::Conf(conf)
+    }
+
+    pub fn vampire(opt: VampireOptions) -> Self {
+        Self::Vampire(opt)
     }
 
     /// Return a reference to the solver configuration used.
     pub fn as_conf(&self) -> &SolverConf {
-        &self.0
+        match self {
+            SingleSolver::Conf(conf) => conf,
+            _ => panic!("not a `SolverConf`"),
+        }
     }
 }
 
@@ -279,18 +290,26 @@ impl BasicSolver for SingleSolver {
         assertions: &[Term],
         assumptions: &HashMap<usize, (Term, bool)>,
     ) -> Result<BasicSolverResp, SolverError> {
-        match check_sat_conf(&self.0, query_conf, assertions, assumptions) {
-            Ok(BasicSolverResp::Unknown(reason)) | Err(SolverError::CouldNotMinimize(reason)) => {
-                Ok(BasicSolverResp::Unknown(reason))
+        match self {
+            SingleSolver::Conf(conf) => {
+                match check_sat_conf(conf, query_conf, assertions, assumptions) {
+                    Ok(BasicSolverResp::Unknown(reason))
+                    | Err(SolverError::CouldNotMinimize(reason)) => {
+                        Ok(BasicSolverResp::Unknown(reason))
+                    }
+                    res => res,
+                }
             }
-            res => res,
+            SingleSolver::Vampire(vampire_opt) => {
+                vampire_opt.check_sat(query_conf, assertions, assumptions)
+            }
         }
     }
 }
 
 impl FallbackSolvers {
     /// Create a new set of fallback solvers with the given configurations.
-    pub fn new(confs: Vec<SolverConf>) -> Self {
+    pub fn new(confs: Vec<SingleSolver>) -> Self {
         Self(confs)
     }
 }
@@ -305,8 +324,8 @@ impl BasicSolver for FallbackSolvers {
         assumptions: &HashMap<usize, (Term, bool)>,
     ) -> Result<BasicSolverResp, SolverError> {
         let mut unknowns: Vec<String> = vec![];
-        for solver_conf in &self.0 {
-            match check_sat_conf(solver_conf, query_conf, assertions, assumptions) {
+        for solver in &self.0 {
+            match solver.check_sat(query_conf, assertions, assumptions) {
                 Ok(BasicSolverResp::Unknown(reason))
                 | Err(SolverError::CouldNotMinimize(reason)) => {
                     unknowns.push(reason);
@@ -321,7 +340,7 @@ impl BasicSolver for FallbackSolvers {
 
 impl ParallelSolvers {
     /// Create a new set of parallel solvers with the given configurations.
-    pub fn new(confs: Vec<SolverConf>) -> Self {
+    pub fn new(confs: Vec<SingleSolver>) -> Self {
         Self(confs)
     }
 }
@@ -356,10 +375,9 @@ impl BasicSolver for ParallelSolvers {
             let handles = self
                 .0
                 .iter()
-                .map(|solver_conf| {
+                .map(|solver| {
                     s.spawn(|| {
-                        let res =
-                            check_sat_conf(solver_conf, &local_query_conf, assertions, assumptions);
+                        let res = solver.check_sat(&local_query_conf, assertions, assumptions);
                         match res {
                             Err(SolverError::Killed) => Err(SolverError::Killed),
                             Ok(BasicSolverResp::Unknown(reason))

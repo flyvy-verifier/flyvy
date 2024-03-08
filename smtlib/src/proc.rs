@@ -24,7 +24,7 @@ use super::sexp::{app, atom_s, sexp_l, Sexp};
 
 /// The states that the process can be in.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Status {
+pub enum Status {
     /// Solver is running normally. If `in_call` is true, it is currently
     /// processing a `check-sat` or `get-model` call.
     Running { in_call: bool },
@@ -109,6 +109,14 @@ impl Drop for SmtProc {
 }
 
 impl SmtPid {
+    /// Create a new [`SmtPid`] from a raw PID and a status
+    pub fn new(pid: u32, status: Status) -> Self {
+        Self {
+            pid: Pid::from_raw(pid as i32),
+            terminated: Arc::new(RwLock::new(status)),
+        }
+    }
+
     /// Kill the SMT process by pid.
     pub fn kill(&self) {
         let mut terminated = self.terminated.write().unwrap();
