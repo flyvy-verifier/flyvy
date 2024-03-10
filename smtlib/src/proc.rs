@@ -27,7 +27,10 @@ use super::sexp::{app, atom_s, sexp_l, Sexp};
 pub enum Status {
     /// Solver is running normally. If `in_call` is true, it is currently
     /// processing a `check-sat` or `get-model` call.
-    Running { in_call: bool },
+    Running {
+        /// If true, the solver is currently processing a `check-sat` or `get-model` call.
+        in_call: bool,
+    },
     /// A cancellation has been requested but has not been acted upon because
     /// the solver isn't at a stopping point (an expensive call). Any solver
     /// operations after this point will cause the solver to be killed; calls

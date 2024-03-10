@@ -238,7 +238,9 @@ impl BasicCanceler for NeverCanceler {
 
 /// A basic solver which uses a single solver configuration
 pub enum SingleSolver {
+    /// A standard solver configuration, e.g., for Z3/CVC4/CVC5
     Conf(SolverConf),
+    /// A Vampire solver configuration
     Vampire(VampireOptions),
 }
 
@@ -268,6 +270,7 @@ impl SingleSolver {
         Self::Conf(conf)
     }
 
+    /// Create a new solver with the given vampire configuration.
     pub fn vampire(opt: VampireOptions) -> Self {
         Self::Vampire(opt)
     }

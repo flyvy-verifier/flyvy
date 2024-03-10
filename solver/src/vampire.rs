@@ -3,10 +3,11 @@
 
 //! Support for the Vampire theorem prover
 
+use lazy_static::lazy_static;
 use std::{
     collections::HashMap,
     ffi::OsStr,
-    fs::{remove_file, OpenOptions},
+    fs::{create_dir_all, remove_file, File},
     io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
@@ -24,17 +25,35 @@ use smtlib::{
     sexp::{app, atom_i, atom_s, sexp_l, Sexp},
 };
 
+lazy_static! {
+    static ref QUERY_COUNT: Mutex<usize> = Mutex::new(0);
+}
+
+static QUERY_DIR: &str = ".vampire-queries";
+
+fn new_query_id() -> usize {
+    let mut count = QUERY_COUNT.lock().unwrap();
+    let id = *count;
+    *count += 1;
+    id
+}
+
 #[derive(Debug)]
+/// Mode of operation for a Vampire solver
 pub enum VampireMode {
+    /// Default mode
     None,
+    /// Finite-model building
     Fmb,
+    /// CASC competition mode
     Casc,
+    /// CASC-SAT competition mode
     CascSat,
 }
 
+/// A Vampire solver configuration
 pub struct VampireOptions {
     mode: VampireMode,
-    query_count: Mutex<usize>,
 }
 
 struct Contents(Vec<Sexp>);
@@ -42,6 +61,26 @@ struct Contents(Vec<Sexp>);
 impl Contents {
     fn append(&mut self, data: Sexp) {
         self.0.push(data)
+    }
+}
+
+impl ToString for Contents {
+    fn to_string(&self) -> String {
+        self.0
+            .iter()
+            .map(|s| {
+                if let Sexp::Comment(c) = s {
+                    #[allow(clippy::comparison_to_empty)]
+                    if c == "" {
+                        return "".to_string();
+                    }
+                    return format!(";; {c}");
+                }
+                // TODO: this should be pretty-printed
+                s.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -149,11 +188,9 @@ impl VampireMode {
 }
 
 impl VampireOptions {
+    /// Create a new Vampire configuration with the given mode.
     pub fn new(mode: VampireMode) -> Self {
-        Self {
-            mode,
-            query_count: Mutex::new(0),
-        }
+        Self { mode }
     }
 
     fn args(&self) -> Vec<&str> {
@@ -167,11 +204,12 @@ impl VampireOptions {
         a
     }
 
-    fn get_fname(&self) -> PathBuf {
-        let mut count = self.query_count.lock().unwrap();
-        let id = *count;
-        *count += 1;
-        PathBuf::from(".vampire-queries").join(format!("query-{}-{id}.smt2", self.mode.mode_str()))
+    fn get_stdin_fname(&self, id: usize) -> PathBuf {
+        PathBuf::from(QUERY_DIR).join(format!("query-{}-{id}.smt2", self.mode.mode_str(),))
+    }
+
+    fn get_stdout_fname(&self, id: usize) -> PathBuf {
+        PathBuf::from(QUERY_DIR).join(format!("result-{}-{id}.smt2", self.mode.mode_str(),))
     }
 
     fn run(
@@ -179,41 +217,31 @@ impl VampireOptions {
         contents: Contents,
         query_conf: &QueryConf<SmtPid>,
     ) -> Result<String, SolverError> {
-        let fname = self.get_fname();
-        let data = contents
-            .0
-            .iter()
-            .map(|s| {
-                if let Sexp::Comment(c) = s {
-                    #[allow(clippy::comparison_to_empty)]
-                    if c == "" {
-                        return "".to_string();
-                    }
-                    return format!(";; {c}");
-                }
-                // TODO: this should be pretty-printed
-                s.to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&fname)
-            .unwrap();
-        write!(&mut f, "{data}").unwrap();
-        drop(f);
+        create_dir_all(QUERY_DIR).unwrap();
+        let id = new_query_id();
+        let in_fname = self.get_stdin_fname(id);
+        let data = contents.to_string();
+        let mut stdin = File::create(&in_fname).unwrap();
+        write!(&mut stdin, "{data}").unwrap();
+        drop(stdin);
+
+        let out_fname = self.get_stdout_fname(id);
+        let stdout = File::create(&out_fname).unwrap();
+
+        let cleanup = || {
+            remove_file(&in_fname).unwrap();
+            remove_file(&out_fname).unwrap();
+        };
 
         let mut child = Command::new(OsStr::new(&"./solvers/vampire"))
             .args(
                 self.args()
                     .iter()
                     .map(AsRef::as_ref)
-                    .chain([fname.as_os_str()]),
+                    .chain([in_fname.as_os_str()]),
             )
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(stdout)
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
@@ -224,23 +252,25 @@ impl VampireOptions {
             .as_ref()
             .is_some_and(|c| !c.add_canceler(pid.clone()))
         {
-            remove_file(fname).unwrap();
+            cleanup();
             pid.cancel();
             child.wait().unwrap();
             return Err(SolverError::Killed);
         }
 
-        let mut out = String::new();
-        child
-            .stdout
-            .as_mut()
-            .unwrap()
-            .read_to_string(&mut out)
-            .unwrap();
         child.wait().unwrap();
-        remove_file(fname).unwrap();
+        if pid.is_canceled() {
+            cleanup();
+            return Err(SolverError::Killed);
+        }
 
-        Ok(out)
+        let mut out_buf = String::new();
+        let mut stdout = File::open(&out_fname).unwrap();
+        stdout.read_to_string(&mut out_buf).unwrap();
+        drop(stdout);
+        cleanup();
+
+        Ok(out_buf)
     }
 }
 
@@ -276,7 +306,7 @@ impl BasicSolver for VampireOptions {
             append_term(&mut contents, t);
         }
 
-        for (_, (t, b)) in assumptions {
+        for (t, b) in assumptions.values() {
             match b {
                 true => append_term(&mut contents, t),
                 false => append_term(&mut contents, &Term::not(t)),
@@ -285,13 +315,12 @@ impl BasicSolver for VampireOptions {
 
         append_check_sat(&mut contents);
 
-        let out = self.run(contents, &query_conf)?;
+        let out = self.run(contents, query_conf)?;
         let lines: Vec<&str> = out.split('\n').collect();
 
         if lines
             .iter()
-            .find(|line| line.starts_with("% SZS status Unsatisfiable"))
-            .is_some()
+            .any(|line| line.starts_with("% SZS status Unsatisfiable"))
         {
             log_result("UNSAT".to_string());
             return Ok(BasicSolverResp::Unsat(
@@ -301,8 +330,7 @@ impl BasicSolver for VampireOptions {
 
         if lines
             .iter()
-            .find(|line| line.starts_with("% SZS status Satisfiable"))
-            .is_some()
+            .any(|line| line.starts_with("% SZS status Satisfiable"))
         {
             if let (Some(start), Some(end)) = (
                 lines

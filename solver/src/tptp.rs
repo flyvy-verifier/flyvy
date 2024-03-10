@@ -16,6 +16,7 @@ enum App {
     Func(String, Vec<Type>, Type),
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Type {
     TType,
@@ -28,7 +29,7 @@ enum Type {
 impl Type {
     fn name(&self) -> &str {
         match self {
-            Self::Named(name) => &name,
+            Self::Named(name) => name,
             _ => panic!("cannot retrieve name of unnamed type"),
         }
     }
@@ -112,8 +113,8 @@ impl Interp {
 fn strip_identifier(s: &str) -> String {
     if s.starts_with('\'') && s.ends_with('\'') {
         strip_identifier(&s[1..(s.len() - 1)])
-    } else if s.ends_with("()") {
-        strip_identifier(&s[..(s.len() - 2)])
+    } else if let Some(stripped) = s.strip_suffix("()") {
+        strip_identifier(stripped)
     } else {
         s.to_string()
     }
