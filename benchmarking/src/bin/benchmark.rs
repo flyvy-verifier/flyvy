@@ -22,12 +22,12 @@ struct QalphaParams {
     /// Output directory to store results
     #[arg(long)]
     output_dir: PathBuf,
+    /// Time limit for running each experiment
     #[arg(long, default_value = "600s")]
-    safety_time_limit: humantime::Duration,
-    #[arg(long, default_value = "600s")]
-    fixpoint_time_limit: humantime::Duration,
-    #[arg(long, default_value = "600s")]
-    scalability_time_limit: humantime::Duration,
+    time_limit: humantime::Duration,
+    /// Repeat each benchmark this number of times
+    #[arg(short = 'R', long, default_value = "1")]
+    repeat: usize,
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
@@ -84,32 +84,30 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
 
 fn run_qalpha(params: &QalphaParams) -> Vec<BenchmarkMeasurement> {
     let name_glob = Pattern::new(&params.name_glob).expect("could not parse pattern");
-    qalpha_benchmarks(
-        params.safety_time_limit.into(),
-        params.fixpoint_time_limit.into(),
-        params.scalability_time_limit.into(),
-    )
-    .into_iter()
-    .filter(|(name, _)| name_glob.matches_path(name))
-    .map(|(file, config)| {
-        eprintln!("qalpha {}", file.display());
-        let result = BenchmarkMeasurement::run(
-            config,
-            Some("info".to_string()),
-            Some(params.output_dir.join(file)),
-        );
-        eprintln!(
-            "  took {:0.0}s{}",
-            result.measurement.real_time.as_secs_f64(),
-            if result.measurement.success {
-                ""
-            } else {
-                " (failed)"
-            }
-        );
-        result
-    })
-    .collect()
+    qalpha_benchmarks(params.time_limit.into())
+        .into_iter()
+        .filter(|(name, _)| name_glob.matches_path(name))
+        .flat_map(|(file, config)| {
+            eprintln!("qalpha {}", file.display());
+            (0..params.repeat).map(move |rep| {
+                let result = BenchmarkMeasurement::run(
+                    config.clone(),
+                    Some("info".to_string()),
+                    Some(params.output_dir.join(&file).join(format!("{rep}"))),
+                );
+                eprintln!(
+                    "  took {:0.0}s{}",
+                    result.measurement.real_time.as_secs_f64(),
+                    if result.measurement.success {
+                        ""
+                    } else {
+                        " (failed)"
+                    }
+                );
+                result
+            })
+        })
+        .collect()
 }
 
 impl App {
