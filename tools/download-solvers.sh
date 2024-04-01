@@ -65,10 +65,12 @@ else
   chmod +x solvers/cvc5
 fi
 
-if [ -x solvers/cvc4 ] && ./solvers/cvc4 --version | grep --fixed-strings --quiet "$CVC4_VERSION"; then
-  echo "found CVC4"
-else
-  echo "downloading CVC4"
-  wget -nv -O solvers/cvc4 "$CVC4_URL"
-  chmod +x solvers/cvc4
-fi
+# TODO: github.com/CVC4/CVC4 was removed and redirects to CVC5 so there's no
+# binary release available; give up for now
+#if [ -x solvers/cvc4 ] && ./solvers/cvc4 --version | grep --fixed-strings --quiet "$CVC4_VERSION"; then
+#  echo "found CVC4"
+#else
+#  echo "downloading CVC4"
+#  wget -nv -O solvers/cvc4 "$CVC4_URL"
+#  chmod +x solvers/cvc4
+#fi

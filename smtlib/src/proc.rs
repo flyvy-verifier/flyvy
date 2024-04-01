@@ -581,6 +581,8 @@ mod tests {
         insta::assert_display_snapshot!(r.unwrap_err());
     }
 
+    // CVC4 binary release is no longer available so this test is difficult to run
+    #[ignore]
     #[test]
     fn test_cvc4_ill_formed() {
         let cvc = CvcConf::new_cvc4(&solver_path("cvc4")).done();
