@@ -582,9 +582,8 @@ mod tests {
     }
 
     // CVC4 binary release is no longer available so this test is difficult to run
-    #[ignore]
-    #[test]
-    fn test_cvc4_ill_formed() {
+    // #[test]
+    fn __ignored_test_cvc4_ill_formed() {
         let cvc = CvcConf::new_cvc4(&solver_path("cvc4")).done();
         let mut proc = SmtProc::new(cvc, None).unwrap();
         let e = parse("(assert (= and or))").unwrap();
