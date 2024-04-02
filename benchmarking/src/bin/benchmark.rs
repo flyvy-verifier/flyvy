@@ -3,16 +3,36 @@
 
 //! Run all of the examples as benchmarks and report the results in a table.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use benchmarking::{
-    run::{get_examples, BenchmarkMeasurement},
+    qalpha::qalpha_benchmarks,
+    report,
+    run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
-use clap::Parser;
+use clap::{Args, Parser};
+use glob::Pattern;
+
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+struct QalphaParams {
+    /// Glob pattern over benchmark names to run
+    #[arg(short = 'F', long = "filter", default_value = "*")]
+    name_glob: String,
+    /// Output directory to store results
+    #[arg(long)]
+    output_dir: PathBuf,
+    /// Time limit for running each experiment
+    #[arg(long, default_value = "600s")]
+    time_limit: humantime::Duration,
+    /// Repeat each benchmark this number of times
+    #[arg(short = 'R', long, default_value = "1")]
+    repeat: usize,
+}
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum Command {
+    /// Run verification benchmarks with user-supplied invariants.
     Verify {
         /// Time limit for verifying each file.
         #[arg(long, default_value = "60s")]
@@ -20,6 +40,16 @@ enum Command {
         /// Solver to use
         #[arg(long, default_value = "z3")]
         solver: String,
+        #[arg(long)]
+        /// Output results in JSON format
+        json: bool,
+    },
+    /// Run invariant inference benchmarks with qalpha.
+    Qalpha(#[command(flatten)] QalphaParams),
+    /// Load and report a previously gathered set of results.
+    Report {
+        /// Directory to load from (recursively)
+        dir: PathBuf,
     },
 }
 
@@ -39,11 +69,43 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
                 file.strip_prefix(REPO_ROOT_PATH()).unwrap().display()
             );
             BenchmarkMeasurement::run(
-                vec![String::from("verify")],
-                vec![format!("--solver={solver}")],
-                file,
-                time_limit,
+                BenchmarkConfig {
+                    command: vec![String::from("verify")],
+                    params: vec![format!("--solver={solver}")],
+                    file,
+                    time_limit,
+                },
+                None, /* rust_log */
+                None, /* output_dir */
             )
+        })
+        .collect()
+}
+
+fn run_qalpha(params: &QalphaParams) -> Vec<BenchmarkMeasurement> {
+    let name_glob = Pattern::new(&params.name_glob).expect("could not parse pattern");
+    qalpha_benchmarks(params.time_limit.into())
+        .into_iter()
+        .filter(|(name, _)| name_glob.matches_path(name))
+        .flat_map(|(file, config)| {
+            eprintln!("qalpha {}", file.display());
+            (0..params.repeat).map(move |rep| {
+                let result = BenchmarkMeasurement::run(
+                    config.clone(),
+                    Some("info".to_string()),
+                    Some(params.output_dir.join(&file).join(format!("{rep}"))),
+                );
+                eprintln!(
+                    "  took {:0.0}s{}",
+                    result.measurement.real_time.as_secs_f64(),
+                    if result.measurement.success {
+                        ""
+                    } else {
+                        " (failed)"
+                    }
+                );
+                result
+            })
         })
         .collect()
 }
@@ -55,8 +117,23 @@ impl App {
         // make sure `temporal-verifier` is available
         compile_flyvy_bin();
         match &self.command {
-            Command::Verify { time_limit, solver } => {
+            Command::Verify {
+                time_limit,
+                solver,
+                json,
+            } => {
                 let results = benchmark_verify((*time_limit).into(), solver);
+                if *json {
+                    println!("{}", BenchmarkMeasurement::to_json(&results));
+                } else {
+                    BenchmarkMeasurement::print_table(results);
+                }
+            }
+            Command::Qalpha(params) => {
+                let _results = run_qalpha(params);
+            }
+            Command::Report { dir } => {
+                let results = report::load_results(dir);
                 BenchmarkMeasurement::print_table(results);
             }
         }
