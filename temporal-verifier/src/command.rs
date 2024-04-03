@@ -470,7 +470,7 @@ impl SolverArgs {
             self.smt,
             fname,
             self.timeout,
-            self.solver_seed,
+            Some(self.solver_seed),
         )
     }
 }

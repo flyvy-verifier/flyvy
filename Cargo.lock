@@ -1170,6 +1170,7 @@ dependencies = [
  "lazy_static",
  "log",
  "pretty_env_logger",
+ "rand",
  "rayon",
  "regex",
  "serde",

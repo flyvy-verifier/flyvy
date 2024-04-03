@@ -288,10 +288,10 @@ struct FixpointStats {
 fn parallel_solver(cfg: &QalphaConfig, seeds: usize) -> impl BasicSolver {
     ParallelSolvers::new(
         (0..seeds)
-            .flat_map(|seed| {
+            .flat_map(|_| {
                 [
-                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, seed),
-                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, seed),
+                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, None),
+                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, None),
                 ]
             })
             .collect(),
@@ -307,13 +307,13 @@ fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     // ending with no timeout at all. The seed changes are meant to add some
     // variation vis-a-vis previous attempts.
     FallbackSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 3),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, Some(0)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, Some(0)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, Some(1)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, Some(1)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, Some(2)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, Some(2)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, Some(3)),
     ])
 }
 
