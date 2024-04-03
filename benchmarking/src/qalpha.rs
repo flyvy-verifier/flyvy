@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use crate::run::BenchmarkConfig;
+use crate::{measurement::RunMeasurement, run::BenchmarkConfig};
 
 /// Return a list of configured qalpha benchmarks for the examples.
 ///
@@ -333,6 +333,15 @@ struct QalphaConfig<'a> {
     nesting: Option<usize>,
     sim: SimulationConfig,
     fragment: Fragment,
+}
+
+/// A qalpha configuration and its resulting measurements
+/// of which there can be more than one
+pub struct QalphaMeasurement {
+    /// The configuration used to run the benchmark.
+    pub config: BenchmarkConfig,
+    /// The measurements of multiple runs of the benchmark.
+    pub measurements: Vec<RunMeasurement>,
 }
 
 fn command() -> Vec<String> {

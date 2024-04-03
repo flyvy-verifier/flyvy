@@ -13,6 +13,7 @@ use std::{
 
 use crate::{
     measurement::RunMeasurement,
+    qalpha::QalphaMeasurement,
     time_bench::{Time, REPO_ROOT_PATH},
 };
 
@@ -99,6 +100,52 @@ impl BenchmarkMeasurement {
             .map(|r| serde_json::to_string(r).expect("could not serialize `RunResult`"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+impl QalphaMeasurement {
+    /// Run the qalpha benchmark and return its measurements
+    pub fn run(
+        config: BenchmarkConfig,
+        rust_log: Option<String>,
+        output_dir: PathBuf,
+        repeat: usize,
+    ) -> Self {
+        let mut timer = flyvy_timer();
+        timer.timeout(config.time_limit);
+        timer.args(config.args());
+        timer.rust_log = rust_log.unwrap_or("".to_string());
+
+        fs::create_dir_all(&output_dir).expect("could not create output directory");
+        let mut f =
+            File::create(output_dir.join("command")).expect("could not create file for command");
+        writeln!(&mut f, "{}", timer.cmdline()).expect("could not write command");
+        let mut f = File::create(output_dir.join("config.json")).unwrap();
+        serde_json::to_writer(&mut f, &config).expect("could not serialize config");
+        _ = writeln!(&mut f);
+
+        let mut measurements = vec![];
+        for rep in 0..repeat {
+            let run_dir = output_dir.join(format!("{rep}"));
+            fs::create_dir_all(&run_dir).expect("could not create output directory");
+            timer.output_dir(&run_dir);
+            let measurement = timer.run().expect("error getting timing");
+            let mut f = File::create(run_dir.join("measurement.json"))
+                .expect("could not create file for measurement");
+            serde_json::to_writer(&mut f, &measurement).expect("could not serialize measurement");
+            _ = writeln!(&mut f);
+            eprintln!(
+                "  took {:0.0}s{}",
+                measurement.real_time.as_secs_f64(),
+                if measurement.success { "" } else { " (failed)" }
+            );
+            measurements.push(measurement);
+        }
+
+        QalphaMeasurement {
+            config,
+            measurements,
+        }
     }
 }
 
