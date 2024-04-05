@@ -8,6 +8,7 @@ use std::fs;
 use std::ops::{Add, Div, Sub};
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, fs::File};
+use tabled::Table;
 use walkdir::{DirEntry, WalkDir};
 
 use tabled::settings::{
@@ -38,19 +39,56 @@ pub fn load_results<M: ReportableMeasurement>(name_glob: &str, dir: &Path) -> Ve
 
 /// A runnbale measurement that can be reported in a table
 pub trait ReportableMeasurement: Sized {
-    /// Load the measurement if the given ntry contains one
+    /// Header used for printing table. Make sure this stays in sync with [`ReportableMeasurement::row`] and [`ReportableMeasurement::format_table`].
+    fn header() -> Vec<String>;
+
+    /// The success status of the measurement.
+    fn success(&self) -> &'static str;
+
+    /// The table row representing the measurement.
+    fn row(&self) -> Vec<String>;
+
+    /// Load a measurement if the given entry contains one.
     fn load(entry: DirEntry) -> Option<Self>;
 
+    /// Format a table for printing.
+    fn format_table(table: &mut Table);
+
     /// Print a nicely-formatting table from a list of results.
-    fn print_table(results: Vec<Self>);
+    fn print_table(results: Vec<Self>) {
+        let mut success_counts = HashMap::<&str, usize>::new();
+        for r in &results {
+            let mut key = r.success();
+            if key == "" {
+                key = "ok";
+            }
+            *success_counts.entry(key).or_default() += 1;
+        }
+        let total = results.len();
+
+        let mut rows = vec![Self::header()];
+        rows.extend(results.iter().map(|r| r.row()));
+
+        let mut table = tabled::builder::Builder::from(rows).build();
+        Self::format_table(&mut table);
+        println!("{table}");
+        println!(
+            "total:    {total}
+ok:       {ok}
+timeout:  {timeout}
+fail:     {fail}",
+            ok = success_counts.get("ok").unwrap_or(&0),
+            timeout = success_counts.get("timeout").unwrap_or(&0),
+            fail = success_counts.get("fail").unwrap_or(&0)
+        );
+    }
 }
 
 fn maybe_strip_prefix(prefix: &str, s: &Path) -> PathBuf {
     s.strip_prefix(prefix).unwrap_or(s).to_path_buf()
 }
 
-impl BenchmarkMeasurement {
-    /// Header used for printing table. Make sure this stays in sync with [`BenchmarkMeasurement::row`].
+impl ReportableMeasurement for BenchmarkMeasurement {
     fn header() -> Vec<String> {
         [
             "command", "file", "outcome", "time s", "cpu util", "solver %", "mem", "params",
@@ -60,7 +98,6 @@ impl BenchmarkMeasurement {
         .collect()
     }
 
-    /// The success status of the measurement
     fn success(&self) -> &'static str {
         if self.measurement.timed_out {
             "timeout"
@@ -71,15 +108,14 @@ impl BenchmarkMeasurement {
         }
     }
 
-    /// The table row(s) representing the measurement
-    fn rows(&self) -> Vec<Vec<String>> {
+    fn row(&self) -> Vec<String> {
         let file_name = maybe_strip_prefix(
             "temporal-verifier/examples",
             &maybe_strip_prefix(REPO_ROOT_PATH().to_str().unwrap(), &self.config.file),
         );
         let measure = &self.measurement;
         let real_time = measure.real_time.as_secs_f64();
-        vec![vec![
+        vec![
             format!("{}", self.config.command.join(" ")),
             format!("{}", file_name.display()),
             format!("{}", self.success()),
@@ -88,11 +124,9 @@ impl BenchmarkMeasurement {
             format!("{:0.0}%", measure.subprocess_utilization() * 100.0),
             format!("{}MB", measure.max_mem_mb()),
             format!("{}", self.config.params.join(" ")),
-        ]]
+        ]
     }
-}
 
-impl ReportableMeasurement for BenchmarkMeasurement {
     fn load(entry: DirEntry) -> Option<Self> {
         // only process entries that contain measurements
         #[allow(clippy::nonminimal_bool)]
@@ -112,21 +146,7 @@ impl ReportableMeasurement for BenchmarkMeasurement {
         })
     }
 
-    fn print_table(results: Vec<Self>) {
-        let mut success_counts = HashMap::<&str, usize>::new();
-        for r in &results {
-            let mut key = r.success();
-            if key == "" {
-                key = "ok";
-            }
-            *success_counts.entry(key).or_default() += 1;
-        }
-        let total = results.len();
-
-        let mut rows = vec![Self::header()];
-        rows.extend(results.iter().flat_map(|r| r.rows()));
-
-        let mut table = tabled::builder::Builder::from(rows).build();
+    fn format_table(table: &mut Table) {
         let numerical_columns = Columns::new(3..=6);
         table
             .with(Style::rounded())
@@ -134,16 +154,6 @@ impl ReportableMeasurement for BenchmarkMeasurement {
             .with(Modify::new(numerical_columns).with(Alignment::right()))
             .with(MinWidth::new(150))
             .with(Width::truncate(500));
-        println!("{table}");
-        println!(
-            "total:    {total}
-ok:       {ok}
-timeout:  {timeout}
-fail:     {fail}",
-            ok = success_counts.get("ok").unwrap_or(&0),
-            timeout = success_counts.get("timeout").unwrap_or(&0),
-            fail = success_counts.get("fail").unwrap_or(&0)
-        );
     }
 }
 
@@ -172,7 +182,7 @@ where
     Some((median, range))
 }
 
-impl QalphaMeasurement {
+impl ReportableMeasurement for QalphaMeasurement {
     fn header() -> Vec<String> {
         [
             "example",
@@ -204,7 +214,7 @@ impl QalphaMeasurement {
         }
     }
 
-    fn rows(&self) -> Vec<Vec<String>> {
+    fn row(&self) -> Vec<String> {
         let file_name = maybe_strip_prefix(
             "temporal-verifier/examples",
             &maybe_strip_prefix(REPO_ROOT_PATH().to_str().unwrap(), &self.config.file),
@@ -308,7 +318,7 @@ impl QalphaMeasurement {
             median_and_range(self.measurements.iter().map(|m| m.run.max_mem_mb())).unwrap();
         let mem = format!("{mem_med:0.0} ± {mem_rng:>3.0} MB");
 
-        vec![vec![
+        vec![
             name,
             lset,
             outcome,
@@ -322,11 +332,9 @@ impl QalphaMeasurement {
             max_size.unwrap_or_default(),
             cpu_util,
             mem,
-        ]]
+        ]
     }
-}
 
-impl ReportableMeasurement for QalphaMeasurement {
     fn load(entry: DirEntry) -> Option<Self> {
         // only process entries that contain a configuration
         if fs::metadata(entry.path().join("config.json")).is_err() {
@@ -367,21 +375,7 @@ impl ReportableMeasurement for QalphaMeasurement {
         ))
     }
 
-    fn print_table(results: Vec<Self>) {
-        let mut success_counts = HashMap::<&str, usize>::new();
-        for r in &results {
-            let mut key = r.success();
-            if key == "" {
-                key = "ok";
-            }
-            *success_counts.entry(key).or_default() += 1;
-        }
-        let total = results.len();
-
-        let mut rows = vec![Self::header()];
-        rows.extend(results.iter().flat_map(|r| r.rows()));
-
-        let mut table = tabled::builder::Builder::from(rows).build();
+    fn format_table(table: &mut Table) {
         table
             .with(Style::rounded())
             .with(Modify::new(Columns::single(1)).with(Alignment::center()))
@@ -391,15 +385,5 @@ impl ReportableMeasurement for QalphaMeasurement {
             .with(Modify::new(Rows::single(0)).with(Alignment::center()))
             .with(MinWidth::new(150))
             .with(Width::truncate(500));
-        println!("{table}");
-        println!(
-            "total:    {total}
-ok:       {ok}
-timeout:  {timeout}
-fail:     {fail}",
-            ok = success_counts.get("ok").unwrap_or(&0),
-            timeout = success_counts.get("timeout").unwrap_or(&0),
-            fail = success_counts.get("fail").unwrap_or(&0)
-        );
     }
 }
