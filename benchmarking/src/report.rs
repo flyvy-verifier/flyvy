@@ -82,6 +82,20 @@ fail:     {fail}",
             fail = success_counts.get("fail").unwrap_or(&0)
         );
     }
+
+    /// Convert a set of results to a TSV file as a string.
+    ///
+    /// Includes a header row.
+    fn as_tsv(results: &[Self]) -> String {
+        let mut tsv = String::new();
+        tsv.push_str(&Self::header().join("\t"));
+        tsv.push('\n');
+        for r in results {
+            tsv.push_str(&r.row().join("\t"));
+            tsv.push('\n');
+        }
+        tsv
+    }
 }
 
 fn maybe_strip_prefix(prefix: &str, s: &Path) -> PathBuf {

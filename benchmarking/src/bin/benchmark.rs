@@ -3,7 +3,7 @@
 
 //! Run all of the examples as benchmarks and report the results in a table.
 
-use std::{path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 use benchmarking::{
     qalpha::{qalpha_benchmarks, QalphaMeasurement},
@@ -31,6 +31,9 @@ struct QalphaParams {
     /// Whether to run the benchmarks or load the saved results
     #[arg(long)]
     load: bool,
+    /// File to output the results in TSV format to
+    #[arg(long)]
+    tsv: Option<String>,
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
@@ -122,7 +125,12 @@ impl App {
                 } else {
                     run_qalpha(params)
                 };
-                QalphaMeasurement::print_table(results);
+                if let Some(fname) = &params.tsv {
+                    let out = QalphaMeasurement::as_tsv(&results);
+                    fs::write(fname, out).expect("could not write tsv to file");
+                } else {
+                    QalphaMeasurement::print_table(results);
+                }
             }
         }
     }
