@@ -142,10 +142,7 @@ impl QalphaMeasurement {
             measurements.push(measurement);
         }
 
-        QalphaMeasurement {
-            config,
-            measurements,
-        }
+        QalphaMeasurement::new(&output_dir, config, measurements)
     }
 }
 

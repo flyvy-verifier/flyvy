@@ -3,8 +3,11 @@
 
 //! Define the qalpha experiments
 
+use regex::Regex;
 use std::{
     collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -367,7 +370,7 @@ impl Default for SimulationConfig {
     }
 }
 
-/// A configuration for a run of qalpha
+/// A configuration for a run of qalpha.
 struct QalphaConfig<'a> {
     file: PathBuf,
     quantifiers: &'a str,
@@ -379,13 +382,163 @@ struct QalphaConfig<'a> {
     expected: Expected,
 }
 
-/// A qalpha configuration and its resulting measurements
-/// of which there can be more than one
+// From inference/src/qalpha/frame.rs
+#[allow(dead_code)]
+#[derive(serde::Deserialize)]
+struct OperationStats {
+    total_duration: Duration,
+    total_calls: usize,
+    effective_calls: usize,
+}
+
+// From inference/src/qalpha/fixpoint.rs
+#[allow(dead_code)]
+#[derive(serde::Deserialize)]
+struct FixpointStats {
+    /// Total runtime
+    time_sec: f64,
+    /// Whether the task finished successfully
+    success: bool,
+    /// The number of formulas in the simplified final frame
+    simplified_size: usize,
+    /// The number of formulas in the final weaken frame, containing unsimplified formulas
+    full_size: usize,
+    /// The maximal number of formulas encountered in the weaken frame,
+    max_size: usize,
+    /// The number of formulas in reduced by implication checks (if available)
+    reduced: Option<usize>,
+    /// The number of formulas in the safety proof (if available)
+    safety: Option<usize>,
+    /// Number of lemmas in the handwritten invariant covered by the result
+    /// and the total number of lemmas in the handwritten invariants
+    covering: Option<(usize, usize)>,
+    /// The number of states processed during the execution
+    processed_states: usize,
+    /// The number of states generated during the execution (some might not have been processed)
+    generated_states: usize,
+    /// Statistics regarding frame weaken operations
+    weaken_stats: OperationStats,
+    /// Statistics regarding frame get_unsat operations
+    get_unsat_stats: OperationStats,
+}
+
+/// Statistics about a single run of a qalpha benchmark.
+pub struct QalphaRunMeasurement {
+    /// General statistics about the run.
+    pub run: RunMeasurement,
+    /// The language size of the benchmark.
+    pub language_size: Option<String>,
+    /// The time spent weakening during the run.
+    pub in_weaken: Option<f64>,
+    /// The final size of the fixpoint computed.
+    pub lfp_size: Option<usize>,
+    /// The maximal number of formulas encountered during the run.
+    pub max_size: Option<usize>,
+}
+
+/// A qalpha configuration and its resulting measurements across multiple runs.
 pub struct QalphaMeasurement {
     /// The configuration used to run the benchmark.
     pub config: BenchmarkConfig,
     /// The measurements of multiple runs of the benchmark.
-    pub measurements: Vec<RunMeasurement>,
+    pub measurements: Vec<QalphaRunMeasurement>,
+}
+
+impl QalphaMeasurement {
+    /// Create a new measurement with the given configuration and run measurements.
+    /// This function is used to load the missing information about each run,
+    /// as given by the remaining fields in [`QalphaRunMeasurement`].
+    pub fn new(dir: &Path, config: BenchmarkConfig, runs: Vec<RunMeasurement>) -> Self {
+        // Language size regex
+        let lang_size_pattern =
+            Regex::new(r"Approximate domain size: (10\^\d+(?:\.\d+)?)").unwrap();
+        // A regex to find the maximal number of formulas at each point in the log
+        let max_size_pattern = Regex::new(r"\[\d+ ~> \d+ \| (\d+)\]").unwrap();
+        // A regex that matches just before weakening starts
+        let weaken_start_pattern =
+            Regex::new(r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ [a-z]+ CTI\(s\) found")
+                .unwrap();
+        // A regex that matches just after weakening ended
+        let weaken_end_pattern = Regex::new(
+            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] Weaken aggregated statistics",
+        )
+        .unwrap();
+        // JSON marker preceding the statistics
+        let json_marker = "=============== JSON ===============";
+
+        let mut measurements = vec![];
+        for (i, run) in runs.into_iter().enumerate() {
+            let mut language_size = None;
+            let in_weaken;
+            let mut lfp_size = None;
+            let mut max_size = None;
+
+            let mut stdout = BufReader::new(
+                File::open(dir.join(format!("{i}/stdout"))).expect("cannot read stdout"),
+            )
+            .lines();
+
+            // Find the language size
+            for line in stdout.by_ref() {
+                if let Some(cap) = lang_size_pattern.captures(&line.unwrap()) {
+                    language_size = Some(cap.get(1).unwrap().as_str().to_string());
+                    break;
+                }
+            }
+
+            // If the benchmark did not time-out, the statistics are appended at the end of STDOUT
+            if !run.timed_out {
+                while stdout.next().unwrap().unwrap() != json_marker {}
+                let stats: FixpointStats =
+                    serde_json::from_str(&stdout.next().unwrap().unwrap()).unwrap();
+                in_weaken = Some(stats.weaken_stats.total_duration.as_secs_f64());
+                lfp_size = Some(stats.full_size);
+                max_size = Some(stats.max_size);
+            // Otherwise, we need to look at the log and track how much time weaken took
+            } else {
+                let stderr = BufReader::new(
+                    File::open(dir.join(format!("{i}/stderr"))).expect("cannot read stderr"),
+                )
+                .lines();
+
+                let mut in_weaken_time = 0_f64;
+                let mut weaken_start = Some(0_f64);
+                for line in stderr {
+                    let s = line.unwrap();
+                    if let Some(cap) = weaken_end_pattern.captures(&s) {
+                        let time_now = cap.get(1).unwrap().as_str().parse::<f64>().unwrap();
+                        in_weaken_time += time_now - weaken_start.unwrap();
+                        weaken_start = None;
+                        max_size = Some(cap.get(2).unwrap().as_str().parse().unwrap());
+                    } else if let Some(cap) = weaken_start_pattern.captures(&s) {
+                        weaken_start = Some(cap.get(1).unwrap().as_str().parse().unwrap());
+                        max_size = Some(cap.get(2).unwrap().as_str().parse().unwrap());
+                    } else if let Some(cap) = max_size_pattern.captures(&s) {
+                        max_size = Some(cap.get(1).unwrap().as_str().parse().unwrap());
+                    }
+                }
+                // If the benchmark timed out on weaken, add the remainder
+                if let Some(start) = weaken_start {
+                    in_weaken_time += run.real_time.as_secs_f64() - start;
+                }
+
+                in_weaken = Some(in_weaken_time)
+            }
+
+            measurements.push(QalphaRunMeasurement {
+                run,
+                language_size,
+                in_weaken,
+                lfp_size,
+                max_size,
+            });
+        }
+
+        Self {
+            config,
+            measurements,
+        }
+    }
 }
 
 fn command() -> Vec<String> {

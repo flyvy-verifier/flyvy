@@ -12,7 +12,7 @@ example. Records the full output of each run, as well as timing info. To
 configure this benchmark edit [qalpha.rs](src/qalpha.rs).
 
 ```sh
-cargo run --bin benchmark -- qalpha --output-dir qalpha-results
+cargo run --bin benchmark -- qalpha --dir qalpha-results
 ```
 
 ## Verification

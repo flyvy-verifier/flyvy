@@ -7,7 +7,7 @@ use std::{path::PathBuf, time::Duration};
 
 use benchmarking::{
     qalpha::{qalpha_benchmarks, QalphaMeasurement},
-    report::{self, load_results},
+    report::{load_results, ReportableMeasurement},
     run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
 };
@@ -19,9 +19,9 @@ struct QalphaParams {
     /// Glob pattern over benchmark names to run
     #[arg(short = 'F', long = "filter", default_value = "*")]
     name_glob: String,
-    /// Output directory to store results
+    /// Directory to store results in / load results from
     #[arg(long)]
-    output_dir: PathBuf,
+    dir: PathBuf,
     /// Time limit for running each experiment
     #[arg(long, default_value = "600s")]
     time_limit: humantime::Duration,
@@ -90,7 +90,7 @@ fn run_qalpha(params: &QalphaParams) -> Vec<QalphaMeasurement> {
             QalphaMeasurement::run(
                 config.clone(),
                 Some("info".to_string()),
-                params.output_dir.join(&file),
+                params.dir.join(&file),
                 params.repeat,
             )
         })
@@ -113,16 +113,16 @@ impl App {
                 if *json {
                     println!("{}", BenchmarkMeasurement::to_json(&results));
                 } else {
-                    report::print_table(results);
+                    BenchmarkMeasurement::print_table(results);
                 }
             }
             Command::Qalpha(params) => {
                 let results: Vec<QalphaMeasurement> = if params.load {
-                    load_results(&params.name_glob, &params.output_dir)
+                    load_results(&params.name_glob, &params.dir)
                 } else {
                     run_qalpha(params)
                 };
-                report::print_table(results);
+                QalphaMeasurement::print_table(results);
             }
         }
     }
