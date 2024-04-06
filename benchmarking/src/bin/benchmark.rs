@@ -116,7 +116,7 @@ impl App {
                 if *json {
                     println!("{}", BenchmarkMeasurement::to_json(&results));
                 } else {
-                    BenchmarkMeasurement::print_table(results);
+                    BenchmarkMeasurement::print_table(&results);
                 }
             }
             Command::Qalpha(params) => {
@@ -129,7 +129,7 @@ impl App {
                     let out = QalphaMeasurement::as_tsv(&results);
                     fs::write(fname, out).expect("could not write tsv to file");
                 } else {
-                    QalphaMeasurement::print_table(results);
+                    QalphaMeasurement::print_table(&results);
                 }
             }
         }

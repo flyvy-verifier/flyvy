@@ -55,9 +55,9 @@ pub trait ReportableMeasurement: Sized {
     fn format_table(table: &mut Table);
 
     /// Print a nicely-formatting table from a list of results.
-    fn print_table(results: Vec<Self>) {
+    fn print_table(results: &[Self]) {
         let mut success_counts = HashMap::<&str, usize>::new();
-        for r in &results {
+        for r in results {
             let mut key = r.success();
             if key == "" {
                 key = "ok";
@@ -200,6 +200,7 @@ impl ReportableMeasurement for QalphaMeasurement {
     fn header() -> Vec<String> {
         [
             "example",
+            "#",
             "LSet",
             "outcome",
             "time (s)",
@@ -211,7 +212,7 @@ impl ReportableMeasurement for QalphaMeasurement {
             "lfp size",
             "max size",
             "× cpu util",
-            "mem",
+            "memory",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -334,6 +335,7 @@ impl ReportableMeasurement for QalphaMeasurement {
 
         vec![
             name,
+            format!("{}", self.measurements.len()),
             lset,
             outcome,
             real_time,
@@ -393,9 +395,10 @@ impl ReportableMeasurement for QalphaMeasurement {
         table
             .with(Style::rounded())
             .with(Modify::new(Columns::single(1)).with(Alignment::center()))
-            .with(Modify::new(Columns::single(2).not(Rows::first())).with(Color::FG_RED))
-            .with(Modify::new(Columns::single(3)).with(Alignment::right()))
-            .with(Modify::new(Columns::new(7..=12)).with(Alignment::right()))
+            .with(Modify::new(Columns::single(2)).with(Alignment::center()))
+            .with(Modify::new(Columns::single(3).not(Rows::first())).with(Color::FG_RED))
+            .with(Modify::new(Columns::single(4)).with(Alignment::right()))
+            .with(Modify::new(Columns::new(8..=13)).with(Alignment::right()))
             .with(Modify::new(Rows::single(0)).with(Alignment::center()))
             .with(MinWidth::new(150))
             .with(Width::truncate(500));

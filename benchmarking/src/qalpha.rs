@@ -455,9 +455,10 @@ impl QalphaMeasurement {
         // A regex to find the maximal number of formulas at each point in the log
         let max_size_pattern = Regex::new(r"\[\d+ ~> \d+ \| (\d+)\]").unwrap();
         // A regex that matches just before weakening starts
-        let weaken_start_pattern =
-            Regex::new(r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ [a-z]+ CTI\(s\) found")
-                .unwrap();
+        let weaken_start_pattern = Regex::new(
+            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ (?:(?:initial|transition) CTI\(s\) found|samples remaining)",
+        )
+        .unwrap();
         // A regex that matches just after weakening ended
         let weaken_end_pattern = Regex::new(
             r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] Weaken aggregated statistics",
