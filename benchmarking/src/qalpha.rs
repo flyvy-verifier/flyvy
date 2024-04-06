@@ -29,7 +29,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_forall.fly"),
@@ -39,7 +39,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id.fly"),
@@ -49,7 +49,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv.fly"),
@@ -59,7 +59,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ticket.fly"),
@@ -69,7 +69,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/learning_switch.fly"),
@@ -79,7 +79,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Timeout,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_wo_decide.fly"),
@@ -89,7 +89,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_forall.fly"),
@@ -99,7 +99,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/cache.fly"),
@@ -109,7 +109,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Large,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
@@ -119,7 +119,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_epr.fly"),
@@ -129,7 +129,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_epr.fly"),
@@ -139,7 +139,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_ae.fly"),
@@ -149,7 +149,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/paxos_epr.fly"),
@@ -159,7 +159,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Medium,
         },
         QalphaConfig {
             file: PathBuf::from("fol/flexible_paxos_epr.fly"),
@@ -169,7 +169,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Success,
+            expected: Category::Medium,
         },
         QalphaConfig {
             file: PathBuf::from("fol/multi_paxos_epr.fly"),
@@ -179,7 +179,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Timeout,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/fast_paxos_epr.fly"),
@@ -189,7 +189,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Timeout,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/stoppable_paxos_epr.fly"),
@@ -199,7 +199,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Timeout,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/vertical_paxos_epr.fly"),
@@ -209,7 +209,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
-            expected: Expected::Timeout,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/bosco_3t_safety.fly"),
@@ -219,7 +219,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/firewall.fly"),
@@ -229,7 +229,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id_not_dead.fly"),
@@ -239,7 +239,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_db_ae.fly"),
@@ -249,7 +249,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/hybrid_reliable_broadcast_cisa.fly"),
@@ -259,7 +259,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/block_cache_system_frozen_async.fly"),
@@ -269,7 +269,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
-            expected: Expected::Unknown,
+            expected: Category::Unknown,
         },
     ];
 
@@ -297,18 +297,22 @@ impl ToString for Fragment {
     }
 }
 
-enum Expected {
+enum Category {
     Unknown,
-    Success,
+    Small,
+    Medium,
+    Large,
     Timeout,
 }
 
-impl ToString for Expected {
+impl ToString for Category {
     fn to_string(&self) -> String {
         match self {
-            Expected::Unknown => "unknown",
-            Expected::Success => "success",
-            Expected::Timeout => "timeout",
+            Category::Unknown => "unknown",
+            Category::Small => "small",
+            Category::Medium => "medium",
+            Category::Large => "large",
+            Category::Timeout => "timeout",
         }
         .to_string()
     }
@@ -379,7 +383,7 @@ struct QalphaConfig<'a> {
     nesting: Option<usize>,
     sim: SimulationConfig,
     fragment: Fragment,
-    expected: Expected,
+    expected: Category,
 }
 
 // From inference/src/qalpha/frame.rs
