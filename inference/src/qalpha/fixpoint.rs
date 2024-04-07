@@ -256,8 +256,8 @@ impl FoundFixpoint {
     }
 }
 
-#[derive(serde::Serialize)]
-struct FixpointStats {
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct FixpointStats {
     /// Total runtime
     time_sec: f64,
     /// Whether the task finished successfully
@@ -265,11 +265,11 @@ struct FixpointStats {
     /// The number of formulas in the simplified final frame
     simplified_size: usize,
     /// The number of formulas in the final weaken frame, containing unsimplified formulas
-    full_size: usize,
+    pub full_size: usize,
     /// The maximal number of formulas encountered in the weaken frame,
-    max_size: usize,
+    pub max_size: usize,
     /// The number of formulas in reduced by implication checks (if available)
-    reduced: Option<usize>,
+    pub reduced: Option<usize>,
     /// The number of formulas in the safety proof (if available)
     safety: Option<usize>,
     /// Number of lemmas in the handwritten invariant covered by the result
@@ -280,7 +280,7 @@ struct FixpointStats {
     /// The number of states generated during the execution (some might not have been processed)
     generated_states: usize,
     /// Statistics regarding frame weaken operations
-    weaken_stats: OperationStats,
+    pub weaken_stats: OperationStats,
     /// Statistics regarding frame get_unsat operations
     get_unsat_stats: OperationStats,
 }

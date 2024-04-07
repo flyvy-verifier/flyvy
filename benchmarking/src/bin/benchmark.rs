@@ -19,7 +19,7 @@ struct QalphaParams {
     /// Glob pattern over benchmark names to run
     #[arg(short = 'F', long = "filter", default_value = "*")]
     name_glob: String,
-    /// Directory to store results in / load results from
+    /// Directory to store results in, or load results from
     #[arg(long)]
     dir: PathBuf,
     /// Time limit for running each experiment
@@ -28,7 +28,7 @@ struct QalphaParams {
     /// Repeat each benchmark this number of times
     #[arg(short = 'R', long, default_value = "1")]
     repeat: usize,
-    /// Whether to run the benchmarks or load the saved results
+    /// Whether to run the benchmarks or load saved results
     #[arg(long)]
     load: bool,
     /// File to output the results in TSV format to
@@ -50,7 +50,43 @@ enum Command {
         /// Output results in JSON format
         json: bool,
     },
-    /// Run invariant inference benchmarks with qalpha.
+    /// Run or load invariant inference benchmarks with qalpha and report the results in a table.
+    ///
+    /// The table produced by this command has one row per benchmark, and contains the following columns:
+    ///
+    /// - example: the name of the file defining the first-order transition system;
+    ///
+    /// - #: the number of trials performed for this benchmark;
+    ///
+    /// - LSet: "✓" if an LSet data-structure was used, or "-" if a baseline data-structure was used instead;
+    ///
+    /// - outcome: "timeout" if all trials in the benchmark timed-out, empty otherwise;
+    ///
+    /// - time (s): the total runtime of the least-fixpoint computation;
+    ///
+    /// - quantifiers: the quantifier structure of formulas in the first-order language considered;
+    ///
+    /// - qf body: the quantifier-free body of formulas in the first-order language considered.
+    /// In our experiments we use k-pDNF as defined by P-FOL-IC3, with a restricted number of literals in the pDNF clause;
+    ///
+    /// - language: the approximate number of formulas in the first-order language considered, induced by the transition system and the language parameters;
+    ///
+    /// - % weaken: the percentage of time spent weakening formulas during the run (as opposed to searching for counter-exmaples to induction);
+    ///
+    /// - lfp: the number of formulas in the computed least-fixpoint;
+    ///
+    /// - reduced: the number of formulas in a subset of the least-fixpoint sufficient to semantically imply the rest;
+    ///
+    /// - max: the maximal number of formulas in the representation of an abstract element encountered throughout the run;
+    ///
+    /// - × cpu: the CPU utilization factor;
+    ///
+    /// - memory: the maximal amount of RAM used throughout the run.
+    ///
+    /// Since we often run multiple trials of the same least-fixpoint computation, we report each of the variable statistics
+    /// (e.g., "time", "% weaken") as _median_ ± _deviation_. This is done by first computing the statistic for each individual trial,
+    /// finding the median, and then computing the maximal distance from the median value to the value in any trial —
+    /// which give us the deviation. This guarantees that the value of the statistic in all trials indeed falls within _median_ ± _deviation_.
     Qalpha(#[command(flatten)] QalphaParams),
 }
 

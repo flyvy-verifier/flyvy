@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::{measurement::RunMeasurement, run::BenchmarkConfig};
+use inference::qalpha::fixpoint::FixpointStats;
 
 /// Return a list of configured qalpha benchmarks for the examples.
 ///
@@ -386,46 +387,6 @@ struct QalphaConfig<'a> {
     expected: Category,
 }
 
-// From inference/src/qalpha/frame.rs
-#[allow(dead_code)]
-#[derive(serde::Deserialize)]
-struct OperationStats {
-    total_duration: Duration,
-    total_calls: usize,
-    effective_calls: usize,
-}
-
-// From inference/src/qalpha/fixpoint.rs
-#[allow(dead_code)]
-#[derive(serde::Deserialize)]
-struct FixpointStats {
-    /// Total runtime
-    time_sec: f64,
-    /// Whether the task finished successfully
-    success: bool,
-    /// The number of formulas in the simplified final frame
-    simplified_size: usize,
-    /// The number of formulas in the final weaken frame, containing unsimplified formulas
-    full_size: usize,
-    /// The maximal number of formulas encountered in the weaken frame,
-    max_size: usize,
-    /// The number of formulas in reduced by implication checks (if available)
-    reduced: Option<usize>,
-    /// The number of formulas in the safety proof (if available)
-    safety: Option<usize>,
-    /// Number of lemmas in the handwritten invariant covered by the result
-    /// and the total number of lemmas in the handwritten invariants
-    covering: Option<(usize, usize)>,
-    /// The number of states processed during the execution
-    processed_states: usize,
-    /// The number of states generated during the execution (some might not have been processed)
-    generated_states: usize,
-    /// Statistics regarding frame weaken operations
-    weaken_stats: OperationStats,
-    /// Statistics regarding frame get_unsat operations
-    get_unsat_stats: OperationStats,
-}
-
 /// Statistics about a single run of a qalpha benchmark.
 pub struct QalphaRunMeasurement {
     /// General statistics about the run.
@@ -434,8 +395,10 @@ pub struct QalphaRunMeasurement {
     pub language_size: Option<String>,
     /// The time spent weakening during the run.
     pub in_weaken: Option<f64>,
-    /// The final size of the fixpoint computed.
+    /// The final size of the least-fixpoint computed.
     pub lfp_size: Option<usize>,
+    /// The semantically-reduced size of the least-fixpoint.
+    pub reduced_size: Option<usize>,
     /// The maximal number of formulas encountered during the run.
     pub max_size: Option<usize>,
 }
@@ -476,6 +439,7 @@ impl QalphaMeasurement {
             let mut language_size = None;
             let in_weaken;
             let mut lfp_size = None;
+            let mut reduced_size = None;
             let mut max_size = None;
 
             let mut stdout = BufReader::new(
@@ -498,6 +462,7 @@ impl QalphaMeasurement {
                     serde_json::from_str(&stdout.next().unwrap().unwrap()).unwrap();
                 in_weaken = Some(stats.weaken_stats.total_duration.as_secs_f64());
                 lfp_size = Some(stats.full_size);
+                reduced_size = stats.reduced;
                 max_size = Some(stats.max_size);
             // Otherwise, we need to look at the log and track how much time weaken took
             } else {
@@ -535,6 +500,7 @@ impl QalphaMeasurement {
                 language_size,
                 in_weaken,
                 lfp_size,
+                reduced_size,
                 max_size,
             });
         }

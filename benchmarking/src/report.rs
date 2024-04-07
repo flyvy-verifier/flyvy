@@ -206,12 +206,12 @@ impl ReportableMeasurement for QalphaMeasurement {
             "time (s)",
             "quantifiers",
             "qf body",
-            "lang size",
-            "in weaken (s)",
-            "in weaken (%)",
-            "lfp size",
-            "max size",
-            "× cpu util",
+            "language",
+            "% weaken",
+            "lfp",
+            "reduced",
+            "max",
+            "× cpu",
             "memory",
         ]
         .iter()
@@ -261,14 +261,9 @@ impl ReportableMeasurement for QalphaMeasurement {
             .filter(|(_, s)| *s == "--quantifier")
             .map(|(i, _)| {
                 let parts: Vec<_> = self.config.params[i + 1].split(' ').collect();
-                let quant = match parts[0].chars().nth(0).unwrap() {
-                    '*' => "∃∀",
-                    'F' => " ∀",
-                    'E' => " ∃",
-                    _ => unreachable!(),
-                };
+                let quant = &parts[0][0..=0];
 
-                format!("{quant}^{}", parts[2])
+                quant.repeat(parts[2].parse().unwrap())
             })
             .join(" ");
 
@@ -290,21 +285,10 @@ impl ReportableMeasurement for QalphaMeasurement {
             .measurements
             .iter()
             .find_map(|m| m.language_size.clone());
-        if let Some(size) = &lang_size {
-            assert!(self
-                .measurements
-                .iter()
-                .all(|m| !m.language_size.as_ref().is_some_and(|s| s != size)))
-        }
 
         let in_weaken_secs: Option<Vec<f64>> =
             self.measurements.iter().map(|m| m.in_weaken).collect();
-        let in_weaken_s = in_weaken_secs.as_ref().map(|v| {
-            let (med, rng) = median_and_range(v.iter().copied()).unwrap();
-            format!("{med:0.1} ± {rng:>5.1}")
-        });
-
-        let in_weaken_per = in_weaken_secs.as_ref().map(|v| {
+        let in_weaken_per = in_weaken_secs.map(|v| {
             let (med, rng) = median_and_range(
                 v.iter()
                     .zip(&self.measurements)
@@ -315,12 +299,9 @@ impl ReportableMeasurement for QalphaMeasurement {
         });
 
         let lfp_size = self.measurements.iter().find_map(|m| m.lfp_size);
-        if let Some(size) = lfp_size {
-            assert!(self
-                .measurements
-                .iter()
-                .all(|m| !m.lfp_size.is_some_and(|s| s != size)))
-        }
+
+        let reduced = median_and_range(self.measurements.iter().filter_map(|m| m.reduced_size))
+            .map(|(med, rng)| format!("{med:0.1} ± {rng:>2.1}"));
 
         let max_size = median_and_range(self.measurements.iter().filter_map(|m| m.max_size))
             .map(|(med, rng)| format!("{med:0.1} ± {rng:>5.1}"));
@@ -342,9 +323,9 @@ impl ReportableMeasurement for QalphaMeasurement {
             quants,
             format!("{}-pDNF, {clause_size}-clause", cubes + 1),
             lang_size.unwrap_or_default(),
-            in_weaken_s.unwrap_or_default(),
             in_weaken_per.unwrap_or_default(),
             lfp_size.map(|size| format!("{size}")).unwrap_or_default(),
+            reduced.unwrap_or_default(),
             max_size.unwrap_or_default(),
             cpu_util,
             mem,
