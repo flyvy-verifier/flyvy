@@ -5,7 +5,6 @@
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/paxos_forall_choosable.pyv
 ##
-## Manually added "always" to axiom.
 ## Manually converted derived relations to definitions.
 
 # sorts:

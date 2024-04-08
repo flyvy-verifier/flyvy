@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/bosco_3t_safety.pyv
-##
-## Manually added "always" to axiom.
 
 # sorts:
 sort quorum_a
