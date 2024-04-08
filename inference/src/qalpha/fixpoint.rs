@@ -101,21 +101,15 @@ pub enum Strategy {
     WeakenPd,
 }
 
-impl Default for Strategy {
-    fn default() -> Self {
-        Self::Weaken
-    }
-}
-
-impl From<&String> for Strategy {
-    fn from(value: &String) -> Self {
-        match value.as_str() {
+impl From<&str> for Strategy {
+    fn from(value: &str) -> Self {
+        match value {
             "none" => Self::None,
             "houdini" => Self::Houdini,
             "houdini-pd" => Self::HoudiniPd,
             "weaken" => Self::Weaken,
             "weaken-pd" => Self::WeakenPd,
-            _ => panic!("invalid CTI option"),
+            _ => panic!("invalid CTI strategy option"),
         }
     }
 }

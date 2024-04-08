@@ -22,14 +22,14 @@ use codespan_reporting::{
     },
 };
 use fly::semantics::models_to_string;
-use fly::syntax::{Module, Signature, Sort};
+use fly::syntax::{Module, Signature};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{
     FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
 };
 use inference::houdini;
 use inference::qalpha::{
-    fixpoint::{self, qalpha_dynamic, Strategy},
+    fixpoint::{qalpha_dynamic, Strategy},
     quant::{parse_quantifier, QuantifierConfig},
 };
 use inference::updr::Updr;
@@ -88,67 +88,48 @@ struct VerifyArgs {
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierConfigArgs {
     #[arg(short, long)]
-    /// Sorts in the order they should appear in the quantifier prefix
-    sort: Vec<String>,
-
-    #[arg(short, long)]
-    /// Quantifiers in the form `<quantifier: F/E/*> <sort> <count>`
+    /// Quantifier of the form `<quantifier: F/E/*> <sort> <count>` which is appended to the
+    /// quantifier structure of the first-order language; multiple quantifiers are permitted
     quantifier: Vec<String>,
 }
 
 impl QuantifierConfigArgs {
     fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
-        let mut quantifiers;
-        let mut sorts: Vec<Sort>;
-        let mut counts: Vec<usize>;
-        if !self.quantifier.is_empty() {
-            quantifiers = vec![];
-            sorts = vec![];
-            counts = vec![];
-            for quantifier_spec in &self.quantifier {
-                let r = parse_quantifier(sig, quantifier_spec);
-                match r {
-                    Ok((q, sort, count)) => {
-                        quantifiers.push(q);
-                        sorts.push(sort);
-                        counts.push(count);
-                    }
-                    Err(err) => panic!("{err}"),
+        let mut quantifiers = vec![];
+        let mut sorts = vec![];
+        let mut counts = vec![];
+        for quantifier_spec in &self.quantifier {
+            match parse_quantifier(sig, quantifier_spec) {
+                Ok((q, sort, count)) => {
+                    quantifiers.push(q);
+                    sorts.push(sort);
+                    counts.push(count);
                 }
+                Err(err) => panic!("{err}"),
             }
-        } else if !self.sort.is_empty() {
-            sorts = self
-                .sort
-                .iter()
-                .map(|s| Sort::Uninterpreted(s.clone()))
-                .collect();
-            quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
-        } else {
-            sorts = sig.sorts.iter().map(|s| Sort::uninterpreted(s)).collect();
-            quantifiers = vec![None; sorts.len()];
-            counts = vec![fixpoint::defaults::QUANT_SAME_SORT; sorts.len()];
         }
+
         QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
     }
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QuantifierFreeConfigArgs {
-    #[arg(long)]
-    /// Defines the type of quantifier-free body (cnf/dnf/pdnf)
-    qf: Option<String>,
+    #[arg(long, default_value = "pdnf")]
+    /// The quantifier-free body of formulas in the first-order language (pdnf/cnf/dnf)
+    qf: String,
 
     #[arg(long)]
-    /// Determines the maximal size of each clause
+    /// The maximal size of the pDNF clause, or of each CNF clause, depending on --qf
     clause_size: Option<usize>,
 
     #[arg(long)]
-    /// Determines the maximal number of cubes in disjunction
+    ///The maximal number of cubes in k-pDNF or DNF; for k-pDNF, this refers to non-unit cubes, i.e., k - 1
     cubes: Option<usize>,
 
     #[arg(long)]
-    /// The maximal nesting depth of terms in the vocabulary (unbounded if not provided)
+    /// The maximal nesting depth of atoms / terms in the vocabulary (unbounded if not provided);
+    /// non-Boolean constants are considered to have depth 1
     nesting: Option<usize>,
 
     #[arg(long, action)]
@@ -159,7 +140,7 @@ struct QuantifierFreeConfigArgs {
 impl QuantifierFreeConfigArgs {
     fn to_cfg(&self) -> QuantifierFreeConfig {
         QuantifierFreeConfig {
-            qf_body: self.qf.as_ref().map_or(QfBody::default(), |qf| qf.into()),
+            qf_body: QfBody::from(self.qf.as_str()),
             clause_size: self.clause_size,
             cubes: self.cubes,
             nesting: self.nesting,
@@ -169,7 +150,7 @@ impl QuantifierFreeConfigArgs {
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct SimulationConfigArgs {
-    /// What size bound to use for the given sort in simulations, given as SORT=N as in --bound node=2
+    /// The size bound to use for the given sort in simulations, given as SORT=N as in `--bound node=2`
     #[arg(long)]
     bound: Vec<String>,
 
@@ -182,7 +163,7 @@ struct SimulationConfigArgs {
     depth: Option<usize>,
 
     #[arg(long)]
-    /// In simulations, consider the depth from the last counterexample found
+    /// In simulations, consider the depth from the last counter-example found
     guided: bool,
 
     #[arg(long)]
@@ -191,49 +172,46 @@ struct SimulationConfigArgs {
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
-struct InferenceConfigArgs {
-    #[command(flatten)]
-    quant_cfg: QuantifierConfigArgs,
-
-    #[arg(long)]
+struct SmtOptimizationArgs {
+    #[arg(long, default_value = "1")]
     /// Number of different seeds to try the solvers with
-    seeds: Option<usize>,
+    seeds: usize,
 
     #[arg(long)]
     /// Do not try to decompose the transition relation disjunctively
     no_disj: bool,
 
-    #[arg(long)]
-    /// How to perform the SMT queries (full/gradual/minimal)
-    smt_tactic: Option<String>,
+    #[arg(long, default_value = "gradual")]
+    /// Determines the incrementality of SMT queries (full/gradual/minimal)
+    smt_tactic: String,
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct QalphaArgs {
     #[command(flatten)]
-    infer_cfg: InferenceConfigArgs,
-
-    #[command(flatten)]
-    sim_cfg: SimulationConfigArgs,
+    quant_cfg: QuantifierConfigArgs,
 
     #[command(flatten)]
     qf_cfg: QuantifierFreeConfigArgs,
 
     #[arg(long)]
-    /// Use the baseline implementation the data structures in qalpha
+    /// Use the baseline implementation of the data-structure in qalpha instead of LSet
     baseline: bool,
 
-    #[arg(long)]
-    /// Determines the strategy that is used in addition to the simulations.
+    #[command(flatten)]
+    sim_cfg: SimulationConfigArgs,
+
+    #[arg(long, default_value = "weaken")]
+    /// Determines the strategy that is used in the fixpoint search.
     /// Options are "weaken", "weaken-pd", "houdini", "houdini-pd", or "none".
-    /// "pd" indicates a property-directed strategy.
-    strategy: Option<String>,
+    /// "pd" indicates a property-directed strategy. Only "weaken" guarantees finding
+    /// the least-fixpoint.
+    strategy: String,
 
-    #[arg(long)]
-    /// Launch no new runs after safety has been proven
-    until_safe: bool,
+    #[command(flatten)]
+    smt_cfg: SmtOptimizationArgs,
 
-    /// File name for a .fly file
+    /// File name for a .fly file containing the program to analyse
     file: String,
 }
 
@@ -249,14 +227,11 @@ impl QalphaArgs {
             fname,
             fo: FOModule::new(
                 m,
-                !self.infer_cfg.no_disj,
-                self.infer_cfg
-                    .smt_tactic
-                    .as_ref()
-                    .map_or(SmtTactic::default(), |s| s.into()),
+                !self.smt_cfg.no_disj,
+                SmtTactic::from(self.smt_cfg.smt_tactic.as_str()),
             ),
 
-            quant_cfg: Arc::new(self.infer_cfg.quant_cfg.to_cfg(&m.signature)),
+            quant_cfg: Arc::new(self.quant_cfg.to_cfg(&m.signature)),
 
             qf_cfg: self.qf_cfg.to_cfg(),
 
@@ -268,12 +243,8 @@ impl QalphaArgs {
                 dfs: self.sim_cfg.dfs,
             },
 
-            strategy: self
-                .strategy
-                .as_ref()
-                .map_or(Strategy::default(), |s| s.into()),
-            until_safe: self.until_safe,
-            seeds: self.infer_cfg.seeds.unwrap_or(1),
+            strategy: Strategy::from(self.strategy.as_str()),
+            seeds: self.smt_cfg.seeds,
             baseline: self.baseline,
         }
     }
@@ -283,18 +254,20 @@ impl QalphaArgs {
 enum InferCommand {
     /// Run Houdini
     Houdini {
+        #[command(flatten)]
+        solver: SolverArgs,
+
         /// File name for a .fly file
         file: String,
     },
-    /// Run quantified-alpha-from-below
+    /// Run the qalpha algorithm, which computes the strongest inductive invariant expressible in
+    /// a given first-order logical language. The language is mostly specified using a quantifier
+    /// structure and a quantifier-free body restricting the formulas in the language.
     Qalpha(QalphaArgs),
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct InferArgs {
-    #[command(flatten)]
-    solver: SolverArgs,
-
     #[arg(long, global = true)]
     /// Print timing statistics
     time: bool,
@@ -412,7 +385,7 @@ enum Command {
 impl InferCommand {
     fn file(&self) -> &str {
         match self {
-            InferCommand::Houdini { file } => file,
+            InferCommand::Houdini { solver: _, file } => file,
             InferCommand::Qalpha(QalphaArgs { file, .. }) => file,
         }
     }
@@ -478,13 +451,6 @@ impl SolverArgs {
 impl VerifyArgs {
     fn get_solver_conf(&self) -> SolverConf {
         self.solver.get_solver_conf(&self.file)
-    }
-}
-
-impl InferArgs {
-    fn get_solver_conf(&self) -> SolverConf {
-        self.solver
-            .get_solver_conf(&self.infer_cmd.file().to_string())
     }
 }
 
@@ -558,11 +524,15 @@ impl App {
             }
             Command::Infer(
                 ref args @ InferArgs {
-                    infer_cmd: InferCommand::Houdini { .. },
+                    infer_cmd:
+                        InferCommand::Houdini {
+                            ref solver,
+                            ref file,
+                        },
                     ..
                 },
             ) => {
-                let conf = args.get_solver_conf();
+                let conf = solver.get_solver_conf(&file);
                 m.inline_defs();
                 let r = houdini::infer_module(&conf, &m);
                 if args.time {
