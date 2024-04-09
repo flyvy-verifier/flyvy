@@ -532,7 +532,7 @@ impl App {
                     ..
                 },
             ) => {
-                let conf = solver.get_solver_conf(&file);
+                let conf = solver.get_solver_conf(file);
                 m.inline_defs();
                 let r = houdini::infer_module(&conf, &m);
                 if args.time {
