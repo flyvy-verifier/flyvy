@@ -3,7 +3,7 @@
 
 //! Define the qalpha experiments
 
-use regex::Regex;
+use lazy_regex::regex;
 use std::{
     collections::HashMap,
     fs::File,
@@ -417,20 +417,16 @@ impl QalphaMeasurement {
     /// as given by the remaining fields in [`QalphaRunMeasurement`].
     pub fn new(dir: &Path, config: BenchmarkConfig, runs: Vec<RunMeasurement>) -> Self {
         // Language size regex
-        let lang_size_pattern =
-            Regex::new(r"Approximate domain size: (10\^\d+(?:\.\d+)?)").unwrap();
+        let lang_size_pattern = regex!(r"Approximate domain size: (10\^\d+(?:\.\d+)?)");
         // A regex to find the maximal number of formulas at each point in the log
-        let max_size_pattern = Regex::new(r"\[\d+ ~> \d+ \| (\d+)\]").unwrap();
+        let max_size_pattern = regex!(r"\[\d+ ~> \d+ \| (\d+)\]");
         // A regex that matches just before weakening starts
-        let weaken_start_pattern = Regex::new(
-            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ (?:(?:initial|transition) CTI\(s\) found|samples remaining)",
-        )
-        .unwrap();
+        let weaken_start_pattern = regex!(
+            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ (?:(?:initial|transition) CTI\(s\) found|samples remaining)"
+        );
         // A regex that matches just after weakening ended
-        let weaken_end_pattern = Regex::new(
-            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] Weaken aggregated statistics",
-        )
-        .unwrap();
+        let weaken_end_pattern =
+            regex!(r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] Weaken aggregated statistics");
         // JSON marker preceding the statistics
         let json_marker = "=============== JSON ===============";
 

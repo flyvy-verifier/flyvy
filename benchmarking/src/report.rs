@@ -32,7 +32,9 @@ pub fn load_results<M: ReportableMeasurement>(name_glob: &str, dir: &Path) -> Ve
     WalkDir::new(dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_dir() && name_glob.matches_path(e.path()))
+        .filter(|e| {
+            e.file_type().is_dir() && name_glob.matches_path(e.path().strip_prefix(dir).unwrap())
+        })
         .filter_map(|entry| M::load(entry))
         .collect()
 }
