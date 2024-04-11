@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/block_cache_system_frozen_async.pyv
-##
-## Manually added "always" to axiom.
 
 # sorts:
 sort node

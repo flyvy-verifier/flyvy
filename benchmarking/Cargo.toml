@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+inference = { path = "../inference" }
+
 clap = { version = "4.3.4", features = ["derive"] }
 humantime = "2.1.0"
 nix = { version = "0.26.2", default-features = false, features = [
@@ -21,3 +23,4 @@ walkdir = "2.3.3"
 tabled = "0.13.0"
 glob = "0.3.1"
 itertools = "0.10.5"
+lazy-regex = "3.1.0"

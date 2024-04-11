@@ -3,13 +3,17 @@
 
 //! Define the qalpha experiments
 
+use lazy_regex::regex;
 use std::{
     collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use crate::run::BenchmarkConfig;
+use crate::{measurement::RunMeasurement, run::BenchmarkConfig};
+use inference::qalpha::fixpoint::FixpointStats;
 
 /// Return a list of configured qalpha benchmarks for the examples.
 ///
@@ -26,6 +30,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_forall.fly"),
@@ -35,6 +40,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id.fly"),
@@ -44,6 +50,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv.fly"),
@@ -53,6 +60,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ticket.fly"),
@@ -62,6 +70,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/learning_switch.fly"),
@@ -71,6 +80,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_wo_decide.fly"),
@@ -80,6 +90,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_forall.fly"),
@@ -89,6 +100,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/cache.fly"),
@@ -98,6 +110,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Large,
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
@@ -107,6 +120,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_epr.fly"),
@@ -116,6 +130,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_epr.fly"),
@@ -125,6 +140,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_ae.fly"),
@@ -134,6 +150,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Small,
         },
         QalphaConfig {
             file: PathBuf::from("fol/paxos_epr.fly"),
@@ -143,6 +160,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Medium,
         },
         QalphaConfig {
             file: PathBuf::from("fol/flexible_paxos_epr.fly"),
@@ -152,6 +170,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Medium,
         },
         QalphaConfig {
             file: PathBuf::from("fol/multi_paxos_epr.fly"),
@@ -161,6 +180,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/fast_paxos_epr.fly"),
@@ -170,6 +190,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(1),
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/stoppable_paxos_epr.fly"),
@@ -179,6 +200,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/vertical_paxos_epr.fly"),
@@ -188,6 +210,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: Some(2),
             sim: Default::default(),
             fragment: Fragment::Epr,
+            expected: Category::Timeout,
         },
         QalphaConfig {
             file: PathBuf::from("fol/bosco_3t_safety.fly"),
@@ -197,6 +220,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/firewall.fly"),
@@ -206,6 +230,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/ring_id_not_dead.fly"),
@@ -215,6 +240,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_db_ae.fly"),
@@ -224,6 +250,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/hybrid_reliable_broadcast_cisa.fly"),
@@ -233,6 +260,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
         QalphaConfig {
             file: PathBuf::from("fol/block_cache_system_frozen_async.fly"),
@@ -242,6 +270,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
             nesting: None,
             sim: Default::default(),
             fragment: Fragment::None,
+            expected: Category::Unknown,
         },
     ];
 
@@ -262,9 +291,31 @@ enum Fragment {
 impl ToString for Fragment {
     fn to_string(&self) -> String {
         match self {
-            Fragment::Epr => "epr".to_string(),
-            Fragment::None => "none".to_string(),
+            Fragment::Epr => "epr",
+            Fragment::None => "none",
         }
+        .to_string()
+    }
+}
+
+enum Category {
+    Unknown,
+    Small,
+    Medium,
+    Large,
+    Timeout,
+}
+
+impl ToString for Category {
+    fn to_string(&self) -> String {
+        match self {
+            Category::Unknown => "unknown",
+            Category::Small => "small",
+            Category::Medium => "medium",
+            Category::Large => "large",
+            Category::Timeout => "timeout",
+        }
+        .to_string()
     }
 }
 
@@ -324,7 +375,7 @@ impl Default for SimulationConfig {
     }
 }
 
-/// A configuration for a run of qalpha
+/// A configuration for a run of qalpha.
 struct QalphaConfig<'a> {
     file: PathBuf,
     quantifiers: &'a str,
@@ -333,6 +384,128 @@ struct QalphaConfig<'a> {
     nesting: Option<usize>,
     sim: SimulationConfig,
     fragment: Fragment,
+    expected: Category,
+}
+
+/// Statistics about a single run of a qalpha benchmark.
+pub struct QalphaRunMeasurement {
+    /// General statistics about the run.
+    pub run: RunMeasurement,
+    /// The language size of the benchmark.
+    pub language_size: Option<String>,
+    /// The time spent weakening during the run.
+    pub in_weaken: Option<f64>,
+    /// The final size of the least-fixpoint computed.
+    pub lfp_size: Option<usize>,
+    /// The semantically-reduced size of the least-fixpoint.
+    pub reduced_size: Option<usize>,
+    /// The maximal number of formulas encountered during the run.
+    pub max_size: Option<usize>,
+}
+
+/// A qalpha configuration and its resulting measurements across multiple runs.
+pub struct QalphaMeasurement {
+    /// The configuration used to run the benchmark.
+    pub config: BenchmarkConfig,
+    /// The measurements of multiple runs of the benchmark.
+    pub measurements: Vec<QalphaRunMeasurement>,
+}
+
+impl QalphaMeasurement {
+    /// Create a new measurement with the given configuration and run measurements.
+    /// This function is used to load the missing information about each run,
+    /// as given by the remaining fields in [`QalphaRunMeasurement`].
+    pub fn new(dir: &Path, config: BenchmarkConfig, runs: Vec<RunMeasurement>) -> Self {
+        // Language size regex
+        let lang_size_pattern = regex!(r"Approximate domain size: (10\^\d+(?:\.\d+)?)");
+        // A regex to find the maximal number of formulas at each point in the log
+        let max_size_pattern = regex!(r"\[\d+ ~> \d+ \| (\d+)\]");
+        // A regex that matches just before weakening starts
+        let weaken_start_pattern = regex!(
+            r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] \d+ (?:(?:initial|transition) CTI\(s\) found|samples remaining)"
+        );
+        // A regex that matches just after weakening ended
+        let weaken_end_pattern =
+            regex!(r"\[(\d+(?:\.\d+)?)s\] \[\d+ ~> \d+ \| (\d+)\] Weaken aggregated statistics");
+        // JSON marker preceding the statistics
+        let json_marker = "=============== JSON ===============";
+
+        let mut measurements = vec![];
+        for (i, run) in runs.into_iter().enumerate() {
+            let mut language_size = None;
+            let in_weaken;
+            let mut lfp_size = None;
+            let mut reduced_size = None;
+            let mut max_size = None;
+
+            let mut stdout = BufReader::new(
+                File::open(dir.join(format!("{i}/stdout"))).expect("cannot read stdout"),
+            )
+            .lines();
+
+            // Find the language size
+            for line in stdout.by_ref() {
+                if let Some(cap) = lang_size_pattern.captures(&line.unwrap()) {
+                    language_size = Some(cap.get(1).unwrap().as_str().to_string());
+                    break;
+                }
+            }
+
+            // If the benchmark did not time-out, the statistics are appended at the end of STDOUT
+            if !run.timed_out {
+                while stdout.next().unwrap().unwrap() != json_marker {}
+                let stats: FixpointStats =
+                    serde_json::from_str(&stdout.next().unwrap().unwrap()).unwrap();
+                in_weaken = Some(stats.weaken_stats.total_duration.as_secs_f64());
+                lfp_size = Some(stats.full_size);
+                reduced_size = stats.reduced;
+                max_size = Some(stats.max_size);
+            // Otherwise, we need to look at the log and track how much time weaken took
+            } else {
+                let stderr = BufReader::new(
+                    File::open(dir.join(format!("{i}/stderr"))).expect("cannot read stderr"),
+                )
+                .lines();
+
+                let mut in_weaken_time = 0_f64;
+                let mut weaken_start = Some(0_f64);
+                for line in stderr {
+                    let s = line.unwrap();
+                    if let Some(cap) = weaken_end_pattern.captures(&s) {
+                        let time_now = cap.get(1).unwrap().as_str().parse::<f64>().unwrap();
+                        in_weaken_time += time_now - weaken_start.unwrap();
+                        weaken_start = None;
+                        max_size = Some(cap.get(2).unwrap().as_str().parse().unwrap());
+                    } else if let Some(cap) = weaken_start_pattern.captures(&s) {
+                        weaken_start = Some(cap.get(1).unwrap().as_str().parse().unwrap());
+                        max_size = Some(cap.get(2).unwrap().as_str().parse().unwrap());
+                    } else if let Some(cap) = max_size_pattern.captures(&s) {
+                        max_size = Some(cap.get(1).unwrap().as_str().parse().unwrap());
+                    }
+                }
+                // If the benchmark timed out on weaken, add the remainder
+                if let Some(start) = weaken_start {
+                    in_weaken_time += run.real_time.as_secs_f64() - start;
+                }
+
+                in_weaken = Some(in_weaken_time)
+            }
+
+            measurements.push(QalphaRunMeasurement {
+                run,
+                language_size,
+                in_weaken,
+                lfp_size,
+                reduced_size,
+                max_size,
+            });
+        }
+
+        Self {
+            config,
+            measurements,
+        }
+    }
 }
 
 fn command() -> Vec<String> {
@@ -408,11 +581,12 @@ impl<'a> QalphaConfig<'a> {
 
     /// Give this benchmark a systematic path that includes enough information
     /// to (hopefully) make it unique.
-    fn full_path(&self, sub_name: &str, baseline: bool) -> PathBuf {
+    fn full_path(&self, experiment_name: &str, baseline: bool) -> PathBuf {
         let mut path_string = format!(
-            "{}/{}-{sub_name}",
-            self.file.display(),
+            "{}/{}/{}/{experiment_name}",
             self.fragment.to_string(),
+            self.expected.to_string(),
+            self.file.display(),
         );
         if baseline {
             path_string = format!("{path_string}-baseline");

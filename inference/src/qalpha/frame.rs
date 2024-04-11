@@ -196,9 +196,9 @@ pub struct InductionFrame<'a, L: BoundedLanguage> {
     get_unsat_stats: Mutex<OperationStats>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct OperationStats {
-    total_duration: Duration,
+    pub total_duration: Duration,
     total_calls: usize,
     effective_calls: usize,
 }

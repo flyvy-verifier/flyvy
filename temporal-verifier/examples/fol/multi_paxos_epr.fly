@@ -4,8 +4,6 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/multi_paxos_epr.pyv
-##
-## Manually added "always" to axiom.
 
 # sorts:
 sort inst

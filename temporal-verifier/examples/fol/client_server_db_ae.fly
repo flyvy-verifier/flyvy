@@ -4,6 +4,8 @@
 ## This file was generated from mypyvy.
 ##
 ## ./src/mypyvy.py typecheck --print-program=fly examples/fol/client_server_db_ae.pyv
+##
+## Manually renamed "match" to "match_"
 
 # sorts:
 sort db_request_id

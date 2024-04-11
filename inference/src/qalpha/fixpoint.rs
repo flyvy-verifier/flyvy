@@ -101,21 +101,15 @@ pub enum Strategy {
     WeakenPd,
 }
 
-impl Default for Strategy {
-    fn default() -> Self {
-        Self::Weaken
-    }
-}
-
-impl From<&String> for Strategy {
-    fn from(value: &String) -> Self {
-        match value.as_str() {
+impl From<&str> for Strategy {
+    fn from(value: &str) -> Self {
+        match value {
             "none" => Self::None,
             "houdini" => Self::Houdini,
             "houdini-pd" => Self::HoudiniPd,
             "weaken" => Self::Weaken,
             "weaken-pd" => Self::WeakenPd,
-            _ => panic!("invalid CTI option"),
+            _ => panic!("invalid CTI strategy option"),
         }
     }
 }
@@ -256,8 +250,8 @@ impl FoundFixpoint {
     }
 }
 
-#[derive(serde::Serialize)]
-struct FixpointStats {
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct FixpointStats {
     /// Total runtime
     time_sec: f64,
     /// Whether the task finished successfully
@@ -265,11 +259,11 @@ struct FixpointStats {
     /// The number of formulas in the simplified final frame
     simplified_size: usize,
     /// The number of formulas in the final weaken frame, containing unsimplified formulas
-    full_size: usize,
+    pub full_size: usize,
     /// The maximal number of formulas encountered in the weaken frame,
-    max_size: usize,
+    pub max_size: usize,
     /// The number of formulas in reduced by implication checks (if available)
-    reduced: Option<usize>,
+    pub reduced: Option<usize>,
     /// The number of formulas in the safety proof (if available)
     safety: Option<usize>,
     /// Number of lemmas in the handwritten invariant covered by the result
@@ -280,7 +274,7 @@ struct FixpointStats {
     /// The number of states generated during the execution (some might not have been processed)
     generated_states: usize,
     /// Statistics regarding frame weaken operations
-    weaken_stats: OperationStats,
+    pub weaken_stats: OperationStats,
     /// Statistics regarding frame get_unsat operations
     get_unsat_stats: OperationStats,
 }
@@ -288,10 +282,10 @@ struct FixpointStats {
 fn parallel_solver(cfg: &QalphaConfig, seeds: usize) -> impl BasicSolver {
     ParallelSolvers::new(
         (0..seeds)
-            .flat_map(|seed| {
+            .flat_map(|_| {
                 [
-                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, seed),
-                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, seed),
+                    SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, None),
+                    SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 0, None),
                 ]
             })
             .collect(),
@@ -307,13 +301,13 @@ fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     // ending with no timeout at all. The seed changes are meant to add some
     // variation vis-a-vis previous attempts.
     FallbackSolvers::new(vec![
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, 0),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, 1),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, 2),
-        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, 3),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 3, Some(0)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 3, Some(0)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 60, Some(1)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 60, Some(1)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 600, Some(2)),
+        SolverConf::new(SolverType::Cvc5, true, &cfg.fname, 600, Some(2)),
+        SolverConf::new(SolverType::Z3, true, &cfg.fname, 0, Some(3)),
     ])
 }
 

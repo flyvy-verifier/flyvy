@@ -677,15 +677,9 @@ pub enum SmtTactic {
     Minimal,
 }
 
-impl Default for SmtTactic {
-    fn default() -> Self {
-        Self::Gradual
-    }
-}
-
-impl From<&String> for SmtTactic {
-    fn from(value: &String) -> Self {
-        match value.as_str() {
+impl From<&str> for SmtTactic {
+    fn from(value: &str) -> Self {
+        match value {
             "gradual" => Self::Gradual,
             "minimal" => Self::Minimal,
             "full" => Self::Full,
@@ -695,23 +689,17 @@ impl From<&String> for SmtTactic {
 }
 
 pub enum QfBody {
-    Cnf,
     PDnf,
+    Cnf,
     Dnf,
 }
 
-impl Default for QfBody {
-    fn default() -> Self {
-        Self::PDnf
-    }
-}
-
-impl From<&String> for QfBody {
-    fn from(value: &String) -> Self {
-        match value.as_str() {
+impl From<&str> for QfBody {
+    fn from(value: &str) -> Self {
+        match value {
+            "pdnf" => QfBody::PDnf,
             "cnf" => QfBody::Cnf,
             "dnf" => QfBody::Dnf,
-            "pdnf" => QfBody::PDnf,
             _ => panic!("invalid choice of quantifier-free body!"),
         }
     }
@@ -744,8 +732,6 @@ pub struct QalphaConfig {
     pub sim: SimulationConfig,
 
     pub strategy: Strategy,
-
-    pub until_safe: bool,
 
     pub seeds: usize,
 

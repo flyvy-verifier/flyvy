@@ -32,12 +32,13 @@ impl SolverConf {
     }
 
     /// Get a new solver configuration with the specified settings
+    /// If `seed` is [`None`], a random seed is chosen each time a solver is created.
     pub fn new(
         backend_type: SolverType,
         smt: bool,
         fname: &String,
         timeout_s: usize,
-        seed: usize,
+        seed: Option<usize>,
     ) -> Self {
         let solver_bin = solver_path(backend_type.bin_name());
         let tee: Option<PathBuf> = if smt {

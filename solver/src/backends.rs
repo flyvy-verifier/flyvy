@@ -14,6 +14,7 @@ use fly::{
     semantics::{Element, Interpretation},
     syntax::{Signature, Sort},
 };
+use rand::Rng;
 use smtlib::{
     conf::{CvcConf, SolverCmd, Z3Conf},
     sexp::{self, Atom},
@@ -47,7 +48,7 @@ impl SolverType {
 #[derive(Debug, Clone, Default)]
 struct GenericOptions {
     timeout_ms: Option<usize>,
-    seed: usize,
+    seed: Option<usize>,
 }
 
 /// A Backend for launching and parsing Z3/CVC4/CVC5, with some hard-coded options.
@@ -76,7 +77,8 @@ impl GenericBackend {
     }
 
     /// Set the solver's random seed.
-    pub fn seed(&mut self, seed: usize) -> &mut Self {
+    /// If the seed is [`None`], a random seed is chosen each time a solver is created.
+    pub fn seed(&mut self, seed: Option<usize>) -> &mut Self {
         self.opts.seed = seed;
         return self;
     }
@@ -103,16 +105,18 @@ fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
 
 impl Backend for &GenericBackend {
     fn get_cmd(&self) -> SolverCmd {
+        let seed = self.opts.seed.unwrap_or_else(|| {
+            let mut rng = rand::thread_rng();
+            rng.gen()
+        });
         match self.solver_type {
             SolverType::Z3 => {
                 let mut conf = Z3Conf::new(&self.bin);
                 conf.model_compact();
                 conf.timeout_ms(self.opts.timeout_ms);
-                if self.opts.seed != 0 {
-                    conf.options()
-                        .option("smt.random_seed", format!("{}", self.opts.seed));
-                    conf.options()
-                        .option("sat.random_seed", format!("{}", self.opts.seed));
+                if seed != 0 {
+                    conf.options().option("smt.random_seed", format!("{seed}"));
+                    conf.options().option("sat.random_seed", format!("{seed}"));
                 }
                 conf.done()
             }
@@ -121,8 +125,8 @@ impl Backend for &GenericBackend {
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
                 conf.timeout_ms(self.opts.timeout_ms);
-                if self.opts.seed != 0 {
-                    conf.options().option("seed", format!("{}", self.opts.seed));
+                if seed != 0 {
+                    conf.options().option("seed", format!("{seed}"));
                 }
                 conf.done()
             }
@@ -131,8 +135,8 @@ impl Backend for &GenericBackend {
                 conf.finite_models();
                 conf.interleave_enumerative_instantiation();
                 conf.timeout_ms(self.opts.timeout_ms);
-                if self.opts.seed != 0 {
-                    conf.options().option("seed", format!("{}", self.opts.seed));
+                if seed != 0 {
+                    conf.options().option("seed", format!("{seed}"));
                 }
                 conf.done()
             }
