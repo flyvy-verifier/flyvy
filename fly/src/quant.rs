@@ -5,15 +5,14 @@
 
 use std::{cmp::Ordering, hash::Hash};
 
-use crate::hashmap::HashSet;
-use fly::ouritertools::OurItertools;
+use crate::ouritertools::OurItertools;
 use itertools::Itertools;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::qalpha::frame;
-use fly::syntax::{Binder, Quantifier, Signature, Sort, Term};
-use fly::term::subst::Substitution;
+use crate::syntax::{Binder, Quantifier, Signature, Sort, Term};
+use crate::term::subst::Substitution;
 
 /// Generate the variable names for this [`QuantifierSequence`]. The names are grouped
 /// and ordered based on their position in the sequence.
@@ -72,6 +71,9 @@ fn select_last(max: usize, boxes: &[usize]) -> usize {
         .unwrap_or(0)
 }
 
+/// Parse a configuration for a single quantifier. The string should be of the form "Q sort count",
+/// where "Q" is "F" / "E" / "*", denoting universal / existential / either quantification, resprestively,
+/// "sort" is the sort quantified over, and "count" is the number of variables within this quantification unit.
 pub fn parse_quantifier(
     sig: &Signature,
     s: &str,
@@ -101,8 +103,11 @@ pub fn parse_quantifier(
 /// Note that this is a generic structure with a generic quantifier.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct QuantifierSequence<Q: Clone + Hash + Eq> {
+    /// The sequence of quantifiers
     pub quantifiers: Vec<Q>,
+    /// The sequence of variable sorts
     pub sorts: Arc<Vec<Sort>>,
+    /// The sequence of variable names (each quantifier might have more than one)
     pub names: Arc<Vec<Vec<String>>>,
 }
 
@@ -115,6 +120,7 @@ pub type QuantifierConfig = QuantifierSequence<Option<Quantifier>>;
 pub type QuantifierPrefix = QuantifierSequence<Quantifier>;
 
 impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
+    /// Create a new quantifier sequence.
     pub fn new(
         signature: Arc<Signature>,
         quantifiers: Vec<Q>,
@@ -136,6 +142,7 @@ impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
         self.quantifiers.len()
     }
 
+    /// Return the number of variables of each quantifier in the sequence.
     pub fn counts(&self) -> Vec<usize> {
         self.names.iter().map(|n| n.len()).collect()
     }
@@ -227,6 +234,7 @@ impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
             .collect_vec()
     }
 
+    /// Generate all one-to-one substitutions (preserving quantification order) from this sequence to another.
     pub fn substitutions_for(&self, other: &Self) -> Vec<Substitution> {
         assert_eq!(self.len(), other.len());
 
@@ -249,6 +257,7 @@ impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
             .collect()
     }
 
+    /// Create a quantifier prefix where all variables in this sequence are universally quantified.
     pub fn as_universal(&self) -> QuantifierPrefix {
         QuantifierPrefix {
             quantifiers: vec![Quantifier::Forall; self.len()],
@@ -257,6 +266,7 @@ impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
         }
     }
 
+    /// Return all subsequences of this quantifier senquence up to the given size.
     pub fn subsequences(&self, size: usize) -> Vec<Self> {
         distribute(size, &self.counts())
             .iter()
@@ -329,6 +339,7 @@ impl QuantifierConfig {
             .collect()
     }
 
+    /// Return the names of universally quantified variables in the configuration.
     pub fn strictly_universal_vars(&self) -> HashSet<String> {
         self.quantifiers
             .iter()
@@ -341,6 +352,7 @@ impl QuantifierConfig {
             .collect()
     }
 
+    /// Return the names of variables quantified deeper than the first existential quantifier (inclusive).
     pub fn vars_after_first_exist(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| !matches!(self.quantifiers[*i], Some(Quantifier::Forall))) {
             Some(first_exists) => self.names[first_exists..]
@@ -351,6 +363,7 @@ impl QuantifierConfig {
         }
     }
 
+    /// Return whether the configuration only contains universal quantifiers.
     pub fn is_universal(&self) -> bool {
         self.names
             .iter()
@@ -382,7 +395,7 @@ impl Debug for QuantifierConfig {
 impl QuantifierPrefix {
     /// Quantify the given term according to this [`QuantifierPrefix`].
     pub fn quantify(&self, mut term: Term) -> Term {
-        let present_ids = frame::ids(&term);
+        let present_ids = term.ids();
         for (i, v) in self.names.iter().enumerate().rev() {
             let binders = v
                 .iter()
@@ -437,6 +450,7 @@ impl QuantifierPrefix {
         })
     }
 
+    /// Return the number of existentially quantified variables in the prefix.
     pub fn existentials(&self) -> usize {
         (0..self.len())
             .map(|i| match self.quantifiers[i] {
@@ -446,6 +460,7 @@ impl QuantifierPrefix {
             .sum()
     }
 
+    /// Return the names of variables quantified deeper than the first existential quantifier (inclusive).
     pub fn vars_after_first_exist(&self) -> HashSet<String> {
         match (0..self.len()).find(|i| matches!(self.quantifiers[*i], Quantifier::Exists)) {
             Some(first_exists) => self.names[first_exists..]
@@ -456,6 +471,7 @@ impl QuantifierPrefix {
         }
     }
 
+    /// Return whether the prefix only contains universal quantifiers.
     pub fn is_universal(&self) -> bool {
         self.names
             .iter()
@@ -522,7 +538,7 @@ impl Ord for QuantifierPrefix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fly::{parser, term::subst::Substitution};
+    use crate::{parser, term::subst::Substitution};
     use std::collections::HashMap;
 
     #[test]

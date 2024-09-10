@@ -12,13 +12,11 @@
 
 use crate::{
     hashmap::{HashMap, HashSet},
-    qalpha::{
-        atoms::Literal,
-        quant::{QuantifierConfig, QuantifierPrefix},
-    },
+    qalpha::atoms::Literal,
 };
 use fly::{
     ouritertools::OurItertools,
+    quant::{QuantifierConfig, QuantifierPrefix},
     semantics::{Assignment, Element, Model},
     syntax::{NOp, Quantifier, Sort, Term, UOp},
     term::subst::Substitution,
@@ -201,7 +199,7 @@ pub trait BoundedFormula: Ord + Hash + Clone + Sync + Send + Debug {
 
     fn substitute(&self, substitution: &Substitution) -> Self;
 
-    fn free_ids(&self) -> HashSet<String>;
+    fn free_ids(&self) -> std::collections::HashSet<String>;
 
     fn from_term(term: &Term) -> Self;
 
@@ -393,9 +391,9 @@ impl BoundedFormula for Bounded<Literal> {
         }
     }
 
-    fn free_ids(&self) -> HashSet<String> {
+    fn free_ids(&self) -> std::collections::HashSet<String> {
         match self {
-            Bounded::Bottom => HashSet::default(),
+            Bounded::Bottom => std::collections::HashSet::new(),
             Bounded::Some(literal) => literal.ids(),
         }
     }
@@ -584,7 +582,7 @@ impl<F1: BoundedFormula, F2: BoundedFormula> BoundedFormula for BinOr<F1, F2> {
         )
     }
 
-    fn free_ids(&self) -> HashSet<String> {
+    fn free_ids(&self) -> std::collections::HashSet<String> {
         let mut ids = self.0.free_ids();
         ids.extend(self.1.free_ids());
         ids
@@ -876,7 +874,7 @@ impl<F: BoundedFormula> BoundedFormula for Or<F> {
         ))
     }
 
-    fn free_ids(&self) -> HashSet<String> {
+    fn free_ids(&self) -> std::collections::HashSet<String> {
         self.0.iter().flat_map(|f| f.free_ids()).collect()
     }
 
@@ -1266,7 +1264,7 @@ impl<F: BoundedFormula> BoundedFormula for And<F> {
         ))
     }
 
-    fn free_ids(&self) -> HashSet<String> {
+    fn free_ids(&self) -> std::collections::HashSet<String> {
         self.0.iter().flat_map(|f| f.free_ids()).collect()
     }
 
@@ -1781,7 +1779,7 @@ impl<F: BoundedFormula> BoundedFormula for Quant<F> {
         }
     }
 
-    fn free_ids(&self) -> HashSet<String> {
+    fn free_ids(&self) -> std::collections::HashSet<String> {
         let mut ids = self.body.free_ids();
         for v in self.prefix.names.iter().flatten() {
             ids.remove(v);

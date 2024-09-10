@@ -8,6 +8,8 @@ members = [
 	"verify",
 	"temporal-verifier",
 	"benchmarking",
+	"formats",
+	"contexts",
 ]
 resolver = "2"
 

@@ -8,4 +8,3 @@ pub mod fixpoint;
 mod frame;
 mod language;
 pub mod lemmas;
-pub mod quant;

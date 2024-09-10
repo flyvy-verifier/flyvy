@@ -8,10 +8,10 @@ use itertools::Itertools;
 use solver::basics::SingleSolver;
 use std::sync::Arc;
 
-use crate::basics::{CexOrCore, CexResult, FOModule, SmtTactic, TermOrModel};
 use fly::syntax::Term::{NAryOp, Quantified, UnaryOp};
 use fly::syntax::*;
 use fly::term::cnf::term_to_cnf_clauses;
+use formats::basics::{CexOrCore, CexResult, FOModule, SmtTactic, TermOrModel};
 
 #[derive(Debug, Clone)]
 struct Frame {

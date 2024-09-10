@@ -1,0 +1,411 @@
+//! A constrained Horn clauses (CHC) format.
+
+use std::collections::HashMap;
+
+use fly::{
+    syntax::{RelationDecl, Signature, Sort, Term},
+    term::subst::{rename_symbols, NameSubstitution},
+};
+use itertools::Itertools;
+use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf};
+
+use crate::basics::FOModule;
+
+/// A higher-order sort able to express sorts of predicates and functions
+/// (as well as regular sorts).
+#[derive(Clone)]
+pub struct FunctionSort(pub Vec<Sort>, pub Sort);
+
+/// A variable of a higher-order sort.
+#[derive(Clone)]
+pub struct HoVariable {
+    /// The name of the variable
+    pub name: String,
+    /// The sort of the variable
+    pub sort: FunctionSort,
+}
+
+impl From<&RelationDecl> for HoVariable {
+    fn from(r_decl: &RelationDecl) -> Self {
+        HoVariable {
+            name: r_decl.name.clone(),
+            sort: FunctionSort(r_decl.args.clone(), r_decl.sort.clone()),
+        }
+    }
+}
+
+/// Declares a higher-order predicate which can have predicates and functions as arguments.
+pub struct HoPredicateDecl {
+    /// The name of the predicate
+    pub name: String,
+    /// The sorts of the arguments to the predicate
+    pub args: Vec<FunctionSort>,
+}
+
+/// A component in a CHC, which is either a predicate P(v1,...,vn),
+/// with higher-order variables v1,...,vn, or a conjunction of formulas.
+#[derive(Clone, Debug)]
+pub enum Component {
+    /// A predicate application on some arguments
+    Predicate(String, Vec<String>),
+    /// A conjunction of terms
+    Formulas(Vec<Term>),
+}
+
+/// A higher-order constrained Horn clause (CHC) of the form (C1 & ... & Cn) -> C,
+/// where (C1 & ... & Cn) is called the _body_ and C is called the _head_.
+/// A CHC is additionally universally quantified over some variables.
+pub struct Chc {
+    /// The signature of the CHC, which contains its variables as function and relation symbols
+    pub signature: Signature,
+    /// The variables of the CHC, which are implicitly universally quantified
+    pub variables: Vec<HoVariable>,
+    /// The body (hypotheses) of the CHC
+    pub body: Vec<Component>,
+    /// The head (consequence) of the CHC
+    pub head: Component,
+}
+
+/// A system of CHCs, additionally specifying a logical signature and the predicates to solve for.
+pub struct ChcSystem {
+    signature: Signature,
+    /// The unknown predicates in the CHC
+    pub predicates: Vec<HoPredicateDecl>,
+    /// The CHCs of the system
+    pub chcs: Vec<Chc>,
+}
+
+/// A symbolic representation of a predicate, given as a conjunction of formulas.
+pub struct SymbolicPredicate {
+    /// The arguments of the predicate
+    pub args: Vec<String>,
+    /// The conjunction of formulas that symbolically represents the predicate
+    pub formulas: Vec<Term>,
+}
+
+/// A mapping from predicate names to their assignments as formulas.
+pub type SymbolicAssignment = HashMap<String, SymbolicPredicate>;
+
+impl Component {
+    fn instantiate(&self, assignment: &SymbolicAssignment) -> Vec<Term> {
+        match self {
+            Component::Predicate(name, args) => {
+                let symb_pred = assignment
+                    .get(name)
+                    .expect("incomplete symbolic assignment");
+                assert_eq!(symb_pred.args.len(), args.len());
+                let mut subst = NameSubstitution::new();
+                for (v, t) in symb_pred.args.iter().zip(args) {
+                    subst.insert((v.clone(), 0), (t.clone(), 0));
+                }
+                symb_pred
+                    .formulas
+                    .iter()
+                    .map(|f| rename_symbols(f, &subst))
+                    .collect()
+            }
+            Component::Formulas(ts) => ts.clone(),
+        }
+    }
+}
+
+impl Chc {
+    /// Instantiate the body of the CHC using the given assignment as conjunction of formulas.
+    pub fn instantiate_body(&self, assignment: &SymbolicAssignment) -> Vec<Term> {
+        self.body
+            .iter()
+            .flat_map(|c| c.instantiate(assignment))
+            .collect()
+    }
+
+    /// Check whether the given assignment to the unknown predicates is a solution for the CHC.
+    pub fn check_assignment<B: BasicSolver>(
+        &self,
+        solver: &B,
+        assignment: &SymbolicAssignment,
+    ) -> bool {
+        let query_conf = QueryConf {
+            sig: &self.signature,
+            n_states: 1,
+            cancelers: None,
+            model_option: ModelOption::Any,
+            evaluate: vec![],
+            save_tee: false,
+        };
+        let hyp = self.instantiate_body(assignment);
+        let cons = self.head.instantiate(assignment);
+        for c in cons {
+            let mut assertions = hyp.clone();
+            assertions.push(Term::not(c));
+            let res = solver.check_sat(&query_conf, &assertions, &HashMap::new());
+            match res.unwrap() {
+                BasicSolverResp::Unsat(_) => (),
+                BasicSolverResp::Sat(_, _) => return false,
+                BasicSolverResp::Unknown(s) => panic!("solver unknown response: {s}"),
+            }
+        }
+
+        true
+    }
+}
+
+impl ChcSystem {
+    /// Create a new CHC system with the given signature and unknown predicates.
+    pub fn new(signature: Signature, predicates: Vec<HoPredicateDecl>) -> Self {
+        Self {
+            signature,
+            predicates,
+            chcs: vec![],
+        }
+    }
+
+    /// Add a CHC to the system with the given variables, body and head.
+    pub fn add_chc(&mut self, variables: Vec<HoVariable>, body: Vec<Component>, head: Component) {
+        let mut extended_signature = self.signature.clone();
+        for binder in &variables {
+            extended_signature.relations.push(RelationDecl {
+                mutable: false,
+                name: binder.name.clone(),
+                args: binder.sort.0.clone(),
+                sort: binder.sort.1.clone(),
+            });
+        }
+
+        self.chcs.push(Chc {
+            signature: extended_signature,
+            variables,
+            body,
+            head,
+        })
+    }
+}
+
+struct TwoStateRelations {
+    mut_relations: Vec<HoVariable>,
+    immut_relations: Vec<HoVariable>,
+}
+
+impl TwoStateRelations {
+    fn new(sig: &Signature) -> Self {
+        Self {
+            mut_relations: sig
+                .relations
+                .iter()
+                .filter(|r| r.mutable)
+                .map(|r_decl| HoVariable::from(r_decl))
+                .collect(),
+            immut_relations: sig
+                .relations
+                .iter()
+                .filter(|r| !r.mutable)
+                .map(|r_decl| HoVariable::from(r_decl))
+                .collect(),
+        }
+    }
+
+    fn next_name(name: &String) -> String {
+        format!("{}_next", name)
+    }
+
+    fn sorts(&self) -> Vec<FunctionSort> {
+        self.immut_relations
+            .iter()
+            .chain(self.mut_relations.iter())
+            .map(|v| v.sort.clone())
+            .collect()
+    }
+
+    fn single_vars(&self) -> Vec<HoVariable> {
+        self.immut_relations
+            .iter()
+            .chain(self.mut_relations.iter())
+            .cloned()
+            .collect()
+    }
+
+    fn single_var_names(&self) -> Vec<String> {
+        self.immut_relations
+            .iter()
+            .chain(self.mut_relations.iter())
+            .map(|v| v.name.clone())
+            .collect()
+    }
+
+    fn double_vars(&self) -> Vec<HoVariable> {
+        self.immut_relations
+            .iter()
+            .chain(self.mut_relations.iter())
+            .cloned()
+            .chain(self.mut_relations.iter().map(|v| HoVariable {
+                name: Self::next_name(&v.name),
+                sort: v.sort.clone(),
+            }))
+            .collect()
+    }
+
+    fn next_var_names(&self) -> Vec<String> {
+        self.immut_relations
+            .iter()
+            .map(|v| v.name.clone())
+            .chain(self.mut_relations.iter().map(|v| Self::next_name(&v.name)))
+            .collect()
+    }
+
+    fn transition_substitution(&self) -> NameSubstitution {
+        self.mut_relations
+            .iter()
+            .map(|n| (n.name.clone(), 1))
+            .zip(
+                self.mut_relations
+                    .iter()
+                    .map(|n| (Self::next_name(&n.name), 0)),
+            )
+            .collect()
+    }
+
+    fn axiom_substitution(&self) -> NameSubstitution {
+        self.mut_relations
+            .iter()
+            .map(|n| (n.name.clone(), 0))
+            .zip(
+                self.mut_relations
+                    .iter()
+                    .map(|n| (Self::next_name(&n.name), 0)),
+            )
+            .collect()
+    }
+}
+
+/// Create a [`ChcSystem`] from the given [`FOModule`]. This results in a system with one unknown predicate
+/// (the invariant), whose name and arguments are also returned.
+pub fn chc_sys_from_fo_module(m: &FOModule) -> (ChcSystem, String, Vec<String>) {
+    let signature = Signature {
+        sorts: m.signature.sorts.clone(),
+        relations: vec![],
+    };
+
+    let rels = TwoStateRelations::new(&m.signature);
+
+    let inv_name = "INV".to_string();
+    let inv_predicate = HoPredicateDecl {
+        name: inv_name.clone(),
+        args: rels.sorts(),
+    };
+
+    let mut chc_sys = ChcSystem::new(signature, vec![inv_predicate]);
+
+    let single_inv = Component::Predicate(inv_name.clone(), rels.single_var_names());
+    let next_inv = Component::Predicate(inv_name.clone(), rels.next_var_names());
+
+    chc_sys.add_chc(
+        rels.single_vars(),
+        vec![
+            Component::Formulas(m.module.axioms.clone()),
+            Component::Formulas(m.module.inits.clone()),
+        ],
+        single_inv.clone(),
+    );
+
+    let axiom_substitution = rels.axiom_substitution();
+    let next_axioms = m
+        .module
+        .axioms
+        .iter()
+        .map(|t| rename_symbols(t, &axiom_substitution))
+        .collect_vec();
+    let transition_substitution = rels.transition_substitution();
+    for ref tr in m.disj_trans() {
+        chc_sys.add_chc(
+            rels.double_vars(),
+            vec![
+                Component::Formulas(m.module.axioms.clone()),
+                Component::Formulas(next_axioms.clone()),
+                Component::Formulas(
+                    tr.iter()
+                        .map(|t| {
+                            let new_t = rename_symbols(t, &transition_substitution);
+                            // Check that there are no temporal operators left in the transition formulas
+                            // after renaming functions and relations
+                            assert!(new_t.is_nontemporal(), "temporal operators in {new_t}");
+                            new_t
+                        })
+                        .collect(),
+                ),
+                single_inv.clone(),
+            ],
+            next_inv.clone(),
+        );
+    }
+
+    (chc_sys, inv_name, rels.single_var_names())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fly::parser;
+    use solver::{backends::SolverType, basics::SingleSolver, conf::SolverConf};
+
+    #[test]
+    fn test_check_assignment() {
+        let sort_a = Sort::uninterpreted("A");
+        let sig = Signature {
+            sorts: vec!["A".to_string()],
+            relations: vec![],
+        };
+
+        let mut chc_sys = ChcSystem::new(
+            sig,
+            vec![HoPredicateDecl {
+                name: "I".to_string(),
+                args: vec![FunctionSort(vec![sort_a.clone()], Sort::Bool)],
+            }],
+        );
+
+        chc_sys.add_chc(
+            vec![
+                HoVariable {
+                    name: "p".to_string(),
+                    sort: FunctionSort(vec![sort_a.clone()], Sort::Bool),
+                },
+                HoVariable {
+                    name: "q".to_string(),
+                    sort: FunctionSort(vec![sort_a.clone()], Sort::Bool),
+                },
+            ],
+            vec![
+                Component::Predicate("I".to_string(), vec!["p".to_string()]),
+                Component::Formulas(vec![parser::term("forall x:A. p(x) -> q(x)")]),
+            ],
+            Component::Predicate("I".to_string(), vec!["q".to_string()]),
+        );
+
+        let solver = SingleSolver::new(SolverConf::new(
+            SolverType::Z3,
+            false,
+            &"".to_string(),
+            0,
+            None,
+        ));
+
+        let mut assignment_correct = SymbolicAssignment::new();
+        assignment_correct.insert(
+            "I".to_string(),
+            SymbolicPredicate {
+                args: vec!["r".to_string()],
+                formulas: vec![parser::term("forall x:A. r(x)")],
+            },
+        );
+        assert!(chc_sys.chcs[0].check_assignment(&solver, &assignment_correct));
+
+        let mut assignment_wrong = SymbolicAssignment::new();
+        assignment_wrong.insert(
+            "I".to_string(),
+            SymbolicPredicate {
+                args: vec!["r".to_string()],
+                formulas: vec![parser::term("forall x:A. !r(x)")],
+            },
+        );
+        assert!(!chc_sys.chcs[0].check_assignment(&solver, &assignment_wrong));
+    }
+}

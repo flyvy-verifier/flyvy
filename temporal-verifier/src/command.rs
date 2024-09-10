@@ -5,6 +5,7 @@
 
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use inference::lfp::qalpha_via_contexts;
 use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
 use solver::basics::SingleSolver;
@@ -23,16 +24,18 @@ use codespan_reporting::{
 };
 use fly::semantics::models_to_string;
 use fly::syntax::{Module, Signature};
-use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
-use inference::basics::{
-    FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
-};
-use inference::houdini;
-use inference::qalpha::{
-    fixpoint::{qalpha_dynamic, Strategy},
+use fly::{
+    self,
+    parser::parse_error_diagnostic,
+    printer,
     quant::{parse_quantifier, QuantifierConfig},
+    sorts, timing,
 };
+use formats::basics::{FOModule, SmtTactic};
+use inference::houdini;
+use inference::qalpha::fixpoint::{qalpha_dynamic, Strategy};
 use inference::updr::Updr;
+use inference::utils::{QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig};
 use solver::backends;
 use solver::conf::SolverConf;
 use verify::module::verify_module;
@@ -210,6 +213,9 @@ struct QalphaArgs {
 
     #[command(flatten)]
     smt_cfg: SmtOptimizationArgs,
+
+    #[arg(long)]
+    use_contexts: bool,
 
     /// File name for a .fly file containing the program to analyse
     file: String,
@@ -561,7 +567,11 @@ impl App {
             ) => {
                 m.inline_defs();
                 let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+                if qargs.use_contexts {
+                    qalpha_via_contexts(infer_cfg.as_ref(), &m);
+                } else {
+                    qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+                }
                 if args.time {
                     timing::report();
                 }

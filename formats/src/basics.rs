@@ -1,5 +1,4 @@
-// Copyright 2022-2023 VMware, Inc.
-// SPDX-License-Identifier: BSD-2-Clause
+//! Basic utilities used by different formats.
 
 use itertools;
 use itertools::Itertools;
@@ -10,7 +9,6 @@ use std::{
     thread,
 };
 
-use crate::qalpha::{fixpoint::Strategy, quant::QuantifierConfig};
 use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
@@ -18,14 +16,19 @@ use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
 use smtlib::proc::{SatResp, SolverError};
 use solver::{
-    basics::{BasicCanceler, BasicSolver, BasicSolverResp, MultiCanceler, QueryConf},
+    basics::{BasicCanceler, BasicSolver, BasicSolverResp, ModelOption, MultiCanceler, QueryConf},
     conf::SolverConf,
 };
 
+/// The result of an SMT query looking for a counterexample
 pub enum CexResult<K: Eq + Hash> {
+    /// The counterexample given as a trace of models
     Cex(Vec<Model>),
+    /// An UNSAT-core sufficent for showing that the query has no counterexample
     UnsatCore(HashSet<K>),
+    /// Indicates that the query has been canceled
     Canceled,
+    /// An unknown query response
     Unknown(String),
 }
 
@@ -175,24 +178,37 @@ impl<H: OrderedTerms> Core<H> {
     }
 }
 
+/// A term or a model
 #[derive(Debug, Clone)]
 pub enum TermOrModel {
+    /// A model
     Model(Model),
+    /// A term
     Term(Term),
 }
 
+/// A counterexample or an UNSAT-core
 pub enum CexOrCore {
+    /// A counterexample
     Cex((Term, Model)),
+    /// An UNSAT-core
     Core(HashMap<Term, bool>),
 }
 
+/// An sequence of terms, ordered by keys associated with each term. This is used for incremental queries,
+/// where some set of terms needs to be included in a query and we have some preference for which terms
+/// to always include, which terms to include before others, etc.
 pub trait OrderedTerms: Copy + Send + Sync {
+    /// The type of keys the terms are ordered by
     type Key: Ord + Hash + Eq + Clone + Copy + Send + Sync;
 
+    /// The terms which should always be included
     fn permanent(&self) -> Vec<(&Self::Key, &Term)>;
 
+    /// Get the first term in the order unsatisfied by the given model (if one exists)
     fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)>;
 
+    /// Get all terms, ordered by keys
     fn all_terms(self) -> BTreeMap<Self::Key, Term>;
 }
 
@@ -223,13 +239,16 @@ impl<V: AsRef<[Term]> + Copy + Send + Sync> OrderedTerms for V {
 /// and double-vocabulary transition assertions.
 /// `disj` denotes whether to split the transitions disjunctively, if possible.
 pub struct FOModule {
-    signature: Arc<Signature>,
+    /// The signature of the single-state, first-order logical language used
+    pub signature: Arc<Signature>,
+    /// Containts the different parts of the module
     pub module: DestructuredModule,
     disj: bool,
     smt_tactic: SmtTactic,
 }
 
 impl FOModule {
+    /// Create a new [`FOModule`] which either decomposes the transitions disjunctive or not, and uses the given [`SmtTactic`].
     pub fn new(m: &Module, disj: bool, smt_tactic: SmtTactic) -> Self {
         FOModule {
             signature: m.signature.clone(),
@@ -239,7 +258,8 @@ impl FOModule {
         }
     }
 
-    fn disj_trans(&self) -> Vec<Vec<&Term>> {
+    /// Get the transitions as a disjunction of conjuctions.
+    pub fn disj_trans(&self) -> Vec<Vec<&Term>> {
         if self.disj {
             self.module
                 .transitions
@@ -255,6 +275,7 @@ impl FOModule {
         }
     }
 
+    /// Get an initial counterexample for the given term.
     pub fn init_cex<B: BasicSolver>(&self, solver: &B, t: &Term) -> Option<Model> {
         self.implication_cex(solver, &self.module.inits, t, None, false)
             .into_option()
@@ -264,6 +285,7 @@ impl FOModule {
             })
     }
 
+    /// Get a transition counterexample for the given term in the post-state, when assuming the given hypotheses in the pre-state.
     pub fn trans_cex<H, B, C>(
         &self,
         solver: &B,
@@ -292,7 +314,8 @@ impl FOModule {
             sig: &self.signature,
             n_states: 2,
             cancelers: Some(local_cancelers.clone()),
-            minimal_model: true,
+            model_option: ModelOption::Minimal,
+            evaluate: vec![],
             save_tee,
         };
         let next = Next::new(&self.signature);
@@ -319,7 +342,7 @@ impl FOModule {
                         loop {
                             let assumptions = core.to_assumptions();
                             match solver.check_sat(&query_conf, &local_assertions, &assumptions) {
-                                Ok(BasicSolverResp::Sat(models)) => {
+                                Ok(BasicSolverResp::Sat(models, _)) => {
                                     if !core.add_counter_model(models[0].clone()) {
                                         // A counter-example to the transition was found, no need to search further.
                                         local_cancelers.cancel();
@@ -391,6 +414,7 @@ impl FOModule {
         CexResult::UnsatCore(unsat_core)
     }
 
+    /// Get a (single-state) implication counterexamaple for the given term, when assuming the given hypotheses
     pub fn implication_cex<H, B, C>(
         &self,
         solver: &B,
@@ -422,14 +446,15 @@ impl FOModule {
             sig: &self.signature,
             n_states: 1,
             cancelers: Some(local_cancelers),
-            minimal_model: true,
+            model_option: ModelOption::Minimal,
+            evaluate: vec![],
             save_tee,
         };
         let mut assertions = self.module.axioms.clone();
         assertions.push(Term::not(t));
         loop {
             match solver.check_sat(&query_conf, &assertions, &core.to_assumptions()) {
-                Ok(BasicSolverResp::Sat(models)) => {
+                Ok(BasicSolverResp::Sat(models, _)) => {
                     if !core.add_counter_model(models[0].clone()) {
                         return CexResult::Cex(models);
                     }
@@ -444,6 +469,7 @@ impl FOModule {
         }
     }
 
+    /// Return up to `width` simulated post-states from the given pre-state
     pub fn simulate_from<B, C>(&self, solver: &B, state: &Model, width: usize) -> Vec<Model>
     where
         C: BasicCanceler,
@@ -457,7 +483,8 @@ impl FOModule {
             sig: &self.signature,
             n_states: 2,
             cancelers: Some(cancelers.clone()),
-            minimal_model: false,
+            model_option: ModelOption::Minimal,
+            evaluate: vec![],
             save_tee: false,
         };
 
@@ -473,7 +500,7 @@ impl FOModule {
                     'this_loop: loop {
                         let resp = solver.check_sat(&query_conf, &assertions, &empty_assumptions);
                         match resp {
-                            Ok(BasicSolverResp::Sat(mut models)) => {
+                            Ok(BasicSolverResp::Sat(mut models, _)) => {
                                 assert_eq!(models.len(), 2);
                                 let new_sample = models.pop().unwrap();
                                 assertions.push(Term::negate(next.prime(&new_sample.to_term())));
@@ -498,6 +525,7 @@ impl FOModule {
         samples.into_inner().unwrap()
     }
 
+    #[allow(missing_docs)]
     pub fn get_pred(&self, conf: &SolverConf, hyp: &[Term], t: &TermOrModel) -> CexOrCore {
         let as_term: Term = match t {
             TermOrModel::Term(t) => t.clone(),
@@ -596,6 +624,7 @@ impl FOModule {
         return CexOrCore::Core(core);
     }
 
+    #[allow(missing_docs)]
     pub fn implies_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
         let mut solver = conf.solver(&self.signature, 1);
         for a in hyp {
@@ -616,6 +645,7 @@ impl FOModule {
         }
     }
 
+    /// Get a safety implication counterexample when assuming the given hypotheses.
     pub fn safe_implication_cex<H, B, C>(
         &self,
         solver: &B,
@@ -638,6 +668,7 @@ impl FOModule {
         CexResult::UnsatCore(core)
     }
 
+    /// Get a safety counterexample in the post-state when assuming the given hypotheses in the pre-state.
     pub fn trans_safe_cex<H, C, B>(
         &self,
         solver: &B,
@@ -660,6 +691,7 @@ impl FOModule {
         CexResult::UnsatCore(core)
     }
 
+    #[allow(missing_docs)]
     pub fn safe_cex(&self, conf: &SolverConf, hyp: &[Term]) -> Option<Model> {
         for s in self.module.proofs.iter() {
             if let Some(model) = self.implies_cex(conf, hyp, &s.safety.x) {
@@ -671,9 +703,14 @@ impl FOModule {
     }
 }
 
+/// A tactic for gradual SMT calls
 pub enum SmtTactic {
+    /// Use all assertions in the first query.
     Full,
+    /// Add assertions one by one when getting spurious counterexamples, each time adding the next assertion unsatisfied by the counterexample.
     Gradual,
+    /// Add assertions one by one when getting spurious counterexamples, each time adding the next assertion unsatisfied by a counterexample,
+    /// but maintain minimality by removing assertions unnecessary for blocking the spurious counterexamples seen so far.
     Minimal,
 }
 
@@ -686,54 +723,4 @@ impl From<&str> for SmtTactic {
             _ => panic!("invalid choice of SMT technique!"),
         }
     }
-}
-
-pub enum QfBody {
-    PDnf,
-    Cnf,
-    Dnf,
-}
-
-impl From<&str> for QfBody {
-    fn from(value: &str) -> Self {
-        match value {
-            "pdnf" => QfBody::PDnf,
-            "cnf" => QfBody::Cnf,
-            "dnf" => QfBody::Dnf,
-            _ => panic!("invalid choice of quantifier-free body!"),
-        }
-    }
-}
-
-pub struct QuantifierFreeConfig {
-    pub qf_body: QfBody,
-    pub clause_size: Option<usize>,
-    pub cubes: Option<usize>,
-    pub nesting: Option<usize>,
-}
-
-#[derive(Clone)]
-pub struct SimulationConfig {
-    pub universe: Vec<usize>,
-    pub sum: Option<usize>,
-    pub depth: Option<usize>,
-    pub guided: bool,
-    pub dfs: bool,
-}
-
-pub struct QalphaConfig {
-    pub fname: String,
-    pub fo: FOModule,
-
-    pub quant_cfg: Arc<QuantifierConfig>,
-
-    pub qf_cfg: QuantifierFreeConfig,
-
-    pub sim: SimulationConfig,
-
-    pub strategy: Strategy,
-
-    pub seeds: usize,
-
-    pub baseline: bool,
 }

@@ -16,14 +16,12 @@ use crate::hashmap::HashMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 
-use crate::{
-    basics::OrderedTerms,
-    qalpha::language::{BoundedLanguage, FormulaId, FormulaSet},
-};
+use crate::qalpha::language::{BoundedLanguage, FormulaId, FormulaSet};
 use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Term},
 };
+use formats::basics::OrderedTerms;
 
 macro_rules! timed {
     ($blk:block) => {{

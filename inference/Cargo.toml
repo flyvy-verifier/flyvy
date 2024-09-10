@@ -7,8 +7,10 @@ edition.workspace = true
 fly = { path = "../fly" }
 smtlib = { path = "../smtlib" }
 solver = { path = "../solver" }
+formats = { path = "../formats" }
 verify = { path = "../verify" }
 bounded = { path = "../bounded" }
+contexts = { path = "../contexts" }
 
 fxhash = "0.2.1"
 itertools = "0.10.5"

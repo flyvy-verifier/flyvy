@@ -1,0 +1,13 @@
+[package]
+name = "contexts"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fly = { path = "../fly" }
+formats = { path = "../formats" }
+smtlib = { path = "../smtlib" }
+solver = { path = "../solver" }
+
+itertools = "0.10.5"
+log = "0.4.19"

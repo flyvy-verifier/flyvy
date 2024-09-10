@@ -16,8 +16,9 @@ use fly::syntax::{Module, Signature, Term};
 
 use bounded::simulator::{MultiSimulator, SatSimulator};
 
+use formats::basics::{CexResult, FOModule};
+
 use crate::{
-    basics::{CexResult, FOModule, SimulationConfig},
     hashmap::{HashMap, HashSet},
     parallel::{parallelism, ParallelWorker, Tasks},
     qalpha::{
@@ -25,6 +26,7 @@ use crate::{
         language::BoundedLanguage,
         lemmas::{LemmaKey, WeakenLemmaSet},
     },
+    utils::SimulationConfig,
 };
 
 macro_rules! timed {
@@ -33,23 +35,6 @@ macro_rules! timed {
         $blk
         start.elapsed()
     }};
-}
-
-/// Compute the names of [`Term::Id`]'s present in the given term.
-///
-/// Supports only quantifier-free terms.
-pub fn ids(term: &Term) -> HashSet<String> {
-    match term {
-        Term::Id(name) => HashSet::from_iter([name.clone()]),
-        Term::App(_, _, vt) => vt.iter().flat_map(ids).collect(),
-        Term::UnaryOp(_, t) => ids(t),
-        Term::BinOp(_, t1, t2) => [t1, t2].iter().flat_map(|t| ids(t)).collect(),
-        Term::NAryOp(_, vt) => vt.iter().flat_map(ids).collect(),
-        Term::Ite { cond, then, else_ } => {
-            [cond, then, else_].iter().flat_map(|t| ids(t)).collect()
-        }
-        _ => HashSet::default(),
-    }
 }
 
 #[derive(PartialEq, Eq, Debug)]

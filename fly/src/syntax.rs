@@ -4,7 +4,7 @@
 //! The flyvy AST for terms and modules.
 
 use itertools::Itertools;
-use std::{fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc};
 
 use serde::Serialize;
 
@@ -505,6 +505,32 @@ impl Term {
         }
     }
 
+    /// Return whether the term does not contain any temporal operators.
+    pub fn is_nontemporal(&self) -> bool {
+        match self {
+            Term::Literal(_) | Term::Id(_) => true,
+            Term::App(_, primes, _) => *primes == 0,
+            Term::UnaryOp(UOp::Not, t) => t.is_nontemporal(),
+            Term::UnaryOp(
+                UOp::Prime | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous,
+                _,
+            ) => false,
+            Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Iff | BinOp::Implies, t1, t2) => {
+                t1.is_nontemporal() && t2.is_nontemporal()
+            }
+            Term::BinOp(BinOp::Until | BinOp::Since, _, _) => false,
+            Term::NAryOp(_, ts) => ts.iter().all(|t| t.is_nontemporal()),
+            Term::Ite { cond, then, else_ } => {
+                cond.is_nontemporal() && then.is_nontemporal() && else_.is_nontemporal()
+            }
+            Term::Quantified {
+                quantifier: _,
+                binders: _,
+                body,
+            } => body.is_nontemporal(),
+        }
+    }
+
     /// Return the number of atomic formulas in the term.
     pub fn size(&self) -> usize {
         match self {
@@ -518,6 +544,24 @@ impl Term {
                 binders: _,
                 body,
             } => body.size(),
+        }
+    }
+
+    /// Compute the names of [`Term::Id`]'s present in the term.
+    ///
+    /// Supports only quantifier-free terms.
+    pub fn ids(&self) -> HashSet<String> {
+        match self {
+            Term::Literal(_) => HashSet::new(),
+            Term::Id(name) => HashSet::from_iter([name.clone()]),
+            Term::App(_, _, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
+            Term::UnaryOp(_, t) => t.ids(),
+            Term::BinOp(_, t1, t2) => [t1, t2].iter().flat_map(|t| t.ids()).collect(),
+            Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
+            Term::Ite { cond, then, else_ } => {
+                [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
+            }
+            _ => unimplemented!(),
         }
     }
 }

@@ -12,7 +12,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::{
-    basics::{FOModule, QalphaConfig, QfBody, SimulationConfig},
     parallel::parallelism,
     parallel::Tasks,
     qalpha::{
@@ -20,8 +19,10 @@ use crate::{
         frame::{InductionFrame, OperationStats},
         language::{advanced, baseline, BoundedLanguage},
     },
+    utils::{QalphaConfig, QfBody, SimulationConfig},
 };
 use fly::syntax::{BinOp, Module, Term, ThmStmt};
+use formats::basics::FOModule;
 use solver::{
     backends::SolverType,
     basics::{BasicSolver, FallbackSolvers, ParallelSolvers},

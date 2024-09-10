@@ -19,10 +19,11 @@
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-pub mod basics;
 pub mod hashmap;
 pub mod houdini;
+pub mod lfp;
 pub mod marco;
 mod parallel;
 pub mod qalpha;
 pub mod updr;
+pub mod utils;

@@ -2,21 +2,14 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 use fly::{
+    quant::{QuantifierConfig, QuantifierPrefix},
     semantics::{Assignment, Model},
     syntax::{BinOp, Binder, Quantifier, Signature, Sort, Term, UOp},
-    term::subst::{substitute_qf, Substitution},
+    term::subst::{substitute, Substitution},
 };
+use formats::basics::{CexResult, FOModule};
 use solver::basics::BasicSolver;
-
-use crate::{
-    basics::{CexResult, FOModule},
-    hashmap::{HashMap, HashSet},
-    qalpha::{
-        frame::ids,
-        quant::{QuantifierConfig, QuantifierPrefix},
-    },
-};
-
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -28,24 +21,24 @@ pub type Atom = Arc<Term>;
 pub struct Literal(pub Atom, pub bool);
 pub type Literals = HashSet<Literal>;
 
-fn substitute(atom: &Atom, substitution: &Substitution) -> Atom {
+fn atom_substitute(atom: &Atom, substitution: &Substitution) -> Atom {
     Arc::new(match atom.as_ref() {
         Term::BinOp(BinOp::Equals, t1, t2) => {
-            let t1_sub = substitute_qf(t1, substitution);
-            let t2_sub = substitute_qf(t2, substitution);
+            let t1_sub = substitute(t1, substitution);
+            let t2_sub = substitute(t2, substitution);
             if t1_sub <= t2_sub {
                 Term::equals(t1_sub, t2_sub)
             } else {
                 Term::equals(t2_sub, t1_sub)
             }
         }
-        _ => substitute_qf(atom, substitution),
+        _ => substitute(atom, substitution),
     })
 }
 
 impl Literal {
     pub fn ids(&self) -> HashSet<String> {
-        ids(&self.0)
+        self.0.ids()
     }
 
     pub fn negate(&self) -> Self {
@@ -53,7 +46,7 @@ impl Literal {
     }
 
     pub fn substitute(&self, substitution: &Substitution) -> Self {
-        Self(substitute(&self.0, substitution), self.1)
+        Self(atom_substitute(&self.0, substitution), self.1)
     }
 
     pub fn is_neq(&self) -> bool {

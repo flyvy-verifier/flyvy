@@ -297,6 +297,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "contexts"
+version = "0.1.0"
+dependencies = [
+ "fly",
+ "formats",
+ "itertools",
+ "log",
+ "smtlib",
+ "solver",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -506,6 +518,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "formats"
+version = "0.1.0"
+dependencies = [
+ "fly",
+ "itertools",
+ "smtlib",
+ "solver",
+]
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -635,7 +657,9 @@ dependencies = [
  "biodivine-lib-bdd",
  "bounded",
  "cadical",
+ "contexts",
  "fly",
+ "formats",
  "fxhash",
  "im",
  "indexmap 1.9.3",
@@ -1272,6 +1296,7 @@ dependencies = [
  "codespan-reporting",
  "criterion",
  "fly",
+ "formats",
  "inference",
  "insta",
  "lazy_static",
