@@ -458,7 +458,7 @@ impl SmtProc {
         Ok(values
             .list()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|v| v.list().unwrap()[1].interpreted_value().unwrap())
             .collect())
     }
@@ -591,7 +591,7 @@ mod tests {
         let e = parse("(assert (= and or))").unwrap();
         proc.send(&e);
         let r = proc.check_sat();
-        insta::assert_display_snapshot!(r.unwrap_err());
+        insta::assert_snapshot!(r.unwrap_err());
     }
 
     // CVC4 binary release is no longer available so this test is difficult to run
@@ -602,7 +602,7 @@ mod tests {
         let e = parse("(assert (= and or))").unwrap();
         proc.send(&e);
         let r = proc.check_sat();
-        insta::assert_display_snapshot!(r.unwrap_err());
+        insta::assert_snapshot!(r.unwrap_err());
     }
 
     #[test]
@@ -613,7 +613,7 @@ mod tests {
         let e = parse("(assert p)").unwrap();
         proc.send(&e);
         let r = proc.check_sat();
-        insta::assert_display_snapshot!(r.unwrap_err());
+        insta::assert_snapshot!(r.unwrap_err());
     }
 
     #[test]

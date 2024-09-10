@@ -253,7 +253,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        insta::assert_display_snapshot!(e, @r#"
+        insta::assert_snapshot!(e, @r#"
         (hello a b c (there
         ; here's a comment
         (friend)))
@@ -272,7 +272,7 @@ mod tests {
         .into_iter()
         .map(|s| parse(s).unwrap());
         let printed: Vec<String> = s.map(|s| s.to_string()).collect();
-        insta::assert_display_snapshot!(printed.join("\n"), @r###"
+        insta::assert_snapshot!(printed.join("\n"), @r###"
         (p A!val!0)
         (q foo.thread@0)
         <<DONE>>
@@ -300,8 +300,8 @@ mod tests {
                 "`{s}` does not roundtrip",
             );
         }
-        insta::assert_display_snapshot!(&es[0], @"|hello there|");
-        insta::assert_display_snapshot!(&es[1], @r#"|"hello"|"#);
-        insta::assert_display_snapshot!(&es[2], @"|also has a space|");
+        insta::assert_snapshot!(&es[0], @"|hello there|");
+        insta::assert_snapshot!(&es[1], @r#"|"hello"|"#);
+        insta::assert_snapshot!(&es[2], @"|also has a space|");
     }
 }

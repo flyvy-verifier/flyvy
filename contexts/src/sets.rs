@@ -54,7 +54,7 @@ where
                 set1.retain(|f| set2.contains(f));
                 set1
             })
-            .unwrap_or_else(|| HashSet::new())
+            .unwrap_or_else(HashSet::new)
     }
 
     fn get_subsuming(&self, attr: &Self::Attribute) -> HashSet<Self::AttributeId> {

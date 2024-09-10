@@ -52,11 +52,11 @@ fn rename_symbols_rec(
 
         Term::App(f, p, args) => {
             let v = substitution.get(&(f.clone(), *p));
-            let (new_f, new_p) = if !bound_ids.contains(f) && v.is_some() {
-                v.unwrap().clone()
-            } else {
-                (f.clone(), *p)
+            let (new_f, new_p) = match v {
+                Some(id) if !bound_ids.contains(f) => id.clone(),
+                _ => (f.clone(), *p),
             };
+
             Term::App(
                 new_f,
                 new_p,

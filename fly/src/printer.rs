@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_printer_basic() {
         let e = parse("a & b | c");
-        insta::assert_display_snapshot!(term(&e), @"a & b | c");
+        insta::assert_snapshot!(term(&e), @"a & b | c");
         assert_eq!(parse(&term(&e)), e);
     }
 
@@ -170,27 +170,27 @@ mod tests {
         let e = parse("a | b | c & d | e");
         assert_eq!(parse(&term(&e)), e);
 
-        insta::assert_display_snapshot!(reprint("forall x:t1, y:t2. f(x, y)"), @"forall x:t1, y:t2. f(x, y)");
+        insta::assert_snapshot!(reprint("forall x:t1, y:t2. f(x, y)"), @"forall x:t1, y:t2. f(x, y)");
 
-        insta::assert_display_snapshot!(reprint("eventually X p until X q"), @"eventually X p until X q");
-        insta::assert_display_snapshot!(reprint("eventually (X p) until (X q)"), @"eventually X p until X q");
+        insta::assert_snapshot!(reprint("eventually X p until X q"), @"eventually X p until X q");
+        insta::assert_snapshot!(reprint("eventually (X p) until (X q)"), @"eventually X p until X q");
 
-        insta::assert_display_snapshot!(reprint("p until q since always r"), @"p until q since (always r)");
-        insta::assert_display_snapshot!(reprint("p until (q since (always r))"), @"p until q since (always r)");
+        insta::assert_snapshot!(reprint("p until q since always r"), @"p until q since (always r)");
+        insta::assert_snapshot!(reprint("p until (q since (always r))"), @"p until q since (always r)");
     }
 
     #[test]
     fn test_printer_advanced() {
-        insta::assert_display_snapshot!(
+        insta::assert_snapshot!(
           reprint("(always a) -> (eventually b)"),
           @"always a -> eventually b");
-        insta::assert_display_snapshot!(
+        insta::assert_snapshot!(
           reprint("always (a -> eventually b)"),
           @"always (a -> eventually b)");
-        insta::assert_display_snapshot!(
+        insta::assert_snapshot!(
           reprint("always a' & eventually c=d'"),
           @"always a' & (eventually c = d')");
-        insta::assert_display_snapshot!(
+        insta::assert_snapshot!(
           reprint("(always a)' & eventually (c=d)'"),
            @"(always a)' & (eventually (c = d)')");
 
@@ -310,6 +310,6 @@ mod module_tests {
         let s = fs::read_to_string("../temporal-verifier/tests/examples/basic1.fly")
             .expect("could not read basic1.fly");
         let m = parse(&s).expect("basic1.fly should parse");
-        insta::assert_display_snapshot!(module(&m));
+        insta::assert_snapshot!(module(&m));
     }
 }

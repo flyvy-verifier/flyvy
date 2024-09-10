@@ -10,7 +10,7 @@ use itertools::Itertools;
 use std::cmp::Ordering;
 
 /// A logical connective
-#[derive(Copy, Clone, Hash, Debug)]
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq)]
 pub enum Op {
     /// Disjunction
     Or,
@@ -20,7 +20,7 @@ pub enum Op {
 
 // TODO: add PropFormula::Top and perform some external filtering of tautological formulas.
 /// A propositional formula
-#[derive(Clone, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropFormula {
     /// Bottom formula, equivalent to false
     Bottom,
@@ -74,7 +74,7 @@ pub struct QuantifiedType(pub Vec<PropModel>);
 fn weaken_or(
     k: Option<usize>,
     disj_cont: &PropContext,
-    disjs: &Vec<PropFormula>,
+    disjs: &[PropFormula],
     obj: &PropModel,
 ) -> Vec<PropFormula> {
     let mut res = vec![];
@@ -100,7 +100,7 @@ fn weaken_or(
             .weaken(obj, &disj_cont.bottom_formula())
             .into_iter()
         {
-            let mut new_or = disjs.clone();
+            let mut new_or = disjs.to_owned();
             let pos = new_or.binary_search(&w).unwrap_or_else(|e| e);
             new_or.insert(pos, w);
             res.push(PropFormula::Nary(Op::Or, new_or));
@@ -110,11 +110,7 @@ fn weaken_or(
     BaselinePropMinimizer::minimize(res)
 }
 
-fn weaken_and(
-    conj_cont: &PropContext,
-    conjs: &Vec<PropFormula>,
-    obj: &PropModel,
-) -> Vec<PropFormula> {
+fn weaken_and(conj_cont: &PropContext, conjs: &[PropFormula], obj: &PropModel) -> Vec<PropFormula> {
     // Weaken existing conjuncts and keep minimal set
     let new_and = BaselinePropMinimizer::minimize(
         conjs
@@ -215,14 +211,6 @@ impl PartialOrd for PropFormula {
     }
 }
 
-impl PartialEq for PropFormula {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other).is_eq()
-    }
-}
-
-impl Eq for PropFormula {}
-
 impl Ord for PropFormula {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
@@ -272,7 +260,7 @@ fn or_subsumes(fs: &[PropFormula], gs: &[PropFormula], gs_indices: &[usize]) -> 
             let ord = f.cmp(&gs[*i]);
             if ord.is_eq() || f.subsumes(&gs[*i]) {
                 let indices = gs_indices.iter().filter(|j| *j != i).copied().collect_vec();
-                if or_subsumes(&f_rest, gs, &indices) {
+                if or_subsumes(f_rest, gs, &indices) {
                     return true;
                 }
             }

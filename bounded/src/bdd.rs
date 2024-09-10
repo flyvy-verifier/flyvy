@@ -305,7 +305,7 @@ pub fn bdd_to_term<'a>(
             And(a, b) => Term::NAryOp(NOp::And, vec![go(*a), go(*b)]),
             Or(a, b) => Term::NAryOp(NOp::Or, vec![go(*a), go(*b)]),
             // Bdd::to_boolean_expression never produces Xor, Imp, or Iff
-            Xor(..) | Imp(..) | Iff(..) => unreachable!(),
+            Xor(..) | Imp(..) | Iff(..) | Cond(..) => unreachable!(),
         }
     }
 

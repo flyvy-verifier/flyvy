@@ -323,7 +323,7 @@ impl Test {
                 format!("{stdout}\n======== STDERR: ===========\n{stderr}");
 
             if check_version(&self.cfg.solver()) {
-                insta::assert_display_snapshot!(self.test_name(), combined_stdout_stderr);
+                insta::assert_snapshot!(self.test_name(), combined_stdout_stderr);
             }
 
             if self.cfg.expect_fail {

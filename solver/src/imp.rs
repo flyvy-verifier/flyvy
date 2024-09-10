@@ -242,7 +242,7 @@ impl<B: Backend> Solver<B> {
         if !terms.is_empty() {
             let values = self
                 .proc
-                .get_value(terms.iter().map(|t| sexp::term(t)).collect())?;
+                .get_value(terms.iter().map(sexp::term).collect())?;
             map.extend(terms.iter().cloned().zip(values));
         }
         Ok(map)

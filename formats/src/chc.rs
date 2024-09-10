@@ -192,19 +192,19 @@ impl TwoStateRelations {
                 .relations
                 .iter()
                 .filter(|r| r.mutable)
-                .map(|r_decl| HoVariable::from(r_decl))
+                .map(HoVariable::from)
                 .collect(),
             immut_relations: sig
                 .relations
                 .iter()
                 .filter(|r| !r.mutable)
-                .map(|r_decl| HoVariable::from(r_decl))
+                .map(HoVariable::from)
                 .collect(),
         }
     }
 
     fn next_name(name: &String) -> String {
-        format!("{}_next", name)
+        format!("{name}_next")
     }
 
     fn sorts(&self) -> Vec<FunctionSort> {
