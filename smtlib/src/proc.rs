@@ -7,9 +7,9 @@
 //! parts are captured by the [`SolverCmd`] passed to launch the solver and in
 //! the code that parses models returned by [`SmtProc::check_sat`].
 
-use crate::conf::SolverCmd;
 use crate::sexp;
 use crate::tee::Tee;
+use crate::{conf::SolverCmd, sexp::InterpretedValue};
 use nix::{errno::Errno, sys::signal, unistd::Pid};
 use std::{
     ffi::{OsStr, OsString},
@@ -448,6 +448,19 @@ impl SmtProc {
     /// call `(get-model)` for sat.
     pub fn check_sat(&mut self) -> Result<SatResp> {
         self.check_sat_assuming(&[])
+    }
+
+    /// Get the value of a sequence of s-expressions following a sat reply.
+    pub fn get_value(&mut self, terms: Vec<sexp::Sexp>) -> Result<Vec<InterpretedValue>> {
+        self.start_call()?;
+        let values = self.send_with_reply(&app("get-value", [Sexp::List(terms)]))?;
+        self.end_call()?;
+        Ok(values
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|v| v.list().unwrap()[1].interpreted_value().unwrap())
+            .collect())
     }
 
     /// Get a model (following a sat reply) as an s-expression.

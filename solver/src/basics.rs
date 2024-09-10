@@ -4,6 +4,7 @@
 //! Traits defining a very basic interface to SMT solvers and a few implementations of them.
 
 use itertools::Itertools;
+use smtlib::sexp::InterpretedValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -64,17 +65,24 @@ fn check_sat_conf(
     let resp = match solver.check_sat(solver_assumptions) {
         Ok(SatResp::Sat) => {
             let get_model_start = std::time::Instant::now();
-            let get_model_resp = if query_conf.minimal_model {
-                solver.get_minimal_model()
-            } else {
-                solver.get_model()
+            let get_model_resp = match query_conf.model_option {
+                ModelOption::None => Ok(vec![]),
+                ModelOption::Any => solver.get_model(),
+                ModelOption::Minimal => solver.get_minimal_model(),
             };
-            let res = get_model_resp.map(BasicSolverResp::Sat);
+            let eval_resp = solver.get_value(&query_conf.evaluate);
+            let res = match (get_model_resp, eval_resp) {
+                (Ok(models), Ok(values)) => Ok(BasicSolverResp::Sat(models, values)),
+                (Err(e), _) | (Ok(_), Err(e)) => Err(e),
+            };
             match &res {
-                Ok(BasicSolverResp::Sat(models)) => log_result(format!(
+                Ok(BasicSolverResp::Sat(models, _)) => log_result(format!(
                     "SAT({}ms, {:?})",
                     get_model_start.elapsed().as_millis(),
-                    models[0].universe
+                    models
+                        .first()
+                        .map(|model| &model.universe[..])
+                        .unwrap_or(&[])
                 )),
                 Err(err) => log_result(format!("error: {err}")),
                 _ => unreachable!(),
@@ -109,6 +117,17 @@ fn check_sat_conf(
     resp
 }
 
+#[derive(Clone, Copy)]
+/// Options for returned models in the case of a satisfiable query.
+pub enum ModelOption {
+    /// Return no model
+    None,
+    /// Return any model
+    Any,
+    /// Return minimal model
+    Minimal,
+}
+
 /// Defines a configuration for performing a solver query.
 pub struct QueryConf<'a, C: BasicCanceler> {
     /// The signature used
@@ -117,16 +136,19 @@ pub struct QueryConf<'a, C: BasicCanceler> {
     pub n_states: usize,
     /// Optional [`MultiCanceler`] which can be used to cancel the query at any time
     pub cancelers: Option<MultiCanceler<C>>,
-    /// Whether to return a minimal model in case of satifiability
-    pub minimal_model: bool,
+    /// What kind of model to return in case of SAT
+    pub model_option: ModelOption,
+    /// Terms to evaluate in case of SAT
+    pub evaluate: Vec<Term>,
     /// Whether to save the solver tee after the query
     pub save_tee: bool,
 }
 
 /// A basic solver response
+#[derive(Debug)]
 pub enum BasicSolverResp {
-    /// A sat response together with a satisfying trace
-    Sat(Vec<Model>),
+    /// A sat response together with a satisfying trace and evaluations for terms
+    Sat(Vec<Model>, HashMap<Term, InterpretedValue>),
     /// An unsat response together with an unsat core
     Unsat(HashSet<usize>),
     /// An unknown response together with a reason
@@ -340,7 +362,8 @@ impl BasicSolver for ParallelSolvers {
             sig: query_conf.sig,
             n_states: query_conf.n_states,
             cancelers: Some(local_cancelers.clone()),
-            minimal_model: query_conf.minimal_model,
+            model_option: query_conf.model_option,
+            evaluate: query_conf.evaluate.clone(),
             save_tee: query_conf.save_tee,
         };
 
@@ -389,7 +412,9 @@ impl BasicSolver for ParallelSolvers {
 
         for res in results {
             match res {
-                Ok(BasicSolverResp::Sat(_) | BasicSolverResp::Unsat(_)) => sat_or_unsat.push(res),
+                Ok(BasicSolverResp::Sat(_, _) | BasicSolverResp::Unsat(_)) => {
+                    sat_or_unsat.push(res)
+                }
                 Ok(BasicSolverResp::Unknown(_)) => unknowns.push(res),
                 Err(SolverError::Killed) => killed.push(res),
                 Err(_) => errors.push(res),

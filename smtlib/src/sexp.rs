@@ -29,6 +29,15 @@ impl Atom {
     }
 }
 
+#[derive(Debug)]
+/// A value in some interpreted universe. Currently either a Boolean or an integer.
+pub enum InterpretedValue {
+    /// A Boolean value
+    B(bool),
+    /// A (non-negative) integer value
+    I(usize),
+}
+
 /// An s-expression which also tracks comments.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, PartialOrd, Ord)]
@@ -132,6 +141,19 @@ impl Sexp {
             Some(s)
         } else {
             None
+        }
+    }
+
+    /// Return the inner integer if self is an integer atom.
+    pub fn interpreted_value(&self) -> Option<InterpretedValue> {
+        match self {
+            Sexp::Atom(Atom::I(i)) => Some(InterpretedValue::I(*i)),
+            Sexp::Atom(Atom::S(s)) => match s as &str {
+                "true" => Some(InterpretedValue::B(true)),
+                "false" => Some(InterpretedValue::B(false)),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

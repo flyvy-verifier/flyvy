@@ -20,7 +20,7 @@ use fly::{
 use smtlib::{
     conf::SolverCmd,
     proc::{SatResp, SmtPid, SmtProc, SolverError},
-    sexp::{app, atom_i, atom_s, sexp_l, Atom, Sexp},
+    sexp::{app, atom_i, atom_s, sexp_l, Atom, InterpretedValue, Sexp},
 };
 
 /// A [`Solver`] requires a Backend, which specifies how to start a particular
@@ -230,6 +230,22 @@ impl<B: Backend> Solver<B> {
         Ok(self
             .backend
             .parse(&self.signature, self.n_states, &self.indicators, &model))
+    }
+
+    /// After a sat response to check_sat or check_sat_assuming, produce the values
+    /// the following terms evaluate to.
+    pub fn get_value(
+        &mut self,
+        terms: &[Term],
+    ) -> Result<HashMap<Term, InterpretedValue>, SolverError> {
+        let mut map = HashMap::new();
+        if !terms.is_empty() {
+            let values = self
+                .proc
+                .get_value(terms.iter().map(|t| sexp::term(t)).collect())?;
+            map.extend(terms.iter().cloned().zip(values));
+        }
+        Ok(map)
     }
 
     /// After a sat response to check_sat or check_sat_assuming, produce a trace
