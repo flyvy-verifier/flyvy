@@ -71,6 +71,20 @@ pub struct QuantifiedContext {
 #[derive(Debug, PartialEq, Eq)]
 pub struct QuantifiedType(pub Vec<PropModel>);
 
+impl PropFormula {
+    /// Return whether the formula is syntactially equivalent to false.
+    pub fn is_false(&self) -> bool {
+        match self {
+            PropFormula::Bottom => true,
+            PropFormula::Atom(_, _) => false,
+            PropFormula::Binary(Op::Or, f1, f2) => f1.is_false() && f2.is_false(),
+            PropFormula::Binary(Op::And, f1, f2) => f1.is_false() || f2.is_false(),
+            PropFormula::Nary(Op::Or, fs) => fs.iter().all(|f| f.is_false()),
+            PropFormula::Nary(Op::And, fs) => fs.iter().any(|f| f.is_false()),
+        }
+    }
+}
+
 fn weaken_or(
     k: Option<usize>,
     disj_cont: &PropContext,

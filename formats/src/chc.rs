@@ -7,6 +7,7 @@ use fly::{
     term::subst::{rename_symbols, NameSubstitution},
 };
 use itertools::Itertools;
+use petgraph::{Directed, Graph};
 use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf};
 
 use crate::basics::FOModule;
@@ -34,6 +35,7 @@ impl From<&RelationDecl> for HoVariable {
     }
 }
 
+#[derive(Clone)]
 /// Declares a higher-order predicate which can have predicates and functions as arguments.
 pub struct HoPredicateDecl {
     /// The name of the predicate
@@ -52,6 +54,7 @@ pub enum Component {
     Formulas(Vec<Term>),
 }
 
+#[derive(Clone)]
 /// A higher-order constrained Horn clause (CHC) of the form (C1 & ... & Cn) -> C,
 /// where (C1 & ... & Cn) is called the _body_ and C is called the _head_.
 /// A CHC is additionally universally quantified over some variables.
@@ -76,18 +79,33 @@ pub struct ChcSystem {
 }
 
 /// A symbolic representation of a predicate, given as a conjunction of formulas.
-pub struct SymbolicPredicate {
-    /// The arguments of the predicate
+pub struct SymbolicPredicate<K: Clone> {
+    /// The arguments of the predicate.
     pub args: Vec<String>,
-    /// The conjunction of formulas that symbolically represents the predicate
-    pub formulas: Vec<Term>,
+    /// The conjunction of formulas that symbolically represents the predicate.
+    /// Each formula has a key representing it for easy identification in SMT queries.
+    pub formulas: Vec<(K, Term)>,
 }
 
-/// A mapping from predicate names to their assignments as formulas.
-pub type SymbolicAssignment = HashMap<String, SymbolicPredicate>;
+/// A mapping from predicate names to their symbolic assignments as formulas.
+pub type SymbolicAssignment<K> = HashMap<String, SymbolicPredicate<K>>;
 
 impl Component {
-    fn instantiate(&self, assignment: &SymbolicAssignment) -> Vec<Term> {
+    /// Destruct the component into predicate name and argument names.
+    pub fn predicate(&self) -> Option<(&String, &Vec<String>)> {
+        match self {
+            Component::Predicate(name, args) => Some((name, args)),
+            Component::Formulas(_) => None,
+        }
+    }
+
+    /// Check whether the given component is a predicate with the given name.
+    pub fn has_predicate_name(&self, name: &String) -> bool {
+        self.predicate()
+            .is_some_and(|(pred_name, _)| pred_name == name)
+    }
+
+    fn instantiate<K: Clone>(&self, assignment: &SymbolicAssignment<K>) -> Vec<(Option<K>, Term)> {
         match self {
             Component::Predicate(name, args) => {
                 let symb_pred = assignment
@@ -101,17 +119,22 @@ impl Component {
                 symb_pred
                     .formulas
                     .iter()
-                    .map(|f| rename_symbols(f, &subst))
+                    .map(|(k, t)| (Some(k.clone()), rename_symbols(t, &subst)))
                     .collect()
             }
-            Component::Formulas(ts) => ts.clone(),
+            Component::Formulas(ts) => ts.iter().map(|t| (None, t.clone())).collect(),
         }
     }
 }
 
 impl Chc {
     /// Instantiate the body of the CHC using the given assignment as conjunction of formulas.
-    pub fn instantiate_body(&self, assignment: &SymbolicAssignment) -> Vec<Term> {
+    /// Returns a sequence of terms with their corresponding keys (for those originating in a
+    /// [`SymbolicAssignment`]).
+    pub fn instantiate_body<K: Clone>(
+        &self,
+        assignment: &SymbolicAssignment<K>,
+    ) -> Vec<(Option<K>, Term)> {
         self.body
             .iter()
             .flat_map(|c| c.instantiate(assignment))
@@ -119,10 +142,10 @@ impl Chc {
     }
 
     /// Check whether the given assignment to the unknown predicates is a solution for the CHC.
-    pub fn check_assignment<B: BasicSolver>(
+    pub fn check_assignment<B: BasicSolver, K: Clone>(
         &self,
         solver: &B,
-        assignment: &SymbolicAssignment,
+        assignment: &SymbolicAssignment<K>,
     ) -> bool {
         let query_conf = QueryConf {
             sig: &self.signature,
@@ -132,8 +155,17 @@ impl Chc {
             evaluate: vec![],
             save_tee: false,
         };
-        let hyp = self.instantiate_body(assignment);
-        let cons = self.head.instantiate(assignment);
+        let hyp = self
+            .instantiate_body(assignment)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect_vec();
+        let cons = self
+            .head
+            .instantiate(assignment)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect_vec();
         for c in cons {
             let mut assertions = hyp.clone();
             assertions.push(Term::not(c));
@@ -146,6 +178,17 @@ impl Chc {
         }
 
         true
+    }
+
+    /// Return whether the head predicate of the other CHC appears in the body of this CHC.
+    fn depends_on(&self, other: &Self) -> bool {
+        match other.head {
+            Component::Predicate(ref head_name, _) => self.body.iter().any(|c| match c {
+                Component::Predicate(name, _) => head_name == name,
+                Component::Formulas(_) => false,
+            }),
+            Component::Formulas(_) => false,
+        }
     }
 }
 
@@ -177,6 +220,20 @@ impl ChcSystem {
             body,
             head,
         })
+    }
+
+    /// Get the dependency graph of the CHC system, as induced by [`Chc::depends_on`].
+    pub fn chc_dependencies(&self) -> Graph<usize, (), Directed> {
+        let mut g = Graph::new();
+        let nodes = (0..self.chcs.len()).map(|i| g.add_node(i)).collect_vec();
+
+        for (i, j) in (0..nodes.len()).cartesian_product(0..nodes.len()) {
+            if self.chcs[i].depends_on(&self.chcs[j]) {
+                g.add_edge(nodes[i], nodes[j], ());
+            }
+        }
+
+        g
     }
 }
 
@@ -388,22 +445,22 @@ mod tests {
             None,
         ));
 
-        let mut assignment_correct = SymbolicAssignment::new();
+        let mut assignment_correct = SymbolicAssignment::<()>::new();
         assignment_correct.insert(
             "I".to_string(),
             SymbolicPredicate {
                 args: vec!["r".to_string()],
-                formulas: vec![parser::term("forall x:A. r(x)")],
+                formulas: vec![((), parser::term("forall x:A. r(x)"))],
             },
         );
         assert!(chc_sys.chcs[0].check_assignment(&solver, &assignment_correct));
 
-        let mut assignment_wrong = SymbolicAssignment::new();
+        let mut assignment_wrong = SymbolicAssignment::<()>::new();
         assignment_wrong.insert(
             "I".to_string(),
             SymbolicPredicate {
                 args: vec!["r".to_string()],
-                formulas: vec![parser::term("forall x:A. !r(x)")],
+                formulas: vec![((), parser::term("forall x:A. !r(x)"))],
             },
         );
         assert!(!chc_sys.chcs[0].check_assignment(&solver, &assignment_wrong));

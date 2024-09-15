@@ -2,7 +2,11 @@
 //! are required to implement a subsumption relation. Also defines the related notions of weakening,
 //! attribute sets, and other useful constructions.
 
-use std::{collections::HashSet, hash::Hash};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
+};
 
 use itertools::Itertools;
 
@@ -95,7 +99,7 @@ pub trait AttributeSet {
     /// The relevant context.
     type Cont: Context<Object = Self::Object, Attribute = Self::Attribute>;
     /// The indirect identifier of attributes in the set.
-    type AttributeId: Hash + Eq;
+    type AttributeId: Clone + Hash + Eq + Ord + Debug;
 
     /// Create a new set for the given context.
     fn new(cont: &Self::Cont) -> Self;
@@ -107,6 +111,12 @@ pub trait AttributeSet {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Return a subset of IDs that are equivalent to false, if such a subset exists.
+    fn get_false_subset(&self) -> Option<Vec<Self::AttributeId>>;
+
+    /// Get the attribute with the given identifier.
+    fn get(&self, id: &Self::AttributeId) -> Self::Attribute;
 
     /// Get the identifier of the given attribute if it is in the set.
     fn get_id(&self, attr: &Self::Attribute) -> Option<Self::AttributeId>;
@@ -134,7 +144,7 @@ pub trait AttributeSet {
     fn get_subsuming(&self, attr: &Self::Attribute) -> HashSet<Self::AttributeId>;
 
     /// Iterate over all attributes in the set.
-    fn iter(&self) -> impl Iterator<Item = Self::Attribute>;
+    fn iter(&self) -> impl Iterator<Item = Self::AttributeId>;
 
     /// Create a new set for the given context from the provided sequence of attributes.
     fn from_<I>(cont: &Self::Cont, it: I) -> Self
@@ -165,26 +175,34 @@ pub trait AttributeSet {
         s
     }
 
-    /// Weaken the attributes in the set to satisfy the given object,
-    /// maintaining subsumption-minimality of the set.
-    fn weaken(&mut self, cont: &Self::Cont, obj: &Self::Object)
+    /// Weaken the attributes in the set to satisfy the given object, maintaining subsumption-minimality of the set.
+    /// Return the weakenings that have been performed.
+    fn weaken(
+        &mut self,
+        cont: &Self::Cont,
+        obj: &Self::Object,
+    ) -> HashMap<Self::AttributeId, Vec<Self::AttributeId>>
     where
         Self: Sized,
     {
         let unsat = self
             .get_unsat(obj)
             .into_iter()
-            .map(|id| self.remove_id(id))
+            .map(|id| (id.clone(), self.remove_id(id)))
             .collect_vec();
 
-        for w in unsat
+        let mut updates: HashMap<_, _> = unsat.iter().map(|(id, _)| (id.clone(), vec![])).collect();
+        for (w, removed_id) in unsat
             .iter()
-            .flat_map(|u| cont.weaken(obj, u).into_iter())
+            .flat_map(|(u_id, u)| cont.weaken(obj, u).into_iter().map(|w| (w, u_id.clone())))
             .sorted()
         {
             if self.get_subsuming(&w).is_empty() {
-                self.insert(w);
+                let new_id = self.insert(w);
+                updates.get_mut(&removed_id).unwrap().push(new_id);
             }
         }
+
+        updates
     }
 }

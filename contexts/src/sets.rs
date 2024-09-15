@@ -34,6 +34,14 @@ where
         self.0.len()
     }
 
+    fn get_false_subset(&self) -> Option<Vec<Self::AttributeId>> {
+        self.0.get_false_subset()
+    }
+
+    fn get(&self, id: &Self::AttributeId) -> Self::Attribute {
+        self.0.get(id)
+    }
+
     fn get_id(&self, attr: &Self::Attribute) -> Option<Self::AttributeId> {
         self.0.get_id(attr)
     }
@@ -61,7 +69,7 @@ where
         self.0.get_subsuming(attr)
     }
 
-    fn iter(&self) -> impl Iterator<Item = Self::Attribute> {
+    fn iter(&self) -> impl Iterator<Item = Self::AttributeId> {
         self.0.iter()
     }
 }
@@ -72,11 +80,14 @@ pub struct MultiAttributeSet<S: AttributeSet> {
     pub sets: Vec<S>,
 }
 
+/// An attribute ID of a [`MultiAttribute`].
+pub type MultiId<I> = (usize, I);
+
 impl<S: AttributeSet> AttributeSet for MultiAttributeSet<S> {
     type Object = MultiObject<S::Object>;
     type Attribute = MultiAttribute<S::Attribute>;
     type Cont = MultiContext<S::Cont>;
-    type AttributeId = (usize, S::AttributeId);
+    type AttributeId = MultiId<S::AttributeId>;
 
     fn new(cont: &Self::Cont) -> Self {
         Self {
@@ -86,6 +97,20 @@ impl<S: AttributeSet> AttributeSet for MultiAttributeSet<S> {
 
     fn len(&self) -> usize {
         self.sets.iter().map(|s| s.len()).sum()
+    }
+
+    fn get_false_subset(&self) -> Option<Vec<Self::AttributeId>> {
+        for (i, s) in self.sets.iter().enumerate() {
+            if let Some(ids) = s.get_false_subset() {
+                return Some(ids.into_iter().map(|id| (i, id)).collect());
+            }
+        }
+
+        None
+    }
+
+    fn get(&self, id: &Self::AttributeId) -> Self::Attribute {
+        MultiAttribute(id.0, self.sets[id.0].get(&id.1))
     }
 
     fn get_id(&self, attr: &Self::Attribute) -> Option<Self::AttributeId> {
@@ -116,11 +141,11 @@ impl<S: AttributeSet> AttributeSet for MultiAttributeSet<S> {
             .collect()
     }
 
-    fn iter(&self) -> impl Iterator<Item = Self::Attribute> {
+    fn iter(&self) -> impl Iterator<Item = Self::AttributeId> {
         self.sets
             .iter()
             .enumerate()
-            .flat_map(|(i, s)| s.iter().map(move |item| MultiAttribute(i, item)))
+            .flat_map(|(i, s)| s.iter().map(move |id| (i, id)))
     }
 }
 
@@ -169,6 +194,20 @@ impl AttributeSet for BaselinePropSet {
         self.map.len()
     }
 
+    fn get_false_subset(&self) -> Option<Vec<Self::AttributeId>> {
+        for (id, f) in &self.inv {
+            if f.is_false() {
+                return Some(vec![*id]);
+            }
+        }
+
+        None
+    }
+
+    fn get(&self, id: &Self::AttributeId) -> Self::Attribute {
+        self.inv.get(id).unwrap().clone()
+    }
+
     fn get_id(&self, attr: &Self::Attribute) -> Option<Self::AttributeId> {
         self.map.get(attr).copied()
     }
@@ -203,7 +242,7 @@ impl AttributeSet for BaselinePropSet {
             .collect()
     }
 
-    fn iter(&self) -> impl Iterator<Item = Self::Attribute> {
-        self.map.keys().cloned()
+    fn iter(&self) -> impl Iterator<Item = Self::AttributeId> {
+        self.inv.keys().cloned()
     }
 }
