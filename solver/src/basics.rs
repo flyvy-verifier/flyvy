@@ -145,7 +145,7 @@ pub struct QueryConf<'a, C: BasicCanceler> {
 }
 
 /// A basic solver response
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BasicSolverResp {
     /// A sat response together with a satisfying trace and evaluations for terms
     Sat(Vec<Model>, HashMap<Term, InterpretedValue>),
@@ -438,5 +438,75 @@ impl BasicSolver for ParallelSolvers {
                 })
                 .join("\n"),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{BasicSolver, ModelOption, QueryConf, SingleSolver};
+    use crate::{backends::SolverType, basics::BasicSolverResp, conf::SolverConf};
+    use fly::{
+        parser::term,
+        syntax::{RelationDecl, Signature, Sort},
+    };
+    use smtlib::sexp::InterpretedValue;
+
+    #[test]
+    fn test_integer_get_value() {
+        let sig = Signature {
+            sorts: vec![],
+            relations: vec![
+                RelationDecl {
+                    mutable: false,
+                    name: "x".to_string(),
+                    args: vec![],
+                    sort: Sort::Int,
+                },
+                RelationDecl {
+                    mutable: false,
+                    name: "y".to_string(),
+                    args: vec![],
+                    sort: Sort::Int,
+                },
+            ],
+        };
+
+        let solver = SingleSolver::new(SolverConf::new(
+            SolverType::Z3,
+            false,
+            &"".to_string(),
+            0,
+            None,
+        ));
+
+        let query_conf = QueryConf {
+            sig: &sig,
+            n_states: 1,
+            cancelers: None,
+            model_option: ModelOption::None,
+            evaluate: vec![term("x"), term("y")],
+            save_tee: false,
+        };
+
+        let resp = solver.check_sat(
+            &query_conf,
+            &[term("x > 1"), term("y <= 3"), term("x < y")],
+            &HashMap::new(),
+        );
+
+        assert_eq!(
+            resp.unwrap(),
+            BasicSolverResp::Sat(
+                vec![],
+                [
+                    (term("x"), InterpretedValue::I(2)),
+                    (term("y"), InterpretedValue::I(3)),
+                ]
+                .into_iter()
+                .collect()
+            )
+        );
     }
 }

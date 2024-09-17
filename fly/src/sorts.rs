@@ -128,7 +128,11 @@ pub fn has_all_sort_annotations_module(module: &Module) -> bool {
 /// annotation.
 pub fn has_all_sort_annotations_term(term: &Term) -> bool {
     match term {
-        Term::Literal(_) | Term::Id(_) => true,
+        Term::Literal(_)
+        | Term::Id(_)
+        | Term::Int(_)
+        | Term::NumRel(_, _, _)
+        | Term::NumOp(_, _, _) => true,
         Term::App(_f, _p, xs) => xs.iter().all(has_all_sort_annotations_term),
         Term::UnaryOp(_, x) => has_all_sort_annotations_term(x),
         Term::BinOp(_, x, y) => {
@@ -373,7 +377,7 @@ impl Scope<'_> {
         empty_allowed: bool,
     ) -> Result<(), SortError> {
         match sort {
-            Sort::Bool => Ok(()),
+            Sort::Bool | Sort::Int => Ok(()),
             Sort::Uninterpreted(a) if a.is_empty() && empty_allowed => Ok(()),
             Sort::Uninterpreted(a) => {
                 if !self.signature.contains_sort(a) {
@@ -677,6 +681,21 @@ impl InternalContext<'_> {
                 context.unify_var_value(&Sort::Bool, &body)?;
                 Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
+            Term::Int(_) => Ok(MaybeUnknownSort::Known(Sort::Int)),
+            Term::NumRel(_, x, y) => {
+                let x = self.collect_sort_constraints_term(x)?;
+                self.unify_var_value(&Sort::Int, &x)?;
+                let y = self.collect_sort_constraints_term(y)?;
+                self.unify_var_value(&Sort::Int, &y)?;
+                Ok(MaybeUnknownSort::Known(Sort::Bool))
+            }
+            Term::NumOp(_, x, y) => {
+                let x = self.collect_sort_constraints_term(x)?;
+                self.unify_var_value(&Sort::Int, &x)?;
+                let y = self.collect_sort_constraints_term(y)?;
+                self.unify_var_value(&Sort::Int, &y)?;
+                Ok(MaybeUnknownSort::Known(Sort::Int))
+            }
         }
     }
 
@@ -685,7 +704,11 @@ impl InternalContext<'_> {
     // Walk the term AST, replacing any binders that still have "var {id}" sorts with their solution
     fn annotate_solved_sorts_term(&mut self, term: &mut Term) -> Result<(), SortError> {
         match term {
-            Term::Literal(_) | Term::Id(_) => Ok(()),
+            Term::Literal(_)
+            | Term::Id(_)
+            | Term::Int(_)
+            | Term::NumRel(_, _, _)
+            | Term::NumOp(_, _, _) => Ok(()),
             Term::App(_f, _p, xs) => {
                 for x in xs {
                     self.annotate_solved_sorts_term(x)?;

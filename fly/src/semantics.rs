@@ -247,6 +247,7 @@ impl Model {
             | Term::BinOp(Until | Since, _, _) => {
                 panic!("tried to eval temporal {t}")
             }
+            Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
         }
     }
 
@@ -366,6 +367,7 @@ impl std::fmt::Display for Model {
                         _ => unreachable!(),
                     },
                     Sort::Uninterpreted(s) => format!("@{s}_{element}"),
+                    Sort::Int => unimplemented!(),
                 }
             }
 

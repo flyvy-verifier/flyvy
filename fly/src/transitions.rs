@@ -149,5 +149,6 @@ fn contains_mutable_relations(term: &Term, relations: &[RelationDecl]) -> bool {
         Term::NAryOp(_, xs) => xs.iter().any(go),
         Term::Ite { cond, then, else_ } => go(cond) || go(then) || go(else_),
         Term::Quantified { body, .. } => go(body),
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }

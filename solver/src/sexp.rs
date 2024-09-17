@@ -3,14 +3,15 @@
 
 //! Converts `Term`s to S-expressions.
 
-use fly::syntax::{BinOp, Binder, NOp, Quantifier, Sort, Term, UOp};
+use fly::syntax::{BinOp, Binder, NOp, NumOp, NumRel, Quantifier, Sort, Term, UOp};
 pub use smtlib::sexp::parse;
-use smtlib::sexp::{app, atom_s, sexp_l, Sexp};
+use smtlib::sexp::{app, atom_i, atom_s, sexp_l, Sexp};
 
 /// Convert a `Sort` to an S-expression.
 pub fn sort(s: &Sort) -> Sexp {
     match s {
         Sort::Bool => atom_s("Bool"),
+        Sort::Int => atom_s("Int"),
         Sort::Uninterpreted(s) => atom_s(s),
     }
 }
@@ -90,6 +91,19 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
             let body = term(body);
             app(quantifier, vec![binders, body])
         }
+        Term::Int(i) => {
+            if i.is_positive() {
+                atom_i(i.unsigned_abs())
+            } else {
+                app("-", [atom_i(i.unsigned_abs())])
+            }
+        }
+        Term::NumRel(NumRel::Lt, x, y) => app("<", [term(x), term(y)]),
+        Term::NumRel(NumRel::Leq, x, y) => app("<=", [term(x), term(y)]),
+        Term::NumRel(NumRel::Geq, x, y) => app(">=", [term(x), term(y)]),
+        Term::NumRel(NumRel::Gt, x, y) => app(">", [term(x), term(y)]),
+        Term::NumOp(NumOp::Add, x, y) => app("+", [term(x), term(y)]),
+        Term::NumOp(NumOp::Sub, x, y) => app("-", [term(x), term(y)]),
     }
 }
 

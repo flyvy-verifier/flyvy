@@ -4,6 +4,7 @@
 //! The flyvy AST for terms and modules.
 
 use itertools::Itertools;
+use std::cmp::Ordering;
 use std::{collections::HashSet, fmt, sync::Arc};
 
 use serde::Serialize;
@@ -16,6 +17,8 @@ use crate::ouritertools::OurItertools;
 pub enum Sort {
     /// Boolean sort
     Bool,
+    /// Integer sort
+    Int,
     /// Uninterpreted sort identified by its name
     Uninterpreted(String),
     /*
@@ -59,6 +62,7 @@ impl fmt::Display for Sort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Sort::Bool => "bool".to_string(),
+            Sort::Int => "int".to_string(),
             Sort::Uninterpreted(i) => i.to_string(),
         };
         write!(f, "{s}")
@@ -126,6 +130,40 @@ pub enum NOp {
     Or,
 }
 
+/// A numerical operation
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
+pub enum NumOp {
+    /// Addition
+    Add,
+    /// Subtraction
+    Sub,
+}
+
+/// A Binary relation over numbers
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
+pub enum NumRel {
+    /// Less than
+    Lt,
+    /// Less than or equal
+    Leq,
+    /// Greater than or equal
+    Geq,
+    /// Greater than
+    Gt,
+}
+
+impl NumRel {
+    /// Return whether the numerical relation is satisfied by the two elements.
+    pub fn satisfied<T: Ord>(&self, x: &T, y: &T) -> bool {
+        matches!(
+            (x.cmp(y), self),
+            (Ordering::Less, NumRel::Lt | NumRel::Leq)
+                | (Ordering::Equal, NumRel::Leq | NumRel::Geq)
+                | (Ordering::Greater, NumRel::Geq | NumRel::Gt)
+        )
+    }
+}
+
 /// A kind of quantifier (forall or exists)
 #[allow(missing_docs)]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash, PartialOrd, Ord)]
@@ -133,6 +171,9 @@ pub enum Quantifier {
     Forall,
     Exists,
 }
+
+/// The type of the interpreted sort for integers in flyvy.
+pub type IntType = isize;
 
 /// FO-LTL term or formula
 ///
@@ -152,6 +193,8 @@ pub enum Quantifier {
 pub enum Term {
     /// A constant true or false
     Literal(bool),
+    /// A constant integer values
+    Int(IntType),
     /// A reference to a bound variable or function in the signature
     Id(String),
     /// Application. `App(f, n_primes, args)` represents applying the function
@@ -163,6 +206,10 @@ pub enum Term {
     BinOp(BinOp, Box<Term>, Box<Term>),
     /// An applied n-ary operation
     NAryOp(NOp, Vec<Term>),
+    /// An applied numerical binary relation
+    NumRel(NumRel, Box<Term>, Box<Term>),
+    /// An applied arithmetic operation
+    NumOp(NumOp, Box<Term>, Box<Term>),
     /// If-then-else
     Ite {
         /// A boolean conditional
@@ -490,7 +537,8 @@ impl Term {
             | Term::UnaryOp(UOp::Not | UOp::Always | UOp::Eventually, _)
             | Term::BinOp(_, _, _)
             | Term::NAryOp(_, _)
-            | Term::Quantified { .. } => true,
+            | Term::Quantified { .. }
+            | Term::NumRel(_, _, _) => true,
             Term::Id(name) | Term::App(name, _, _) => {
                 signature.contains_relation(name)
                     && matches!(signature.relation_decl(name).sort, Sort::Bool)
@@ -502,22 +550,23 @@ impl Term {
                 assert_eq!(then_is_bool, else_is_bool);
                 then_is_bool
             }
+            Term::Int(_) | Term::NumOp(_, _, _) => false,
         }
     }
 
     /// Return whether the term does not contain any temporal operators.
     pub fn is_nontemporal(&self) -> bool {
         match self {
-            Term::Literal(_) | Term::Id(_) => true,
+            Term::Literal(_) | Term::Id(_) | Term::Int(_) => true,
             Term::App(_, primes, _) => *primes == 0,
             Term::UnaryOp(UOp::Not, t) => t.is_nontemporal(),
             Term::UnaryOp(
                 UOp::Prime | UOp::Always | UOp::Eventually | UOp::Next | UOp::Previous,
                 _,
             ) => false,
-            Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Iff | BinOp::Implies, t1, t2) => {
-                t1.is_nontemporal() && t2.is_nontemporal()
-            }
+            Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Iff | BinOp::Implies, t1, t2)
+            | Term::NumRel(_, t1, t2)
+            | Term::NumOp(_, t1, t2) => t1.is_nontemporal() && t2.is_nontemporal(),
             Term::BinOp(BinOp::Until | BinOp::Since, _, _) => false,
             Term::NAryOp(_, ts) => ts.iter().all(|t| t.is_nontemporal()),
             Term::Ite { cond, then, else_ } => {
@@ -534,7 +583,12 @@ impl Term {
     /// Return the number of atomic formulas in the term.
     pub fn size(&self) -> usize {
         match self {
-            Term::Literal(_) | Term::Id(_) | Term::App(_, _, _) => 1,
+            Term::Literal(_)
+            | Term::Id(_)
+            | Term::App(_, _, _)
+            | Term::Int(_)
+            | Term::NumRel(_, _, _)
+            | Term::NumOp(_, _, _) => 1,
             Term::UnaryOp(_, t) => t.size(),
             Term::BinOp(_, t1, t2) => t1.size() + t2.size(),
             Term::NAryOp(_, ts) => ts.iter().map(Term::size).sum(),
@@ -641,12 +695,12 @@ impl Signature {
     /// Get the index of an uninterpreted sort.
     pub fn sort_idx(&self, sort: &Sort) -> usize {
         match sort {
-            Sort::Bool => panic!("invalid sort {sort}"),
             Sort::Uninterpreted(sort) => self
                 .sorts
                 .iter()
                 .position(|x| x == sort)
                 .unwrap_or_else(|| panic!("invalid sort {sort}")),
+            _ => panic!("invalid sort {sort}"),
         }
     }
 

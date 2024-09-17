@@ -26,6 +26,11 @@ grammar parser() for str {
     = s:$(quiet!{ident_start() ident_char()*} / expected!("identifier"))
     { s.to_string() }
 
+    rule pos_int() -> IntType = s:$(['0'..='9']+) { s.parse().unwrap() }
+    rule neg_int() -> IntType = "-" _ s:$(['0'..='9']+) { - s.parse::<isize>().unwrap() }
+    rule int() -> IntType = quiet!{pos_int()} / quiet!{neg_int()} / expected!("integer")
+
+
     rule nl() = quiet!{ ['\n' | '\r'] } / expected!("newline")
     rule comment() = "#" [^'\n' | '\r']* nl()
     rule ws_no_nl() = quiet!{ [' ' | '\t' ] / comment() }
@@ -78,10 +83,17 @@ grammar parser() for str {
         --
         x:(@) _ "=" _ y:@ { Term::BinOp(Equals, Box::new(x), Box::new(y)) }
         x:(@) _ "!=" _ y:@ { Term::BinOp(NotEquals, Box::new(x), Box::new(y)) }
+        x:(@) _ "<" _ y:@ { Term::NumRel(NumRel::Lt, Box::new(x), Box::new(y)) }
+        x:(@) _ "<=" _ y:@ { Term::NumRel(NumRel::Leq, Box::new(x), Box::new(y)) }
+        x:(@) _ ">=" _ y:@ { Term::NumRel(NumRel::Geq, Box::new(x), Box::new(y)) }
+        x:(@) _ ">" _ y:@ { Term::NumRel(NumRel::Gt, Box::new(x), Box::new(y)) }
         --
         "!" x:@ { Term::UnaryOp(Not, Box::new(x)) }
         --
         t:(@) "'" { Term::UnaryOp(Prime, Box::new(t)) }
+        --
+        x:(@) _ "+" _ y:@ { Term::NumOp(NumOp::Add, Box::new(x), Box::new(y)) }
+        x:(@) _ "-" _ y:@ { Term::NumOp(NumOp::Sub, Box::new(x), Box::new(y)) }
         --
         // note that no space is allowed between relation name and args, so p (q)
         // doesn't parse as a relation call
@@ -91,11 +103,13 @@ grammar parser() for str {
             "true" => Term::Literal(true),
             _ => Term::Id(s),
         } }
+        i:int() { Term::Int(i) }
         "(" _ t:term() _ ")" { t }
     }
 
     rule sort() -> Sort
     = ("bool" word_boundary() { Sort::Bool }) /
+      ("int" word_boundary() { Sort::Int }) /
       s:ident() { Sort::Uninterpreted(s) }
 
     rule sort_decl() -> String
@@ -369,5 +383,114 @@ proof {
             term("a & if x = y then a & b else c & d"),
             term("a & (if x = y then a & b else (c & d))"),
         );
+    }
+
+    #[test]
+    fn test_integers() {
+        assert_eq! {
+            term("1 + 2 = 3"),
+            Term::BinOp(
+                BinOp::Equals,
+                Box::new(Term::NumOp(
+                    NumOp::Add,
+                    Box::new(Term::Int(1)),
+                    Box::new(Term::Int(2)),
+                )),
+                Box::new(Term::Int(3)),
+            )
+        };
+
+        assert_eq! {
+            term("1 + - 2 = -3"),
+            Term::BinOp(
+                BinOp::Equals,
+                Box::new(Term::NumOp(
+                    NumOp::Add,
+                    Box::new(Term::Int(1)),
+                    Box::new(Term::Int(-2)),
+                )),
+                Box::new(Term::Int(-3)),
+            )
+        };
+
+        assert_eq! {
+            term("1 - - 2 < - 0"),
+            Term::NumRel(
+                NumRel::Lt,
+                Box::new(Term::NumOp(
+                    NumOp::Sub,
+                    Box::new(Term::Int(1)),
+                    Box::new(Term::Int(-2)),
+                )),
+                Box::new(Term::Int(0)),
+            )
+        };
+
+        assert_eq! {
+            term("- 1 + 2 <= 3"),
+            Term::NumRel(
+                NumRel::Leq,
+                Box::new(Term::NumOp(
+                    NumOp::Add,
+                    Box::new(Term::Int(-1)),
+                    Box::new(Term::Int(2)),
+                )),
+                Box::new(Term::Int(3)),
+            )
+        };
+
+        assert_eq! {
+            term("2 >= 3 - 5"),
+            Term::NumRel(
+                NumRel::Geq,
+                Box::new(Term::Int(2)),
+                Box::new(Term::NumOp(
+                    NumOp::Sub,
+                    Box::new(Term::Int(3)),
+                    Box::new(Term::Int(5)),
+                )),
+            )
+        };
+
+        assert_eq! {
+            term("100 + 1 > - 3 - 1"),
+            Term::NumRel(
+                NumRel::Gt,
+                Box::new(Term::NumOp(
+                    NumOp::Add,
+                    Box::new(Term::Int(100)),
+                    Box::new(Term::Int(1)),
+                )),
+                Box::new(Term::NumOp(
+                    NumOp::Sub,
+                    Box::new(Term::Int(-3)),
+                    Box::new(Term::Int(1)),
+                )),
+            )
+        };
+
+        assert_eq! {
+            term("forall x:int. x > 5 - 2 + 3"),
+            Term::Quantified {
+                quantifier: Quantifier::Forall,
+                binders: vec![Binder {
+                    name: "x".to_string(),
+                    sort: Sort::Int,
+                }],
+                body: Box::new(Term::NumRel(
+                    NumRel::Gt,
+                    Box::new(Term::id("x")),
+                    Box::new(Term::NumOp(
+                        NumOp::Add,
+                        Box::new(Term::NumOp(
+                            NumOp::Sub,
+                            Box::new(Term::Int(5)),
+                            Box::new(Term::Int(2)),
+                        )),
+                        Box::new(Term::Int(3)),
+                    )),
+                )),
+            }
+        };
     }
 }

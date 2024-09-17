@@ -340,6 +340,7 @@ pub fn bdd_to_term<'a>(
                         1 => Term::Literal(true),
                         _ => unreachable!(),
                     },
+                    Sort::Int => unimplemented!(),
                 });
             let term = match args.len() {
                 0 => Term::Id(relation.to_string()),

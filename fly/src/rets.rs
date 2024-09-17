@@ -238,6 +238,7 @@ fn contains_changed(term: &Term, changed: &[RelationDecl]) -> bool {
                 || contains_changed(else_, changed)
         }
         Term::Quantified { body, .. } => contains_changed(body, changed),
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 
@@ -251,6 +252,7 @@ fn strip_primes(term: &Term) -> Option<(Term, usize)> {
         | Term::NAryOp(..)
         | Term::Ite { .. }
         | Term::Quantified { .. } => None,
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 
@@ -429,6 +431,7 @@ fn flatten_term_rec(
             binders: binders.clone(),
             body: Box::new(flatten_term_rec(sig, body, subterm_vars, false)),
         },
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 
@@ -542,6 +545,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
             Ok(())
         }
         Term::Quantified { body, .. } => fix_term(body, changed),
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 

@@ -8,7 +8,7 @@ use std::fmt;
 use crate::syntax::*;
 
 fn precedence(t: &Term) -> usize {
-    use crate::syntax::{BinOp::*, NOp::*, Quantifier::*, Term::*, UOp::*};
+    use crate::syntax::{BinOp::*, NOp::*, NumOp::*, Quantifier::*, Term::*, UOp::*};
 
     match t {
         Quantified {
@@ -25,7 +25,9 @@ fn precedence(t: &Term) -> usize {
         BinOp(Equals | NotEquals, _, _) => 60,
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
-        Literal(_) | Id(_) | App(_, _, _) => 1000,
+        NumRel(_, _, _) => 500,
+        NumOp(Add | Sub, _, _) => 510,
+        Literal(_) | Id(_) | Int(_) | App(_, _, _) => 1000,
     }
 }
 
@@ -57,6 +59,13 @@ pub fn term(t: &Term) -> String {
         Term::Literal(false) => "false".to_string(),
         Term::Literal(true) => "true".to_string(),
         Term::Id(i) => i.to_string(),
+        Term::Int(i) => {
+            if i.is_negative() {
+                format!("(- {})", i.abs())
+            } else {
+                i.to_string()
+            }
+        }
         Term::App(f, p, args) => format!(
             "{}{}({})",
             f,
@@ -101,6 +110,30 @@ pub fn term(t: &Term) -> String {
                 NOp::Or => "|",
             };
             args.join(&format!(" {op} "))
+        }
+        Term::NumRel(rel, arg1, arg2) => {
+            let use_left_paren = precedence(t) > precedence(arg1);
+            let use_right_paren = precedence(t) > precedence(arg2);
+            let left = parens(use_left_paren, term(arg1));
+            let right = parens(use_right_paren, term(arg2));
+            let rel = match rel {
+                NumRel::Lt => "<",
+                NumRel::Leq => "<=",
+                NumRel::Geq => ">=",
+                NumRel::Gt => ">",
+            };
+            format!("{left} {rel} {right}")
+        }
+        Term::NumOp(op, arg1, arg2) => {
+            let use_left_paren = precedence(t) > precedence(arg1);
+            let use_right_paren = precedence(t) > precedence(arg2);
+            let left = parens(use_left_paren, term(arg1));
+            let right = parens(use_right_paren, term(arg2));
+            let op = match op {
+                NumOp::Add => "+",
+                NumOp::Sub => "-",
+            };
+            format!("{left} {op} {right}")
         }
         Term::Ite { cond, then, else_ } => {
             let cond = term(cond);
@@ -202,6 +235,7 @@ mod tests {
 fn sort(s: &Sort) -> String {
     match s {
         Sort::Bool => "bool".to_string(),
+        Sort::Int => "int".to_string(),
         Sort::Uninterpreted(i) => i.to_string(),
     }
 }

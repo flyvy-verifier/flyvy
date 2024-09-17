@@ -1011,6 +1011,7 @@ impl IsoStateSet {
                                 new_elements[i] = match &relation.args[i] {
                                     Sort::Uninterpreted(s) => permutation[s.as_str()][x],
                                     Sort::Bool => x,
+                                    Sort::Int => unimplemented!(),
                                 };
                             }
                             // look up the index to precompute the dst

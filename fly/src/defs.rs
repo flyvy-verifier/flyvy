@@ -38,6 +38,7 @@ fn subst(t: &mut Term, repl: &HashMap<String, &Term>) {
         }
         // TODO: didn't worry about shadowing here
         Term::Quantified { body, .. } => go(body),
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 
@@ -87,6 +88,7 @@ fn inline_def_term(def: &Definition, t: &mut Term) {
             }
             go(body)
         }
+        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
     }
 }
 
