@@ -33,9 +33,27 @@ impl Atom {
 /// A value in some interpreted universe. Currently either a Boolean or an integer.
 pub enum InterpretedValue {
     /// A Boolean value
-    B(bool),
+    Bool(bool),
     /// An integer value
-    I(isize),
+    Int(isize),
+}
+
+impl InterpretedValue {
+    /// Return the inner `bool` (if the interpreted value is a `bool`).
+    pub fn bool(&self) -> Option<bool> {
+        match self {
+            InterpretedValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// Return the inner integer (if the interpreted value is an integer).
+    pub fn int(&self) -> Option<isize> {
+        match self {
+            InterpretedValue::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
 }
 
 /// An s-expression which also tracks comments.
@@ -147,15 +165,15 @@ impl Sexp {
     /// Return the interpreted value of the [`Sexp`]
     pub fn interpreted_value(&self) -> Option<InterpretedValue> {
         match self {
-            Sexp::Atom(Atom::I(i)) => Some(InterpretedValue::I(*i as isize)),
+            Sexp::Atom(Atom::I(i)) => Some(InterpretedValue::Int(*i as isize)),
             Sexp::Atom(Atom::S(s)) => match s as &str {
-                "true" => Some(InterpretedValue::B(true)),
-                "false" => Some(InterpretedValue::B(false)),
+                "true" => Some(InterpretedValue::Bool(true)),
+                "false" => Some(InterpretedValue::Bool(false)),
                 _ => None,
             },
             Sexp::List(v) if v.len() == 2 && v[0].atom_s().is_some_and(|h| h == "-") => {
                 match v[1].interpreted_value() {
-                    Some(InterpretedValue::I(i)) => Some(InterpretedValue::I(-i)),
+                    Some(InterpretedValue::Int(i)) => Some(InterpretedValue::Int(-i)),
                     _ => None,
                 }
             }
@@ -178,7 +196,7 @@ impl Sexp {
 
 peg::parser! {
 grammar parser() for str {
-  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' ]
+  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '-' | '+' ]
   rule ident_char() = ident_start() / ['0'..='9' | '!' | '#' | '%' | '-' | '.']
   rule ident() = quiet! { ident_start() ident_char()* } / expected!("atom")
 

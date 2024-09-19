@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::qalpha::fixpoint::Strategy;
@@ -66,8 +67,14 @@ pub fn get_multi_context(cfg: &QalphaConfig, m: &Module) -> MultiContext<Quantif
     for prefix in cfg.quant_cfg.exact_prefixes(size, size) {
         contexts.push(QuantifiedContext {
             prefix,
-            atoms: atoms.clone(),
-            prop_cont: pdnf_context(atoms.len(), cfg.qf_cfg.clause_size, cfg.qf_cfg.cubes),
+            bool_terms: atoms.clone(),
+            int_terms: vec![],
+            prop_cont: pdnf_context(
+                (0..atoms.len()).collect(),
+                HashMap::new(),
+                cfg.qf_cfg.clause_size,
+                cfg.qf_cfg.cubes,
+            ),
         });
     }
 

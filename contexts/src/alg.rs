@@ -10,6 +10,7 @@ use crate::{
     logic::*,
     sets::MultiAttributeSet,
 };
+use fly::syntax::NumRel;
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
@@ -23,32 +24,70 @@ fn prop_var(outer_index: usize, inner_index: usize) -> String {
     format!("__prop_{outer_index}_{inner_index}")
 }
 
+fn int_var(outer_index: usize, inner_index: usize) -> String {
+    format!("__int_{outer_index}_{inner_index}")
+}
+
 /// A sequence of propositional variables
 #[derive(Clone)]
 pub struct PropVars {
     bools: Vec<String>,
+    ints: Vec<String>,
+}
+
+fn arith_term_with_vars(expr: &ArithExpr, outer_index: usize) -> Term {
+    match expr {
+        ArithExpr::Int(i) => Term::Int(*i),
+        ArithExpr::Expr(inner_index) => Term::Id(int_var(outer_index, *inner_index)),
+        ArithExpr::Binary(op, x, y) => Term::NumOp(
+            *op,
+            Box::new(arith_term_with_vars(x, outer_index)),
+            Box::new(arith_term_with_vars(y, outer_index)),
+        ),
+    }
 }
 
 fn prop_model_not_satisfies(f: &PropFormula, outer_index: usize) -> Term {
     match f {
         PropFormula::Bottom => Term::true_(),
-        PropFormula::Atom(inner_index, false) => Term::Id(prop_var(outer_index, *inner_index)),
-        PropFormula::Atom(inner_index, true) => {
+        PropFormula::Literal(Literal::IntBounds { expr, lower, upper }) => {
+            let e = arith_term_with_vars(expr, outer_index);
+            let mut ts = vec![];
+            if let Some(l) = lower {
+                ts.push(Term::NumRel(
+                    NumRel::Gt,
+                    Box::new(Term::Int(*l)),
+                    Box::new(e.clone()),
+                ));
+            }
+            if let Some(u) = upper {
+                ts.push(Term::NumRel(
+                    NumRel::Lt,
+                    Box::new(Term::Int(*u)),
+                    Box::new(e.clone()),
+                ));
+            }
+            return Term::or(ts);
+        }
+        PropFormula::Literal(Literal::Bool(inner_index, false)) => {
+            Term::Id(prop_var(outer_index, *inner_index))
+        }
+        PropFormula::Literal(Literal::Bool(inner_index, true)) => {
             Term::not(Term::Id(prop_var(outer_index, *inner_index)))
         }
-        PropFormula::Binary(Op::Or, f1, f2) => Term::and([
+        PropFormula::Binary(LogicOp::Or, f1, f2) => Term::and([
             prop_model_not_satisfies(f1, outer_index),
             prop_model_not_satisfies(f2, outer_index),
         ]),
-        PropFormula::Binary(Op::And, f1, f2) => Term::or([
+        PropFormula::Binary(LogicOp::And, f1, f2) => Term::or([
             prop_model_not_satisfies(f1, outer_index),
             prop_model_not_satisfies(f2, outer_index),
         ]),
-        PropFormula::Nary(Op::Or, fs) => Term::and(
+        PropFormula::Nary(LogicOp::Or, fs) => Term::and(
             fs.iter()
                 .map(|ff| prop_model_not_satisfies(ff, outer_index)),
         ),
-        PropFormula::Nary(Op::And, fs) => Term::or(
+        PropFormula::Nary(LogicOp::And, fs) => Term::or(
             fs.iter()
                 .map(|ff| prop_model_not_satisfies(ff, outer_index)),
         ),
@@ -59,7 +98,8 @@ fn prop_model_not_satisfies(f: &PropFormula, outer_index: usize) -> Term {
 #[derive(Clone)]
 pub struct Extractor {
     type_count: usize,
-    type_length: usize,
+    bool_count: usize,
+    int_count: usize,
     term: Term,
     vars: Vec<PropVars>,
 }
@@ -69,17 +109,31 @@ impl Extractor {
         QuantifiedType(
             (0..self.type_count)
                 .map(|outer_index| PropModel {
-                    bools: (0..self.type_length)
+                    bools: (0..self.bool_count)
                         .map(|inner_index| {
-                            match &values[&Term::Id(prop_var(outer_index, inner_index))] {
-                                InterpretedValue::B(b) => *b,
-                                InterpretedValue::I(_) => unimplemented!(),
-                            }
+                            values[&Term::Id(prop_var(outer_index, inner_index))]
+                                .bool()
+                                .unwrap()
+                        })
+                        .collect(),
+                    ints: (0..self.int_count)
+                        .map(|inner_index| {
+                            values[&Term::Id(int_var(outer_index, inner_index))]
+                                .int()
+                                .unwrap()
                         })
                         .collect(),
                 })
                 .collect(),
         )
+    }
+
+    fn to_evaluate(&self) -> Vec<Term> {
+        self.vars
+            .iter()
+            .flat_map(|v| v.bools.iter().chain(&v.ints))
+            .map(|name| Term::id(name))
+            .collect()
     }
 
     fn extend_signature(&self, sig: &Signature) -> Signature {
@@ -91,6 +145,14 @@ impl Extractor {
                     name: v.clone(),
                     args: vec![],
                     sort: Sort::Bool,
+                })
+            }
+            for v in &vs.ints {
+                extended_sig.relations.push(RelationDecl {
+                    mutable: false,
+                    name: v.clone(),
+                    args: vec![],
+                    sort: Sort::Int,
                 })
             }
         }
@@ -111,25 +173,58 @@ impl QuantifiedContext {
     fn to_term_prop(&self, f: &PropFormula) -> Term {
         match f {
             PropFormula::Bottom => Term::false_(),
-            PropFormula::Atom(i, b) => {
+            PropFormula::Literal(Literal::Bool(i, b)) => {
                 if *b {
-                    self.atoms[*i].clone()
+                    self.bool_terms[*i].clone()
                 } else {
-                    Term::not(&self.atoms[*i])
+                    Term::not(&self.bool_terms[*i])
                 }
             }
-            PropFormula::Binary(Op::Or, f1, f2) => {
+            PropFormula::Literal(Literal::IntBounds { expr, lower, upper }) => {
+                let mut ts = vec![];
+                let expr_term = self.to_term_int(expr);
+                // lower bound <= expr
+                if let Some(l) = lower {
+                    ts.push(Term::NumRel(
+                        NumRel::Leq,
+                        Box::new(Term::Int(*l)),
+                        Box::new(expr_term.clone()),
+                    ));
+                }
+                // upper bound >= expr
+                if let Some(u) = upper {
+                    ts.push(Term::NumRel(
+                        NumRel::Geq,
+                        Box::new(Term::Int(*u)),
+                        Box::new(expr_term.clone()),
+                    ));
+                }
+                Term::and(ts)
+            }
+            PropFormula::Binary(LogicOp::Or, f1, f2) => {
                 Term::NAryOp(NOp::Or, vec![self.to_term_prop(f1), self.to_term_prop(f2)])
             }
-            PropFormula::Binary(Op::And, f1, f2) => {
+            PropFormula::Binary(LogicOp::And, f1, f2) => {
                 Term::NAryOp(NOp::And, vec![self.to_term_prop(f1), self.to_term_prop(f2)])
             }
-            PropFormula::Nary(Op::Or, fs) => {
+            PropFormula::Nary(LogicOp::Or, fs) => {
                 Term::NAryOp(NOp::Or, fs.iter().map(|ff| self.to_term_prop(ff)).collect())
             }
-            PropFormula::Nary(Op::And, fs) => Term::NAryOp(
+            PropFormula::Nary(LogicOp::And, fs) => Term::NAryOp(
                 NOp::And,
                 fs.iter().map(|ff| self.to_term_prop(ff)).collect(),
+            ),
+        }
+    }
+
+    fn to_term_int(&self, expr: &ArithExpr) -> Term {
+        match expr {
+            ArithExpr::Int(i) => Term::Int(*i),
+            ArithExpr::Expr(index) => self.int_terms[*index].clone(),
+            ArithExpr::Binary(op, x, y) => Term::NumOp(
+                *op,
+                Box::new(self.to_term_int(x)),
+                Box::new(self.to_term_int(y)),
             ),
         }
     }
@@ -142,26 +237,34 @@ impl QuantifiedContext {
 
         let vars = (0..size)
             .map(|i| PropVars {
-                bools: (0..self.atoms.len()).map(|j| prop_var(i, j)).collect(),
+                bools: (0..self.bool_terms.len()).map(|j| prop_var(i, j)).collect(),
+                ints: (0..self.int_terms.len()).map(|j| int_var(i, j)).collect(),
             })
             .collect_vec();
 
-        let cubes = (0..size)
-            .map(|i| {
-                Term::and(
-                    self.atoms
-                        .iter()
-                        .enumerate()
-                        .map(|(j, a): (usize, &Term)| Term::iff(Term::id(&vars[i].bools[j]), a)),
-                )
-            })
-            .collect_vec();
+        let cubes =
+            (0..size)
+                .map(|i| {
+                    Term::and(
+                        self.bool_terms
+                            .iter()
+                            .enumerate()
+                            .map(|(j, t): (usize, &Term)| Term::iff(Term::id(&vars[i].bools[j]), t))
+                            .chain(self.int_terms.iter().enumerate().map(
+                                |(j, t): (usize, &Term)| {
+                                    Term::equals(Term::id(&vars[i].ints[j]), t)
+                                },
+                            )),
+                    )
+                })
+                .collect_vec();
 
         let t = Term::not(self.prefix.quantify(Term::not(Term::or(cubes))));
 
         Extractor {
             type_count: size,
-            type_length: self.atoms.len(),
+            bool_count: self.bool_terms.len(),
+            int_count: self.int_terms.len(),
             term: rename_symbols(&t, substitution),
             vars,
         }
@@ -379,7 +482,7 @@ where
                 .arguments
                 .iter()
                 .zip(head_predicate.1)
-                .map(|(old_v, new_v)| ((old_v.clone(), 0), (new_v.clone(), 0)))
+                .map(|(old_v, new_v)| ((old_v.clone(), 0), new_v.clone()))
                 .collect();
 
             assert_eq!(head_contexts.len(), head_sets.len());
@@ -403,19 +506,19 @@ where
                     n_states: 1,
                     cancelers: None,
                     model_option: ModelOption::None,
-                    evaluate: extractor
-                        .vars
-                        .iter()
-                        .flat_map(|v| &v.bools)
-                        .map(|name| Term::id(name))
-                        .collect(),
+                    evaluate: extractor.to_evaluate(),
                     save_tee: false,
                 };
 
-                log::info!("Querying... ({} remaining)", self.partial.checks_left());
+                let formula = head_sets[id.0].get(&id.1);
+                log::info!(
+                    "Querying ({} remaining): {}",
+                    self.partial.checks_left(),
+                    head_contexts[id.0].to_term(&formula)
+                );
                 let mut assertions = hyp.clone();
                 assertions.push(extractor.term.clone());
-                assertions.push(extractor.not_satisfies(&head_sets[id.0].get(&id.1)));
+                assertions.push(extractor.not_satisfies(&formula));
                 let resp = solver.check_sat(&query_conf, &assertions, &assumptions);
 
                 match resp {
@@ -493,10 +596,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::sets::{BaselinePropSet, QFormulaSet};
-
     use super::*;
-    use fly::syntax::{Quantifier, Sort};
+    use crate::sets::{BaselinePropSet, QFormulaSet};
+    use fly::quant::QuantifierPrefix;
+    use fly::syntax::{NumOp, Quantifier, Sort};
+    use fly::term::subst::Substitutable;
     use fly::{parser, quant::QuantifierSequence};
     use formats::chc::*;
     use solver::{backends::SolverType, basics::SingleSolver, conf::SolverConf};
@@ -549,12 +653,18 @@ mod tests {
                 },
             ],
             vec![
-                Component::Predicate("I".to_string(), vec!["p1".to_string(), "q1".to_string()]),
+                Component::Predicate(
+                    "I".to_string(),
+                    vec![Substitutable::name("p1"), Substitutable::name("q1")],
+                ),
                 Component::Formulas(vec![parser::term(
                     "forall x:A. (p1(x) <-> q2(x)) & (p2(x) <-> q1(x))",
                 )]),
             ],
-            Component::Predicate("I".to_string(), vec!["p2".to_string(), "q2".to_string()]),
+            Component::Predicate(
+                "I".to_string(),
+                vec![Substitutable::name("p2"), Substitutable::name("q2")],
+            ),
         );
 
         let prefix = QuantifierSequence::new(
@@ -564,16 +674,23 @@ mod tests {
             &[1],
         );
         let v_name = prefix.all_vars().iter().next().unwrap().clone();
-        let atoms = vec![
+        let bool_terms = vec![
             Term::app("p", 0, [Term::id(&v_name)]),
             Term::app("q", 0, [Term::id(&v_name)]),
         ];
-        let prop_cont =
-            PropContext::Nary(Op::Or, Some(2), Box::new(PropContext::Bools(atoms.len())));
+        let prop_cont = PropContext::Nary(
+            LogicOp::Or,
+            Some(2),
+            Box::new(PropContext::literals(
+                (0..bool_terms.len()).collect(),
+                HashMap::new(),
+            )),
+        );
 
         let cont = MultiContext::new(vec![QuantifiedContext {
             prefix,
-            atoms,
+            bool_terms,
+            int_terms: vec![],
             prop_cont,
         }]);
 
@@ -584,7 +701,7 @@ mod tests {
         let mut formulas_1 = MultiAttributeSet::<QFormulaSet<BaselinePropSet>>::new(&cont);
         formulas_1.insert(MultiAttribute(
             0,
-            PropFormula::Nary(Op::Or, vec![PropFormula::Atom(0, true)]),
+            PropFormula::Nary(LogicOp::Or, vec![PropFormula::bool_literal(0, true)]),
         ));
         let pred_sol_1 = PredicateSolution {
             arguments: vec!["p".to_string(), "q".to_string()],
@@ -618,11 +735,189 @@ mod tests {
                 MultiObject(
                     0,
                     QuantifiedType(vec![PropModel {
-                        bools: vec![false, true]
+                        bools: vec![false, true],
+                        ints: vec![],
                     }])
                 )
             ))
         );
         assert_eq!(sol_1.partial.to_check.len(), 1);
+    }
+
+    #[test]
+    fn test_mccarthy() {
+        let solver = SingleSolver::new(SolverConf::new(
+            SolverType::Z3,
+            false,
+            &"".to_string(),
+            0,
+            None,
+        ));
+
+        let sig = Signature {
+            sorts: vec![],
+            relations: vec![],
+        };
+
+        let mut chc_sys = ChcSystem::new(
+            sig.clone(),
+            vec![HoPredicateDecl {
+                name: "MC".to_string(),
+                args: vec![FunctionSort(vec![Sort::Int, Sort::Int], Sort::Bool)],
+            }],
+        );
+
+        chc_sys.add_chc(
+            vec![
+                HoVariable {
+                    name: "n".to_string(),
+                    sort: FunctionSort(vec![], Sort::Int),
+                },
+                HoVariable {
+                    name: "r".to_string(),
+                    sort: FunctionSort(vec![], Sort::Int),
+                },
+            ],
+            vec![Component::Formulas(vec![parser::term(
+                "(n > 100) & (r = n - 10)",
+            )])],
+            Component::Predicate(
+                "MC".to_string(),
+                vec![Substitutable::name("n"), Substitutable::name("r")],
+            ),
+        );
+
+        chc_sys.add_chc(
+            vec![
+                HoVariable {
+                    name: "n".to_string(),
+                    sort: FunctionSort(vec![], Sort::Int),
+                },
+                HoVariable {
+                    name: "r1".to_string(),
+                    sort: FunctionSort(vec![], Sort::Int),
+                },
+                HoVariable {
+                    name: "r2".to_string(),
+                    sort: FunctionSort(vec![], Sort::Int),
+                },
+            ],
+            vec![
+                Component::Formulas(vec![parser::term("!(n > 100)")]),
+                Component::Predicate(
+                    "MC".to_string(),
+                    vec![
+                        Substitutable::Term(parser::term("n + 11")),
+                        Substitutable::name("r1"),
+                    ],
+                ),
+                Component::Predicate(
+                    "MC".to_string(),
+                    vec![Substitutable::name("r1"), Substitutable::name("r2")],
+                ),
+            ],
+            Component::Predicate(
+                "MC".to_string(),
+                vec![Substitutable::name("n"), Substitutable::name("r2")],
+            ),
+        );
+
+        let prefix = QuantifierPrefix::new(Arc::new(sig.clone()), vec![], vec![], &[]);
+
+        let prop_cont = PropContext::Binary(
+            LogicOp::Or,
+            Box::new(PropContext::literals(
+                vec![],
+                [(
+                    ArithExpr::Expr(1),
+                    IntBoundTemplate {
+                        with_upper: true,
+                        with_lower: true,
+                        upper_limit: Some(0),
+                        lower_limit: Some(200),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            )),
+            Box::new(PropContext::Binary(
+                LogicOp::And,
+                Box::new(PropContext::literals(
+                    vec![],
+                    [(
+                        ArithExpr::Expr(0),
+                        IntBoundTemplate {
+                            with_upper: true,
+                            with_lower: true,
+                            upper_limit: Some(0),
+                            lower_limit: Some(200),
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                )),
+                Box::new(PropContext::literals(
+                    vec![],
+                    [((
+                        ArithExpr::Binary(
+                            NumOp::Sub,
+                            Box::new(ArithExpr::Expr(0)),
+                            Box::new(ArithExpr::Expr(1)),
+                        ),
+                        IntBoundTemplate {
+                            with_upper: true,
+                            with_lower: true,
+                            upper_limit: Some(0),
+                            lower_limit: Some(200),
+                        },
+                    ))]
+                    .into_iter()
+                    .collect(),
+                )),
+            )),
+        );
+
+        let context = MultiContext::new(vec![QuantifiedContext {
+            prefix,
+            bool_terms: vec![],
+            int_terms: vec![Term::id("n"), Term::id("r")],
+            prop_cont,
+        }]);
+
+        let cfg = vec![PredicateConfig {
+            name: "MC".to_string(),
+            arguments: vec!["n".to_string(), "r".to_string()],
+            context,
+        }];
+
+        let res = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, cfg);
+        // Verify that (91 <= r <= 91) | ((102 <= n) | (10 <= n - r <= 10)) is in the solution
+        assert!(
+            res.solutions[&"MC".to_string()].solution.sets[0].contains(&PropFormula::Binary(
+                LogicOp::Or,
+                Box::new(PropFormula::Literal(Literal::IntBounds {
+                    expr: ArithExpr::Expr(1),
+                    lower: Some(91),
+                    upper: Some(91),
+                })),
+                Box::new(PropFormula::Binary(
+                    LogicOp::And,
+                    Box::new(PropFormula::Literal(Literal::IntBounds {
+                        expr: ArithExpr::Expr(0),
+                        lower: Some(102),
+                        upper: None,
+                    })),
+                    Box::new(PropFormula::Literal(Literal::IntBounds {
+                        expr: ArithExpr::Binary(
+                            NumOp::Sub,
+                            Box::new(ArithExpr::Expr(0)),
+                            Box::new(ArithExpr::Expr(1)),
+                        ),
+                        lower: Some(10),
+                        upper: Some(10),
+                    })),
+                )),
+            ))
+        );
     }
 }

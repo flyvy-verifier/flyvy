@@ -131,7 +131,7 @@ pub enum NOp {
 }
 
 /// A numerical operation
-#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord, Copy)]
 pub enum NumOp {
     /// Addition
     Add,
@@ -140,7 +140,7 @@ pub enum NumOp {
 }
 
 /// A Binary relation over numbers
-#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord, Copy)]
 pub enum NumRel {
     /// Less than
     Lt,
@@ -154,7 +154,7 @@ pub enum NumRel {
 
 impl NumRel {
     /// Return whether the numerical relation is satisfied by the two elements.
-    pub fn satisfied<T: Ord>(&self, x: &T, y: &T) -> bool {
+    pub fn satisfies<T: Ord>(&self, x: &T, y: &T) -> bool {
         matches!(
             (x.cmp(y), self),
             (Ordering::Less, NumRel::Lt | NumRel::Leq)
@@ -606,16 +606,18 @@ impl Term {
     /// Supports only quantifier-free terms.
     pub fn ids(&self) -> HashSet<String> {
         match self {
-            Term::Literal(_) => HashSet::new(),
+            Term::Literal(_) | Term::Int(_) => HashSet::new(),
             Term::Id(name) => HashSet::from_iter([name.clone()]),
             Term::App(_, _, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
             Term::UnaryOp(_, t) => t.ids(),
-            Term::BinOp(_, t1, t2) => [t1, t2].iter().flat_map(|t| t.ids()).collect(),
+            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
+                [t1, t2].iter().flat_map(|t| t.ids()).collect()
+            }
             Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
             Term::Ite { cond, then, else_ } => {
                 [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
             }
-            _ => unimplemented!(),
+            Term::Quantified { .. } => unimplemented!(),
         }
     }
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use fly::{
     syntax::{RelationDecl, Signature, Sort, Term},
-    term::subst::{rename_symbols, NameSubstitution},
+    term::subst::{rename_symbols, NameSubstitution, Substitutable},
 };
 use itertools::Itertools;
 use petgraph::{Directed, Graph};
@@ -49,7 +49,7 @@ pub struct HoPredicateDecl {
 #[derive(Clone, Debug)]
 pub enum Component {
     /// A predicate application on some arguments
-    Predicate(String, Vec<String>),
+    Predicate(String, Vec<Substitutable>),
     /// A conjunction of terms
     Formulas(Vec<Term>),
 }
@@ -92,7 +92,7 @@ pub type SymbolicAssignment<K> = HashMap<String, SymbolicPredicate<K>>;
 
 impl Component {
     /// Destruct the component into predicate name and argument names.
-    pub fn predicate(&self) -> Option<(&String, &Vec<String>)> {
+    pub fn predicate(&self) -> Option<(&String, &Vec<Substitutable>)> {
         match self {
             Component::Predicate(name, args) => Some((name, args)),
             Component::Formulas(_) => None,
@@ -114,7 +114,7 @@ impl Component {
                 assert_eq!(symb_pred.args.len(), args.len());
                 let mut subst = NameSubstitution::new();
                 for (v, t) in symb_pred.args.iter().zip(args) {
-                    subst.insert((v.clone(), 0), (t.clone(), 0));
+                    subst.insert((v.clone(), 0), t.clone());
                 }
                 symb_pred
                     .formulas
@@ -315,7 +315,7 @@ impl TwoStateRelations {
             .zip(
                 self.mut_relations
                     .iter()
-                    .map(|n| (Self::next_name(&n.name), 0)),
+                    .map(|n| Substitutable::Name(Self::next_name(&n.name), 0)),
             )
             .collect()
     }
@@ -327,7 +327,7 @@ impl TwoStateRelations {
             .zip(
                 self.mut_relations
                     .iter()
-                    .map(|n| (Self::next_name(&n.name), 0)),
+                    .map(|n| Substitutable::Name(Self::next_name(&n.name), 0)),
             )
             .collect()
     }
@@ -351,8 +351,20 @@ pub fn chc_sys_from_fo_module(m: &FOModule) -> (ChcSystem, String, Vec<String>) 
 
     let mut chc_sys = ChcSystem::new(signature, vec![inv_predicate]);
 
-    let single_inv = Component::Predicate(inv_name.clone(), rels.single_var_names());
-    let next_inv = Component::Predicate(inv_name.clone(), rels.next_var_names());
+    let single_inv = Component::Predicate(
+        inv_name.clone(),
+        rels.single_var_names()
+            .into_iter()
+            .map(|n| Substitutable::Name(n, 0))
+            .collect(),
+    );
+    let next_inv = Component::Predicate(
+        inv_name.clone(),
+        rels.next_var_names()
+            .into_iter()
+            .map(|n| Substitutable::Name(n, 0))
+            .collect(),
+    );
 
     chc_sys.add_chc(
         rels.single_vars(),
@@ -431,10 +443,10 @@ mod tests {
                 },
             ],
             vec![
-                Component::Predicate("I".to_string(), vec!["p".to_string()]),
+                Component::Predicate("I".to_string(), vec![Substitutable::name("p")]),
                 Component::Formulas(vec![parser::term("forall x:A. p(x) -> q(x)")]),
             ],
-            Component::Predicate("I".to_string(), vec!["q".to_string()]),
+            Component::Predicate("I".to_string(), vec![Substitutable::name("q")]),
         );
 
         let solver = SingleSolver::new(SolverConf::new(

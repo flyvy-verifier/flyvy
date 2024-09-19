@@ -501,8 +501,8 @@ mod tests {
             BasicSolverResp::Sat(
                 vec![],
                 [
-                    (term("x"), InterpretedValue::I(2)),
-                    (term("y"), InterpretedValue::I(3)),
+                    (term("x"), InterpretedValue::Int(2)),
+                    (term("y"), InterpretedValue::Int(3)),
                 ]
                 .into_iter()
                 .collect()

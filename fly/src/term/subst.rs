@@ -7,10 +7,40 @@ use std::collections::HashMap;
 
 use crate::syntax::{Term, UOp};
 
+/// A possible substitute for something else in a generalized substitution that supports renaming symbols:
+/// either a new name (with a new number of primes) or a [`Term`] (only if the thing being replaced is some [`Term::Id`]).
+#[derive(Clone, Debug)]
+pub enum Substitutable {
+    /// A new name for a symbols, along with a number of primes
+    Name(String, usize),
+    /// A [`Term`]
+    Term(Term),
+}
+
+impl Substitutable {
+    /// Return a name with no primes.
+    pub fn name<S: Into<String>>(s: S) -> Self {
+        Self::Name(s.into(), 0)
+    }
+
+    fn to_term(&self) -> Term {
+        match self {
+            Substitutable::Name(name, primes) => {
+                let mut t = Term::id(name);
+                for _ in 0..*primes {
+                    t = Term::UnaryOp(UOp::Prime, Box::new(t));
+                }
+                t
+            }
+            Substitutable::Term(t) => t.clone(),
+        }
+    }
+}
+
 /// A map from identifiers to Terms.
 pub type Substitution = HashMap<String, Term>;
-/// A map from names to names, used for renaming functions and relations.
-pub type NameSubstitution = HashMap<(String, usize), (String, usize)>;
+/// A generalized substitution that can also rename symbols and change the number of primes.
+pub type NameSubstitution = HashMap<(String, usize), Substitutable>;
 
 /// Perform a substitution.
 pub fn substitute(term: &Term, substitution: &Substitution) -> Term {
@@ -36,24 +66,21 @@ fn rename_symbols_rec(
     }
 
     match term {
-        Term::Literal(b) => Term::Literal(*b),
-        Term::Id(s) => {
-            let v = substitution.get(&(s.clone(), primes));
-            if (primes > 0 || !bound_ids.contains(s)) && v.is_some() {
-                let mut t = Term::id(&v.unwrap().0);
-                for _ in 0..v.unwrap().1 {
-                    t = Term::UnaryOp(UOp::Prime, Box::new(t));
-                }
-                t
-            } else {
-                Term::id(s)
-            }
-        }
+        Term::Literal(_) | Term::Int(_) => term.clone(),
+        Term::Id(s) => match substitution.get(&(s.clone(), primes)) {
+            Some(x) if primes > 0 || !bound_ids.contains(s) => x.to_term(),
+            _ => Term::id(s),
+        },
 
         Term::App(f, p, args) => {
             let v = substitution.get(&(f.clone(), *p));
             let (new_f, new_p) = match v {
-                Some(id) if !bound_ids.contains(f) => id.clone(),
+                Some(Substitutable::Name(new_f, new_p)) if !bound_ids.contains(f) => {
+                    (new_f.clone(), *new_p)
+                }
+                Some(Substitutable::Term(_)) => {
+                    panic!("cannot rename function application to term")
+                }
                 _ => (f.clone(), *p),
             };
 
@@ -117,6 +144,18 @@ fn rename_symbols_rec(
                 )),
             }
         }
+
+        Term::NumOp(op, x, y) => Term::NumOp(
+            *op,
+            Box::new(rename_symbols_rec(x, substitution, bound_ids, primes)),
+            Box::new(rename_symbols_rec(y, substitution, bound_ids, primes)),
+        ),
+
+        Term::NumRel(rel, x, y) => Term::NumRel(
+            *rel,
+            Box::new(rename_symbols_rec(x, substitution, bound_ids, primes)),
+            Box::new(rename_symbols_rec(y, substitution, bound_ids, primes)),
+        ),
 
         _ => panic!("unsupported term in subsutitution: {term:?}"),
     }
