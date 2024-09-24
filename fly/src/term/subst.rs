@@ -3,7 +3,7 @@
 
 //! Perform substitutions of Id terms by other terms.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use crate::syntax::{Term, UOp};
 
@@ -33,6 +33,15 @@ impl Substitutable {
                 t
             }
             Substitutable::Term(t) => t.clone(),
+        }
+    }
+}
+
+impl Display for Substitutable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Substitutable::Name(name, primes) => write!(f, "{name}{}", "\'".repeat(*primes)),
+            Substitutable::Term(t) => write!(f, "{t}"),
         }
     }
 }

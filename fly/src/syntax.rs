@@ -137,6 +137,8 @@ pub enum NumOp {
     Add,
     /// Subtraction
     Sub,
+    /// Multiplication
+    Mul,
 }
 
 /// A Binary relation over numbers
@@ -618,6 +620,14 @@ impl Term {
                 [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
             }
             Term::Quantified { .. } => unimplemented!(),
+        }
+    }
+
+    /// Flatten the given term into a conjunction as terms as much as possible.
+    pub fn as_conjunction(self) -> Vec<Term> {
+        match self {
+            Self::NAryOp(NOp::And, v) => v.into_iter().flat_map(|t| t.as_conjunction()).collect(),
+            _ => vec![self],
         }
     }
 }

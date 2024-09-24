@@ -104,6 +104,7 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
         Term::NumRel(NumRel::Gt, x, y) => app(">", [term(x), term(y)]),
         Term::NumOp(NumOp::Add, x, y) => app("+", [term(x), term(y)]),
         Term::NumOp(NumOp::Sub, x, y) => app("-", [term(x), term(y)]),
+        Term::NumOp(NumOp::Mul, x, y) => app("*", [term(x), term(y)]),
     }
 }
 

@@ -5,6 +5,7 @@
 
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use formats::chc::ChcSystem;
 use inference::lfp::qalpha_via_contexts;
 use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
@@ -39,6 +40,29 @@ use inference::utils::{QalphaConfig, QfBody, QuantifierFreeConfig, SimulationCon
 use solver::backends;
 use solver::conf::SolverConf;
 use verify::module::verify_module;
+
+/// Possible file input formats.
+pub enum Format {
+    /// A module based on temporal logic
+    Module(Module),
+    /// A system of contrained Horn clause
+    ChcSystem(ChcSystem),
+}
+
+enum FileType {
+    Temporal,
+    Smt2,
+}
+
+impl FileType {
+    fn from_name(name: &str) -> Self {
+        if name.ends_with(".smt2") {
+            Self::Smt2
+        } else {
+            Self::Temporal
+        }
+    }
+}
 
 #[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 enum SolverType {
@@ -270,6 +294,9 @@ enum InferCommand {
     /// a given first-order logical language. The language is mostly specified using a quantifier
     /// structure and a quantifier-free body restricting the formulas in the language.
     Qalpha(QalphaArgs),
+    Lfp {
+        file: String,
+    },
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -393,6 +420,7 @@ impl InferCommand {
         match self {
             InferCommand::Houdini { solver: _, file } => file,
             InferCommand::Qalpha(QalphaArgs { file, .. }) => file,
+            InferCommand::Lfp { file } => file,
         }
     }
 }
@@ -463,6 +491,14 @@ impl VerifyArgs {
 impl App {
     /// Run the application.
     pub fn exec(self) {
+        match FileType::from_name(self.command.file()) {
+            FileType::Temporal => self.exec_temporal(),
+            FileType::Smt2 => self.exec_smtlib2(),
+        }
+    }
+
+    /// Run the application on a `.fly` file written in temporal logic.
+    pub fn exec_temporal(self) {
         let file = fs::read_to_string(self.command.file()).expect("could not read input file");
         // We make sure paths look like Unix paths on all platforms, otherwise test snapshots don't match.
         let standardized_filename = Path::new(self.command.file()).to_slash_lossy();
@@ -725,6 +761,25 @@ impl App {
                     Err(error) => eprintln!("{error}"),
                 }
             }
+            _ => unimplemented!("command does not support this file format"),
+        }
+    }
+
+    /// Run the application on a file in SMTLIB2 format.
+    pub fn exec_smtlib2(self) {
+        let file = fs::read_to_string(self.command.file()).expect("could not read input file");
+
+        match self.command {
+            Command::Infer(
+                ref _args @ InferArgs {
+                    infer_cmd: InferCommand::Lfp { file: _ },
+                    ..
+                },
+            ) => {
+                let chc_sys = formats::parser::parse_smtlib2(&file);
+                println!("{chc_sys}");
+            }
+            _ => unimplemented!("command does not support this file format"),
         }
     }
 }

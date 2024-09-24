@@ -1326,6 +1326,7 @@ name = "smtlib"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "fly",
  "insta",
  "nix",
  "peg",

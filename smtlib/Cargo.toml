@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+fly = { path = "../fly" }
+
 eyre = "0.6.8"
 nix = { version = "0.26.2", default-features = false, features = ["resource", "process", "signal"] }
 thiserror = "1.0.40"

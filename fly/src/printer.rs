@@ -27,6 +27,7 @@ fn precedence(t: &Term) -> usize {
         UnaryOp(Prime, _) => 80,
         NumRel(_, _, _) => 500,
         NumOp(Add | Sub, _, _) => 510,
+        NumOp(Mul, _, _) => 520,
         Literal(_) | Id(_) | Int(_) | App(_, _, _) => 1000,
     }
 }
@@ -132,6 +133,7 @@ pub fn term(t: &Term) -> String {
             let op = match op {
                 NumOp::Add => "+",
                 NumOp::Sub => "-",
+                NumOp::Mul => "*",
             };
             format!("{left} {op} {right}")
         }

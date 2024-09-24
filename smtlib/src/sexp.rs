@@ -6,10 +6,10 @@
 //! This implementation supports comments as part of the grammar, since they are
 //! needed to fully parse the models returned by for example CVC5.
 
-use std::fmt;
-
+use fly::syntax::{BinOp, Binder, NOp, NumOp, NumRel, Quantifier, Sort, Term, UOp};
 use peg::str::LineCol;
 use serde::Serialize;
+use std::fmt;
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, PartialOrd, Ord)]
@@ -162,6 +162,15 @@ impl Sexp {
         }
     }
 
+    /// Return the inner integer if self is an integer atom.
+    pub fn atom_i(&self) -> Option<usize> {
+        if let Sexp::Atom(Atom::I(i)) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
     /// Return the interpreted value of the [`Sexp`]
     pub fn interpreted_value(&self) -> Option<InterpretedValue> {
         match self {
@@ -192,11 +201,117 @@ impl Sexp {
             None
         })
     }
+
+    /// Convert the s-expression into a flyvy sort, if possible.
+    pub fn sort(&self) -> Option<Sort> {
+        self.atom_s().map(|s| match s {
+            "Bool" => Sort::Bool,
+            "Int" => Sort::Int,
+            _ => Sort::uninterpreted(s),
+        })
+    }
+
+    /// Parse a list of quantifier binders.
+    pub fn binders(&self) -> Vec<Binder> {
+        self.list()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                let l = b.list().unwrap();
+                assert_eq!(l.len(), 2);
+                Binder {
+                    name: l[0].atom_s().unwrap().to_string(),
+                    sort: l[1].sort().unwrap(),
+                }
+            })
+            .collect()
+    }
+
+    /// Convert the s-expression into a flyvy term.
+    pub fn term(&self) -> Term {
+        let unary_op = |op: UOp, args: &[Sexp]| -> Term {
+            assert_eq!(args.len(), 1);
+            Term::UnaryOp(op, Box::new(args[0].term()))
+        };
+        let bin_op = |op: BinOp, args: &[Sexp]| -> Term {
+            assert_eq!(args.len(), 2);
+            Term::BinOp(op, Box::new(args[0].term()), Box::new(args[1].term()))
+        };
+        let num_op = |op: NumOp, args: &[Sexp]| -> Term {
+            assert_eq!(args.len(), 2);
+            Term::NumOp(op, Box::new(args[0].term()), Box::new(args[1].term()))
+        };
+        let num_rel = |rel: NumRel, args: &[Sexp]| -> Term {
+            assert_eq!(args.len(), 2);
+            Term::NumRel(rel, Box::new(args[0].term()), Box::new(args[1].term()))
+        };
+        let nary_op = |op: NOp, args: &[Sexp]| -> Term {
+            Term::NAryOp(op, args.iter().map(|a| a.term()).collect())
+        };
+
+        if let Some((name, args)) = self.app() {
+            match name {
+                "forall" => {
+                    assert_eq!(args.len(), 2);
+                    return Term::Quantified {
+                        quantifier: Quantifier::Forall,
+                        binders: args[0].binders(),
+                        body: Box::new(args[1].term()),
+                    };
+                }
+                "exists" => {
+                    assert_eq!(args.len(), 2);
+                    return Term::Quantified {
+                        quantifier: Quantifier::Exists,
+                        binders: args[0].binders(),
+                        body: Box::new(args[1].term()),
+                    };
+                }
+
+                "not" => return unary_op(UOp::Not, args),
+
+                "=" => return bin_op(BinOp::Equals, args),
+                "=>" => return bin_op(BinOp::Implies, args),
+
+                "+" => return num_op(NumOp::Add, args),
+                "*" => return num_op(NumOp::Mul, args),
+                "-" => {
+                    return if args.len() == 1 {
+                        num_op(NumOp::Sub, &[Sexp::Atom(Atom::I(0)), args[0].clone()])
+                    } else {
+                        num_op(NumOp::Sub, args)
+                    }
+                }
+                "<" => return num_rel(NumRel::Lt, args),
+                "<=" => return num_rel(NumRel::Leq, args),
+                ">=" => return num_rel(NumRel::Geq, args),
+                ">" => return num_rel(NumRel::Gt, args),
+
+                "or" => return nary_op(NOp::Or, args),
+                "and" => return nary_op(NOp::And, args),
+                id => return Term::app(id, 0, args.iter().map(|a| a.term())),
+            }
+        }
+
+        if let Some(s) = self.atom_s() {
+            match s {
+                "true" => return Term::Literal(true),
+                "false" => return Term::Literal(false),
+                id => return Term::id(id),
+            }
+        }
+
+        if let Some(i) = self.atom_i() {
+            return Term::Int(i as isize);
+        }
+
+        panic!("cannot parse s-expression to term: {self}")
+    }
 }
 
 peg::parser! {
 grammar parser() for str {
-  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '-' | '+' ]
+  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '+' | '-' | '*']
   rule ident_char() = ident_start() / ['0'..='9' | '!' | '#' | '%' | '-' | '.']
   rule ident() = quiet! { ident_start() ident_char()* } / expected!("atom")
 

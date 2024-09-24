@@ -10,3 +10,4 @@
 
 pub mod basics;
 pub mod chc;
+pub mod parser;

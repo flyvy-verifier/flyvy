@@ -1,6 +1,6 @@
 //! A constrained Horn clauses (CHC) format.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use fly::{
     syntax::{RelationDecl, Signature, Sort, Term},
@@ -71,7 +71,8 @@ pub struct Chc {
 
 /// A system of CHCs, additionally specifying a logical signature and the predicates to solve for.
 pub struct ChcSystem {
-    signature: Signature,
+    /// The signature of the CHC system
+    pub signature: Signature,
     /// The unknown predicates in the CHC
     pub predicates: Vec<HoPredicateDecl>,
     /// The CHCs of the system
@@ -407,6 +408,77 @@ pub fn chc_sys_from_fo_module(m: &FOModule) -> (ChcSystem, String, Vec<String>) 
     }
 
     (chc_sys, inv_name, rels.single_var_names())
+}
+
+impl Display for FunctionSort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "{}", self.1)
+        } else {
+            write!(
+                f,
+                "{} -> {}",
+                self.0.iter().map(|s| s.to_string()).join(" * "),
+                self.1
+            )
+        }
+    }
+}
+
+impl Display for Component {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Component::Predicate(name, args) => {
+                write!(
+                    f,
+                    "{name}({})",
+                    args.iter().map(|a| format!("{a}")).join(", ")
+                )
+            }
+            Component::Formulas(ts) => {
+                write!(f, "{}", ts.iter().map(|t| format!("{t}")).join(" & "))
+            }
+        }
+    }
+}
+
+impl Display for Chc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "forall {}.\n{}\n=> {}",
+            self.variables
+                .iter()
+                .map(|v| format!("{}:{}", v.name, v.sort))
+                .join(", "),
+            self.body.iter().map(|c| format!("({c})")).join(" & "),
+            self.head
+        )
+    }
+}
+
+impl Display for ChcSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{:#?}", self.signature)?;
+        writeln!(f)?;
+        writeln!(f, "Predicates:")?;
+        for p in &self.predicates {
+            writeln!(
+                f,
+                "{}: {}",
+                p.name,
+                p.args.iter().map(|a| format!("({a})")).join(" * ")
+            )?;
+        }
+        writeln!(f)?;
+        writeln!(f, "CHCs:")?;
+        for chc in &self.chcs {
+            writeln!(f)?;
+            writeln!(f, "{chc}")?
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

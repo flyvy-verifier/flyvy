@@ -43,6 +43,7 @@ impl ArithExpr {
             ArithExpr::Expr(index) => assignment[*index],
             ArithExpr::Binary(NumOp::Add, x, y) => x.eval(assignment) + y.eval(assignment),
             ArithExpr::Binary(NumOp::Sub, x, y) => x.eval(assignment) - y.eval(assignment),
+            ArithExpr::Binary(NumOp::Mul, x, y) => x.eval(assignment) * y.eval(assignment),
         }
     }
 }
