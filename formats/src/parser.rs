@@ -1,6 +1,6 @@
 //! A module containing parsing utilities, e.g. for parsing SMTLIB2 s-expressions into a system of CHCs.
 
-use crate::chc::{Chc, ChcSystem, Component, FunctionSort, HoPredicateDecl, HoVariable};
+use crate::chc::{ChcSystem, Component, FunctionSort, HoPredicateDecl, HoVariable};
 use fly::{
     syntax::{Signature, Term},
     term::subst::Substitutable,
@@ -11,7 +11,11 @@ enum SmtlibLine {
     Sort(String),
     Predicate(HoPredicateDecl),
     Var(HoVariable),
-    Chc(Chc),
+    Chc {
+        variables: Vec<HoVariable>,
+        body: Vec<Component>,
+        head: Component,
+    },
     Ignore,
 }
 
@@ -42,6 +46,9 @@ impl SmtlibLine {
     ) -> Self {
         let parse_component = |t: Term| -> Component {
             match t {
+                Term::Id(name) if chc_sys.predicates.iter().any(|p| p.name == name) => {
+                    Component::Predicate(name, vec![])
+                }
                 Term::App(name, 0, args) if chc_sys.predicates.iter().any(|p| p.name == name) => {
                     Component::Predicate(name, args.into_iter().map(Substitutable::Term).collect())
                 }
@@ -61,7 +68,11 @@ impl SmtlibLine {
             }))
             .collect();
 
-        let head_component = parse_component(head.term());
+        let mut head_component = parse_component(head.term());
+        if let Component::Formulas(fs) = &head_component {
+            assert_eq!(fs, &[Term::Literal(false)]);
+            head_component = Component::Predicate(false_predicate(), vec![]);
+        }
 
         let body_components = body
             .term()
@@ -70,19 +81,18 @@ impl SmtlibLine {
             .map(parse_component)
             .collect();
 
-        Self::Chc(Chc {
-            signature: chc_sys.signature.clone(),
+        Self::Chc {
             variables,
             body: body_components,
             head: head_component,
-        })
+        }
     }
 
     fn parse(chc_sys: &ChcSystem, global_vars: &[HoVariable], s: &Sexp) -> Self {
         match s {
             Sexp::Comment(_) => Self::Ignore,
             Sexp::List(l) => match l[0].atom_s().unwrap() {
-                "set-logic" | "check-sat" | "exit" => Self::Ignore,
+                "set-logic" | "check-sat" | "get-model" | "exit" => Self::Ignore,
                 "declare-sort" => {
                     assert_eq!(&l[2], &atom_i(0));
                     Self::Sort(l[1].atom_s().unwrap().to_string())
@@ -129,6 +139,10 @@ impl SmtlibLine {
     }
 }
 
+fn false_predicate() -> String {
+    "__false_predicate".to_string()
+}
+
 /// Parse a ChcSystem from an SMTLIB2 format.
 pub fn parse_smtlib2(s: &str) -> ChcSystem {
     let mut chc_sys = ChcSystem {
@@ -141,12 +155,21 @@ pub fn parse_smtlib2(s: &str) -> ChcSystem {
     };
     let mut global_vars = vec![];
 
+    chc_sys.predicates.push(HoPredicateDecl {
+        name: false_predicate(),
+        args: vec![],
+    });
+
     for line in &smtlib::sexp::parse_many(s).unwrap() {
         match SmtlibLine::parse(&chc_sys, &global_vars, line) {
             SmtlibLine::Sort(s) => chc_sys.signature.sorts.push(s),
             SmtlibLine::Predicate(p) => chc_sys.predicates.push(p),
             SmtlibLine::Var(v) => global_vars.push(v),
-            SmtlibLine::Chc(chc) => chc_sys.chcs.push(chc),
+            SmtlibLine::Chc {
+                variables,
+                body,
+                head,
+            } => chc_sys.add_chc(variables, body, head),
             SmtlibLine::Ignore => (),
         }
     }

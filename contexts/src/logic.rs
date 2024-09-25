@@ -9,6 +9,7 @@ use fly::syntax::{IntType, NumOp, Term};
 use itertools::Itertools;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt::Display;
 
 /// A logical connective
 #[derive(Copy, Clone, Hash, Debug, PartialEq, Eq)]
@@ -29,6 +30,16 @@ pub enum ArithExpr {
     Expr(usize),
     /// An application of a binary operation
     Binary(NumOp, Box<ArithExpr>, Box<ArithExpr>),
+}
+
+impl Display for ArithExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArithExpr::Int(i) => write!(f, "{i}"),
+            ArithExpr::Expr(e) => write!(f, "x{e}"),
+            ArithExpr::Binary(op, x, y) => write!(f, "({x} {op} {y})"),
+        }
+    }
 }
 
 type ArithAssignment = Vec<IntType>;
@@ -196,14 +207,21 @@ impl LiteralContext {
             .bool_atoms
             .iter()
             .map(|&i| Literal::Bool(i, obj.bools[i]));
-        let ints = self.int_templates.iter().map(|(expr, t)| {
+        let ints = self.int_templates.iter().filter_map(|(expr, t)| {
             let val = expr.eval(&obj.ints);
-            let lower = if t.with_lower { Some(val) } else { None };
-            let upper = if t.with_upper { Some(val) } else { None };
-            Literal::IntBounds {
-                expr: expr.clone(),
-                lower,
-                upper,
+            if (!t.with_lower && !t.with_upper)
+                || t.lower_limit.is_some_and(|lim| lim > val)
+                || t.upper_limit.is_some_and(|lim| lim < val)
+            {
+                None
+            } else {
+                let lower = if t.with_lower { Some(val) } else { None };
+                let upper = if t.with_upper { Some(val) } else { None };
+                Some(Literal::IntBounds {
+                    expr: expr.clone(),
+                    lower,
+                    upper,
+                })
             }
         });
         bools.chain(ints).map(PropFormula::Literal).collect()

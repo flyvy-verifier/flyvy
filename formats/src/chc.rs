@@ -14,7 +14,7 @@ use crate::basics::FOModule;
 
 /// A higher-order sort able to express sorts of predicates and functions
 /// (as well as regular sorts).
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct FunctionSort(pub Vec<Sort>, pub Sort);
 
 /// A variable of a higher-order sort.
@@ -471,10 +471,11 @@ impl Display for ChcSystem {
             )?;
         }
         writeln!(f)?;
-        writeln!(f, "CHCs:")?;
+        write!(f, "CHCs:")?;
         for chc in &self.chcs {
             writeln!(f)?;
-            writeln!(f, "{chc}")?
+            writeln!(f)?;
+            write!(f, "{chc}")?
         }
 
         Ok(())

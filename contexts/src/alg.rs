@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::sets::MultiId;
 use crate::{
@@ -10,12 +11,15 @@ use crate::{
     logic::*,
     sets::MultiAttributeSet,
 };
+use fly::quant::QuantifierPrefix;
 use fly::syntax::NumRel;
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
 };
-use formats::chc::{ChcSystem, SymbolicAssignment, SymbolicPredicate};
+use formats::chc::{
+    ChcSystem, FunctionSort, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate,
+};
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
 use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf};
@@ -208,12 +212,11 @@ impl QuantifiedContext {
                 Term::NAryOp(NOp::And, vec![self.to_term_prop(f1), self.to_term_prop(f2)])
             }
             PropFormula::Nary(LogicOp::Or, fs) => {
-                Term::NAryOp(NOp::Or, fs.iter().map(|ff| self.to_term_prop(ff)).collect())
+                Term::or(fs.iter().map(|ff| self.to_term_prop(ff)))
             }
-            PropFormula::Nary(LogicOp::And, fs) => Term::NAryOp(
-                NOp::And,
-                fs.iter().map(|ff| self.to_term_prop(ff)).collect(),
-            ),
+            PropFormula::Nary(LogicOp::And, fs) => {
+                Term::and(fs.iter().map(|ff| self.to_term_prop(ff)))
+            }
         }
     }
 
@@ -299,7 +302,7 @@ struct PartialSolution<K: Hash + Eq + Clone> {
     /// The identifiers of formulas left to check, for each CHC (as indexed by the [`ChcSystem`])
     to_check: Vec<HashSet<K>>,
     /// For each CHC, a mapping from a formula identifier to an UNSAT-core consisting of elements `(predicate_name, formula_identifier)`
-    formula_to_core: Vec<HashMap<K, Vec<(String, K)>>>,
+    formula_to_core: Vec<HashMap<K, HashSet<(String, K)>>>,
     /// A mapping from `(predicate_name, formula_identifier)` to formulas in the heads of CHCs that have it in their UNSAT-core,
     /// given as `(chc_index, formula_identifier)`
     in_core_of: HashMap<(String, K), HashSet<(usize, K)>>,
@@ -310,7 +313,7 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
         self.to_check.iter().map(|s| s.len()).sum()
     }
 
-    fn add_core(&mut self, id: (usize, K), core: Vec<(String, K)>) {
+    fn add_core(&mut self, id: (usize, K), core: HashSet<(String, K)>) {
         for e in &core {
             self.in_core_of
                 .entry(e.clone())
@@ -437,25 +440,26 @@ where
             }
 
             let chc = &chc_sys.chcs[chc_index];
+            let head_predicate = chc.head.predicate().unwrap();
+
+            log::info!("Checking CHC #{chc_index} with head {}", head_predicate.0);
 
             // Check whether one of the predicates in the body is equivalent to false (which implies a trivial implication)
             for comp in &chc.body {
                 if let Some((comp_name, _)) = comp.predicate() {
                     if let Some(core) = self.solutions[comp_name].solution.get_false_subset() {
-                        let named_core = core
-                            .into_iter()
-                            .map(|e| (comp_name.clone(), e))
-                            .collect_vec();
+                        let named_core: HashSet<_> =
+                            core.into_iter().map(|e| (comp_name.clone(), e)).collect();
                         let ids_to_check = std::mem::take(&mut self.partial.to_check[chc_index]);
                         for id in ids_to_check {
                             self.partial.add_core((chc_index, id), named_core.clone());
                         }
+                        log::info!("Check trivially holds");
                         continue 'chc_loop;
                     }
                 }
             }
 
-            let head_predicate = chc.head.predicate().unwrap();
             // The hypotheses of the CHC
             let mut hyp = vec![];
             let mut assume_keys = vec![];
@@ -512,7 +516,8 @@ where
 
                 let formula = head_sets[id.0].get(&id.1);
                 log::info!(
-                    "Querying ({} remaining): {}",
+                    "Querying {} ({} remaining): {}",
+                    head_predicate.0,
                     self.partial.checks_left(),
                     head_contexts[id.0].to_term(&formula)
                 );
@@ -529,7 +534,7 @@ where
                         ))
                     }
                     Ok(BasicSolverResp::Unsat(core)) => {
-                        let named_core = core.iter().map(|i| assume_keys[*i].clone()).collect_vec();
+                        let named_core = core.iter().map(|i| assume_keys[*i].clone()).collect();
                         self.partial.to_check[chc_index].remove(&id);
                         self.partial.add_core((chc_index, id), named_core);
                     }
@@ -570,6 +575,72 @@ pub struct PredicateConfig {
     pub arguments: Vec<String>,
     /// The context the predicate ranges over.
     pub context: MultiContext<QuantifiedContext>,
+}
+
+impl PredicateConfig {
+    /// Create a default configuration for the given predicate in the given CHC system.
+    pub fn default(decl: &HoPredicateDecl, chc_sys: &ChcSystem) -> Self {
+        let arguments = (1..=decl.args.len())
+            .map(|i| format!("__pvar_{i}"))
+            .collect_vec();
+
+        let bool_sort = FunctionSort(vec![], Sort::Bool);
+        let bool_terms = decl
+            .args
+            .iter()
+            .zip(&arguments)
+            .filter(|(sort, _)| *sort == &bool_sort)
+            .map(|(_, name)| Term::id(name))
+            .collect_vec();
+
+        let int_sort = FunctionSort(vec![], Sort::Int);
+        let int_terms = decl
+            .args
+            .iter()
+            .zip(&arguments)
+            .filter(|(sort, _)| *sort == &int_sort)
+            .map(|(_, name)| Term::id(name))
+            .collect_vec();
+
+        // Create integer bounds for each integer argument.
+        let bounds = IntBoundTemplate {
+            with_upper: true,
+            with_lower: true,
+            upper_limit: Some(1),
+            lower_limit: Some(-1),
+        };
+        let int_exprs: HashSet<_> = (0..int_terms.len()).map(|i| ArithExpr::Expr(i)).collect();
+
+        log::info!("Integer expressions used ({}):", int_exprs.len());
+        let int_templates = int_exprs
+            .into_iter()
+            .map(|e| {
+                log::info!("    {e}");
+                (e, bounds.clone())
+            })
+            .collect();
+
+        let literal_context = PropContext::literals((0..bool_terms.len()).collect(), int_templates);
+
+        let prop_cont = PropContext::Nary(LogicOp::Or, Some(2), Box::new(literal_context));
+
+        PredicateConfig {
+            name: decl.name.clone(),
+            arguments,
+            context: MultiContext {
+                contexts: vec![QuantifiedContext {
+                    prefix: QuantifierPrefix {
+                        quantifiers: vec![],
+                        sorts: Arc::new(vec![]),
+                        names: Arc::new(vec![]),
+                    },
+                    bool_terms,
+                    int_terms,
+                    prop_cont,
+                }],
+            },
+        }
+    }
 }
 
 /// Find the least-fixpoint solution of a [`ChcSystem`] with the given predicate configurations.

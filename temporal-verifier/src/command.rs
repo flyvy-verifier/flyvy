@@ -6,7 +6,7 @@
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use formats::chc::ChcSystem;
-use inference::lfp::qalpha_via_contexts;
+use inference::lfp::{compute_lfp, qalpha_via_contexts};
 use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
 use solver::basics::SingleSolver;
@@ -778,6 +778,7 @@ impl App {
             ) => {
                 let chc_sys = formats::parser::parse_smtlib2(&file);
                 println!("{chc_sys}");
+                compute_lfp(&file, &chc_sys);
             }
             _ => unimplemented!("command does not support this file format"),
         }

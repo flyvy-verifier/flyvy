@@ -141,6 +141,20 @@ pub enum NumOp {
     Mul,
 }
 
+impl fmt::Display for NumOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                NumOp::Add => "+",
+                NumOp::Sub => "-",
+                NumOp::Mul => "*",
+            }
+        )
+    }
+}
+
 /// A Binary relation over numbers
 #[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord, Copy)]
 pub enum NumRel {
