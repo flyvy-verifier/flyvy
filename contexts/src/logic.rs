@@ -185,6 +185,8 @@ pub struct IntBoundTemplate {
     pub with_upper: bool,
     /// Whether to include a lower value
     pub with_lower: bool,
+    /// Whether to allow both the upper bound and the lower bound to appear in an atom simulataneously
+    pub with_both: bool,
     /// The upper limit of the integer literal on the righthand side
     pub upper_limit: Option<IntType>,
     /// The lower limit of the integer literal on the righthand side
@@ -207,21 +209,36 @@ impl LiteralContext {
             .bool_atoms
             .iter()
             .map(|&i| Literal::Bool(i, obj.bools[i]));
-        let ints = self.int_templates.iter().filter_map(|(expr, t)| {
+        let ints = self.int_templates.iter().flat_map(|(expr, t)| {
             let val = expr.eval(&obj.ints);
             if (!t.with_lower && !t.with_upper)
                 || t.lower_limit.is_some_and(|lim| lim > val)
                 || t.upper_limit.is_some_and(|lim| lim < val)
             {
-                None
+                vec![]
             } else {
                 let lower = if t.with_lower { Some(val) } else { None };
                 let upper = if t.with_upper { Some(val) } else { None };
-                Some(Literal::IntBounds {
-                    expr: expr.clone(),
-                    lower,
-                    upper,
-                })
+                if matches!((lower, upper), (Some(_), Some(_))) & !t.with_both {
+                    vec![
+                        Literal::IntBounds {
+                            expr: expr.clone(),
+                            lower: None,
+                            upper,
+                        },
+                        Literal::IntBounds {
+                            expr: expr.clone(),
+                            lower,
+                            upper: None,
+                        },
+                    ]
+                } else {
+                    vec![Literal::IntBounds {
+                        expr: expr.clone(),
+                        lower,
+                        upper,
+                    }]
+                }
             }
         });
         bools.chain(ints).map(PropFormula::Literal).collect()
@@ -255,6 +272,21 @@ impl LiteralContext {
                 };
                 if matches!((new_lower, new_upper), (None, None)) {
                     vec![]
+                } else if matches!((new_lower, new_upper), (Some(_), Some(_)))
+                    && !template.with_both
+                {
+                    vec![
+                        PropFormula::Literal(Literal::IntBounds {
+                            expr: expr.clone(),
+                            lower: None,
+                            upper: new_upper,
+                        }),
+                        PropFormula::Literal(Literal::IntBounds {
+                            expr: expr.clone(),
+                            lower: new_lower,
+                            upper: None,
+                        }),
+                    ]
                 } else {
                     vec![PropFormula::Literal(Literal::IntBounds {
                         expr: expr.clone(),

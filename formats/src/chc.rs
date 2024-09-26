@@ -236,6 +236,42 @@ impl ChcSystem {
 
         g
     }
+
+    /// Return the maximal absolute value of an integer that appears in the CHC system.
+    pub fn max_int(&self) -> Option<isize> {
+        self.chcs
+            .iter()
+            .flat_map(|chc| chc.body.iter().chain([&chc.head]))
+            .flat_map(|c| match c {
+                Component::Predicate(_, _) => &[],
+                Component::Formulas(t) => t.as_slice(),
+            })
+            .filter_map(|t| term_max_int(t))
+            .max()
+    }
+}
+
+fn term_max_int(term: &Term) -> Option<isize> {
+    match term {
+        Term::Literal(_) | Term::Id(_) => None,
+        Term::Int(i) => Some(i.abs()),
+        Term::App(_, _, ts) | Term::NAryOp(_, ts) => {
+            ts.iter().filter_map(|t| term_max_int(t)).max()
+        }
+        Term::UnaryOp(_, t)
+        | Term::Quantified {
+            quantifier: _,
+            binders: _,
+            body: t,
+        } => term_max_int(t),
+        Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
+            [t1, t2].iter().filter_map(|t| term_max_int(t)).max()
+        }
+        Term::Ite { cond, then, else_ } => [cond, then, else_]
+            .iter()
+            .filter_map(|t| term_max_int(t))
+            .max(),
+    }
 }
 
 struct TwoStateRelations {

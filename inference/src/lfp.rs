@@ -30,7 +30,7 @@ pub fn compute_lfp(fname: &String, chc_sys: &ChcSystem) {
         .map(|decl| PredicateConfig::default(decl, chc_sys))
         .collect();
 
-    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, predicates);
+    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, chc_sys, predicates);
 
     println!();
     println!("{}", fp.to_string());

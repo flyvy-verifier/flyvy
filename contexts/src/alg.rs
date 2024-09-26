@@ -603,13 +603,15 @@ impl PredicateConfig {
             .collect_vec();
 
         // Create integer bounds for each integer argument.
+        let max_int = chc_sys.max_int().map(|i| i + 1).or(Some(1));
         let bounds = IntBoundTemplate {
             with_upper: true,
             with_lower: true,
-            upper_limit: Some(1),
-            lower_limit: Some(-1),
+            with_both: false,
+            upper_limit: max_int,
+            lower_limit: max_int.map(|i| -i),
         };
-        let int_exprs: HashSet<_> = (0..int_terms.len()).map(|i| ArithExpr::Expr(i)).collect();
+        let int_exprs: HashSet<_> = (0..int_terms.len()).map(ArithExpr::Expr).collect();
 
         log::info!("Integer expressions used ({}):", int_exprs.len());
         let int_templates = int_exprs
@@ -904,6 +906,7 @@ mod tests {
                     IntBoundTemplate {
                         with_upper: true,
                         with_lower: true,
+                        with_both: true,
                         upper_limit: Some(0),
                         lower_limit: Some(200),
                     },
@@ -920,6 +923,7 @@ mod tests {
                         IntBoundTemplate {
                             with_upper: true,
                             with_lower: true,
+                            with_both: true,
                             upper_limit: Some(0),
                             lower_limit: Some(200),
                         },
@@ -938,6 +942,7 @@ mod tests {
                         IntBoundTemplate {
                             with_upper: true,
                             with_lower: true,
+                            with_both: true,
                             upper_limit: Some(0),
                             lower_limit: Some(200),
                         },
