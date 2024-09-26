@@ -19,6 +19,13 @@ pub enum Sort {
     Bool,
     /// Integer sort
     Int,
+    /// Array sort with an index sort and an element sort
+    Array {
+        /// The index sort of the array
+        index: Box<Sort>,
+        /// The element sort of the array
+        element: Box<Sort>,
+    },
     /// Uninterpreted sort identified by its name
     Uninterpreted(String),
     /*
@@ -63,6 +70,7 @@ impl fmt::Display for Sort {
         let s = match self {
             Sort::Bool => "bool".to_string(),
             Sort::Int => "int".to_string(),
+            Sort::Array { index, element } => format!("array<{index},{element}>"),
             Sort::Uninterpreted(i) => i.to_string(),
         };
         write!(f, "{s}")
@@ -209,7 +217,7 @@ pub type IntType = isize;
 pub enum Term {
     /// A constant true or false
     Literal(bool),
-    /// A constant integer values
+    /// A an integer value
     Int(IntType),
     /// A reference to a bound variable or function in the signature
     Id(String),
@@ -224,6 +232,22 @@ pub enum Term {
     NAryOp(NOp, Vec<Term>),
     /// An applied numerical binary relation
     NumRel(NumRel, Box<Term>, Box<Term>),
+    /// An array store operation
+    ArrayStore {
+        /// The array to store in
+        array: Box<Term>,
+        /// The index to store at
+        index: Box<Term>,
+        /// The element to store
+        value: Box<Term>,
+    },
+    /// An array select (retrieval) operation
+    ArraySelect {
+        /// The array to select from
+        array: Box<Term>,
+        /// The index of the selected elements
+        index: Box<Term>,
+    },
     /// An applied arithmetic operation
     NumOp(NumOp, Box<Term>, Box<Term>),
     /// If-then-else
@@ -567,6 +591,7 @@ impl Term {
                 then_is_bool
             }
             Term::Int(_) | Term::NumOp(_, _, _) => false,
+            Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
         }
     }
 
@@ -593,6 +618,12 @@ impl Term {
                 binders: _,
                 body,
             } => body.is_nontemporal(),
+            Term::ArrayStore {
+                array,
+                index,
+                value,
+            } => array.is_nontemporal() && index.is_nontemporal() && value.is_nontemporal(),
+            Term::ArraySelect { array, index } => array.is_nontemporal() && index.is_nontemporal(),
         }
     }
 
@@ -604,7 +635,9 @@ impl Term {
             | Term::App(_, _, _)
             | Term::Int(_)
             | Term::NumRel(_, _, _)
-            | Term::NumOp(_, _, _) => 1,
+            | Term::NumOp(_, _, _)
+            | Term::ArrayStore { .. }
+            | Term::ArraySelect { .. } => 1,
             Term::UnaryOp(_, t) => t.size(),
             Term::BinOp(_, t1, t2) => t1.size() + t2.size(),
             Term::NAryOp(_, ts) => ts.iter().map(Term::size).sum(),
@@ -634,6 +667,14 @@ impl Term {
                 [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
             }
             Term::Quantified { .. } => unimplemented!(),
+            Term::ArrayStore {
+                array,
+                index,
+                value,
+            } => [array, index, value].iter().flat_map(|t| t.ids()).collect(),
+            Term::ArraySelect { array, index } => {
+                [array, index].iter().flat_map(|t| t.ids()).collect()
+            }
         }
     }
 

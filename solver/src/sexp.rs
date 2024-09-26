@@ -12,6 +12,7 @@ pub fn sort(s: &Sort) -> Sexp {
     match s {
         Sort::Bool => atom_s("Bool"),
         Sort::Int => atom_s("Int"),
+        Sort::Array { index, element } => app("Array", [sort(index), sort(element)]),
         Sort::Uninterpreted(s) => atom_s(s),
     }
 }
@@ -105,6 +106,12 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
         Term::NumOp(NumOp::Add, x, y) => app("+", [term(x), term(y)]),
         Term::NumOp(NumOp::Sub, x, y) => app("-", [term(x), term(y)]),
         Term::NumOp(NumOp::Mul, x, y) => app("*", [term(x), term(y)]),
+        Term::ArrayStore {
+            array,
+            index,
+            value,
+        } => app("store", [term(array), term(index), term(value)]),
+        Term::ArraySelect { array, index } => app("select", [term(array), term(index)]),
     }
 }
 

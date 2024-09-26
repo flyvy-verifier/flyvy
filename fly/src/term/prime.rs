@@ -58,7 +58,11 @@ fn with_next(sig: &Signature, t: &Term, bound: im::HashSet<String>, next: usize)
                 Box::new(with_next(sig, body, bound, next))
             },
         },
-        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
+        Term::Int(_)
+        | Term::NumRel(_, _, _)
+        | Term::NumOp(_, _, _)
+        | Term::ArrayStore { .. }
+        | Term::ArraySelect { .. } => unimplemented!(),
     }
 }
 

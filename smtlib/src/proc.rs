@@ -188,7 +188,7 @@ impl SmtProc {
         // silence a warning from CVC4/CVC5 when run manually without -q
         // TODO: figure out what a good default logic is (possibly will be
         // customized to the solver)
-        proc.send(&app("set-logic", vec![atom_s("UFNIA")]));
+        proc.send(&app("set-logic", vec![atom_s("AUFNIRA")]));
         Ok(proc)
     }
 

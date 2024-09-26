@@ -33,7 +33,7 @@ pub fn cardinality(universe: &UniverseBounds, sort: &Sort) -> usize {
     match sort {
         Sort::Bool => 2,
         Sort::Uninterpreted(sort) => *universe.get(sort).unwrap(),
-        Sort::Int => panic!("integer sort has infinite cardinality"),
+        Sort::Int | Sort::Array { .. } => panic!("sort does not have finite cardinality"),
     }
 }
 
@@ -93,7 +93,11 @@ fn nullary_id_to_app(term: &Term, rs: &[RelationDecl]) -> Term {
             binders: binders.to_vec(),
             body: Box::new(go(body)),
         },
-        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
+        Term::Int(_)
+        | Term::NumRel(_, _, _)
+        | Term::NumOp(_, _, _)
+        | Term::ArrayStore { .. }
+        | Term::ArraySelect { .. } => unimplemented!(),
     }
 }
 
@@ -275,7 +279,11 @@ fn term_to_enumerated(
         | Term::BinOp(BinOp::Until | BinOp::Since, ..) => {
             return Err(EnumerationError::TemporalOperator(term.clone()))
         }
-        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
+        Term::Int(_)
+        | Term::NumRel(_, _, _)
+        | Term::NumOp(_, _, _)
+        | Term::ArrayStore { .. }
+        | Term::ArraySelect { .. } => unimplemented!(),
     };
     Ok(enumerated)
 }

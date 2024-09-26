@@ -100,7 +100,7 @@ fn sort_cardinality(universes: &HashMap<String, usize>, sort: &Sort) -> usize {
         Sort::Uninterpreted(s) => *universes
             .get(s)
             .unwrap_or_else(|| panic!("unknown sort {s}")),
-        Sort::Int => panic!("integer sort has infinite cardinality"),
+        Sort::Int | Sort::Array { .. } => panic!("integer sort has infinite cardinality"),
     }
 }
 
@@ -208,7 +208,7 @@ impl Backend for &GenericBackend {
                             let element = elements[e_idx].clone();
                             Atom::S(element)
                         }
-                        Sort::Int => unimplemented!(),
+                        Sort::Int | Sort::Array { .. } => unimplemented!(),
                     })
                     .collect::<Vec<_>>();
                 let repl: HashMap<&str, Atom> =
@@ -235,7 +235,7 @@ impl Backend for &GenericBackend {
                             .unwrap_or_else(|| panic!("unknown {sort} element {res}"));
                         return res_idx as Element;
                     }
-                    Sort::Int => unimplemented!(),
+                    Sort::Int | Sort::Array { .. } => unimplemented!(),
                 }
             });
             part_interp

@@ -107,28 +107,35 @@ impl SmtlibLine {
                     assert_eq!(l[3].atom_s(), Some("Bool"));
                     SmtlibLine::parse_predicate(&l[1], l[2].list().unwrap())
                 }
-                "assert" | "rule" => match &l[1].app().unwrap() {
-                    ("forall", rest) => {
-                        let binders = rest[0].list().unwrap();
-                        let (implies, body_head) = rest[1].app().unwrap();
-                        assert_eq!(implies, "=>");
-                        SmtlibLine::parse_chc(
-                            chc_sys,
-                            global_vars,
-                            binders,
-                            &body_head[0],
-                            &body_head[1],
-                        )
+                "assert" | "rule" => {
+                    if let Some(app) = l[1].app() {
+                        match app {
+                            ("forall", rest) => {
+                                let binders = rest[0].list().unwrap();
+                                let (implies, body_head) = rest[1].app().unwrap();
+                                assert_eq!(implies, "=>");
+                                return SmtlibLine::parse_chc(
+                                    chc_sys,
+                                    global_vars,
+                                    binders,
+                                    &body_head[0],
+                                    &body_head[1],
+                                );
+                            }
+                            ("=>", body_head) => {
+                                return SmtlibLine::parse_chc(
+                                    chc_sys,
+                                    global_vars,
+                                    &[],
+                                    &body_head[0],
+                                    &body_head[1],
+                                )
+                            }
+                            _ => (),
+                        }
                     }
-                    ("=>", body_head) => SmtlibLine::parse_chc(
-                        chc_sys,
-                        global_vars,
-                        &[],
-                        &body_head[0],
-                        &body_head[1],
-                    ),
-                    _ => panic!("invalid assertion format: {s}"),
-                },
+                    SmtlibLine::parse_chc(chc_sys, global_vars, &[], &atom_s("true"), &l[1])
+                }
                 "query" => {
                     SmtlibLine::parse_chc(chc_sys, global_vars, &[], &l[1], &atom_s("false"))
                 }

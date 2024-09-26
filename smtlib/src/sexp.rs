@@ -204,11 +204,22 @@ impl Sexp {
 
     /// Convert the s-expression into a flyvy sort, if possible.
     pub fn sort(&self) -> Option<Sort> {
-        self.atom_s().map(|s| match s {
-            "Bool" => Sort::Bool,
-            "Int" => Sort::Int,
-            _ => Sort::uninterpreted(s),
-        })
+        if let Some(("Array", sorts)) = self.app() {
+            assert_eq!(sorts.len(), 2);
+            match (sorts[0].sort(), sorts[1].sort()) {
+                (Some(index), Some(element)) => Some(Sort::Array {
+                    index: Box::new(index),
+                    element: Box::new(element),
+                }),
+                _ => None,
+            }
+        } else {
+            self.atom_s().map(|s| match s {
+                "Bool" => Sort::Bool,
+                "Int" => Sort::Int,
+                _ => Sort::uninterpreted(s),
+            })
+        }
     }
 
     /// Parse a list of quantifier binders.
@@ -289,6 +300,24 @@ impl Sexp {
 
                 "or" => return nary_op(NOp::Or, args),
                 "and" => return nary_op(NOp::And, args),
+
+                "store" => {
+                    assert_eq!(args.len(), 3);
+                    return Term::ArrayStore {
+                        array: Box::new(args[0].term()),
+                        index: Box::new(args[1].term()),
+                        value: Box::new(args[2].term()),
+                    };
+                }
+
+                "select" => {
+                    assert_eq!(args.len(), 2);
+                    return Term::ArraySelect {
+                        array: Box::new(args[0].term()),
+                        index: Box::new(args[1].term()),
+                    };
+                }
+
                 id => return Term::app(id, 0, args.iter().map(|a| a.term())),
             }
         }

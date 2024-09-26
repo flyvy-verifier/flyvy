@@ -28,7 +28,12 @@ fn precedence(t: &Term) -> usize {
         NumRel(_, _, _) => 500,
         NumOp(Add | Sub, _, _) => 510,
         NumOp(Mul, _, _) => 520,
-        Literal(_) | Id(_) | Int(_) | App(_, _, _) => 1000,
+        Literal(_)
+        | Id(_)
+        | Int(_)
+        | App(_, _, _)
+        | Term::ArrayStore { .. }
+        | Term::ArraySelect { .. } => 1000,
     }
 }
 
@@ -157,6 +162,12 @@ pub fn term(t: &Term) -> String {
             let binders = binders.iter().map(binder).collect::<Vec<_>>().join(", ");
             format!("{quantifier} {binders}. {}", term(body))
         }
+        Term::ArrayStore {
+            array,
+            index,
+            value,
+        } => format!("{}[{} -> {}]", term(array), term(index), term(value)),
+        Term::ArraySelect { array, index } => format!("{}[{}]", term(array), term(index)),
     }
 }
 
@@ -235,11 +246,7 @@ mod tests {
 }
 
 fn sort(s: &Sort) -> String {
-    match s {
-        Sort::Bool => "bool".to_string(),
-        Sort::Int => "int".to_string(),
-        Sort::Uninterpreted(i) => i.to_string(),
-    }
+    format!("{s}")
 }
 
 fn relation_decl(decl: &RelationDecl) -> String {

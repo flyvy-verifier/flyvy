@@ -278,7 +278,7 @@ impl PartialInterp {
                 }
             }
             Sort::Uninterpreted(sort) => self.universes[sort][result_el].clone(),
-            Sort::Int => unimplemented!(),
+            Sort::Int | Sort::Array { .. } => unimplemented!(),
         }
     }
 }

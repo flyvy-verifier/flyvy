@@ -246,7 +246,7 @@ impl ChcSystem {
                 Component::Predicate(_, _) => &[],
                 Component::Formulas(t) => t.as_slice(),
             })
-            .filter_map(|t| term_max_int(t))
+            .filter_map(term_max_int)
             .max()
     }
 }
@@ -255,22 +255,30 @@ fn term_max_int(term: &Term) -> Option<isize> {
     match term {
         Term::Literal(_) | Term::Id(_) => None,
         Term::Int(i) => Some(i.abs()),
-        Term::App(_, _, ts) | Term::NAryOp(_, ts) => {
-            ts.iter().filter_map(|t| term_max_int(t)).max()
-        }
+        Term::App(_, _, ts) | Term::NAryOp(_, ts) => ts.iter().filter_map(term_max_int).max(),
         Term::UnaryOp(_, t)
         | Term::Quantified {
             quantifier: _,
             binders: _,
             body: t,
         } => term_max_int(t),
-        Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
-            [t1, t2].iter().filter_map(|t| term_max_int(t)).max()
+        Term::BinOp(_, t1, t2)
+        | Term::NumRel(_, t1, t2)
+        | Term::NumOp(_, t1, t2)
+        | Term::ArraySelect {
+            array: t1,
+            index: t2,
+        } => [t1, t2].iter().filter_map(|t| term_max_int(t)).max(),
+        Term::Ite {
+            cond: t1,
+            then: t2,
+            else_: t3,
         }
-        Term::Ite { cond, then, else_ } => [cond, then, else_]
-            .iter()
-            .filter_map(|t| term_max_int(t))
-            .max(),
+        | Term::ArrayStore {
+            array: t1,
+            index: t2,
+            value: t3,
+        } => [t1, t2, t3].iter().filter_map(|t| term_max_int(t)).max(),
     }
 }
 

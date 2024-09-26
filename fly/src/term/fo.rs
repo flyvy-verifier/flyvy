@@ -73,7 +73,11 @@ fn unrolling(t: &Term) -> Unrolling {
         Term::NAryOp(_, ts) => max_unrolling(ts),
         Term::Ite { cond, then, else_ } => unrolling(cond) & unrolling(then) & unrolling(else_),
         Term::Quantified { body, .. } => unrolling(body),
-        Term::Int(_) | Term::NumRel(_, _, _) | Term::NumOp(_, _, _) => unimplemented!(),
+        Term::Int(_)
+        | Term::NumRel(_, _, _)
+        | Term::NumOp(_, _, _)
+        | Term::ArrayStore { .. }
+        | Term::ArraySelect { .. } => unimplemented!(),
     }
 }
 
