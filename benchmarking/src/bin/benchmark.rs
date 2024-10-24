@@ -67,7 +67,7 @@ enum Command {
     /// - quantifiers: the quantifier structure of formulas in the first-order language considered;
     ///
     /// - qf body: the quantifier-free body of formulas in the first-order language considered.
-    /// In our experiments we use k-pDNF as defined by P-FOL-IC3, with a restricted number of literals in the pDNF clause;
+    ///   In our experiments we use k-pDNF as defined by P-FOL-IC3, with a restricted number of literals in the pDNF clause;
     ///
     /// - language: the approximate number of formulas in the first-order language considered, induced by the transition system and the language parameters;
     ///

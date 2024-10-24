@@ -68,11 +68,7 @@ impl SmtlibLine {
             }))
             .collect();
 
-        let mut head_component = parse_component(head.term());
-        if let Component::Formulas(fs) = &head_component {
-            assert_eq!(fs, &[Term::Literal(false)]);
-            head_component = Component::Predicate(false_predicate(), vec![]);
-        }
+        let head_component = parse_component(head.term());
 
         let body_components = body
             .term()
@@ -146,10 +142,6 @@ impl SmtlibLine {
     }
 }
 
-fn false_predicate() -> String {
-    "__false_predicate".to_string()
-}
-
 /// Parse a ChcSystem from an SMTLIB2 format.
 pub fn parse_smtlib2(s: &str) -> ChcSystem {
     let mut chc_sys = ChcSystem {
@@ -161,11 +153,6 @@ pub fn parse_smtlib2(s: &str) -> ChcSystem {
         chcs: vec![],
     };
     let mut global_vars = vec![];
-
-    chc_sys.predicates.push(HoPredicateDecl {
-        name: false_predicate(),
-        args: vec![],
-    });
 
     for line in &smtlib::sexp::parse_many(s).unwrap() {
         match SmtlibLine::parse(&chc_sys, &global_vars, line) {

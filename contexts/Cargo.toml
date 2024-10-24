@@ -11,3 +11,4 @@ solver = { path = "../solver" }
 
 itertools = "0.10.5"
 log = "0.4.19"
+gcd = "2.3.0"

@@ -6,6 +6,7 @@
 use lazy_regex::regex;
 use std::{
     collections::HashMap,
+    fmt::Display,
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -288,13 +289,16 @@ enum Fragment {
     None,
 }
 
-impl ToString for Fragment {
-    fn to_string(&self) -> String {
-        match self {
-            Fragment::Epr => "epr",
-            Fragment::None => "none",
-        }
-        .to_string()
+impl Display for Fragment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Fragment::Epr => "epr",
+                Fragment::None => "none",
+            }
+        )
     }
 }
 
@@ -306,16 +310,19 @@ enum Category {
     Timeout,
 }
 
-impl ToString for Category {
-    fn to_string(&self) -> String {
-        match self {
-            Category::Unknown => "unknown",
-            Category::Small => "small",
-            Category::Medium => "medium",
-            Category::Large => "large",
-            Category::Timeout => "timeout",
-        }
-        .to_string()
+impl Display for Category {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Category::Unknown => "unknown",
+                Category::Small => "small",
+                Category::Medium => "medium",
+                Category::Large => "large",
+                Category::Timeout => "timeout",
+            }
+        )
     }
 }
 
@@ -584,8 +591,8 @@ impl<'a> QalphaConfig<'a> {
     fn full_path(&self, experiment_name: &str, baseline: bool) -> PathBuf {
         let mut path_string = format!(
             "{}/{}/{}/{experiment_name}",
-            self.fragment.to_string(),
-            self.expected.to_string(),
+            self.fragment,
+            self.expected,
             self.file.display(),
         );
         if baseline {

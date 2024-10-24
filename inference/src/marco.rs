@@ -12,9 +12,9 @@
 /// - if the inputs are all false, the function should return true
 /// - if the inputs all all true, the function should return false
 /// - if for some inputs the function returns true, any subset of those inputs should
-/// also return true
+///   also return true
 /// - if for some inputs the function returns false, any superset of those inputs should
-/// also return false
+///   also return false
 pub fn marco<'a>(func: impl Fn(&[bool]) -> bool + 'a, n: usize) -> MarcoIterator<'a> {
     MarcoIterator {
         func: Box::new(func),

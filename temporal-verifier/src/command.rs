@@ -777,8 +777,7 @@ impl App {
                 },
             ) => {
                 let chc_sys = formats::parser::parse_smtlib2(&file);
-                println!("{chc_sys}");
-                compute_lfp(&file, &chc_sys);
+                compute_lfp(&chc_sys);
             }
             _ => unimplemented!("command does not support this file format"),
         }

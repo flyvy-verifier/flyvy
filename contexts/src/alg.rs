@@ -1,10 +1,12 @@
 //! Various algorithmic building blocks for using contexts in logical reasoning.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::sync::Arc;
 
+use crate::arith::{ArithExpr, IneqTemplates};
+use crate::language::{Atomics, Parameterized};
 use crate::sets::MultiId;
 use crate::{
     context::{AttributeSet, Context, MultiAttribute, MultiContext, MultiObject},
@@ -12,7 +14,7 @@ use crate::{
     sets::MultiAttributeSet,
 };
 use fly::quant::QuantifierPrefix;
-use fly::syntax::NumRel;
+use fly::syntax::{NumRel, Quantifier};
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
@@ -39,39 +41,16 @@ pub struct PropVars {
     ints: Vec<String>,
 }
 
-fn arith_term_with_vars(expr: &ArithExpr, outer_index: usize) -> Term {
-    match expr {
-        ArithExpr::Int(i) => Term::Int(*i),
-        ArithExpr::Expr(inner_index) => Term::Id(int_var(outer_index, *inner_index)),
-        ArithExpr::Binary(op, x, y) => Term::NumOp(
-            *op,
-            Box::new(arith_term_with_vars(x, outer_index)),
-            Box::new(arith_term_with_vars(y, outer_index)),
-        ),
-    }
+fn arith_term_with_vars(expr: &ArithExpr<usize>, outer_index: usize) -> Term {
+    expr.to_term(|inner_index| Term::Id(int_var(outer_index, *inner_index)))
 }
 
 fn prop_model_not_satisfies(f: &PropFormula, outer_index: usize) -> Term {
     match f {
         PropFormula::Bottom => Term::true_(),
-        PropFormula::Literal(Literal::IntBounds { expr, lower, upper }) => {
+        PropFormula::Literal(Literal::Leq(expr, i)) => {
             let e = arith_term_with_vars(expr, outer_index);
-            let mut ts = vec![];
-            if let Some(l) = lower {
-                ts.push(Term::NumRel(
-                    NumRel::Gt,
-                    Box::new(Term::Int(*l)),
-                    Box::new(e.clone()),
-                ));
-            }
-            if let Some(u) = upper {
-                ts.push(Term::NumRel(
-                    NumRel::Lt,
-                    Box::new(Term::Int(*u)),
-                    Box::new(e.clone()),
-                ));
-            }
-            return Term::or(ts);
+            Term::NumRel(NumRel::Gt, Box::new(e), Box::new(Term::Int(*i)))
         }
         PropFormula::Literal(Literal::Bool(inner_index, false)) => {
             Term::Id(prop_var(outer_index, *inner_index))
@@ -184,26 +163,9 @@ impl QuantifiedContext {
                     Term::not(&self.bool_terms[*i])
                 }
             }
-            PropFormula::Literal(Literal::IntBounds { expr, lower, upper }) => {
-                let mut ts = vec![];
+            PropFormula::Literal(Literal::Leq(expr, i)) => {
                 let expr_term = self.to_term_int(expr);
-                // lower bound <= expr
-                if let Some(l) = lower {
-                    ts.push(Term::NumRel(
-                        NumRel::Leq,
-                        Box::new(Term::Int(*l)),
-                        Box::new(expr_term.clone()),
-                    ));
-                }
-                // upper bound >= expr
-                if let Some(u) = upper {
-                    ts.push(Term::NumRel(
-                        NumRel::Geq,
-                        Box::new(Term::Int(*u)),
-                        Box::new(expr_term.clone()),
-                    ));
-                }
-                Term::and(ts)
+                Term::NumRel(NumRel::Leq, Box::new(expr_term), Box::new(Term::Int(*i)))
             }
             PropFormula::Binary(LogicOp::Or, f1, f2) => {
                 Term::NAryOp(NOp::Or, vec![self.to_term_prop(f1), self.to_term_prop(f2)])
@@ -220,16 +182,18 @@ impl QuantifiedContext {
         }
     }
 
-    fn to_term_int(&self, expr: &ArithExpr) -> Term {
-        match expr {
-            ArithExpr::Int(i) => Term::Int(*i),
-            ArithExpr::Expr(index) => self.int_terms[*index].clone(),
-            ArithExpr::Binary(op, x, y) => Term::NumOp(
-                *op,
-                Box::new(self.to_term_int(x)),
-                Box::new(self.to_term_int(y)),
-            ),
-        }
+    fn to_term_int(&self, expr: &ArithExpr<usize>) -> Term {
+        Term::int_add(
+            [Term::Int(expr.constant)]
+                .into_iter()
+                .chain(expr.summands.iter().map(|(c, p)| {
+                    Term::int_mul(
+                        [Term::Int(*c)]
+                            .into_iter()
+                            .chain(p.iter().map(|index| self.int_terms[*index].clone())),
+                    )
+                })),
+        )
     }
 
     /// Create an extractor for extracting a [`QuantifiedType`] of the given size.
@@ -323,22 +287,38 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
         assert!(self.formula_to_core[id.0].insert(id.1, core).is_none());
     }
 
-    fn post_weaken_update(
+    fn remove_core(&mut self, formula: &(usize, K)) -> HashSet<(String, K)> {
+        let core = self.formula_to_core[formula.0].remove(&formula.1).unwrap();
+        for in_core in &core {
+            let s = self.in_core_of.get_mut(in_core).unwrap();
+            assert!(s.remove(formula));
+            if s.is_empty() {
+                self.in_core_of.remove(in_core);
+            }
+        }
+
+        core
+    }
+
+    /// Remove all cores using weakened formulas, and add the formulas using them to future checks.
+    fn remove_cores(&mut self, predicate_name: &str, updates: &HashMap<K, Vec<K>>) {
+        for k in updates.keys() {
+            let participant = (predicate_name.to_owned(), k.clone());
+            if let Some(using) = self.in_core_of.get(&participant).cloned() {
+                for formula in using {
+                    self.remove_core(&formula);
+                    self.to_check[formula.0].insert(formula.1);
+                }
+            }
+        }
+    }
+
+    fn update_weakened(
         &mut self,
         predicate_name: &String,
         updates: &HashMap<K, Vec<K>>,
         chc_sys: &ChcSystem,
     ) {
-        // Remove all cores using the weakened predicate.
-        for k in updates.keys() {
-            let participant = (predicate_name.clone(), k.clone());
-            if let Some(using) = self.in_core_of.remove(&participant) {
-                for u in using {
-                    self.formula_to_core[u.0].remove(&u.1);
-                }
-            }
-        }
-
         for (i, chc) in chc_sys.chcs.iter().enumerate() {
             if chc.head.has_predicate_name(predicate_name) {
                 for (k, weakenings) in updates {
@@ -348,13 +328,9 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
                         for wk in weakenings {
                             assert!(self.to_check[i].insert(wk.clone()));
                         }
-                    }
-
-                    // Update the cores for the weakenings.
-                    if let Some(core) = self.formula_to_core[i].remove(k) {
-                        for c in &core {
-                            assert!(self.in_core_of.get_mut(c).unwrap().remove(&(i, k.clone())));
-                        }
+                    } else {
+                        // Update the cores for the weakenings.
+                        let core = self.remove_core(&(i, k.clone()));
                         for wk in weakenings {
                             self.add_core((i, wk.clone()), core.clone());
                         }
@@ -404,7 +380,8 @@ where
         Self { solutions, partial }
     }
 
-    fn get_symbolic_assignment(&self) -> SymbolicAssignment<(String, MultiId<S::AttributeId>)> {
+    /// Get the symbolic assignment given by this solution.
+    pub fn get_symbolic_assignment(&self) -> SymbolicAssignment<(String, MultiId<S::AttributeId>)> {
         self.solutions
             .iter()
             .map(|(name, p)| {
@@ -442,7 +419,7 @@ where
             let chc = &chc_sys.chcs[chc_index];
             let head_predicate = chc.head.predicate().unwrap();
 
-            log::info!("Checking CHC #{chc_index} with head {}", head_predicate.0);
+            println!("Checking CHC #{chc_index} with head {}", head_predicate.0);
 
             // Check whether one of the predicates in the body is equivalent to false (which implies a trivial implication)
             for comp in &chc.body {
@@ -454,7 +431,7 @@ where
                         for id in ids_to_check {
                             self.partial.add_core((chc_index, id), named_core.clone());
                         }
-                        log::info!("Check trivially holds");
+                        println!("Check trivially holds");
                         continue 'chc_loop;
                     }
                 }
@@ -515,7 +492,7 @@ where
                 };
 
                 let formula = head_sets[id.0].get(&id.1);
-                log::info!(
+                println!(
                     "Querying {} ({} remaining): {}",
                     head_predicate.0,
                     self.partial.checks_left(),
@@ -547,23 +524,24 @@ where
     }
 }
 
-impl<S> ToString for ChcSolution<S>
+impl<S> Display for ChcSolution<S>
 where
     S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>,
 {
-    fn to_string(&self) -> String {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut lines: Vec<String> = vec![];
         for (k, v) in &self.solutions {
+            let mut new_lines = vec![];
             let args = v.arguments.iter().join(", ");
-            lines.push(format!("predicate {k}({args}):"));
+            new_lines.push(format!("predicate {k}({args}):"));
             for ref id in v.solution.iter() {
                 let t = v.context.to_term(&v.solution.get(id));
-                lines.push(format!("    {t}"));
+                new_lines.push(format!("    {t}"));
             }
-            lines.push("".to_string());
+            lines.push(new_lines.iter().join("\n"));
         }
 
-        lines.iter().join("\n")
+        write!(f, "{}", lines.iter().join("\n"))
     }
 }
 
@@ -578,11 +556,19 @@ pub struct PredicateConfig {
 }
 
 impl PredicateConfig {
+    /// Create standard argument name for an argument of a predicate at the given position.
+    pub fn arg_name(i: usize) -> String {
+        format!("__pvar_{i}")
+    }
+
+    /// Create standard variable name for a quantified variable at a given position.
+    pub fn quant_name(i: usize) -> String {
+        format!("__qvar_{i}")
+    }
+
     /// Create a default configuration for the given predicate in the given CHC system.
-    pub fn default(decl: &HoPredicateDecl, chc_sys: &ChcSystem) -> Self {
-        let arguments = (1..=decl.args.len())
-            .map(|i| format!("__pvar_{i}"))
-            .collect_vec();
+    pub fn default(decl: &HoPredicateDecl, literals: &Parameterized<Atomics>) -> Self {
+        let arguments = (0..decl.args.len()).map(Self::arg_name).collect_vec();
 
         let bool_sort = FunctionSort(vec![], Sort::Bool);
         let bool_terms = decl
@@ -593,49 +579,33 @@ impl PredicateConfig {
             .map(|(_, name)| Term::id(name))
             .collect_vec();
 
-        let int_sort = FunctionSort(vec![], Sort::Int);
-        let int_terms = decl
-            .args
-            .iter()
-            .zip(&arguments)
-            .filter(|(sort, _)| *sort == &int_sort)
-            .map(|(_, name)| Term::id(name))
-            .collect_vec();
+        let int_terms = literals.content.ints.clone();
 
-        // Create integer bounds for each integer argument.
-        let max_int = chc_sys.max_int().map(|i| i + 1).or(Some(1));
-        let bounds = IntBoundTemplate {
-            with_upper: true,
-            with_lower: true,
-            with_both: false,
-            upper_limit: max_int,
-            lower_limit: max_int.map(|i| -i),
-        };
-        let int_exprs: HashSet<_> = (0..int_terms.len()).map(ArithExpr::Expr).collect();
-
-        log::info!("Integer expressions used ({}):", int_exprs.len());
-        let int_templates = int_exprs
-            .into_iter()
-            .map(|e| {
-                log::info!("    {e}");
-                (e, bounds.clone())
-            })
-            .collect();
+        let mut int_templates = IneqTemplates::new(false);
+        for literal in &literals.content.literals {
+            int_templates.add_from_literal(literal);
+        }
+        println!("Integer templates ({}):", decl.name);
+        for (e, t) in &int_templates.templates {
+            println!("{} <= {t}", e.to_term(|i| int_terms[*i].clone()));
+        }
+        println!();
 
         let literal_context = PropContext::literals((0..bool_terms.len()).collect(), int_templates);
+        let prop_cont = PropContext::Nary(LogicOp::Or, Some(3), Box::new(literal_context));
 
-        let prop_cont = PropContext::Nary(LogicOp::Or, Some(2), Box::new(literal_context));
+        let prefix = QuantifierPrefix {
+            quantifiers: vec![Quantifier::Forall],
+            sorts: Arc::new(vec![Sort::Int]),
+            names: Arc::new(vec![literals.univ_ints.clone()]),
+        };
 
         PredicateConfig {
             name: decl.name.clone(),
             arguments,
             context: MultiContext {
                 contexts: vec![QuantifiedContext {
-                    prefix: QuantifierPrefix {
-                        quantifiers: vec![],
-                        sorts: Arc::new(vec![]),
-                        names: Arc::new(vec![]),
-                    },
+                    prefix,
                     bool_terms,
                     int_terms,
                     prop_cont,
@@ -656,10 +626,11 @@ where
     // TODO: handle increasing sizes
 
     while let Some((name, cex)) = chc_sol.get_positive_cex(solver, chc_sys, 1) {
-        log::info!("Found CEX: {cex:?}");
+        println!("Found CEX: {cex:?}");
         let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
         let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
-        chc_sol.partial.post_weaken_update(&name, &updates, chc_sys);
+        chc_sol.partial.remove_cores(&name, &updates);
+        chc_sol.partial.update_weakened(&name, &updates, chc_sys);
     }
 
     // TODO: verify solution (also w.r.t queries)
@@ -671,8 +642,7 @@ where
 mod tests {
     use super::*;
     use crate::sets::{BaselinePropSet, QFormulaSet};
-    use fly::quant::QuantifierPrefix;
-    use fly::syntax::{NumOp, Quantifier, Sort};
+    use fly::syntax::{Quantifier, Sort};
     use fly::term::subst::Substitutable;
     use fly::{parser, quant::QuantifierSequence};
     use formats::chc::*;
@@ -756,7 +726,7 @@ mod tests {
             Some(2),
             Box::new(PropContext::literals(
                 (0..bool_terms.len()).collect(),
-                HashMap::new(),
+                IneqTemplates::new(false),
             )),
         );
 
@@ -815,185 +785,5 @@ mod tests {
             ))
         );
         assert_eq!(sol_1.partial.to_check.len(), 1);
-    }
-
-    #[test]
-    fn test_mccarthy() {
-        let solver = SingleSolver::new(SolverConf::new(
-            SolverType::Z3,
-            false,
-            &"".to_string(),
-            0,
-            None,
-        ));
-
-        let sig = Signature {
-            sorts: vec![],
-            relations: vec![],
-        };
-
-        let mut chc_sys = ChcSystem::new(
-            sig.clone(),
-            vec![HoPredicateDecl {
-                name: "MC".to_string(),
-                args: vec![FunctionSort(vec![Sort::Int, Sort::Int], Sort::Bool)],
-            }],
-        );
-
-        chc_sys.add_chc(
-            vec![
-                HoVariable {
-                    name: "n".to_string(),
-                    sort: FunctionSort(vec![], Sort::Int),
-                },
-                HoVariable {
-                    name: "r".to_string(),
-                    sort: FunctionSort(vec![], Sort::Int),
-                },
-            ],
-            vec![Component::Formulas(vec![parser::term(
-                "(n > 100) & (r = n - 10)",
-            )])],
-            Component::Predicate(
-                "MC".to_string(),
-                vec![Substitutable::name("n"), Substitutable::name("r")],
-            ),
-        );
-
-        chc_sys.add_chc(
-            vec![
-                HoVariable {
-                    name: "n".to_string(),
-                    sort: FunctionSort(vec![], Sort::Int),
-                },
-                HoVariable {
-                    name: "r1".to_string(),
-                    sort: FunctionSort(vec![], Sort::Int),
-                },
-                HoVariable {
-                    name: "r2".to_string(),
-                    sort: FunctionSort(vec![], Sort::Int),
-                },
-            ],
-            vec![
-                Component::Formulas(vec![parser::term("!(n > 100)")]),
-                Component::Predicate(
-                    "MC".to_string(),
-                    vec![
-                        Substitutable::Term(parser::term("n + 11")),
-                        Substitutable::name("r1"),
-                    ],
-                ),
-                Component::Predicate(
-                    "MC".to_string(),
-                    vec![Substitutable::name("r1"), Substitutable::name("r2")],
-                ),
-            ],
-            Component::Predicate(
-                "MC".to_string(),
-                vec![Substitutable::name("n"), Substitutable::name("r2")],
-            ),
-        );
-
-        let prefix = QuantifierPrefix::new(Arc::new(sig.clone()), vec![], vec![], &[]);
-
-        let prop_cont = PropContext::Binary(
-            LogicOp::Or,
-            Box::new(PropContext::literals(
-                vec![],
-                [(
-                    ArithExpr::Expr(1),
-                    IntBoundTemplate {
-                        with_upper: true,
-                        with_lower: true,
-                        with_both: true,
-                        upper_limit: Some(0),
-                        lower_limit: Some(200),
-                    },
-                )]
-                .into_iter()
-                .collect(),
-            )),
-            Box::new(PropContext::Binary(
-                LogicOp::And,
-                Box::new(PropContext::literals(
-                    vec![],
-                    [(
-                        ArithExpr::Expr(0),
-                        IntBoundTemplate {
-                            with_upper: true,
-                            with_lower: true,
-                            with_both: true,
-                            upper_limit: Some(0),
-                            lower_limit: Some(200),
-                        },
-                    )]
-                    .into_iter()
-                    .collect(),
-                )),
-                Box::new(PropContext::literals(
-                    vec![],
-                    [((
-                        ArithExpr::Binary(
-                            NumOp::Sub,
-                            Box::new(ArithExpr::Expr(0)),
-                            Box::new(ArithExpr::Expr(1)),
-                        ),
-                        IntBoundTemplate {
-                            with_upper: true,
-                            with_lower: true,
-                            with_both: true,
-                            upper_limit: Some(0),
-                            lower_limit: Some(200),
-                        },
-                    ))]
-                    .into_iter()
-                    .collect(),
-                )),
-            )),
-        );
-
-        let context = MultiContext::new(vec![QuantifiedContext {
-            prefix,
-            bool_terms: vec![],
-            int_terms: vec![Term::id("n"), Term::id("r")],
-            prop_cont,
-        }]);
-
-        let cfg = vec![PredicateConfig {
-            name: "MC".to_string(),
-            arguments: vec!["n".to_string(), "r".to_string()],
-            context,
-        }];
-
-        let res = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, cfg);
-        // Verify that (91 <= r <= 91) | ((102 <= n) | (10 <= n - r <= 10)) is in the solution
-        assert!(
-            res.solutions[&"MC".to_string()].solution.sets[0].contains(&PropFormula::Binary(
-                LogicOp::Or,
-                Box::new(PropFormula::Literal(Literal::IntBounds {
-                    expr: ArithExpr::Expr(1),
-                    lower: Some(91),
-                    upper: Some(91),
-                })),
-                Box::new(PropFormula::Binary(
-                    LogicOp::And,
-                    Box::new(PropFormula::Literal(Literal::IntBounds {
-                        expr: ArithExpr::Expr(0),
-                        lower: Some(102),
-                        upper: None,
-                    })),
-                    Box::new(PropFormula::Literal(Literal::IntBounds {
-                        expr: ArithExpr::Binary(
-                            NumOp::Sub,
-                            Box::new(ArithExpr::Expr(0)),
-                            Box::new(ArithExpr::Expr(1)),
-                        ),
-                        lower: Some(10),
-                        upper: Some(10),
-                    })),
-                )),
-            ))
-        );
     }
 }

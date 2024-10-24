@@ -1,0 +1,485 @@
+//! Arithmetic expressions used in CHC context-based solving.
+
+use fly::syntax::{IntType, NumOp, Term};
+use gcd::Gcd;
+use itertools::Itertools;
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::Display,
+    hash::Hash,
+    ops::{Add, Mul, Sub},
+};
+
+use crate::{language::AtomicTemplate, logic::Literal};
+
+/// An arithmetic expression represented as the sum of products.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub struct ArithExpr<T> {
+    /// The products in the sum of the expression, each with a coefficient.
+    pub summands: Vec<(IntType, Vec<T>)>,
+    /// A constant added to the sum.
+    pub constant: IntType,
+}
+
+/// A collection of inequality templates for several arithmetic expressions
+#[derive(Clone)]
+pub struct IneqTemplates {
+    merge_intervals: bool,
+    /// A mapping from each expression to the range of its less-than-or-equal bound.
+    pub templates: HashMap<ArithExpr<usize>, PiecewiseRange>,
+}
+
+impl IneqTemplates {
+    /// Create a new collection of inequality templates. `merge_intervals` determines whether the range of bounds
+    /// is forced to be a continuous interval.
+    pub fn new(merge_intervals: bool) -> Self {
+        Self {
+            merge_intervals,
+            templates: HashMap::new(),
+        }
+    }
+
+    /// Add the given range to the template of the given expression, for `leq` literals and
+    /// `geq` literals as specified.
+    pub fn add_range(&mut self, a: ArithExpr<usize>, r: IntRange) {
+        let e = self
+            .templates
+            .entry(a)
+            .or_insert_with(|| PiecewiseRange::new(self.merge_intervals));
+        e.add_range(r);
+    }
+
+    /// Add the relevant range from the given literal.
+    pub fn add_from_literal(&mut self, literal: &Literal) {
+        match literal {
+            Literal::Bool(_, _) => (),
+            Literal::Leq(a, i) => self.add_range(a.clone(), (*i, *i)),
+        }
+    }
+}
+
+type IntRange = (IntType, IntType);
+
+/// A range consisting of several closed intervals.
+#[derive(Clone, Debug)]
+pub struct PiecewiseRange {
+    merge_all: bool,
+    ranges: Vec<IntRange>,
+}
+
+impl Display for PiecewiseRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self
+            .ranges
+            .iter()
+            .map(|r| format!("[{},{}]", r.0, r.1))
+            .join(", ");
+        write!(f, "{{{s}}}")
+    }
+}
+
+impl PiecewiseRange {
+    fn new(merge_all: bool) -> Self {
+        Self {
+            merge_all,
+            ranges: vec![],
+        }
+    }
+
+    fn add_range(&mut self, mut r: IntRange) {
+        // Find ranges intersecting with r: i.e., those with l <= r.0 <= u or l <= r.1 <= u
+        let intersecting = self
+            .ranges
+            .iter()
+            .enumerate()
+            .filter(|(_, (l, u))| (l <= &r.0 && &r.0 <= u) || (l <= &r.1 && &r.1 <= u))
+            .map(|(i, _)| i)
+            .collect_vec();
+
+        // Merge all the ranges with the new one and remove them.
+        if !intersecting.is_empty() {
+            let fst = *intersecting.first().unwrap();
+            let lst = *intersecting.last().unwrap();
+            r.0 = r.0.min(self.ranges[fst].0);
+            r.1 = r.1.max(self.ranges[lst].1);
+            self.ranges.drain(fst..=lst);
+        }
+
+        // Now that there are no intersecting ranges, find the first that is higher than r.
+        let index = self.ranges.iter().find_position(|(l, _)| l > &r.1);
+
+        if let Some((i, _)) = index {
+            self.ranges.insert(i, r);
+        } else {
+            self.ranges.push(r);
+        }
+
+        if self.merge_all && self.ranges.len() > 1 {
+            self.ranges = vec![(
+                self.ranges.first().unwrap().0,
+                self.ranges.last().unwrap().1,
+            )]
+        }
+        self.merge_consecutive();
+    }
+
+    /// Merge consecutive ranges of the form (a, b) and (b + 1, c) into (a, c).
+    fn merge_consecutive(&mut self) {
+        let mut i = 0;
+
+        while i < self.ranges.len() - 1 {
+            if self.ranges[i].1 + 1 == self.ranges[i + 1].0 {
+                self.ranges[i].1 = self.ranges[i + 1].1;
+                self.ranges.remove(i + 1);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Find the least upper bound of `i` in range.
+    pub fn least_upper_bound(&self, i: IntType) -> Option<IntType> {
+        let mut lub = None;
+        for (l, u) in self.ranges.iter().rev() {
+            if l <= &i && &i <= u {
+                return Some(i);
+            } else if l > &i {
+                lub = Some(*l);
+            } else if u < &i {
+                break;
+            }
+        }
+
+        lub
+    }
+}
+
+impl<T: Display> Display for ArithExpr<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.constant != 0 {
+            write!(f, "{}", self.constant)?;
+            if !self.summands.is_empty() {
+                write!(f, " + ")?;
+            }
+        }
+
+        let mut factors = vec![];
+        for (coeff, prod) in &self.summands {
+            assert!(coeff != &0);
+            let prod_str = prod.iter().map(|f| format!("x{f}")).join(" * ");
+            factors.push(match coeff.cmp(&0) {
+                Ordering::Equal => "{prod_str}".to_string(),
+                Ordering::Less => format!("({coeff}) * {prod_str}"),
+                Ordering::Greater => format!("{coeff} * {prod_str}"),
+            });
+        }
+
+        write!(f, "{}", factors.into_iter().join(" + "))
+    }
+}
+
+/// An Assignment to atomic integer variables in arithmetic expressions.
+pub type ArithAssignment = Vec<IntType>;
+
+impl ArithExpr<usize> {
+    /// Evaluates the arithmetic expression based on  the given assignment. Note that the assignment assigns values to
+    /// arithmatic expressions and not only identifiers, and the evaluation is short-circuiting -- the moment an expression
+    /// with an assigned value is encountered, this value is returned.
+    pub fn eval(&self, assignment: &ArithAssignment) -> IntType {
+        self.constant
+            + self
+                .summands
+                .iter()
+                .map(|(coeff, prod)| {
+                    coeff * prod.iter().map(|f| assignment[*f]).product::<IntType>()
+                })
+                .sum::<IntType>()
+    }
+
+    /// Create an arithmetic expression with [`usize`] identifiers from another arithmetic expression.
+    pub fn from_expr<T, F>(expr: &ArithExpr<T>, mut id: F) -> Self
+    where
+        F: FnMut(&T) -> usize,
+    {
+        let mut summands = vec![];
+        for (c, v) in &expr.summands {
+            let mut new_v = vec![];
+            for t in v {
+                new_v.push(id(t));
+            }
+            new_v.sort();
+            summands.push((*c, new_v));
+        }
+        summands.sort_by(|(_, v1), (_, v2)| v1.cmp(v2));
+
+        Self {
+            summands,
+            constant: expr.constant,
+        }
+    }
+}
+
+fn get_index(terms: &mut Vec<Term>, term: &Term) -> usize {
+    if let Some(i) = (0..terms.len()).find(|i| &terms[*i] == term) {
+        i
+    } else {
+        terms.push(term.clone());
+        terms.len() - 1
+    }
+}
+
+impl ArithExpr<AtomicTemplate> {
+    fn from_term_rec(term: &Term, ints: &mut Vec<Term>, arrays: &mut Vec<Term>) -> Option<Self> {
+        match term {
+            Term::Id(_) => Some(ArithExpr {
+                summands: vec![(1, vec![AtomicTemplate::Int(get_index(ints, term))])],
+                constant: 0,
+            }),
+            Term::ArraySelect { array, index } => {
+                let ind = get_index(ints, index);
+                let arr = get_index(arrays, array);
+                Some(ArithExpr {
+                    summands: vec![(1, vec![AtomicTemplate::Select(arr, ind)])],
+                    constant: 0,
+                })
+            }
+            Term::Int(i) => Some(ArithExpr {
+                summands: vec![],
+                constant: *i,
+            }),
+            Term::NumOp(op, t1, t2) => {
+                let a1 = Self::from_term_rec(t1, ints, arrays)?;
+                let a2 = Self::from_term_rec(t2, ints, arrays)?;
+                Some(match op {
+                    NumOp::Add => a1.clone() + a2.clone(),
+                    NumOp::Sub => a1.clone() - a2.clone(),
+                    NumOp::Mul => a1.clone() * a2.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Convert the given terms into arithmetic expressions.
+    pub fn from_terms(terms: &[&Term]) -> Option<(Vec<Self>, Vec<Term>, Vec<Term>)> {
+        let mut ints = vec![];
+        let mut arrays = vec![];
+        let mut exprs = vec![];
+        for term in terms {
+            exprs.push(Self::from_term_rec(term, &mut ints, &mut arrays)?);
+        }
+
+        Some((exprs, ints, arrays))
+    }
+
+    /// Return the integer-term identifiers in the expression.
+    pub fn ints(&self) -> Vec<usize> {
+        self.participants()
+            .map(|t| match t {
+                AtomicTemplate::Int(x) | AtomicTemplate::Select(_, x) => *x,
+            })
+            .unique()
+            .sorted()
+            .collect()
+    }
+
+    /// Return the array-term identifiers in the expression.
+    pub fn arrays(&self) -> Vec<usize> {
+        self.participants()
+            .filter_map(|t| match t {
+                AtomicTemplate::Select(x, _) => Some(*x),
+                _ => None,
+            })
+            .unique()
+            .sorted()
+            .collect()
+    }
+}
+
+fn divide_and_round_down(x: IntType, y: IntType) -> IntType {
+    let sig = x.signum() * y.signum();
+    if sig == 1 {
+        // The result is positive, automatic round-down.
+        x.abs() / y.abs()
+    } else if sig == -1 {
+        // The result is negative, might need to subtract one.
+        let mut res = -(x.abs() / y.abs());
+        if x % y != 0 {
+            res -= 1;
+        }
+        res
+    } else {
+        // The result is zero.
+        0
+    }
+}
+
+impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
+    /// Convert into a normalized expression such that `old_expr <= 0` is equivalent to `new_expr <= 0`.
+    pub fn normalize_leq_0(&mut self) {
+        assert!(!self.summands.is_empty());
+
+        // Convert into self <= bound with no constant.
+        let bound = -self.constant;
+        self.constant = 0;
+
+        // Normalize
+        let div = self
+            .summands
+            .iter()
+            .map(|(i, _)| *i)
+            .chain([self.constant])
+            .fold(0, |x, y| x.gcd(y.unsigned_abs())) as isize;
+        self.summands.sort_by(|(_, p1), (_, p2)| p1.cmp(p2));
+        for (coeff, v) in &mut self.summands {
+            v.sort();
+            assert_eq!(*coeff % div, 0);
+            *coeff /= div;
+        }
+
+        // We have expr * div <= bound, meaning expr <= bound / div.
+        // In particular, the new bound can be rounded down, since expr is whole.
+        self.constant = -divide_and_round_down(bound, div);
+    }
+
+    /// Convert into an expression such that `old_expr > 0` is equivalent to `new_expr <= 0`.
+    pub fn negate_leq_0(&mut self) {
+        // Convert into expr >= 0.
+        self.constant -= 1;
+
+        // Negate and turn into expr <= 0.
+        for (coeff, _) in &mut self.summands {
+            *coeff = -*coeff;
+        }
+        self.constant = -self.constant;
+        self.normalize_leq_0();
+    }
+
+    /// Convert the arithmetic expression to a term, using the specified closure to retrieve atomic expressions.
+    pub fn to_term<F>(&self, var: F) -> Term
+    where
+        F: Fn(&T) -> Term,
+    {
+        Term::int_add(
+            [Term::Int(self.constant)]
+                .into_iter()
+                .chain(self.summands.iter().map(|(c, p)| {
+                    Term::int_mul([Term::Int(*c)].into_iter().chain(p.iter().map(&var)))
+                })),
+        )
+    }
+
+    /// Return the atomic participants in this arithmetic expression.
+    pub fn participants(&self) -> impl Iterator<Item = &T> {
+        self.summands.iter().flat_map(|(_, p)| p.iter())
+    }
+}
+
+impl<T: Clone + Eq + Hash + Ord> Add for ArithExpr<T> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
+        for (c, p) in self.summands.iter().chain(&rhs.summands) {
+            *coeffs.entry(p.clone()).or_insert(0) += *c;
+        }
+
+        Self {
+            summands: coeffs
+                .into_iter()
+                .filter(|(_, coeff)| coeff != &0)
+                .map(|(p, c)| (c, p))
+                .sorted_by(|(_, p1), (_, p2)| p1.cmp(p2))
+                .collect(),
+            constant: self.constant + rhs.constant,
+        }
+    }
+}
+
+impl<T: Clone + Eq + Hash + Ord> Sub for ArithExpr<T> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
+        for (c, p) in &self.summands {
+            *coeffs.entry(p.clone()).or_insert(0) += *c;
+        }
+
+        for (c, p) in &rhs.summands {
+            *coeffs.entry(p.clone()).or_insert(0) -= *c;
+        }
+
+        Self {
+            summands: coeffs
+                .into_iter()
+                .filter(|(_, coeff)| coeff != &0)
+                .map(|(p, c)| (c, p))
+                .sorted_by(|(_, p1), (_, p2)| p1.cmp(p2))
+                .collect(),
+            constant: self.constant - rhs.constant,
+        }
+    }
+}
+
+impl<T: Clone + Eq + Hash + Ord> Mul for ArithExpr<T> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
+
+        for (c1, p1) in &self.summands {
+            *coeffs.entry(p1.clone()).or_insert(0) += *c1 * rhs.constant;
+        }
+
+        for (c2, p2) in &rhs.summands {
+            *coeffs.entry(p2.clone()).or_insert(0) += *c2 * self.constant;
+        }
+
+        for ((c1, p1), (c2, p2)) in self.summands.iter().cartesian_product(&rhs.summands) {
+            let prod = p1.iter().chain(p2).cloned().sorted().collect_vec();
+            *coeffs.entry(prod).or_insert(0) += *c1 * *c2;
+        }
+
+        Self {
+            summands: coeffs
+                .into_iter()
+                .filter(|(_, coeff)| coeff != &0)
+                .map(|(p, c)| (c, p))
+                .sorted_by(|(_, p1), (_, p2)| p1.cmp(p2))
+                .collect(),
+
+            constant: self.constant * rhs.constant,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PiecewiseRange;
+
+    #[test]
+    fn test_ranges() {
+        let mut pr = PiecewiseRange::new(false);
+
+        pr.add_range((3, 3));
+        pr.add_range((5, 6));
+        assert_eq!(pr.ranges, vec![(3, 3), (5, 6)]);
+        assert_eq!(pr.least_upper_bound(1), Some(3));
+        assert_eq!(pr.least_upper_bound(4), Some(5));
+        assert_eq!(pr.least_upper_bound(7), None);
+
+        pr.add_range((0, 1));
+        assert_eq!(pr.ranges, vec![(0, 1), (3, 3), (5, 6)]);
+        assert_eq!(pr.least_upper_bound(1), Some(1));
+
+        pr.add_range((1, 2));
+        assert_eq!(pr.ranges, vec![(0, 3), (5, 6)]);
+
+        pr.add_range((2, 3));
+        assert_eq!(pr.ranges, vec![(0, 3), (5, 6)]);
+
+        pr.add_range((1, 5));
+        assert_eq!(pr.ranges, vec![(0, 6)]);
+    }
+}

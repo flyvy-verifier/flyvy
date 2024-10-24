@@ -47,6 +47,18 @@ impl Sort {
     pub fn unknown() -> Self {
         Self::uninterpreted("")
     }
+
+    /// An array sort with some index and element sorts.
+    pub fn array<S1, S2>(index: S1, element: S2) -> Self
+    where
+        S1: Into<Sort>,
+        S2: Into<Sort>,
+    {
+        Self::Array {
+            index: Box::new(index.into()),
+            element: Box::new(element.into()),
+        }
+    }
 }
 
 impl From<&str> for Sort {
@@ -485,6 +497,54 @@ impl Term {
     }
 
     //////////////////
+    // Integer Operations
+    //////////////////
+
+    /// Construct an integer sum using nested addition.
+    pub fn int_add<I>(ts: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Term>,
+    {
+        let mut ts = ts
+            .into_iter()
+            .map(|t| t.into())
+            .filter(|t| !matches!(t, Term::Int(0)));
+        let mut sum = match ts.next() {
+            None => return Term::Int(0),
+            Some(t) => t,
+        };
+
+        for t in ts {
+            sum = Term::NumOp(NumOp::Add, Box::new(sum), Box::new(t));
+        }
+
+        sum
+    }
+
+    /// Construct an integer product using nested multiplication.
+    pub fn int_mul<I>(ts: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Term>,
+    {
+        let mut ts = ts
+            .into_iter()
+            .map(|t| t.into())
+            .filter(|t| !matches!(t, Term::Int(1)));
+        let mut prod = match ts.next() {
+            None => return Term::Int(1),
+            Some(t) => t,
+        };
+
+        for t in ts {
+            prod = Term::NumOp(NumOp::Mul, Box::new(prod), Box::new(t));
+        }
+
+        prod
+    }
+
+    //////////////////
     // Remaining operations: Ite, Forall, Exists
     //////////////////
 
@@ -678,6 +738,59 @@ impl Term {
         }
     }
 
+    /// Compute the names present in the term (including both [`Term::Id`] and names in [`Term::App`]).
+    ///
+    /// Supports only quantifier-free terms.
+    pub fn names(&self) -> HashSet<String> {
+        match self {
+            Term::Literal(_) | Term::Int(_) => HashSet::new(),
+            Term::Id(name) => HashSet::from_iter([name.clone()]),
+            Term::App(name, _, vt) => [name.clone()]
+                .into_iter()
+                .chain(vt.iter().flat_map(|t| t.names()))
+                .collect(),
+            Term::UnaryOp(_, t) => t.names(),
+            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
+                [t1, t2].iter().flat_map(|t| t.names()).collect()
+            }
+            Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.names()).collect(),
+            Term::Ite { cond, then, else_ } => {
+                [cond, then, else_].iter().flat_map(|t| t.names()).collect()
+            }
+            Term::Quantified { .. } => unimplemented!(),
+            Term::ArrayStore {
+                array,
+                index,
+                value,
+            } => [array, index, value]
+                .iter()
+                .flat_map(|t| t.names())
+                .collect(),
+            Term::ArraySelect { array, index } => {
+                [array, index].iter().flat_map(|t| t.names()).collect()
+            }
+        }
+    }
+
+    /// If possible, convert the term into an integer literal.
+    pub fn as_int(&self) -> Option<IntType> {
+        match self {
+            Term::Int(i) => Some(*i),
+            Term::NumOp(op, t1, t2) => {
+                if let (Some(i1), Some(i2)) = (t1.as_int(), t2.as_int()) {
+                    Some(match op {
+                        NumOp::Add => i1 + i2,
+                        NumOp::Sub => i1 - i2,
+                        NumOp::Mul => i1 * i2,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Flatten the given term into a conjunction as terms as much as possible.
     pub fn as_conjunction(self) -> Vec<Term> {
         match self {
@@ -807,7 +920,7 @@ impl Signature {
     /// Check if `name` is a relation in the signature, or a primed version of
     /// one.
     pub fn contains_relation(&self, name: &str) -> bool {
-        let symbol_no_primes = name.trim_end_matches(|c| c == '\'');
+        let symbol_no_primes = name.trim_end_matches('\'');
         return self.relations.iter().any(|r| r.name == symbol_no_primes);
     }
 

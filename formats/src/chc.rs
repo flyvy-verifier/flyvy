@@ -152,7 +152,7 @@ impl Chc {
             sig: &self.signature,
             n_states: 1,
             cancelers: None,
-            model_option: ModelOption::Any,
+            model_option: ModelOption::None,
             evaluate: vec![],
             save_tee: false,
         };
@@ -237,48 +237,15 @@ impl ChcSystem {
         g
     }
 
-    /// Return the maximal absolute value of an integer that appears in the CHC system.
-    pub fn max_int(&self) -> Option<isize> {
+    /// Check whether the given assignment to the unknown predicates is a solution for the CHC system.
+    pub fn check_assignment<B: BasicSolver, K: Clone>(
+        &self,
+        solver: &B,
+        assignment: &SymbolicAssignment<K>,
+    ) -> bool {
         self.chcs
             .iter()
-            .flat_map(|chc| chc.body.iter().chain([&chc.head]))
-            .flat_map(|c| match c {
-                Component::Predicate(_, _) => &[],
-                Component::Formulas(t) => t.as_slice(),
-            })
-            .filter_map(term_max_int)
-            .max()
-    }
-}
-
-fn term_max_int(term: &Term) -> Option<isize> {
-    match term {
-        Term::Literal(_) | Term::Id(_) => None,
-        Term::Int(i) => Some(i.abs()),
-        Term::App(_, _, ts) | Term::NAryOp(_, ts) => ts.iter().filter_map(term_max_int).max(),
-        Term::UnaryOp(_, t)
-        | Term::Quantified {
-            quantifier: _,
-            binders: _,
-            body: t,
-        } => term_max_int(t),
-        Term::BinOp(_, t1, t2)
-        | Term::NumRel(_, t1, t2)
-        | Term::NumOp(_, t1, t2)
-        | Term::ArraySelect {
-            array: t1,
-            index: t2,
-        } => [t1, t2].iter().filter_map(|t| term_max_int(t)).max(),
-        Term::Ite {
-            cond: t1,
-            then: t2,
-            else_: t3,
-        }
-        | Term::ArrayStore {
-            array: t1,
-            index: t2,
-            value: t3,
-        } => [t1, t2, t3].iter().filter_map(|t| term_max_int(t)).max(),
+            .all(|chc| chc.check_assignment(solver, assignment))
     }
 }
 
@@ -360,7 +327,7 @@ impl TwoStateRelations {
             .zip(
                 self.mut_relations
                     .iter()
-                    .map(|n| Substitutable::Name(Self::next_name(&n.name), 0)),
+                    .map(|n| Substitutable::Name(Self::next_name(&n.name))),
             )
             .collect()
     }
@@ -372,7 +339,7 @@ impl TwoStateRelations {
             .zip(
                 self.mut_relations
                     .iter()
-                    .map(|n| Substitutable::Name(Self::next_name(&n.name), 0)),
+                    .map(|n| Substitutable::Name(Self::next_name(&n.name))),
             )
             .collect()
     }
@@ -400,14 +367,14 @@ pub fn chc_sys_from_fo_module(m: &FOModule) -> (ChcSystem, String, Vec<String>) 
         inv_name.clone(),
         rels.single_var_names()
             .into_iter()
-            .map(|n| Substitutable::Name(n, 0))
+            .map(Substitutable::Name)
             .collect(),
     );
     let next_inv = Component::Predicate(
         inv_name.clone(),
         rels.next_var_names()
             .into_iter()
-            .map(|n| Substitutable::Name(n, 0))
+            .map(Substitutable::Name)
             .collect(),
     );
 

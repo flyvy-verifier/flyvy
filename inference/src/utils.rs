@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::qalpha::fixpoint::Strategy;
 use contexts::{
+    arith::IneqTemplates,
     context::MultiContext,
     logic::{pdnf_context, QuantifiedContext},
 };
@@ -71,7 +71,7 @@ pub fn get_multi_context(cfg: &QalphaConfig, m: &Module) -> MultiContext<Quantif
             int_terms: vec![],
             prop_cont: pdnf_context(
                 (0..atoms.len()).collect(),
-                HashMap::new(),
+                IneqTemplates::new(false),
                 cfg.qf_cfg.clause_size,
                 cfg.qf_cfg.cubes,
             ),

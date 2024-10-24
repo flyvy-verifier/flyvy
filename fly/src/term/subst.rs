@@ -12,7 +12,7 @@ use crate::syntax::{Term, UOp};
 #[derive(Clone, Debug)]
 pub enum Substitutable {
     /// A new name for a symbols, along with a number of primes
-    Name(String, usize),
+    Name(String),
     /// A [`Term`]
     Term(Term),
 }
@@ -20,18 +20,12 @@ pub enum Substitutable {
 impl Substitutable {
     /// Return a name with no primes.
     pub fn name<S: Into<String>>(s: S) -> Self {
-        Self::Name(s.into(), 0)
+        Self::Name(s.into())
     }
 
     fn to_term(&self) -> Term {
         match self {
-            Substitutable::Name(name, primes) => {
-                let mut t = Term::id(name);
-                for _ in 0..*primes {
-                    t = Term::UnaryOp(UOp::Prime, Box::new(t));
-                }
-                t
-            }
+            Substitutable::Name(name) => Term::id(name),
             Substitutable::Term(t) => t.clone(),
         }
     }
@@ -40,7 +34,7 @@ impl Substitutable {
 impl Display for Substitutable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Substitutable::Name(name, primes) => write!(f, "{name}{}", "\'".repeat(*primes)),
+            Substitutable::Name(name) => write!(f, "{name}"),
             Substitutable::Term(t) => write!(f, "{t}"),
         }
     }
@@ -84,9 +78,7 @@ fn rename_symbols_rec(
         Term::App(f, p, args) => {
             let v = substitution.get(&(f.clone(), *p));
             let (new_f, new_p) = match v {
-                Some(Substitutable::Name(new_f, new_p)) if !bound_ids.contains(f) => {
-                    (new_f.clone(), *new_p)
-                }
+                Some(Substitutable::Name(new_f)) if !bound_ids.contains(f) => (new_f.clone(), 0),
                 Some(Substitutable::Term(_)) => {
                     panic!("cannot rename function application to term")
                 }
@@ -165,6 +157,21 @@ fn rename_symbols_rec(
             Box::new(rename_symbols_rec(x, substitution, bound_ids, primes)),
             Box::new(rename_symbols_rec(y, substitution, bound_ids, primes)),
         ),
+
+        Term::ArraySelect { array, index } => Term::ArraySelect {
+            array: Box::new(rename_symbols_rec(array, substitution, bound_ids, primes)),
+            index: Box::new(rename_symbols_rec(index, substitution, bound_ids, primes)),
+        },
+
+        Term::ArrayStore {
+            array,
+            index,
+            value,
+        } => Term::ArrayStore {
+            array: Box::new(rename_symbols_rec(array, substitution, bound_ids, primes)),
+            index: Box::new(rename_symbols_rec(index, substitution, bound_ids, primes)),
+            value: Box::new(rename_symbols_rec(value, substitution, bound_ids, primes)),
+        },
 
         _ => panic!("unsupported term in subsutitution: {term:?}"),
     }

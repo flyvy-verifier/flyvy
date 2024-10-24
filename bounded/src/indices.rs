@@ -14,11 +14,11 @@ use std::{collections::HashMap, sync::Arc};
 /// of primes on mutable relations, and also supports creating unique indices that
 /// don't correspond to relations. Other features:
 ///   - It also remembers the signature and universe that were used to create it,
-///   because functions that need this object frequently also need the signature or
-///   the universe, and this means that they don't need to accept them separately.
+///     because functions that need this object frequently also need the signature or
+///     the universe, and this means that they don't need to accept them separately.
 ///   - It wraps the BDD library that we're using, because anyone who wants to use
-///   BDDs needs to have both a`BddVariableSet` and this mapping, so it makes sense
-///   to bundle them together.
+///     BDDs needs to have both a`BddVariableSet` and this mapping, so it makes sense
+///     to bundle them together.
 pub struct Indices {
     /// The signature used to create this object
     pub signature: Arc<Signature>,

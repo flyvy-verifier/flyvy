@@ -1,15 +1,14 @@
 //! Defines logical contexts, specifically one that uses quantified types instead of models.
 
+use crate::arith::{ArithAssignment, ArithExpr, IneqTemplates};
 use crate::context::*;
 use crate::sets::BaselinePropMinimizer;
 use crate::subsume::*;
 use fly::quant::QuantifierPrefix;
-use fly::syntax::{IntType, NumOp, Term};
+use fly::syntax::{IntType, Term};
 
 use itertools::Itertools;
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::Display;
 
 /// A logical connective
 #[derive(Copy, Clone, Hash, Debug, PartialEq, Eq)]
@@ -20,89 +19,20 @@ pub enum LogicOp {
     And,
 }
 
-/// An arithmetic expression. Atomic expression are given by identifiers, similarly
-/// to propositional variables.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub enum ArithExpr {
-    /// An integer literal
-    Int(IntType),
-    /// A named variables / constant
-    Expr(usize),
-    /// An application of a binary operation
-    Binary(NumOp, Box<ArithExpr>, Box<ArithExpr>),
-}
-
-impl Display for ArithExpr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ArithExpr::Int(i) => write!(f, "{i}"),
-            ArithExpr::Expr(e) => write!(f, "x{e}"),
-            ArithExpr::Binary(op, x, y) => write!(f, "({x} {op} {y})"),
-        }
-    }
-}
-
-type ArithAssignment = Vec<IntType>;
-
-impl ArithExpr {
-    /// Evaluates the arithmetic expression based on  the given assignment. Note that the assignment assigns values to
-    /// arithmatic expressions and not only identifiers, and the evaluation is short-circuiting -- the moment an expression
-    /// with an assigned value is encountered, this value is returned.
-    fn eval(&self, assignment: &ArithAssignment) -> IntType {
-        match self {
-            ArithExpr::Int(i) => *i,
-            ArithExpr::Expr(index) => assignment[*index],
-            ArithExpr::Binary(NumOp::Add, x, y) => x.eval(assignment) + y.eval(assignment),
-            ArithExpr::Binary(NumOp::Sub, x, y) => x.eval(assignment) - y.eval(assignment),
-            ArithExpr::Binary(NumOp::Mul, x, y) => x.eval(assignment) * y.eval(assignment),
-        }
-    }
-}
-
 /// A logical literal
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Literal {
     /// A Boolean literal with a [`usize`] atomic identifier and a [`bool`] denoting whether the atom is unnegated (`true`) or negated (`false`)
     Bool(usize, bool),
-    /// An integer inequality
-    IntBounds {
-        /// The arithmetic expression to be bounded
-        expr: ArithExpr,
-        /// The lower bound on the expression
-        lower: Option<IntType>,
-        /// The upper bound on the expression
-        upper: Option<IntType>,
-    },
+    /// An integer less-than-or-equal
+    Leq(ArithExpr<usize>, IntType),
 }
 
 impl Literal {
     fn subsumes(&self, other: &Self) -> bool {
         match (self, other) {
             (Literal::Bool(i1, b1), Literal::Bool(i2, b2)) => i1 == i2 && b1 == b2,
-            (
-                Literal::IntBounds {
-                    expr: e1,
-                    lower: l1,
-                    upper: u1,
-                },
-                Literal::IntBounds {
-                    expr: e2,
-                    lower: l2,
-                    upper: u2,
-                },
-            ) => {
-                let l_subsumes = match (l1, l2) {
-                    (None, None) | (Some(_), None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 >= n2,
-                };
-                let u_subsumes = match (u1, u2) {
-                    (None, None) | (Some(_), None) => true,
-                    (None, Some(_)) => false,
-                    (Some(n1), Some(n2)) => n1 <= n2,
-                };
-                e1 == e2 && l_subsumes && u_subsumes
-            }
+            (Literal::Leq(a1, i1), Literal::Leq(a2, i2)) => a1 == a2 && i1 <= i2,
             _ => false,
         }
     }
@@ -117,40 +47,13 @@ impl PartialOrd for Literal {
 impl Ord for Literal {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            // Integer bounds are first ordered by their expression,
-            // then by the reverse ordering on the lower bounds (a _higher_ lower bound is stronger),
-            // then by the ordering on the upper bounds (a _lower_ higher bound is stronger)
-            (
-                Literal::IntBounds {
-                    expr: e1,
-                    lower: l1,
-                    upper: u1,
-                },
-                Literal::IntBounds {
-                    expr: e2,
-                    lower: l2,
-                    upper: u2,
-                },
-            ) => {
-                let e_cmp = e1.cmp(e2);
-                let l_cmp = match (l1, l2) {
-                    (None, None) => Ordering::Equal,
-                    (None, Some(_)) => Ordering::Greater,
-                    (Some(_), None) => Ordering::Less,
-                    (Some(n1), Some(n2)) => n2.cmp(n1),
-                };
-                let u_cmp = match (u1, u2) {
-                    (None, None) => Ordering::Equal,
-                    (None, Some(_)) => Ordering::Greater,
-                    (Some(_), None) => Ordering::Less,
-                    (Some(n1), Some(n2)) => n1.cmp(n2),
-                };
-                e_cmp.then(l_cmp).then(u_cmp)
-            }
-            // An arbitrary choice -- bound atoms are lower than propositional atoms
-            (Literal::IntBounds { .. }, Literal::Bool(_, _)) => Ordering::Less,
-            (Literal::Bool(_, _), Literal::IntBounds { .. }) => Ordering::Greater,
+            // Leq literals with a lower bound are lower (stronger)
+            (Literal::Leq(a1, i1), Literal::Leq(a2, i2)) => a1.cmp(a2).then(i1.cmp(i2)),
+            // Comparison for Boolean literals
             (Literal::Bool(i1, b1), Literal::Bool(i2, b2)) => i1.cmp(i2).then(b1.cmp(b2)),
+            // An arbitrary choice -- leq < bool
+            (Literal::Leq(_, _), Literal::Bool(_, _)) => Ordering::Less,
+            (Literal::Bool(_, _), Literal::Leq(_, _)) => Ordering::Greater,
         }
     }
 }
@@ -178,21 +81,6 @@ pub struct PropModel {
     pub ints: ArithAssignment,
 }
 
-#[derive(Clone)]
-/// A template for an integer equality of the form `int <= expr <= int`.
-pub struct IntBoundTemplate {
-    /// Whether to include an upper value
-    pub with_upper: bool,
-    /// Whether to include a lower value
-    pub with_lower: bool,
-    /// Whether to allow both the upper bound and the lower bound to appear in an atom simulataneously
-    pub with_both: bool,
-    /// The upper limit of the integer literal on the righthand side
-    pub upper_limit: Option<IntType>,
-    /// The lower limit of the integer literal on the righthand side
-    pub lower_limit: Option<IntType>,
-}
-
 /// A context for literals, the lowest level in the inductive construction of languages.
 /// This supports Boolean literals as well as bounds on arithmetic expressions.
 #[derive(Clone)]
@@ -200,7 +88,7 @@ pub struct LiteralContext {
     /// Propositional atoms with given identifiers
     bool_atoms: Vec<usize>,
     /// Templates for integer atoms
-    int_templates: HashMap<ArithExpr, IntBoundTemplate>,
+    int_templates: IneqTemplates,
 }
 
 impl LiteralContext {
@@ -209,38 +97,21 @@ impl LiteralContext {
             .bool_atoms
             .iter()
             .map(|&i| Literal::Bool(i, obj.bools[i]));
-        let ints = self.int_templates.iter().flat_map(|(expr, t)| {
-            let val = expr.eval(&obj.ints);
-            if (!t.with_lower && !t.with_upper)
-                || t.lower_limit.is_some_and(|lim| lim > val)
-                || t.upper_limit.is_some_and(|lim| lim < val)
-            {
-                vec![]
-            } else {
-                let lower = if t.with_lower { Some(val) } else { None };
-                let upper = if t.with_upper { Some(val) } else { None };
-                if matches!((lower, upper), (Some(_), Some(_))) & !t.with_both {
-                    vec![
-                        Literal::IntBounds {
-                            expr: expr.clone(),
-                            lower: None,
-                            upper,
-                        },
-                        Literal::IntBounds {
-                            expr: expr.clone(),
-                            lower,
-                            upper: None,
-                        },
-                    ]
-                } else {
-                    vec![Literal::IntBounds {
-                        expr: expr.clone(),
-                        lower,
-                        upper,
-                    }]
+        let ints = self
+            .int_templates
+            .templates
+            .iter()
+            .flat_map(|(expr, range)| {
+                let val = expr.eval(&obj.ints);
+                let mut lits = vec![];
+
+                if let Some(bound) = range.least_upper_bound(val) {
+                    lits.push(Literal::Leq(expr.clone(), bound));
                 }
-            }
-        });
+
+                lits
+            });
+
         bools.chain(ints).map(PropFormula::Literal).collect()
     }
 
@@ -249,50 +120,13 @@ impl LiteralContext {
         match lit {
             // A propositional atom cannot be strictly weakened
             Literal::Bool(_, _) => vec![],
-            Literal::IntBounds { expr, lower, upper } => {
-                let template = self.int_templates.get(expr).unwrap();
+            Literal::Leq(expr, i) => {
+                let range = self.int_templates.templates.get(expr).unwrap();
                 let val = expr.eval(&obj.ints);
-                let new_lower = match lower {
-                    // Keep legal bound
-                    Some(l) if &val >= l => Some(*l),
-                    // Weaken illegal bound
-                    Some(l) if &val < l && !template.lower_limit.is_some_and(|lim| lim > val) => {
-                        Some(val)
-                    }
-                    _ => None,
-                };
-                let new_upper = match upper {
-                    // Keep legal bound
-                    Some(u) if &val <= u => Some(*u),
-                    // Weaken illegal bound
-                    Some(u) if &val > u && !template.upper_limit.is_some_and(|lim| lim < val) => {
-                        Some(val)
-                    }
-                    _ => None,
-                };
-                if matches!((new_lower, new_upper), (None, None)) {
-                    vec![]
-                } else if matches!((new_lower, new_upper), (Some(_), Some(_)))
-                    && !template.with_both
-                {
-                    vec![
-                        PropFormula::Literal(Literal::IntBounds {
-                            expr: expr.clone(),
-                            lower: None,
-                            upper: new_upper,
-                        }),
-                        PropFormula::Literal(Literal::IntBounds {
-                            expr: expr.clone(),
-                            lower: new_lower,
-                            upper: None,
-                        }),
-                    ]
-                } else {
-                    vec![PropFormula::Literal(Literal::IntBounds {
-                        expr: expr.clone(),
-                        lower: new_lower,
-                        upper: new_upper,
-                    })]
+                assert!(&val > i); // sanity check
+                match range.least_upper_bound(val) {
+                    Some(v) => vec![PropFormula::Literal(Literal::Leq(expr.clone(), v))],
+                    _ => vec![],
                 }
             }
         }
@@ -426,10 +260,7 @@ impl PropContext {
     }
 
     /// Create a new propositional context of literals.
-    pub fn literals(
-        bool_atoms: Vec<usize>,
-        int_templates: HashMap<ArithExpr, IntBoundTemplate>,
-    ) -> Self {
+    pub fn literals(bool_atoms: Vec<usize>, int_templates: IneqTemplates) -> Self {
         Self::Literals(LiteralContext {
             bool_atoms,
             int_templates,
@@ -449,15 +280,7 @@ impl Context for PropContext {
         match attr {
             PropFormula::Bottom => false,
             PropFormula::Literal(Literal::Bool(i, b)) => obj.bools[*i] == *b,
-            PropFormula::Literal(Literal::IntBounds { expr, lower, upper }) => {
-                let val = expr.eval(&obj.ints);
-                match (lower, upper) {
-                    (None, None) => true,
-                    (None, Some(u)) => &val <= u,
-                    (Some(l), None) => l <= &val,
-                    (Some(l), Some(u)) => l <= &val && &val <= u,
-                }
-            }
+            PropFormula::Literal(Literal::Leq(expr, i)) => &expr.eval(&obj.ints) <= i,
             PropFormula::Binary(op, f1, f2) => match op {
                 LogicOp::Or => Self::satisfies(obj, f1) || Self::satisfies(obj, f2),
                 LogicOp::And => Self::satisfies(obj, f1) && Self::satisfies(obj, f2),
@@ -654,7 +477,7 @@ impl Context for QuantifiedContext {
 /// Both the size of c (`clause_size`) and the number of cubes after the implication (`cubes`) can be bounded.
 pub fn pdnf_context(
     bool_atoms: Vec<usize>,
-    int_templates: HashMap<ArithExpr, IntBoundTemplate>,
+    int_templates: IneqTemplates,
     clause_size: Option<usize>,
     cubes: Option<usize>,
 ) -> PropContext {
@@ -689,7 +512,7 @@ mod tests {
     #[test]
     fn test_bottom() {
         // TODO: test out each constructor separately
-        let cont0 = Box::new(PropContext::literals(vec![0, 1], HashMap::new()));
+        let cont0 = Box::new(PropContext::literals(vec![0, 1], IneqTemplates::new(false)));
         let cont_or_bin = PropContext::Binary(LogicOp::Or, cont0.clone(), cont0.clone());
         let cont_and_bin = PropContext::Binary(LogicOp::And, cont0.clone(), cont0.clone());
         let cont_or = PropContext::Nary(LogicOp::Or, Some(3), cont0.clone());
@@ -792,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_weaken() {
-        let cont0 = Box::new(PropContext::literals(vec![0, 1], HashMap::new()));
+        let cont0 = Box::new(PropContext::literals(vec![0, 1], IneqTemplates::new(false)));
         let cont_or_bin = PropContext::Binary(LogicOp::Or, cont0.clone(), cont0.clone());
         let cont_and_bin = PropContext::Binary(LogicOp::And, cont0.clone(), cont0.clone());
         let cont_or = PropContext::Nary(LogicOp::Or, Some(2), cont0.clone());
