@@ -24,13 +24,7 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
 }
 
 pub fn compute_lfp(chc_sys: &ChcSystem) {
-    let solver = SingleSolver::new(SolverConf::new(
-        SolverType::Z3,
-        true,
-        &"lfp".to_string(),
-        100,
-        None,
-    ));
+    let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, true, "lfp", 100, None));
     let pred_to_lits = atomics_in_chc_sys(chc_sys, 1);
     let predicates = chc_sys
         .predicates

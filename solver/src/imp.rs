@@ -145,6 +145,14 @@ impl<B: Backend> Solver<B> {
         }
     }
 
+    /// Send raw s-expressions to the solver.
+    pub fn send_raw(&mut self, sexps: &[Sexp]) {
+        for s in sexps {
+            self.proc.send(s);
+        }
+        self.last_assumptions = None;
+    }
+
     /// Send `(assert ...)` to the solver.
     pub fn assert(&mut self, t: &Term) {
         self.proc.send(&app("assert", [sexp::term(t)]));
@@ -256,6 +264,16 @@ impl<B: Backend> Solver<B> {
         let start = fly::timing::start();
         let fo_model = self.get_fo_model(TimeType::GetModel, start)?;
         Ok(fo_model.into_trace(&self.signature, self.n_states))
+    }
+
+    /// After a sat response to check_sat or check_sat_assuming, produce a model expressed as
+    /// an s-expression with no post-processing performed.
+    pub fn get_sexp_model(&mut self) -> Result<Vec<Sexp>, SolverError> {
+        self.last_assumptions = None;
+        self.proc.get_model().map(|s| match s {
+            Sexp::List(l) => l,
+            _ => vec![s],
+        })
     }
 
     /// Construct an assertion that enforces `univ` has max cardinality `card`.

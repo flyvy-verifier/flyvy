@@ -4,17 +4,18 @@
 //! Traits defining a very basic interface to SMT solvers and a few implementations of them.
 
 use itertools::Itertools;
-use smtlib::sexp::InterpretedValue;
+use smtlib::sexp::{InterpretedValue, Sexp};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::thread;
 
 use fly::{
-    semantics::Model,
+    semantics::{Evaluable, Model},
     syntax::{Signature, Term},
 };
 use smtlib::proc::{SatResp, SmtPid, SolverError};
 
+use crate::backends::SolverType;
 use crate::conf::SolverConf;
 
 /// Check the following SMT query with the given solver configuration.
@@ -66,9 +67,14 @@ fn check_sat_conf(
         Ok(SatResp::Sat) => {
             let get_model_start = std::time::Instant::now();
             let get_model_resp = match query_conf.model_option {
-                ModelOption::None => Ok(vec![]),
-                ModelOption::Any => solver.get_model(),
-                ModelOption::Minimal => solver.get_minimal_model(),
+                ModelOption::None => Ok(RespModel::None),
+                ModelOption::Any => solver.get_model().map(RespModel::Trace),
+                ModelOption::Minimal => solver.get_minimal_model().map(RespModel::Trace),
+                ModelOption::Sexp => solver.get_sexp_model().map(|sexps| RespModel::Sexp {
+                    sorts: query_conf.sig.sorts.clone(),
+                    n_states: query_conf.n_states,
+                    sexps,
+                }),
             };
             let eval_resp = solver.get_value(&query_conf.evaluate);
             let res = match (get_model_resp, eval_resp) {
@@ -76,14 +82,9 @@ fn check_sat_conf(
                 (Err(e), _) | (Ok(_), Err(e)) => Err(e),
             };
             match &res {
-                Ok(BasicSolverResp::Sat(models, _)) => log_result(format!(
-                    "SAT({}ms, {:?})",
-                    get_model_start.elapsed().as_millis(),
-                    models
-                        .first()
-                        .map(|model| &model.universe[..])
-                        .unwrap_or(&[])
-                )),
+                Ok(BasicSolverResp::Sat(_, _)) => {
+                    log_result(format!("SAT({}ms)", get_model_start.elapsed().as_millis(),))
+                }
                 Err(err) => log_result(format!("error: {err}")),
                 _ => unreachable!(),
             }
@@ -126,6 +127,67 @@ pub enum ModelOption {
     Any,
     /// Return minimal model
     Minimal,
+    /// Return model expressed as an s-expression
+    Sexp,
+}
+
+/// A model returned in a solver response.
+#[derive(Debug, Clone)]
+pub enum RespModel {
+    /// No model.
+    None,
+    /// A trace of Flyvy models.
+    Trace(Vec<Model>),
+    /// A model as returned by the solver as an s-expression.
+    Sexp {
+        /// The uninterpreted sorts used in the model.
+        sorts: Vec<String>,
+        /// The number of states in the model.
+        n_states: usize,
+        /// The sequence of s-expressions defining the model.
+        sexps: Vec<Sexp>,
+    },
+}
+
+impl RespModel {
+    /// Return the trace of models in this response.
+    pub fn trace(&self) -> &[Model] {
+        match self {
+            RespModel::Trace(models) => models,
+            _ => panic!("could not extract flyvy model"),
+        }
+    }
+}
+
+impl Evaluable for RespModel {
+    fn evaluate(&self, term: &Term) -> bool {
+        match self {
+            RespModel::None | RespModel::Trace(_) => unimplemented!(),
+            RespModel::Sexp {
+                sorts,
+                n_states,
+                sexps,
+            } => {
+                let solver_conf = SolverConf::new(SolverType::Z3, false, "", 0, Some(0));
+
+                let mut solver = solver_conf.solver(
+                    &Signature {
+                        sorts: sorts.clone(),
+                        relations: vec![],
+                    },
+                    *n_states,
+                );
+                solver.send_raw(sexps);
+                solver.assert(&Term::not(term));
+
+                match solver.check_sat(HashMap::new()).unwrap() {
+                    SatResp::Unsat => true,
+                    SatResp::Sat => false,
+                    SatResp::Unknown(s) => panic!("unknown response when evaluation model: {s}"),
+                }
+            }
+        }
+    }
 }
 
 /// Defines a configuration for performing a solver query.
@@ -145,10 +207,10 @@ pub struct QueryConf<'a, C: BasicCanceler> {
 }
 
 /// A basic solver response
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum BasicSolverResp {
     /// A sat response together with a satisfying trace and evaluations for terms
-    Sat(Vec<Model>, HashMap<Term, InterpretedValue>),
+    Sat(RespModel, HashMap<Term, InterpretedValue>),
     /// An unsat response together with an unsat core
     Unsat(HashSet<usize>),
     /// An unknown response together with a reason
@@ -446,7 +508,11 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{BasicSolver, ModelOption, QueryConf, SingleSolver};
-    use crate::{backends::SolverType, basics::BasicSolverResp, conf::SolverConf};
+    use crate::{
+        backends::SolverType,
+        basics::{BasicSolverResp, RespModel},
+        conf::SolverConf,
+    };
     use fly::{
         parser::term,
         syntax::{RelationDecl, Signature, Sort},
@@ -496,17 +562,15 @@ mod tests {
             &HashMap::new(),
         );
 
-        assert_eq!(
-            resp.unwrap(),
+        assert!(matches!(resp.unwrap(),
             BasicSolverResp::Sat(
-                vec![],
-                [
-                    (term("x"), InterpretedValue::Int(2)),
-                    (term("y"), InterpretedValue::Int(3)),
-                ]
-                .into_iter()
-                .collect()
-            )
-        );
+                RespModel::None,
+               vals
+            ) if vals == [
+                (term("x"), InterpretedValue::Int(2)),
+                (term("y"), InterpretedValue::Int(3)),
+            ]
+            .into_iter()
+            .collect()));
     }
 }

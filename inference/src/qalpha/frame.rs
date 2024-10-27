@@ -572,7 +572,8 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                     false,
                 );
                 match &res {
-                    CexResult::Cex(models) => {
+                    CexResult::Cex(resp_model, _) => {
+                        let models = resp_model.trace();
                         cancelers.cancel();
                         {
                             let mut first_sat_lock = first_sat.lock().unwrap();
@@ -626,9 +627,9 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         let mut unknown = false;
         for (_, out) in results {
             match out {
-                Some(CexResult::Cex(mut models)) => {
+                Some(CexResult::Cex(models, _)) => {
                     total_sat += 1;
-                    ctis.push(models.pop().unwrap());
+                    ctis.push(models.trace().last().unwrap().clone());
                 }
                 Some(CexResult::UnsatCore(_)) => {
                     total_unsat += 1;
@@ -693,7 +694,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         }
 
         match fo.trans_safe_cex(solver, &hyp, cancelers) {
-            CexResult::Cex(_) => {
+            CexResult::Cex(_, _) => {
                 self.log_info(format!(
                     "{:>8}ms. Safety violated",
                     start_time.elapsed().as_millis()

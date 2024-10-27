@@ -49,6 +49,7 @@ pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
 
 impl<'a, L: BoundedLanguage> OrderedTerms for &WeakenHypotheses<'a, L> {
     type Key = LemmaKey;
+    type Eval = Model;
 
     fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
         self.permanent.iter().map(|(k, t)| (k, t)).collect()

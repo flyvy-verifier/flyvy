@@ -1,9 +1,10 @@
 //! Various algorithmic building blocks for using contexts in logical reasoning.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::arith::{ArithExpr, IneqTemplates};
 use crate::language::{Atomics, Parameterized};
@@ -14,17 +15,19 @@ use crate::{
     sets::MultiAttributeSet,
 };
 use fly::quant::QuantifierPrefix;
+use fly::semantics::Evaluable;
 use fly::syntax::{NumRel, Quantifier};
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
 };
+use formats::basics::{CexResult, OrderedTerms, SmtTactic};
 use formats::chc::{
-    ChcSystem, FunctionSort, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate,
+    ChcSystem, Component, FunctionSort, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate,
 };
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
-use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf};
+use solver::basics::{BasicSolver, ModelOption, QueryConf, RespModel};
 
 fn prop_var(outer_index: usize, inner_index: usize) -> String {
     format!("__prop_{outer_index}_{inner_index}")
@@ -244,6 +247,55 @@ impl MultiContext<QuantifiedContext> {
     }
 }
 
+struct OrderedFormulas<K>
+where
+    K: Ord + Hash + Eq + Clone + Send + Sync,
+{
+    next_id: usize,
+    formulas: BTreeMap<(usize, usize, K), Term>,
+}
+
+impl<K> OrderedTerms for &OrderedFormulas<K>
+where
+    K: Ord + Hash + Eq + Clone + Send + Sync,
+{
+    type Key = (usize, usize, K);
+    type Eval = RespModel;
+
+    fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
+        vec![]
+    }
+
+    fn first_unsat(self, model: &Self::Eval) -> Option<(Self::Key, Term)> {
+        self.formulas
+            .iter()
+            .find(|(_, t)| !model.evaluate(t))
+            .map(|(k, t)| (k.clone(), t.clone()))
+    }
+
+    fn all_terms(self) -> BTreeMap<Self::Key, Term> {
+        self.formulas.clone()
+    }
+}
+
+impl<K> OrderedFormulas<K>
+where
+    K: Ord + Hash + Eq + Clone + Send + Sync,
+{
+    fn new() -> Self {
+        Self {
+            next_id: 0,
+            formulas: BTreeMap::new(),
+        }
+    }
+
+    fn add(&mut self, key: K, term: Term) {
+        let size = term.size();
+        self.formulas.insert((size, self.next_id, key), term);
+        self.next_id += 1;
+    }
+}
+
 struct PredicateSolution<S>
 where
     S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula>,
@@ -263,6 +315,8 @@ where
 }
 
 struct PartialSolution<K: Hash + Eq + Clone> {
+    /// Mapping from CHC names of predicates to CHC indices where they are the head.
+    predicate_to_indices: HashMap<String, Vec<usize>>,
     /// The identifiers of formulas left to check, for each CHC (as indexed by the [`ChcSystem`])
     to_check: Vec<HashSet<K>>,
     /// For each CHC, a mapping from a formula identifier to an UNSAT-core consisting of elements `(predicate_name, formula_identifier)`
@@ -270,6 +324,8 @@ struct PartialSolution<K: Hash + Eq + Clone> {
     /// A mapping from `(predicate_name, formula_identifier)` to formulas in the heads of CHCs that have it in their UNSAT-core,
     /// given as `(chc_index, formula_identifier)`
     in_core_of: HashMap<(String, K), HashSet<(usize, K)>>,
+    /// The set of necessary formulas to include in the final solution for each CHC -- all others are implied by them
+    necessary: Vec<HashSet<K>>,
 }
 
 impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
@@ -277,14 +333,19 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
         self.to_check.iter().map(|s| s.len()).sum()
     }
 
-    fn add_core(&mut self, id: (usize, K), core: HashSet<(String, K)>) {
+    fn add_core(&mut self, id: (usize, K), core: HashSet<(String, K)>, necessary: bool) {
         for e in &core {
             self.in_core_of
                 .entry(e.clone())
                 .or_default()
                 .insert(id.clone());
         }
-        assert!(self.formula_to_core[id.0].insert(id.1, core).is_none());
+        assert!(self.formula_to_core[id.0]
+            .insert(id.1.clone(), core)
+            .is_none());
+        if necessary {
+            assert!(self.necessary[id.0].insert(id.1));
+        }
     }
 
     fn remove_core(&mut self, formula: &(usize, K)) -> HashSet<(String, K)> {
@@ -307,7 +368,8 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
             if let Some(using) = self.in_core_of.get(&participant).cloned() {
                 for formula in using {
                     self.remove_core(&formula);
-                    self.to_check[formula.0].insert(formula.1);
+                    self.to_check[formula.0].insert(formula.1.clone());
+                    self.necessary[formula.0].remove(&formula.1);
                 }
             }
         }
@@ -331,8 +393,9 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
                     } else {
                         // Update the cores for the weakenings.
                         let core = self.remove_core(&(i, k.clone()));
+                        let necessary = self.necessary[i].remove(k);
                         for wk in weakenings {
-                            self.add_core((i, wk.clone()), core.clone());
+                            self.add_core((i, wk.clone()), core.clone(), necessary);
                         }
                     }
                 }
@@ -365,16 +428,27 @@ where
                 )
             })
             .collect();
-        let partial = PartialSolution {
-            to_check: head_predicates
-                .iter()
-                .map(|pred| match pred {
-                    Some((name, _)) => solutions[*name].solution.iter().collect(),
-                    None => HashSet::new(),
-                })
-                .collect(),
+
+        let mut predicate_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut to_check = vec![];
+        let necessary = vec![HashSet::new(); chc_sys.chcs.len()];
+        for (i, head) in head_predicates.iter().enumerate() {
+            if let Some((predicate, _)) = *head {
+                predicate_to_indices
+                    .entry(predicate.clone())
+                    .or_default()
+                    .push(i);
+                to_check.push(solutions[predicate].solution.iter().collect());
+            } else {
+                to_check.push(HashSet::new());
+            }
+        }
+        let partial: PartialSolution<(usize, <S as AttributeSet>::AttributeId)> = PartialSolution {
+            predicate_to_indices,
+            to_check,
             formula_to_core: vec![HashMap::new(); head_predicates.len()],
             in_core_of: HashMap::new(),
+            necessary,
         };
 
         Self { solutions, partial }
@@ -385,6 +459,10 @@ where
         self.solutions
             .iter()
             .map(|(name, p)| {
+                let necessary_sets = self.partial.predicate_to_indices[name]
+                    .iter()
+                    .map(|i| &self.partial.necessary[*i])
+                    .collect_vec();
                 (
                     name.clone(),
                     SymbolicPredicate {
@@ -392,6 +470,7 @@ where
                         formulas: p
                             .solution
                             .iter()
+                            .filter(|id| necessary_sets.iter().any(|s| s.contains(id)))
                             .map(|id| {
                                 let t = p.context.to_term(&p.solution.get(&id));
                                 ((name.clone(), id), t)
@@ -403,7 +482,28 @@ where
             .collect()
     }
 
-    fn get_positive_cex<B: BasicSolver>(
+    /// Check whether one of the predicates in the chc body is equivalent to false (which implies a trivial implication)
+    fn check_trivial(&mut self, chc_sys: &ChcSystem, chc_index: usize) -> bool {
+        for comp in &chc_sys.chcs[chc_index].body {
+            if let Component::Predicate(comp_name, _) = &comp {
+                if let Some(core) = self.solutions[comp_name].solution.get_false_subset() {
+                    let named_core: HashSet<_> =
+                        core.into_iter().map(|e| (comp_name.clone(), e)).collect();
+                    let ids_to_check = std::mem::take(&mut self.partial.to_check[chc_index]);
+                    for id in ids_to_check {
+                        self.partial
+                            .add_core((chc_index, id), named_core.clone(), true);
+                    }
+                    println!("Check trivially holds");
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn find_cex<B: BasicSolver>(
         &mut self,
         solver: &B,
         chc_sys: &ChcSystem,
@@ -421,31 +521,17 @@ where
 
             println!("Checking CHC #{chc_index} with head {}", head_predicate.0);
 
-            // Check whether one of the predicates in the body is equivalent to false (which implies a trivial implication)
-            for comp in &chc.body {
-                if let Some((comp_name, _)) = comp.predicate() {
-                    if let Some(core) = self.solutions[comp_name].solution.get_false_subset() {
-                        let named_core: HashSet<_> =
-                            core.into_iter().map(|e| (comp_name.clone(), e)).collect();
-                        let ids_to_check = std::mem::take(&mut self.partial.to_check[chc_index]);
-                        for id in ids_to_check {
-                            self.partial.add_core((chc_index, id), named_core.clone());
-                        }
-                        println!("Check trivially holds");
-                        continue 'chc_loop;
-                    }
-                }
+            if self.check_trivial(chc_sys, chc_index) {
+                continue 'chc_loop;
             }
 
             // The hypotheses of the CHC
             let mut hyp = vec![];
-            let mut assume_keys = vec![];
-            let mut assumptions = HashMap::new();
+            let mut full_assumptions = OrderedFormulas::new();
             for (k, t) in chc.instantiate_body(&assignment).into_iter() {
                 match k {
                     Some(key) => {
-                        assumptions.insert(assume_keys.len(), (t, true));
-                        assume_keys.push(key);
+                        full_assumptions.add(key, t);
                     }
                     None => hyp.push(t),
                 }
@@ -470,13 +556,79 @@ where
 
             let mut extractors: Vec<Option<Extractor>> = vec![None; head_contexts.len()];
             let ids_to_check = self.partial.to_check[chc_index].clone();
-            for id in ids_to_check {
+            'formula_loop: for id in ids_to_check {
                 // A formula to check shouldn't already have a core
                 assert!(
                     !self.partial.formula_to_core[chc_index].contains_key(&id),
                     "formula to check already had UNSAT-core"
                 );
 
+                let impl_query_conf = QueryConf {
+                    sig: &chc.signature,
+                    n_states: 1,
+                    cancelers: None,
+                    model_option: ModelOption::None,
+                    evaluate: vec![],
+                    save_tee: false,
+                };
+
+                let formula = head_sets[id.0].get(&id.1);
+                let formula_term =
+                    rename_symbols(&head_contexts[id.0].to_term(&formula), &head_subst);
+                println!(
+                    "Querying {} ({} remaining): {}",
+                    head_predicate.0,
+                    self.partial.checks_left(),
+                    formula_term
+                );
+
+                // ---------- INTERNAL IMPLICATION CHECK ----------
+                println!("Checking implication...");
+                let preceding = chc
+                    .head
+                    .instantiate(&assignment)
+                    .into_iter()
+                    .filter(|(_, t)| {
+                        t.size()
+                            .cmp(&formula_term.size())
+                            .then(t.cmp(&formula_term))
+                            .is_lt()
+                    });
+                let mut impl_assumptions = OrderedFormulas::new();
+                for (k, t) in preceding {
+                    impl_assumptions.add(k.unwrap(), t);
+                }
+
+                let assertions = vec![Term::not(formula_term)];
+                let instant = Instant::now();
+                let res = impl_assumptions.find_cex(
+                    solver,
+                    &impl_query_conf,
+                    &assertions,
+                    &SmtTactic::Full,
+                    |m| m.clone(),
+                );
+
+                match res {
+                    CexResult::Cex(_, _) => {
+                        println!("    (took {}ms, found SAT)", instant.elapsed().as_millis(),);
+                    }
+                    CexResult::UnsatCore(core) => {
+                        println!(
+                            "    (took {}ms, found UNSAT({}))",
+                            instant.elapsed().as_millis(),
+                            core.len()
+                        );
+                        let named_core = core.into_iter().map(|(_, _, id)| id).collect();
+                        self.partial.to_check[chc_index].remove(&id);
+                        self.partial.add_core((chc_index, id), named_core, false);
+                        continue 'formula_loop;
+                    }
+                    _ => panic!("solver error {res:?}"),
+                }
+
+                // ---------- CHC CONSEQUENCE CHECK ----------
+                println!("Checking CHC consequence...");
                 if extractors[id.0].is_none() {
                     extractors[id.0] = Some(head_contexts[id.0].extractor(size, &head_subst));
                 }
@@ -491,31 +643,37 @@ where
                     save_tee: false,
                 };
 
-                let formula = head_sets[id.0].get(&id.1);
-                println!(
-                    "Querying {} ({} remaining): {}",
-                    head_predicate.0,
-                    self.partial.checks_left(),
-                    head_contexts[id.0].to_term(&formula)
-                );
                 let mut assertions = hyp.clone();
                 assertions.push(extractor.term.clone());
                 assertions.push(extractor.not_satisfies(&formula));
-                let resp = solver.check_sat(&query_conf, &assertions, &assumptions);
+                let instant = Instant::now();
+                let res = full_assumptions.find_cex(
+                    solver,
+                    &query_conf,
+                    &assertions,
+                    &SmtTactic::Full,
+                    |m| m.clone(),
+                );
 
-                match resp {
-                    Ok(BasicSolverResp::Sat(_, vals)) => {
+                match res {
+                    CexResult::Cex(_, vals) => {
+                        println!("    (took {}ms, found SAT)", instant.elapsed().as_millis());
                         return Some((
                             head_predicate.0.clone(),
                             MultiObject(id.0, extractor.extract(&vals)),
-                        ))
+                        ));
                     }
-                    Ok(BasicSolverResp::Unsat(core)) => {
-                        let named_core = core.iter().map(|i| assume_keys[*i].clone()).collect();
+                    CexResult::UnsatCore(core) => {
+                        println!(
+                            "    (took {}ms, found UNSAT({}))",
+                            instant.elapsed().as_millis(),
+                            core.len()
+                        );
+                        let named_core = core.into_iter().map(|(_, _, id)| id).collect();
                         self.partial.to_check[chc_index].remove(&id);
-                        self.partial.add_core((chc_index, id), named_core);
+                        self.partial.add_core((chc_index, id), named_core, true);
                     }
-                    _ => panic!("solver error {resp:?}"),
+                    _ => panic!("solver error {res:?}"),
                 }
             }
         }
@@ -625,7 +783,7 @@ where
 
     // TODO: handle increasing sizes
 
-    while let Some((name, cex)) = chc_sol.get_positive_cex(solver, chc_sys, 1) {
+    while let Some((name, cex)) = chc_sol.find_cex(solver, chc_sys, 1) {
         println!("Found CEX: {cex:?}");
         let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
         let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
@@ -755,9 +913,11 @@ mod tests {
         let mut sol_1 = ChcSolution {
             solutions: HashMap::new(),
             partial: PartialSolution {
+                predicate_to_indices: HashMap::from([("I".to_string(), vec![0])]),
                 to_check: vec![pred_sol_1.solution.iter().collect()],
                 formula_to_core: vec![HashMap::new()],
                 in_core_of: HashMap::new(),
+                necessary: vec![HashSet::new()],
             },
         };
         sol_1.solutions.insert("I".to_string(), pred_sol_1);
@@ -770,7 +930,7 @@ mod tests {
             None,
         ));
 
-        let cex = sol_1.get_positive_cex(&solver, &chc_sys, 1);
+        let cex = sol_1.find_cex(&solver, &chc_sys, 1);
         assert_eq!(
             cex,
             Some((

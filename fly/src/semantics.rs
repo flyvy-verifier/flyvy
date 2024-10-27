@@ -360,6 +360,18 @@ impl Model {
     }
 }
 
+/// An [`Evaluable`] can evaluate a [`Term`] to either `true` or `false`.
+pub trait Evaluable {
+    /// Check whether the term evaluates to true.
+    fn evaluate(&self, term: &Term) -> bool;
+}
+
+impl Evaluable for Model {
+    fn evaluate(&self, term: &Term) -> bool {
+        self.eval(term) == 1
+    }
+}
+
 impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         fn fmt_rel(decl: &RelationDecl, interp: &Interpretation) -> String {

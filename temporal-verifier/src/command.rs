@@ -465,7 +465,7 @@ pub struct App {
 }
 
 impl SolverArgs {
-    fn get_solver_conf(&self, fname: &String) -> SolverConf {
+    fn get_solver_conf(&self, fname: &str) -> SolverConf {
         let backend_type = match &self.solver {
             SolverType::Z3 => backends::SolverType::Z3,
             SolverType::Cvc5 => backends::SolverType::Cvc5,

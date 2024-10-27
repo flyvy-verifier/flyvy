@@ -36,7 +36,7 @@ impl SolverConf {
     pub fn new(
         backend_type: SolverType,
         smt: bool,
-        fname: &String,
+        fname: &str,
         timeout_s: usize,
         seed: Option<usize>,
     ) -> Self {

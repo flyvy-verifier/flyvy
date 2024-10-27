@@ -99,7 +99,7 @@ pub trait AttributeSet {
     /// The relevant context.
     type Cont: Context<Object = Self::Object, Attribute = Self::Attribute>;
     /// The indirect identifier of attributes in the set.
-    type AttributeId: Clone + Hash + Eq + Ord + Debug;
+    type AttributeId: Clone + Hash + Eq + Ord + Debug + Send + Sync;
 
     /// Create a new set for the given context.
     fn new(cont: &Self::Cont) -> Self;

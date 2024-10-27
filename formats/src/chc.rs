@@ -106,7 +106,13 @@ impl Component {
             .is_some_and(|(pred_name, _)| pred_name == name)
     }
 
-    fn instantiate<K: Clone>(&self, assignment: &SymbolicAssignment<K>) -> Vec<(Option<K>, Term)> {
+    /// Instantiate the CHC component using the given assignment as conjunction of formulas.
+    /// Returns a sequence of terms with their corresponding keys (for those originating in a
+    /// [`SymbolicAssignment`]).
+    pub fn instantiate<K: Clone>(
+        &self,
+        assignment: &SymbolicAssignment<K>,
+    ) -> Vec<(Option<K>, Term)> {
         match self {
             Component::Predicate(name, args) => {
                 let symb_pred = assignment

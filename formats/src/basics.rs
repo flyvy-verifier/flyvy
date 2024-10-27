@@ -9,21 +9,28 @@ use std::{
     thread,
 };
 
-use fly::syntax::BinOp;
 use fly::syntax::Term::*;
 use fly::syntax::*;
 use fly::term::{prime::clear_next, prime::Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
-use smtlib::proc::{SatResp, SolverError};
+use fly::{semantics::Evaluable, syntax::BinOp};
+use smtlib::{
+    proc::{SatResp, SolverError},
+    sexp::InterpretedValue,
+};
 use solver::{
-    basics::{BasicCanceler, BasicSolver, BasicSolverResp, ModelOption, MultiCanceler, QueryConf},
+    basics::{
+        BasicCanceler, BasicSolver, BasicSolverResp, ModelOption, MultiCanceler, QueryConf,
+        RespModel,
+    },
     conf::SolverConf,
 };
 
+#[derive(Debug)]
 /// The result of an SMT query looking for a counterexample
 pub enum CexResult<K: Eq + Hash> {
     /// The counterexample given as a trace of models
-    Cex(Vec<Model>),
+    Cex(RespModel, HashMap<Term, InterpretedValue>),
     /// An UNSAT-core sufficent for showing that the query has no counterexample
     UnsatCore(HashSet<K>),
     /// Indicates that the query has been canceled
@@ -34,9 +41,9 @@ pub enum CexResult<K: Eq + Hash> {
 
 impl<K: Eq + Hash> CexResult<K> {
     /// Convert into an [`Option`], which either contains a counterexample or [`None`].
-    pub fn into_option(self) -> Option<Vec<Model>> {
+    pub fn into_trace(self) -> Option<Vec<Model>> {
         match self {
-            CexResult::Cex(models) => Some(models),
+            CexResult::Cex(RespModel::Trace(models), _) => Some(models),
             CexResult::UnsatCore(_) => None,
             _ => panic!("cex result is neither sat or unsat"),
         }
@@ -46,7 +53,7 @@ impl<K: Eq + Hash> CexResult<K> {
     /// If the query is either `Canceled` or `Unknown`, this panics.
     pub fn is_cex(&self) -> bool {
         match self {
-            CexResult::Cex(_) => true,
+            CexResult::Cex(_, _) => true,
             CexResult::UnsatCore(_) => false,
             _ => panic!("cex result is neither sat or unsat"),
         }
@@ -62,7 +69,7 @@ impl<K: Eq + Hash> CexResult<K> {
 struct Core<H: OrderedTerms> {
     formulas: H,
     participants: BTreeMap<H::Key, Term>,
-    counter_models: Vec<Model>,
+    counter_models: Vec<H::Eval>,
     to_participants: HashMap<usize, HashSet<H::Key>>,
     to_counter_models: HashMap<H::Key, HashSet<usize>>,
     minimal: bool,
@@ -89,29 +96,32 @@ impl<H: OrderedTerms> Core<H> {
     ///
     /// Returns `true` if the model has been successfully blocked or `false` if it couldn't be
     /// blocked because it satisfied all candidate formulas.
-    fn add_counter_model(&mut self, counter_model: Model) -> bool {
+    fn add_counter_model(&mut self, counter_model: H::Eval) -> bool {
         match self.formulas.first_unsat(&counter_model) {
             Some((key, term)) => {
                 let model_idx = self.counter_models.len();
                 self.to_participants.insert(model_idx, HashSet::new());
                 let mut counter_models: HashSet<usize> = (0..self.counter_models.len())
-                    .filter(|i| self.counter_models[*i].eval(&term) == 0)
+                    .filter(|i| !self.counter_models[*i].evaluate(&term))
                     .collect();
                 counter_models.insert(model_idx);
                 self.counter_models.push(counter_model);
                 for m_idx in &counter_models {
-                    self.to_participants.get_mut(m_idx).unwrap().insert(key);
+                    self.to_participants
+                        .get_mut(m_idx)
+                        .unwrap()
+                        .insert(key.clone());
                 }
-                self.to_counter_models.insert(key, counter_models);
-                self.participants.insert(key, term);
+                self.to_counter_models.insert(key.clone(), counter_models);
+                self.participants.insert(key.clone(), term);
 
                 if self.minimal {
                     while self.reduce() {}
 
                     assert!(self.participants.keys().all(|key| {
-                        self.to_counter_models[key]
-                            .iter()
-                            .any(|m_idx| self.to_participants[m_idx] == HashSet::from([*key]))
+                        self.to_counter_models[key].iter().any(|m_idx| {
+                            self.to_participants[m_idx] == HashSet::from([key.clone()])
+                        })
                     }));
                 }
 
@@ -159,14 +169,20 @@ impl<H: OrderedTerms> Core<H> {
     {
         self.present()
             .enumerate()
-            .filter_map(|(i, (k, _))| if core.contains(&i) { Some(*k) } else { None })
+            .filter_map(|(i, (k, _))| {
+                if core.contains(&i) {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
     /// Get the keys and terms currently present in the core.
     fn present(&self) -> impl Iterator<Item = (&H::Key, &Term)> {
         let permanent = self.formulas.permanent();
-        let seen: HashSet<H::Key> = permanent.iter().map(|(k, _)| **k).collect();
+        let seen: HashSet<H::Key> = permanent.iter().map(|(k, _)| (*k).clone()).collect();
         permanent
             .into_iter()
             .chain(
@@ -200,20 +216,62 @@ pub enum CexOrCore {
 /// to always include, which terms to include before others, etc.
 pub trait OrderedTerms: Copy + Send + Sync {
     /// The type of keys the terms are ordered by
-    type Key: Ord + Hash + Eq + Clone + Copy + Send + Sync;
+    type Key: Ord + Hash + Eq + Clone + Send + Sync;
+    /// The type of model used to evaluate the terms.
+    type Eval: Evaluable;
 
     /// The terms which should always be included
     fn permanent(&self) -> Vec<(&Self::Key, &Term)>;
 
     /// Get the first term in the order unsatisfied by the given model (if one exists)
-    fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)>;
+    fn first_unsat(self, model: &Self::Eval) -> Option<(Self::Key, Term)>;
 
     /// Get all terms, ordered by keys
     fn all_terms(self) -> BTreeMap<Self::Key, Term>;
+
+    /// Find a counterexample to the formulas in the core and the given assertions.
+    fn find_cex<B, F>(
+        self,
+        solver: &B,
+        query_conf: &QueryConf<B::Canceler>,
+        assertions: &[Term],
+        smt_tactic: &SmtTactic,
+        counter_model: F,
+    ) -> CexResult<Self::Key>
+    where
+        B: BasicSolver,
+        F: Fn(&RespModel) -> Self::Eval,
+    {
+        let mut core = match smt_tactic {
+            SmtTactic::Full => Core::new(self, self.all_terms(), false),
+            SmtTactic::Gradual => Core::new(self, BTreeMap::new(), false),
+            SmtTactic::Minimal => Core::new(self, BTreeMap::new(), true),
+        };
+        loop {
+            let assumptions = core.to_assumptions();
+            match solver.check_sat(query_conf, assertions, &assumptions) {
+                Ok(BasicSolverResp::Sat(resp_model, values)) => {
+                    if matches!(smt_tactic, SmtTactic::Full)
+                        || !core.add_counter_model(counter_model(&resp_model))
+                    {
+                        // A counter-example was found, no need to search further.
+                        return CexResult::Cex(resp_model, values);
+                    }
+                }
+                Ok(BasicSolverResp::Unsat(c)) => {
+                    return CexResult::UnsatCore(core.convert_core(&c));
+                }
+                Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
+                Err(SolverError::Killed) => return CexResult::Canceled,
+                Err(e) => panic!("error in solver: {e}"),
+            }
+        }
+    }
 }
 
 impl<V: AsRef<[Term]> + Copy + Send + Sync> OrderedTerms for V {
     type Key = usize;
+    type Eval = Model;
 
     fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
         vec![]
@@ -278,7 +336,7 @@ impl FOModule {
     /// Get an initial counterexample for the given term.
     pub fn init_cex<B: BasicSolver>(&self, solver: &B, t: &Term) -> Option<Model> {
         self.implication_cex(solver, &self.module.inits, t, None, false)
-            .into_option()
+            .into_trace()
             .map(|mut models| {
                 assert_eq!(models.len(), 1);
                 models.pop().unwrap()
@@ -296,7 +354,7 @@ impl FOModule {
         save_tee: bool,
     ) -> CexResult<H::Key>
     where
-        H: OrderedTerms,
+        H: OrderedTerms<Eval = Model>,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
@@ -331,34 +389,20 @@ impl FOModule {
                 .into_iter()
                 .map(|transition| {
                     s.spawn(|| {
-                        let mut core = match self.smt_tactic {
-                            SmtTactic::Full => Core::new(hyp, hyp.all_terms(), false),
-                            SmtTactic::Gradual => Core::new(hyp, BTreeMap::new(), false),
-                            SmtTactic::Minimal => Core::new(hyp, BTreeMap::new(), true),
-                        };
-
                         let mut local_assertions = assertions.clone();
                         local_assertions.extend(transition.into_iter().cloned());
-                        loop {
-                            let assumptions = core.to_assumptions();
-                            match solver.check_sat(&query_conf, &local_assertions, &assumptions) {
-                                Ok(BasicSolverResp::Sat(models, _)) => {
-                                    if !core.add_counter_model(models[0].clone()) {
-                                        // A counter-example to the transition was found, no need to search further.
-                                        local_cancelers.cancel();
-                                        return CexResult::Cex(models);
-                                    }
-                                }
-                                Ok(BasicSolverResp::Unsat(c)) => {
-                                    return CexResult::UnsatCore(core.convert_core(&c))
-                                }
-                                Ok(BasicSolverResp::Unknown(reason)) => {
-                                    return CexResult::Unknown(reason)
-                                }
-                                Err(SolverError::Killed) => return CexResult::Canceled,
-                                Err(e) => panic!("error in solver: {e}"),
-                            }
+
+                        let res = hyp.find_cex(
+                            solver,
+                            &query_conf,
+                            &local_assertions,
+                            &self.smt_tactic,
+                            |m| m.trace()[0].clone(),
+                        );
+                        if let CexResult::Cex(_, _) = res {
+                            local_cancelers.cancel();
                         }
+                        res
                     })
                 })
                 .collect_vec()
@@ -370,11 +414,11 @@ impl FOModule {
         // Check whether any counterexample has been found
         if cex_results
             .iter()
-            .any(|res| matches!(res, CexResult::Cex(_)))
+            .any(|res| matches!(res, CexResult::Cex(_, _)))
         {
             return cex_results
                 .into_iter()
-                .find(|res| matches!(res, CexResult::Cex(_)))
+                .find(|res| matches!(res, CexResult::Cex(_, _)))
                 .unwrap();
         }
 
@@ -424,7 +468,7 @@ impl FOModule {
         save_tee: bool,
     ) -> CexResult<H::Key>
     where
-        H: OrderedTerms,
+        H: OrderedTerms<Eval = Model>,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
@@ -436,12 +480,6 @@ impl FOModule {
             return CexResult::Canceled;
         }
 
-        let mut core = match self.smt_tactic {
-            SmtTactic::Full => Core::new(hyp, hyp.all_terms(), false),
-            SmtTactic::Gradual => Core::new(hyp, BTreeMap::new(), false),
-            SmtTactic::Minimal => Core::new(hyp, BTreeMap::new(), true),
-        };
-
         let query_conf = QueryConf {
             sig: &self.signature,
             n_states: 1,
@@ -452,21 +490,9 @@ impl FOModule {
         };
         let mut assertions = self.module.axioms.clone();
         assertions.push(Term::not(t));
-        loop {
-            match solver.check_sat(&query_conf, &assertions, &core.to_assumptions()) {
-                Ok(BasicSolverResp::Sat(models, _)) => {
-                    if !core.add_counter_model(models[0].clone()) {
-                        return CexResult::Cex(models);
-                    }
-                }
-                Ok(BasicSolverResp::Unsat(c)) => {
-                    return CexResult::UnsatCore(core.convert_core(&c))
-                }
-                Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
-                Err(SolverError::Killed) => return CexResult::Canceled,
-                Err(e) => panic!("error in solver: {e}"),
-            }
-        }
+        hyp.find_cex(solver, &query_conf, &assertions, &self.smt_tactic, |m| {
+            m.trace()[0].clone()
+        })
     }
 
     /// Return up to `width` simulated post-states from the given pre-state
@@ -500,7 +526,8 @@ impl FOModule {
                     'this_loop: loop {
                         let resp = solver.check_sat(&query_conf, &assertions, &empty_assumptions);
                         match resp {
-                            Ok(BasicSolverResp::Sat(mut models, _)) => {
+                            Ok(BasicSolverResp::Sat(resp_model, _)) => {
+                                let mut models = resp_model.trace().to_owned();
                                 assert_eq!(models.len(), 2);
                                 let new_sample = models.pop().unwrap();
                                 assertions.push(Term::negate(next.prime(&new_sample.to_term())));
@@ -653,7 +680,7 @@ impl FOModule {
         cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
     ) -> CexResult<H::Key>
     where
-        H: OrderedTerms,
+        H: OrderedTerms<Eval = Model>,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
@@ -676,7 +703,7 @@ impl FOModule {
         cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
     ) -> CexResult<H::Key>
     where
-        H: OrderedTerms,
+        H: OrderedTerms<Eval = Model>,
         C: BasicCanceler,
         B: BasicSolver<Canceler = C>,
     {
