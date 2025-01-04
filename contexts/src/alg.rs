@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::arith::{ArithExpr, IneqTemplates};
-use crate::language::{Atomics, Parameterized};
 use crate::sets::MultiId;
 use crate::{
     context::{AttributeSet, Context, MultiAttribute, MultiContext, MultiObject},
@@ -22,9 +21,7 @@ use fly::{
     term::subst::{rename_symbols, NameSubstitution},
 };
 use formats::basics::{CexResult, OrderedTerms, SmtTactic};
-use formats::chc::{
-    ChcSystem, Component, FunctionSort, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate,
-};
+use formats::chc::{ChcSystem, Component, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate};
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
 use solver::basics::{BasicSolver, ModelOption, QueryConf, RespModel};
@@ -455,7 +452,10 @@ where
     }
 
     /// Get the symbolic assignment given by this solution.
-    pub fn get_symbolic_assignment(&self) -> SymbolicAssignment<(String, MultiId<S::AttributeId>)> {
+    pub fn get_symbolic_assignment(
+        &self,
+        full: bool,
+    ) -> SymbolicAssignment<(String, MultiId<S::AttributeId>)> {
         self.solutions
             .iter()
             .map(|(name, p)| {
@@ -470,7 +470,7 @@ where
                         formulas: p
                             .solution
                             .iter()
-                            .filter(|id| necessary_sets.iter().any(|s| s.contains(id)))
+                            .filter(|id| full || necessary_sets.iter().any(|s| s.contains(id)))
                             .map(|id| {
                                 let t = p.context.to_term(&p.solution.get(&id));
                                 ((name.clone(), id), t)
@@ -507,9 +507,8 @@ where
         &mut self,
         solver: &B,
         chc_sys: &ChcSystem,
-        size: usize,
     ) -> Option<(String, MultiObject<QuantifiedType>)> {
-        let assignment = self.get_symbolic_assignment();
+        let assignment = self.get_symbolic_assignment(true);
 
         'chc_loop: for chc_index in 0..self.partial.to_check.len() {
             if self.partial.to_check[chc_index].is_empty() {
@@ -563,15 +562,6 @@ where
                     "formula to check already had UNSAT-core"
                 );
 
-                let impl_query_conf = QueryConf {
-                    sig: &chc.signature,
-                    n_states: 1,
-                    cancelers: None,
-                    model_option: ModelOption::None,
-                    evaluate: vec![],
-                    save_tee: false,
-                };
-
                 let formula = head_sets[id.0].get(&id.1);
                 let formula_term =
                     rename_symbols(&head_contexts[id.0].to_term(&formula), &head_subst);
@@ -582,70 +572,18 @@ where
                     formula_term
                 );
 
-                // ---------- INTERNAL IMPLICATION CHECK ----------
-                println!("Checking implication...");
-                let preceding = chc
-                    .head
-                    .instantiate(&assignment)
-                    .into_iter()
-                    .filter(|(_, t)| {
-                        t.size()
-                            .cmp(&formula_term.size())
-                            .then(t.cmp(&formula_term))
-                            .is_lt()
-                    });
-                let mut impl_assumptions = OrderedFormulas::new();
-                for (k, t) in preceding {
-                    impl_assumptions.add(k.unwrap(), t);
-                }
-
-                let assertions = vec![Term::not(formula_term)];
-                let instant = Instant::now();
-                let res = impl_assumptions.find_cex(
-                    solver,
-                    &impl_query_conf,
-                    &assertions,
-                    &SmtTactic::Full,
-                    |m| m.clone(),
-                );
-
-                match res {
-                    CexResult::Cex(_, _) => {
-                        println!("    (took {}ms, found SAT)", instant.elapsed().as_millis(),);
-                    }
-                    CexResult::UnsatCore(core) => {
-                        println!(
-                            "    (took {}ms, found UNSAT({}))",
-                            instant.elapsed().as_millis(),
-                            core.len()
-                        );
-                        let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                        self.partial.to_check[chc_index].remove(&id);
-                        self.partial.add_core((chc_index, id), named_core, false);
-                        continue 'formula_loop;
-                    }
-                    _ => panic!("solver error {res:?}"),
-                }
-
                 // ---------- CHC CONSEQUENCE CHECK ----------
                 println!("Checking CHC consequence...");
-                if extractors[id.0].is_none() {
-                    extractors[id.0] = Some(head_contexts[id.0].extractor(size, &head_subst));
-                }
-                let extractor = extractors[id.0].as_ref().unwrap();
-                let extended_sig = extractor.extend_signature(&chc.signature);
                 let query_conf = QueryConf {
-                    sig: &extended_sig,
+                    sig: &chc.signature,
                     n_states: 1,
                     cancelers: None,
                     model_option: ModelOption::None,
-                    evaluate: extractor.to_evaluate(),
+                    evaluate: vec![],
                     save_tee: false,
                 };
-
                 let mut assertions = hyp.clone();
-                assertions.push(extractor.term.clone());
-                assertions.push(extractor.not_satisfies(&formula));
+                assertions.push(Term::not(formula_term));
                 let instant = Instant::now();
                 let res = full_assumptions.find_cex(
                     solver,
@@ -654,14 +592,12 @@ where
                     &SmtTactic::Full,
                     |m| m.clone(),
                 );
-
                 match res {
-                    CexResult::Cex(_, vals) => {
-                        println!("    (took {}ms, found SAT)", instant.elapsed().as_millis());
-                        return Some((
-                            head_predicate.0.clone(),
-                            MultiObject(id.0, extractor.extract(&vals)),
-                        ));
+                    CexResult::Cex(_, _) => {
+                        println!(
+                            "    (took {}ms, found SAT(null))",
+                            instant.elapsed().as_millis()
+                        );
                     }
                     CexResult::UnsatCore(core) => {
                         println!(
@@ -672,8 +608,61 @@ where
                         let named_core = core.into_iter().map(|(_, _, id)| id).collect();
                         self.partial.to_check[chc_index].remove(&id);
                         self.partial.add_core((chc_index, id), named_core, true);
+                        continue 'formula_loop;
                     }
                     _ => panic!("solver error {res:?}"),
+                }
+
+                let mut size = 1;
+                loop {
+                    if extractors[id.0].is_none() {
+                        extractors[id.0] = Some(head_contexts[id.0].extractor(size, &head_subst));
+                    }
+                    let extractor = extractors[id.0].as_ref().unwrap();
+                    let extended_sig = extractor.extend_signature(&chc.signature);
+                    let query_conf = QueryConf {
+                        sig: &extended_sig,
+                        n_states: 1,
+                        cancelers: None,
+                        model_option: ModelOption::None,
+                        evaluate: extractor.to_evaluate(),
+                        save_tee: false,
+                    };
+
+                    let mut assertions = hyp.clone();
+                    assertions.push(extractor.term.clone());
+                    assertions.push(extractor.not_satisfies(&formula));
+                    let instant = Instant::now();
+                    let res = full_assumptions.find_cex(
+                        solver,
+                        &query_conf,
+                        &assertions,
+                        &SmtTactic::Full,
+                        |m| m.clone(),
+                    );
+
+                    match res {
+                        CexResult::Cex(_, vals) => {
+                            println!(
+                                "    (took {}ms, found SAT({size}))",
+                                instant.elapsed().as_millis()
+                            );
+                            return Some((
+                                head_predicate.0.clone(),
+                                MultiObject(id.0, extractor.extract(&vals)),
+                            ));
+                        }
+                        CexResult::UnsatCore(core) => {
+                            println!(
+                                "    (took {}ms, found UNSAT({}) for size {size})",
+                                instant.elapsed().as_millis(),
+                                core.len()
+                            );
+                        }
+                        _ => println!("({size}) solver error {res:?}"),
+                    }
+
+                    size += 1;
                 }
             }
         }
@@ -724,47 +713,29 @@ impl PredicateConfig {
         format!("__qvar_{i}")
     }
 
-    /// Create a default configuration for the given predicate in the given CHC system.
-    pub fn default(decl: &HoPredicateDecl, literals: &Parameterized<Atomics>) -> Self {
-        let arguments = (0..decl.args.len()).map(Self::arg_name).collect_vec();
-
-        let bool_sort = FunctionSort(vec![], Sort::Bool);
-        let bool_terms = decl
-            .args
-            .iter()
-            .zip(&arguments)
-            .filter(|(sort, _)| *sort == &bool_sort)
-            .map(|(_, name)| Term::id(name))
-            .collect_vec();
-
-        let int_terms = literals.content.ints.clone();
-
-        let mut int_templates = IneqTemplates::new(false);
-        for literal in &literals.content.literals {
-            int_templates.add_from_literal(literal);
-        }
-        println!("Integer templates ({}):", decl.name);
-        for (e, t) in &int_templates.templates {
-            println!("{} <= {t}", e.to_term(|i| int_terms[*i].clone()));
-        }
-        println!();
-
-        let literal_context = PropContext::literals((0..bool_terms.len()).collect(), int_templates);
-        let prop_cont = PropContext::Nary(LogicOp::Or, Some(3), Box::new(literal_context));
-
+    pub fn int_ineqs(
+        decl: &HoPredicateDecl,
+        int_terms: Vec<Term>,
+        int_templates: IneqTemplates,
+        univ_indices: usize,
+        disj_length: Option<usize>,
+    ) -> Self {
         let prefix = QuantifierPrefix {
             quantifiers: vec![Quantifier::Forall],
             sorts: Arc::new(vec![Sort::Int]),
-            names: Arc::new(vec![literals.univ_ints.clone()]),
+            names: Arc::new(vec![(0..univ_indices).map(Self::quant_name).collect()]),
         };
 
-        PredicateConfig {
+        let literal_context = PropContext::literals(vec![], int_templates);
+        let prop_cont = PropContext::Nary(LogicOp::Or, disj_length, Box::new(literal_context));
+
+        Self {
             name: decl.name.clone(),
-            arguments,
+            arguments: (0..decl.args.len()).map(Self::arg_name).collect(),
             context: MultiContext {
                 contexts: vec![QuantifiedContext {
                     prefix,
-                    bool_terms,
+                    bool_terms: vec![],
                     int_terms,
                     prop_cont,
                 }],
@@ -783,7 +754,7 @@ where
 
     // TODO: handle increasing sizes
 
-    while let Some((name, cex)) = chc_sol.find_cex(solver, chc_sys, 1) {
+    while let Some((name, cex)) = chc_sol.find_cex(solver, chc_sys) {
         println!("Found CEX: {cex:?}");
         let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
         let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
@@ -930,7 +901,7 @@ mod tests {
             None,
         ));
 
-        let cex = sol_1.find_cex(&solver, &chc_sys, 1);
+        let cex = sol_1.find_cex(&solver, &chc_sys);
         assert_eq!(
             cex,
             Some((

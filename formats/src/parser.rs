@@ -5,6 +5,7 @@ use fly::{
     syntax::{Signature, Term},
     term::subst::Substitutable,
 };
+use regex::Regex;
 use smtlib::sexp::{atom_i, atom_s, Sexp};
 
 enum SmtlibLine {
@@ -142,6 +143,11 @@ impl SmtlibLine {
     }
 }
 
+fn strip_sexp_comments(s: &str) -> String {
+    let re = Regex::new(r";[^\n]*\n").unwrap();
+    re.replace_all(s, "\n").to_string()
+}
+
 /// Parse a ChcSystem from an SMTLIB2 format.
 pub fn parse_smtlib2(s: &str) -> ChcSystem {
     let mut chc_sys = ChcSystem {
@@ -154,7 +160,8 @@ pub fn parse_smtlib2(s: &str) -> ChcSystem {
     };
     let mut global_vars = vec![];
 
-    for line in &smtlib::sexp::parse_many(s).unwrap() {
+    let s_stripped = strip_sexp_comments(s);
+    for line in &smtlib::sexp::parse_many(&s_stripped).unwrap() {
         match SmtlibLine::parse(&chc_sys, &global_vars, line) {
             SmtlibLine::Sort(s) => chc_sys.signature.sorts.push(s),
             SmtlibLine::Predicate(p) => chc_sys.predicates.push(p),

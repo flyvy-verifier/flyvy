@@ -10,3 +10,4 @@ solver = { path = "../solver" }
 
 itertools = "0.10.5"
 petgraph = "0.6.5"
+regex = "1.11.1"

@@ -59,7 +59,7 @@ pub struct QalphaConfig {
     pub baseline: bool,
 }
 
-pub fn get_multi_context(cfg: &QalphaConfig, m: &Module) -> MultiContext<QuantifiedContext> {
+pub fn get_context_for_module(cfg: &QalphaConfig, m: &Module) -> MultiContext<QuantifiedContext> {
     let mut contexts = vec![];
 
     let size = cfg.quant_cfg.num_vars();

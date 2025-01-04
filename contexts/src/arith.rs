@@ -11,7 +11,7 @@ use std::{
     ops::{Add, Mul, Sub},
 };
 
-use crate::{language::AtomicTemplate, logic::Literal};
+use crate::logic::Literal;
 
 /// An arithmetic expression represented as the sum of products.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -42,7 +42,15 @@ impl IneqTemplates {
 
     /// Add the given range to the template of the given expression, for `leq` literals and
     /// `geq` literals as specified.
-    pub fn add_range(&mut self, a: ArithExpr<usize>, r: IntRange) {
+    pub fn add_range(&mut self, mut a: ArithExpr<usize>, mut r: IntRange) {
+        r.0 -= a.constant;
+        r.1 -= a.constant;
+        a.constant = 0;
+        let div = a.normalize();
+
+        r.0 = divide_and_round_down(r.0, div);
+        r.1 = divide_and_round_down(r.1, div);
+
         let e = self
             .templates
             .entry(a)
@@ -80,14 +88,14 @@ impl Display for PiecewiseRange {
 }
 
 impl PiecewiseRange {
-    fn new(merge_all: bool) -> Self {
+    pub fn new(merge_all: bool) -> Self {
         Self {
             merge_all,
             ranges: vec![],
         }
     }
 
-    fn add_range(&mut self, mut r: IntRange) {
+    pub fn add_range(&mut self, mut r: IntRange) {
         // Find ranges intersecting with r: i.e., those with l <= r.0 <= u or l <= r.1 <= u
         let intersecting = self
             .ranges
@@ -182,6 +190,15 @@ impl<T: Display> Display for ArithExpr<T> {
 /// An Assignment to atomic integer variables in arithmetic expressions.
 pub type ArithAssignment = Vec<IntType>;
 
+impl<T> From<T> for ArithExpr<T> {
+    fn from(value: T) -> Self {
+        ArithExpr {
+            summands: vec![(1, vec![value])],
+            constant: 0,
+        }
+    }
+}
+
 impl ArithExpr<usize> {
     /// Evaluates the arithmetic expression based on  the given assignment. Note that the assignment assigns values to
     /// arithmatic expressions and not only identifiers, and the evaluation is short-circuiting -- the moment an expression
@@ -218,39 +235,33 @@ impl ArithExpr<usize> {
             constant: expr.constant,
         }
     }
-}
 
-fn get_index(terms: &mut Vec<Term>, term: &Term) -> usize {
-    if let Some(i) = (0..terms.len()).find(|i| &terms[*i] == term) {
-        i
-    } else {
-        terms.push(term.clone());
-        terms.len() - 1
+    pub fn from_term<F>(term: &Term, atomics_to_index: F) -> Self
+    where
+        F: FnMut(&Term) -> usize,
+    {
+        Self::from_expr(
+            &ArithExpr::<Term>::from_term(term).unwrap(),
+            atomics_to_index,
+        )
     }
 }
 
-impl ArithExpr<AtomicTemplate> {
-    fn from_term_rec(term: &Term, ints: &mut Vec<Term>, arrays: &mut Vec<Term>) -> Option<Self> {
+impl ArithExpr<Term> {
+    /// Convert the given term into arithmetic expressions.
+    pub fn from_term(term: &Term) -> Option<Self> {
         match term {
-            Term::Id(_) => Some(ArithExpr {
-                summands: vec![(1, vec![AtomicTemplate::Int(get_index(ints, term))])],
+            Term::Id(_) | Term::ArraySelect { .. } => Some(ArithExpr {
+                summands: vec![(1, vec![term.clone()])],
                 constant: 0,
             }),
-            Term::ArraySelect { array, index } => {
-                let ind = get_index(ints, index);
-                let arr = get_index(arrays, array);
-                Some(ArithExpr {
-                    summands: vec![(1, vec![AtomicTemplate::Select(arr, ind)])],
-                    constant: 0,
-                })
-            }
             Term::Int(i) => Some(ArithExpr {
                 summands: vec![],
                 constant: *i,
             }),
             Term::NumOp(op, t1, t2) => {
-                let a1 = Self::from_term_rec(t1, ints, arrays)?;
-                let a2 = Self::from_term_rec(t2, ints, arrays)?;
+                let a1 = Self::from_term(t1)?;
+                let a2 = Self::from_term(t2)?;
                 Some(match op {
                     NumOp::Add => a1.clone() + a2.clone(),
                     NumOp::Sub => a1.clone() - a2.clone(),
@@ -259,41 +270,6 @@ impl ArithExpr<AtomicTemplate> {
             }
             _ => None,
         }
-    }
-
-    /// Convert the given terms into arithmetic expressions.
-    pub fn from_terms(terms: &[&Term]) -> Option<(Vec<Self>, Vec<Term>, Vec<Term>)> {
-        let mut ints = vec![];
-        let mut arrays = vec![];
-        let mut exprs = vec![];
-        for term in terms {
-            exprs.push(Self::from_term_rec(term, &mut ints, &mut arrays)?);
-        }
-
-        Some((exprs, ints, arrays))
-    }
-
-    /// Return the integer-term identifiers in the expression.
-    pub fn ints(&self) -> Vec<usize> {
-        self.participants()
-            .map(|t| match t {
-                AtomicTemplate::Int(x) | AtomicTemplate::Select(_, x) => *x,
-            })
-            .unique()
-            .sorted()
-            .collect()
-    }
-
-    /// Return the array-term identifiers in the expression.
-    pub fn arrays(&self) -> Vec<usize> {
-        self.participants()
-            .filter_map(|t| match t {
-                AtomicTemplate::Select(x, _) => Some(*x),
-                _ => None,
-            })
-            .unique()
-            .sorted()
-            .collect()
     }
 }
 
@@ -316,13 +292,12 @@ fn divide_and_round_down(x: IntType, y: IntType) -> IntType {
 }
 
 impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
-    /// Convert into a normalized expression such that `old_expr <= 0` is equivalent to `new_expr <= 0`.
-    pub fn normalize_leq_0(&mut self) {
-        assert!(!self.summands.is_empty());
+    pub fn is_constant(&self) -> bool {
+        self.summands.is_empty()
+    }
 
-        // Convert into self <= bound with no constant.
-        let bound = -self.constant;
-        self.constant = 0;
+    pub fn normalize(&mut self) -> IntType {
+        assert!(!self.summands.is_empty());
 
         // Normalize
         let div = self
@@ -338,22 +313,9 @@ impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
             *coeff /= div;
         }
 
-        // We have expr * div <= bound, meaning expr <= bound / div.
-        // In particular, the new bound can be rounded down, since expr is whole.
-        self.constant = -divide_and_round_down(bound, div);
-    }
+        assert!(div > 0);
 
-    /// Convert into an expression such that `old_expr > 0` is equivalent to `new_expr <= 0`.
-    pub fn negate_leq_0(&mut self) {
-        // Convert into expr >= 0.
-        self.constant -= 1;
-
-        // Negate and turn into expr <= 0.
-        for (coeff, _) in &mut self.summands {
-            *coeff = -*coeff;
-        }
-        self.constant = -self.constant;
-        self.normalize_leq_0();
+        div
     }
 
     /// Convert the arithmetic expression to a term, using the specified closure to retrieve atomic expressions.

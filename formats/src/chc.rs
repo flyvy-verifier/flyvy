@@ -17,6 +17,16 @@ use crate::basics::FOModule;
 #[derive(Clone, PartialEq, Eq)]
 pub struct FunctionSort(pub Vec<Sort>, pub Sort);
 
+impl FunctionSort {
+    pub fn is_int(&self) -> bool {
+        self.0.is_empty() && matches!(self.1, Sort::Int)
+    }
+
+    pub fn is_array_int_int(&self) -> bool {
+        self.0.is_empty() && self.1.is_array_int_int()
+    }
+}
+
 /// A variable of a higher-order sort.
 #[derive(Clone)]
 pub struct HoVariable {
@@ -185,6 +195,28 @@ impl Chc {
         }
 
         true
+    }
+
+    pub fn terms(&self) -> Vec<Term> {
+        self.body
+            .iter()
+            .chain([&self.head])
+            .flat_map(|c| match c {
+                Component::Predicate(_, _) => vec![],
+                Component::Formulas(ts) => ts.clone(),
+            })
+            .collect()
+    }
+
+    pub fn predicates(&self) -> Vec<(String, Vec<Substitutable>)> {
+        self.body
+            .iter()
+            .chain([&self.head])
+            .filter_map(|c| match c {
+                Component::Predicate(name, args) => Some((name.clone(), args.clone())),
+                Component::Formulas(_) => None,
+            })
+            .collect()
     }
 
     /// Return whether the head predicate of the other CHC appears in the body of this CHC.

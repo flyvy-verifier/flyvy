@@ -59,6 +59,10 @@ impl Sort {
             element: Box::new(element.into()),
         }
     }
+
+    pub fn is_array_int_int(&self) -> bool {
+        matches!(self, Sort::Array { index, element } if matches!(index.as_ref(), Sort::Int) && matches!(element.as_ref(), Sort::Int))
+    }
 }
 
 impl From<&str> for Sort {
@@ -497,7 +501,7 @@ impl Term {
     }
 
     //////////////////
-    // Integer Operations
+    // Numerical Operations
     //////////////////
 
     /// Construct an integer sum using nested addition.
@@ -542,6 +546,29 @@ impl Term {
         }
 
         prod
+    }
+
+    pub fn num_rel<I1, I2>(rel: NumRel, x: I1, y: I2) -> Term
+    where
+        I1: Into<Term>,
+        I2: Into<Term>,
+    {
+        Term::NumRel(rel, Box::new(x.into()), Box::new(y.into()))
+    }
+
+    //////////////////
+    // Array Operations
+    //////////////////
+
+    pub fn array_select<I1, I2>(array: I1, index: I2) -> Term
+    where
+        I1: Into<Term>,
+        I2: Into<Term>,
+    {
+        Term::ArraySelect {
+            array: Box::new(array.into()),
+            index: Box::new(index.into()),
+        }
     }
 
     //////////////////

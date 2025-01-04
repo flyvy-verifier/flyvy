@@ -130,7 +130,7 @@ impl DestructuredModule {
     pub fn mutable_axioms<'a>(
         &'a self,
         relations: &'a [RelationDecl],
-    ) -> impl Iterator<Item = &Term> + 'a {
+    ) -> impl Iterator<Item = &'a Term> + 'a {
         self.axioms
             .iter()
             .filter(|term| contains_mutable_relations(term, relations))
