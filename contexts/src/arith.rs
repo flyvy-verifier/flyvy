@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     hash::Hash,
-    ops::{Add, Mul, Sub},
+    ops::{Add, Mul, Neg, Sub},
 };
 
 use crate::logic::Literal;
@@ -259,13 +259,20 @@ impl ArithExpr<Term> {
                 summands: vec![],
                 constant: *i,
             }),
-            Term::NumOp(op, t1, t2) => {
-                let a1 = Self::from_term(t1)?;
-                let a2 = Self::from_term(t2)?;
+            Term::NumOp(op, ts) => {
+                assert!(!ts.is_empty());
+                let exprs = ts.iter().map(Self::from_term).collect::<Option<Vec<_>>>()?;
                 Some(match op {
-                    NumOp::Add => a1.clone() + a2.clone(),
-                    NumOp::Sub => a1.clone() - a2.clone(),
-                    NumOp::Mul => a1.clone() * a2.clone(),
+                    NumOp::Add => exprs.iter().fold(Self::constant(0), |x, y| &x + y),
+                    NumOp::Sub => {
+                        if exprs.len() == 1 {
+                            -&exprs[0]
+                        } else {
+                            let (fst, rest) = exprs.split_first().unwrap();
+                            fst - &rest.iter().fold(Self::constant(0), |x, y| &x + y)
+                        }
+                    }
+                    NumOp::Mul => exprs.iter().fold(Self::constant(1), |x, y| &x * y),
                 })
             }
             _ => None,
@@ -292,6 +299,13 @@ fn divide_and_round_down(x: IntType, y: IntType) -> IntType {
 }
 
 impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
+    pub fn constant(constant: IntType) -> Self {
+        Self {
+            summands: vec![],
+            constant,
+        }
+    }
+
     pub fn is_constant(&self) -> bool {
         self.summands.is_empty()
     }
@@ -323,11 +337,15 @@ impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
     where
         F: Fn(&T) -> Term,
     {
-        Term::int_add(
+        Term::num_op(
+            NumOp::Add,
             [Term::Int(self.constant)]
                 .into_iter()
                 .chain(self.summands.iter().map(|(c, p)| {
-                    Term::int_mul([Term::Int(*c)].into_iter().chain(p.iter().map(&var)))
+                    Term::num_op(
+                        NumOp::Mul,
+                        [Term::Int(*c)].into_iter().chain(p.iter().map(&var)),
+                    )
                 })),
         )
     }
@@ -338,8 +356,19 @@ impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
     }
 }
 
-impl<T: Clone + Eq + Hash + Ord> Add for ArithExpr<T> {
-    type Output = Self;
+impl<T: Clone + Eq + Hash + Ord> Neg for &ArithExpr<T> {
+    type Output = ArithExpr<T>;
+
+    fn neg(self) -> Self::Output {
+        Self::Output {
+            summands: self.summands.iter().map(|(c, v)| (-c, v.clone())).collect(),
+            constant: -self.constant,
+        }
+    }
+}
+
+impl<T: Clone + Eq + Hash + Ord> Add for &ArithExpr<T> {
+    type Output = ArithExpr<T>;
 
     fn add(self, rhs: Self) -> Self::Output {
         let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
@@ -347,7 +376,7 @@ impl<T: Clone + Eq + Hash + Ord> Add for ArithExpr<T> {
             *coeffs.entry(p.clone()).or_insert(0) += *c;
         }
 
-        Self {
+        Self::Output {
             summands: coeffs
                 .into_iter()
                 .filter(|(_, coeff)| coeff != &0)
@@ -359,8 +388,8 @@ impl<T: Clone + Eq + Hash + Ord> Add for ArithExpr<T> {
     }
 }
 
-impl<T: Clone + Eq + Hash + Ord> Sub for ArithExpr<T> {
-    type Output = Self;
+impl<T: Clone + Eq + Hash + Ord> Sub for &ArithExpr<T> {
+    type Output = ArithExpr<T>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
@@ -372,7 +401,7 @@ impl<T: Clone + Eq + Hash + Ord> Sub for ArithExpr<T> {
             *coeffs.entry(p.clone()).or_insert(0) -= *c;
         }
 
-        Self {
+        Self::Output {
             summands: coeffs
                 .into_iter()
                 .filter(|(_, coeff)| coeff != &0)
@@ -384,8 +413,8 @@ impl<T: Clone + Eq + Hash + Ord> Sub for ArithExpr<T> {
     }
 }
 
-impl<T: Clone + Eq + Hash + Ord> Mul for ArithExpr<T> {
-    type Output = Self;
+impl<T: Clone + Eq + Hash + Ord> Mul for &ArithExpr<T> {
+    type Output = ArithExpr<T>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         let mut coeffs: HashMap<Vec<T>, IntType> = HashMap::new();
@@ -403,7 +432,7 @@ impl<T: Clone + Eq + Hash + Ord> Mul for ArithExpr<T> {
             *coeffs.entry(prod).or_insert(0) += *c1 * *c2;
         }
 
-        Self {
+        Self::Output {
             summands: coeffs
                 .into_iter()
                 .filter(|(_, coeff)| coeff != &0)

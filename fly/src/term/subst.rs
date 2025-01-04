@@ -146,10 +146,11 @@ fn rename_symbols_rec(
             }
         }
 
-        Term::NumOp(op, x, y) => Term::NumOp(
+        Term::NumOp(op, xs) => Term::NumOp(
             *op,
-            Box::new(rename_symbols_rec(x, substitution, bound_ids, primes)),
-            Box::new(rename_symbols_rec(y, substitution, bound_ids, primes)),
+            xs.iter()
+                .map(|a| rename_symbols_rec(a, substitution, bound_ids, primes))
+                .collect(),
         ),
 
         Term::NumRel(rel, x, y) => Term::NumRel(

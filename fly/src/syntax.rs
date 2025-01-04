@@ -265,7 +265,7 @@ pub enum Term {
         index: Box<Term>,
     },
     /// An applied arithmetic operation
-    NumOp(NumOp, Box<Term>, Box<Term>),
+    NumOp(NumOp, Vec<Term>),
     /// If-then-else
     Ite {
         /// A boolean conditional
@@ -501,51 +501,32 @@ impl Term {
     }
 
     //////////////////
-    // Numerical Operations
+    // Numerical Operations and Relations
     //////////////////
 
-    /// Construct an integer sum using nested addition.
-    pub fn int_add<I>(ts: I) -> Self
+    /// Smart constructor for numerical operations.
+    pub fn num_op<I>(op: NumOp, ts: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<Term>,
     {
-        let mut ts = ts
-            .into_iter()
-            .map(|t| t.into())
-            .filter(|t| !matches!(t, Term::Int(0)));
-        let mut sum = match ts.next() {
-            None => return Term::Int(0),
-            Some(t) => t,
-        };
-
-        for t in ts {
-            sum = Term::NumOp(NumOp::Add, Box::new(sum), Box::new(t));
+        let mut ts = ts.into_iter().map(|x| x.into()).collect_vec();
+        if matches!(op, NumOp::Add | NumOp::Mul) {
+            ts = ts
+                .into_iter()
+                .flat_map(|t| match t {
+                    Self::NumOp(op2, ts) if op == op2 => ts,
+                    _ => vec![t],
+                })
+                .collect();
         }
+        assert!(!ts.is_empty());
 
-        sum
-    }
-
-    /// Construct an integer product using nested multiplication.
-    pub fn int_mul<I>(ts: I) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Into<Term>,
-    {
-        let mut ts = ts
-            .into_iter()
-            .map(|t| t.into())
-            .filter(|t| !matches!(t, Term::Int(1)));
-        let mut prod = match ts.next() {
-            None => return Term::Int(1),
-            Some(t) => t,
-        };
-
-        for t in ts {
-            prod = Term::NumOp(NumOp::Mul, Box::new(prod), Box::new(t));
+        if ts.len() == 1 {
+            ts.pop().unwrap()
+        } else {
+            Self::NumOp(op, ts)
         }
-
-        prod
     }
 
     pub fn num_rel<I1, I2>(rel: NumRel, x: I1, y: I2) -> Term
@@ -677,7 +658,7 @@ impl Term {
                 assert_eq!(then_is_bool, else_is_bool);
                 then_is_bool
             }
-            Term::Int(_) | Term::NumOp(_, _, _) => false,
+            Term::Int(_) | Term::NumOp(_, _) => false,
             Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
         }
     }
@@ -693,10 +674,9 @@ impl Term {
                 _,
             ) => false,
             Term::BinOp(BinOp::Equals | BinOp::NotEquals | BinOp::Iff | BinOp::Implies, t1, t2)
-            | Term::NumRel(_, t1, t2)
-            | Term::NumOp(_, t1, t2) => t1.is_nontemporal() && t2.is_nontemporal(),
+            | Term::NumRel(_, t1, t2) => t1.is_nontemporal() && t2.is_nontemporal(),
             Term::BinOp(BinOp::Until | BinOp::Since, _, _) => false,
-            Term::NAryOp(_, ts) => ts.iter().all(|t| t.is_nontemporal()),
+            Term::NAryOp(_, ts) | Term::NumOp(_, ts) => ts.iter().all(|t| t.is_nontemporal()),
             Term::Ite { cond, then, else_ } => {
                 cond.is_nontemporal() && then.is_nontemporal() && else_.is_nontemporal()
             }
@@ -722,7 +702,7 @@ impl Term {
             | Term::App(_, _, _)
             | Term::Int(_)
             | Term::NumRel(_, _, _)
-            | Term::NumOp(_, _, _)
+            | Term::NumOp(_, _)
             | Term::ArrayStore { .. }
             | Term::ArraySelect { .. } => 1,
             Term::UnaryOp(_, t) => t.size(),
@@ -746,10 +726,10 @@ impl Term {
             Term::Id(name) => HashSet::from_iter([name.clone()]),
             Term::App(_, _, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
             Term::UnaryOp(_, t) => t.ids(),
-            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
+            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) => {
                 [t1, t2].iter().flat_map(|t| t.ids()).collect()
             }
-            Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
+            Term::NumOp(_, vt) | Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.ids()).collect(),
             Term::Ite { cond, then, else_ } => {
                 [cond, then, else_].iter().flat_map(|t| t.ids()).collect()
             }
@@ -777,10 +757,10 @@ impl Term {
                 .chain(vt.iter().flat_map(|t| t.names()))
                 .collect(),
             Term::UnaryOp(_, t) => t.names(),
-            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) | Term::NumOp(_, t1, t2) => {
+            Term::BinOp(_, t1, t2) | Term::NumRel(_, t1, t2) => {
                 [t1, t2].iter().flat_map(|t| t.names()).collect()
             }
-            Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.names()).collect(),
+            Term::NumOp(_, vt) | Term::NAryOp(_, vt) => vt.iter().flat_map(|t| t.names()).collect(),
             Term::Ite { cond, then, else_ } => {
                 [cond, then, else_].iter().flat_map(|t| t.names()).collect()
             }
@@ -803,16 +783,20 @@ impl Term {
     pub fn as_int(&self) -> Option<IntType> {
         match self {
             Term::Int(i) => Some(*i),
-            Term::NumOp(op, t1, t2) => {
-                if let (Some(i1), Some(i2)) = (t1.as_int(), t2.as_int()) {
-                    Some(match op {
-                        NumOp::Add => i1 + i2,
-                        NumOp::Sub => i1 - i2,
-                        NumOp::Mul => i1 * i2,
-                    })
-                } else {
-                    None
-                }
+            Term::NumOp(op, ts) => {
+                assert!(ts.len() > 0);
+                let is: Option<Vec<IntType>> = ts.iter().map(|t| t.as_int()).collect();
+                is.map(|vals| match op {
+                    NumOp::Add => vals.iter().sum(),
+                    NumOp::Mul => vals.iter().product(),
+                    NumOp::Sub => {
+                        if vals.len() == 1 {
+                            -vals[0]
+                        } else {
+                            vals[0] - vals[1..].iter().sum::<IntType>()
+                        }
+                    }
+                })
             }
             _ => None,
         }

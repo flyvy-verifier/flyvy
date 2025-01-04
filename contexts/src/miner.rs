@@ -89,9 +89,10 @@ impl MinedTerms {
             ) => {
                 self.int_atomics.insert(term.clone());
             }
-            (Term::NumOp(_, t1, t2), _) => {
-                self.add_int_atomics(t1, ttype);
-                self.add_int_atomics(t2, ttype);
+            (Term::NumOp(_, ts), _) => {
+                for t in ts {
+                    self.add_int_atomics(t, ttype);
+                }
             }
             _ => (),
         }
@@ -152,10 +153,12 @@ impl MinedTerms {
                 self.add(index.as_ref().clone(), TermType::ArrayIndex);
                 TermType::ArrayEntry
             }
-            Term::NumOp(_, t1, t2) => {
-                let tt1 = self.mine(t1, known, TermType::Unknown);
-                let tt2 = self.mine(t2, known, TermType::Unknown);
-                tt1.unify(tt2)
+            Term::NumOp(_, ts) => {
+                let mut tt = TermType::Unknown;
+                for t in ts {
+                    tt = tt.unify(self.mine(t, known, TermType::Unknown));
+                }
+                tt
             }
             Term::Ite { cond, then, else_ } => {
                 self.mine(cond, known, TermType::Invalid);
@@ -221,7 +224,7 @@ impl MinedTerms {
             let e1 = ArithExpr::<usize>::from_term(indices[0], atomic_to_index);
             let e2 = ArithExpr::<usize>::from_term(indices[1], atomic_to_index);
 
-            for expr in [e1.clone() - e2.clone(), e2 - e1] {
+            for expr in [&e1 - &e2, &e2 - &e1] {
                 if !expr.is_constant() {
                     ineqs.add_range(expr, (-1, 1));
                 }
@@ -232,7 +235,7 @@ impl MinedTerms {
             let e1 = ArithExpr::<usize>::from_term(entries[0], atomic_to_index);
             let e2 = ArithExpr::<usize>::from_term(entries[1], atomic_to_index);
 
-            for expr in [e1.clone() - e2.clone(), e2 - e1] {
+            for expr in [&e1 - &e2, &e2 - &e1] {
                 if !expr.is_constant() {
                     ineqs.add_range(expr, (-1, 1));
                 }

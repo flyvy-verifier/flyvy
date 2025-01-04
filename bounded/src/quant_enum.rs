@@ -95,7 +95,7 @@ fn nullary_id_to_app(term: &Term, rs: &[RelationDecl]) -> Term {
         },
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     }
@@ -281,7 +281,7 @@ fn term_to_enumerated(
         }
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     };

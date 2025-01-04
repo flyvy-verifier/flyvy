@@ -248,10 +248,8 @@ impl Sexp {
             assert_eq!(args.len(), 2);
             Term::BinOp(op, Box::new(args[0].term()), Box::new(args[1].term()))
         };
-        let num_op = |op: NumOp, args: &[Sexp]| -> Term {
-            assert_eq!(args.len(), 2);
-            Term::NumOp(op, Box::new(args[0].term()), Box::new(args[1].term()))
-        };
+        let num_op =
+            |op: NumOp, args: &[Sexp]| -> Term { Term::num_op(op, args.iter().map(|a| a.term())) };
         let num_rel = |rel: NumRel, args: &[Sexp]| -> Term {
             assert_eq!(args.len(), 2);
             Term::NumRel(rel, Box::new(args[0].term()), Box::new(args[1].term()))

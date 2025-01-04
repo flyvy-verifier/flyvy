@@ -92,8 +92,8 @@ grammar parser() for str {
         --
         t:(@) "'" { Term::UnaryOp(Prime, Box::new(t)) }
         --
-        x:(@) _ "+" _ y:@ { Term::NumOp(NumOp::Add, Box::new(x), Box::new(y)) }
-        x:(@) _ "-" _ y:@ { Term::NumOp(NumOp::Sub, Box::new(x), Box::new(y)) }
+        x:(@) _ "+" _ y:@ { Term::num_op(NumOp::Add, [x, y]) }
+        x:(@) _ "-" _ y:@ { Term::num_op(NumOp::Sub, [x, y]) }
         --
         // note that no space is allowed between relation name and args, so p (q)
         // doesn't parse as a relation call
@@ -393,8 +393,7 @@ proof {
                 BinOp::Equals,
                 Box::new(Term::NumOp(
                     NumOp::Add,
-                    Box::new(Term::Int(1)),
-                    Box::new(Term::Int(2)),
+                    vec![Term::Int(1), Term::Int(2)]
                 )),
                 Box::new(Term::Int(3)),
             )
@@ -406,8 +405,7 @@ proof {
                 BinOp::Equals,
                 Box::new(Term::NumOp(
                     NumOp::Add,
-                    Box::new(Term::Int(1)),
-                    Box::new(Term::Int(-2)),
+                    vec![Term::Int(1), Term::Int(-2)]
                 )),
                 Box::new(Term::Int(-3)),
             )
@@ -419,8 +417,7 @@ proof {
                 NumRel::Lt,
                 Box::new(Term::NumOp(
                     NumOp::Sub,
-                    Box::new(Term::Int(1)),
-                    Box::new(Term::Int(-2)),
+                    vec![Term::Int(1), Term::Int(-2)]
                 )),
                 Box::new(Term::Int(0)),
             )
@@ -432,8 +429,7 @@ proof {
                 NumRel::Leq,
                 Box::new(Term::NumOp(
                     NumOp::Add,
-                    Box::new(Term::Int(-1)),
-                    Box::new(Term::Int(2)),
+                    vec![Term::Int(1), Term::Int(-2)]
                 )),
                 Box::new(Term::Int(3)),
             )
@@ -446,8 +442,7 @@ proof {
                 Box::new(Term::Int(2)),
                 Box::new(Term::NumOp(
                     NumOp::Sub,
-                    Box::new(Term::Int(3)),
-                    Box::new(Term::Int(5)),
+                    vec![Term::Int(3), Term::Int(5)]
                 )),
             )
         };
@@ -458,13 +453,11 @@ proof {
                 NumRel::Gt,
                 Box::new(Term::NumOp(
                     NumOp::Add,
-                    Box::new(Term::Int(100)),
-                    Box::new(Term::Int(1)),
+                    vec![Term::Int(100), Term::Int(1)]
                 )),
                 Box::new(Term::NumOp(
                     NumOp::Sub,
-                    Box::new(Term::Int(-3)),
-                    Box::new(Term::Int(1)),
+                    vec![Term::Int(-3), Term::Int(1)]
                 )),
             )
         };
@@ -482,12 +475,11 @@ proof {
                     Box::new(Term::id("x")),
                     Box::new(Term::NumOp(
                         NumOp::Add,
-                        Box::new(Term::NumOp(
+                        vec![Term::NumOp(
                             NumOp::Sub,
-                            Box::new(Term::Int(5)),
-                            Box::new(Term::Int(2)),
-                        )),
-                        Box::new(Term::Int(3)),
+                            vec![Term::Int(5), Term::Int(2)]
+                        ),
+                        Term::Int(3)],
                     )),
                 )),
             }

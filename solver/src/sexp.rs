@@ -103,9 +103,16 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
         Term::NumRel(NumRel::Leq, x, y) => app("<=", [term(x), term(y)]),
         Term::NumRel(NumRel::Geq, x, y) => app(">=", [term(x), term(y)]),
         Term::NumRel(NumRel::Gt, x, y) => app(">", [term(x), term(y)]),
-        Term::NumOp(NumOp::Add, x, y) => app("+", [term(x), term(y)]),
-        Term::NumOp(NumOp::Sub, x, y) => app("-", [term(x), term(y)]),
-        Term::NumOp(NumOp::Mul, x, y) => app("*", [term(x), term(y)]),
+        Term::NumOp(op, args) => {
+            assert!(!args.is_empty());
+            let args = args.iter().map(term).collect::<Vec<_>>();
+            let op = match op {
+                NumOp::Add => "+",
+                NumOp::Sub => "-",
+                NumOp::Mul => "*",
+            };
+            app(op, args)
+        }
         Term::ArrayStore {
             array,
             index,

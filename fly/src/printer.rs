@@ -26,8 +26,8 @@ fn precedence(t: &Term) -> usize {
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
         NumRel(_, _, _) => 500,
-        NumOp(Add | Sub, _, _) => 510,
-        NumOp(Mul, _, _) => 520,
+        NumOp(Add | Sub, _) => 510,
+        NumOp(Mul, _) => 520,
         Literal(_)
         | Id(_)
         | Int(_)
@@ -130,17 +130,23 @@ pub fn term(t: &Term) -> String {
             };
             format!("{left} {rel} {right}")
         }
-        Term::NumOp(op, arg1, arg2) => {
-            let use_left_paren = precedence(t) > precedence(arg1);
-            let use_right_paren = precedence(t) > precedence(arg2);
-            let left = parens(use_left_paren, term(arg1));
-            let right = parens(use_right_paren, term(arg2));
+        Term::NumOp(op, args) => {
+            let args = args
+                .iter()
+                .map(|arg| parens(precedence(t) > precedence(arg), term(arg)))
+                .collect::<Vec<_>>();
+            assert!(!args.is_empty());
+
+            if matches!(op, NumOp::Sub) && args.len() == 1 {
+                return format!("- {}", args[0]);
+            }
+
             let op = match op {
                 NumOp::Add => "+",
                 NumOp::Sub => "-",
                 NumOp::Mul => "*",
             };
-            format!("{left} {op} {right}")
+            args.join(&format!(" {op} "))
         }
         Term::Ite { cond, then, else_ } => {
             let cond = term(cond);

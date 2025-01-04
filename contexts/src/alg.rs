@@ -15,7 +15,7 @@ use crate::{
 };
 use fly::quant::QuantifierPrefix;
 use fly::semantics::Evaluable;
-use fly::syntax::{NumRel, Quantifier};
+use fly::syntax::{NumOp, NumRel, Quantifier};
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
@@ -183,11 +183,13 @@ impl QuantifiedContext {
     }
 
     fn to_term_int(&self, expr: &ArithExpr<usize>) -> Term {
-        Term::int_add(
+        Term::num_op(
+            NumOp::Add,
             [Term::Int(expr.constant)]
                 .into_iter()
                 .chain(expr.summands.iter().map(|(c, p)| {
-                    Term::int_mul(
+                    Term::num_op(
+                        NumOp::Mul,
                         [Term::Int(*c)]
                             .into_iter()
                             .chain(p.iter().map(|index| self.int_terms[*index].clone())),

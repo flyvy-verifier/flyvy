@@ -240,7 +240,7 @@ fn contains_changed(term: &Term, changed: &[RelationDecl]) -> bool {
         Term::Quantified { body, .. } => contains_changed(body, changed),
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => {
             unimplemented!()
@@ -260,7 +260,7 @@ fn strip_primes(term: &Term) -> Option<(Term, usize)> {
         | Term::Quantified { .. } => None,
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     }
@@ -443,7 +443,7 @@ fn flatten_term_rec(
         },
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     }
@@ -561,7 +561,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
         Term::Quantified { body, .. } => fix_term(body, changed),
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     }

@@ -132,7 +132,7 @@ pub fn has_all_sort_annotations_term(term: &Term) -> bool {
         | Term::Id(_)
         | Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => true,
         Term::App(_f, _p, xs) => xs.iter().all(has_all_sort_annotations_term),
@@ -692,11 +692,11 @@ impl InternalContext<'_> {
                 self.unify_var_value(&Sort::Int, &y)?;
                 Ok(MaybeUnknownSort::Known(Sort::Bool))
             }
-            Term::NumOp(_, x, y) => {
-                let x = self.collect_sort_constraints_term(x)?;
-                self.unify_var_value(&Sort::Int, &x)?;
-                let y = self.collect_sort_constraints_term(y)?;
-                self.unify_var_value(&Sort::Int, &y)?;
+            Term::NumOp(_, xs) => {
+                for x in xs {
+                    let sort = self.collect_sort_constraints_term(x)?;
+                    self.unify_var_value(&Sort::Int, &sort)?;
+                }
                 Ok(MaybeUnknownSort::Known(Sort::Int))
             }
             Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
@@ -712,7 +712,7 @@ impl InternalContext<'_> {
             | Term::Id(_)
             | Term::Int(_)
             | Term::NumRel(_, _, _)
-            | Term::NumOp(_, _, _) => Ok(()),
+            | Term::NumOp(_, _) => Ok(()),
             Term::App(_f, _p, xs) => {
                 for x in xs {
                     self.annotate_solved_sorts_term(x)?;

@@ -60,7 +60,7 @@ fn with_next(sig: &Signature, t: &Term, bound: im::HashSet<String>, next: usize)
         },
         Term::Int(_)
         | Term::NumRel(_, _, _)
-        | Term::NumOp(_, _, _)
+        | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
         | Term::ArraySelect { .. } => unimplemented!(),
     }
