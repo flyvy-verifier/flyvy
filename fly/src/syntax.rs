@@ -163,6 +163,8 @@ pub enum NumOp {
     Sub,
     /// Multiplication
     Mul,
+    /// Modulo
+    Mod,
 }
 
 impl fmt::Display for NumOp {
@@ -174,6 +176,7 @@ impl fmt::Display for NumOp {
                 NumOp::Add => "+",
                 NumOp::Sub => "-",
                 NumOp::Mul => "*",
+                NumOp::Mod => "mod",
             }
         )
     }
@@ -795,6 +798,10 @@ impl Term {
                         } else {
                             vals[0] - vals[1..].iter().sum::<IntType>()
                         }
+                    }
+                    NumOp::Mod => {
+                        assert_eq!(vals.len(), 2);
+                        vals[0] % vals[1]
                     }
                 })
             }

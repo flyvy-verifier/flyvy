@@ -11,7 +11,7 @@ use solver::conf::SolverConf;
 fn parallel_z3(seeds: usize) -> impl BasicSolver {
     ParallelSolvers::new(
         (0..seeds)
-            .map(|seed| SolverConf::new(SolverType::Z3, true, "lfp", 10, Some(seed)))
+            .map(|seed| SolverConf::new(SolverType::Z3, false, "lfp", 10, Some(seed)))
             .collect(),
     )
 }
@@ -40,7 +40,7 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
 }
 
 pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool) {
-    let solver = parallel_z3(4);
+    let solver = parallel_z3(8);
     let univ_indices = 1;
     let disj_length = Some(3);
 
@@ -58,6 +58,10 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool) {
                 .expect("cannot mine terms for predicate");
             let (int_terms, int_templates) = terms.inequalities();
             println!("========== {} ==========", decl.name);
+            for t in &int_terms {
+                println!("{t}");
+            }
+            println!("------------------------");
             for e in int_templates.templates.keys() {
                 println!("{e}");
             }
@@ -70,6 +74,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool) {
 
     println!();
     println!("{fp}");
+
     println!();
     if chc_sys.check_assignment(&solver, &assignment) {
         println!("Success!");

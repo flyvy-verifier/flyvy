@@ -163,9 +163,9 @@ impl MinedTerms {
                 TermType::ArrayEntry
             }
             Term::NumOp(_, ts) => {
-                let mut tt = TermType::Unknown;
+                let mut tt = ttype;
                 for t in ts {
-                    tt = tt.unify(self.mine(t, known, TermType::Unknown));
+                    tt = tt.unify(self.mine(t, known, ttype));
                 }
                 tt
             }
@@ -207,6 +207,7 @@ impl MinedTerms {
     }
 
     fn retain_ids(&mut self, ids: &HashSet<String>) {
+        self.int_atomics.retain(|t| t.ids().is_subset(&ids));
         self.array_index_ids.retain(|t| ids.contains(t));
         self.array_indices.retain(|t| t.ids().is_subset(&ids));
         self.array_entries.retain(|t| t.ids().is_subset(&ids));
@@ -250,6 +251,10 @@ impl MinedTerms {
 
 impl Display for MinedTerms {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "quantified integer variables:")?;
+        for t in &self.quant_int_var {
+            writeln!(f, "    {t}")?;
+        }
         writeln!(f, "array indices:")?;
         for t in &self.array_indices {
             writeln!(f, "    {t}")?;

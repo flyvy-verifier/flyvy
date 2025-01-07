@@ -700,7 +700,7 @@ where
                                 core.len()
                             );
                         }
-                        _ => println!("({size}) solver error {res:?}"),
+                        _ => panic!("({size}) solver error {res:?}"),
                     }
 
                     size += 1;
@@ -816,8 +816,6 @@ where
 
         chc_sol.partial.update_weakened(&name, &updates, chc_sys);
     }
-
-    // TODO: verify solution (also w.r.t queries)
 
     chc_sol
 }

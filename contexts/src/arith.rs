@@ -251,10 +251,12 @@ impl ArithExpr<Term> {
     /// Convert the given term into arithmetic expressions.
     pub fn from_term(term: &Term) -> Option<Self> {
         match term {
-            Term::Id(_) | Term::ArraySelect { .. } => Some(ArithExpr {
-                summands: vec![(1, vec![term.clone()])],
-                constant: 0,
-            }),
+            Term::Id(_) | Term::ArraySelect { .. } | Term::NumOp(NumOp::Mod, _) => {
+                Some(ArithExpr {
+                    summands: vec![(1, vec![term.clone()])],
+                    constant: 0,
+                })
+            }
             Term::Int(i) => Some(ArithExpr {
                 summands: vec![],
                 constant: *i,
@@ -273,6 +275,7 @@ impl ArithExpr<Term> {
                         }
                     }
                     NumOp::Mul => exprs.iter().fold(Self::constant(1), |x, y| &x * y),
+                    NumOp::Mod => unreachable!(),
                 })
             }
             _ => None,

@@ -26,6 +26,7 @@ fn precedence(t: &Term) -> usize {
         UnaryOp(Not, _) => 70,
         UnaryOp(Prime, _) => 80,
         NumRel(_, _, _) => 500,
+        NumOp(Mod, _) => 505,
         NumOp(Add | Sub, _) => 510,
         NumOp(Mul, _) => 520,
         Literal(_)
@@ -145,6 +146,7 @@ pub fn term(t: &Term) -> String {
                 NumOp::Add => "+",
                 NumOp::Sub => "-",
                 NumOp::Mul => "*",
+                NumOp::Mod => "mod",
             };
             args.join(&format!(" {op} "))
         }
