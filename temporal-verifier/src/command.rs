@@ -296,6 +296,9 @@ enum InferCommand {
     Qalpha(QalphaArgs),
     Lfp {
         file: String,
+
+        #[arg(long, global = true)]
+        minimize: bool,
     },
 }
 
@@ -420,7 +423,7 @@ impl InferCommand {
         match self {
             InferCommand::Houdini { solver: _, file } => file,
             InferCommand::Qalpha(QalphaArgs { file, .. }) => file,
-            InferCommand::Lfp { file } => file,
+            InferCommand::Lfp { file, .. } => file,
         }
     }
 }
@@ -772,12 +775,12 @@ impl App {
         match self.command {
             Command::Infer(
                 ref _args @ InferArgs {
-                    infer_cmd: InferCommand::Lfp { file: _ },
+                    infer_cmd: InferCommand::Lfp { file: _, minimize },
                     ..
                 },
             ) => {
                 let chc_sys = formats::parser::parse_smtlib2(&file);
-                compute_lfp(&chc_sys);
+                compute_lfp(&chc_sys, minimize);
             }
             _ => unimplemented!("command does not support this file format"),
         }

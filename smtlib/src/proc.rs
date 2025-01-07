@@ -436,9 +436,7 @@ impl SmtProc {
             return Ok(SatResp::Sat);
         }
         if resp == "unknown" {
-            let reason = self
-                .get_info(":reason-unknown")
-                .expect("could not get :reason-unknown");
+            let reason = self.get_info(":reason-unknown")?;
             return Ok(SatResp::Unknown(reason.to_string()));
         }
         self.get_error(resp)

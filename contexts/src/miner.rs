@@ -25,6 +25,8 @@ pub enum TermType {
     Invalid,
     /// Unknown type
     Unknown,
+    /// Quantifier integer variable
+    QuantifiedIntVar,
     /// Array index type
     ArrayIndex,
     /// Array entry type
@@ -36,6 +38,7 @@ pub enum TermType {
 #[derive(Default)]
 pub struct MinedTerms {
     array_index_ids: HashSet<String>,
+    quant_int_var: HashSet<Term>,
     array_indices: HashSet<Term>,
     array_entries: HashSet<Term>,
     int_atomics: HashSet<Term>,
@@ -67,6 +70,9 @@ impl MinedTerms {
         self.add_int_atomics(&term, ttype);
         match ttype {
             TermType::Unknown | TermType::Invalid => (),
+            TermType::QuantifiedIntVar => {
+                self.quant_int_var.insert(term);
+            }
             TermType::ArrayIndex => {
                 self.array_indices.insert(term);
             }
@@ -82,7 +88,10 @@ impl MinedTerms {
 
     fn add_int_atomics(&mut self, term: &Term, ttype: TermType) {
         match (term, ttype) {
-            (Term::Id(_), TermType::ArrayIndex | TermType::ArrayIndexEntry)
+            (
+                Term::Id(_),
+                TermType::QuantifiedIntVar | TermType::ArrayIndex | TermType::ArrayIndexEntry,
+            )
             | (
                 Term::ArraySelect { array: _, index: _ },
                 TermType::ArrayEntry | TermType::ArrayIndexEntry,
@@ -170,37 +179,26 @@ impl MinedTerms {
         })
     }
 
-    fn add_quantified_index(&mut self, name: &str) {
-        // let indices = self
-        //     .array_indices
-        //     .iter()
-        //     .filter_map(|index| replace_index_id(index))
-        //     .collect_vec();
-        // self.array_indices.extend(indices);
+    fn add_quant_int_var(&mut self, name: &str) {
         self.array_index_ids.insert(name.to_string());
 
-        self.add(Term::id(name), TermType::ArrayIndex);
+        self.add(Term::id(name), TermType::QuantifiedIntVar);
 
-        let replace_index_id = |t: &Term| -> Option<Term> {
-            let ids = t
-                .ids()
+        let replace_index_id = |t: &Term| -> Vec<Term> {
+            t.ids()
                 .intersection(&self.array_index_ids)
-                .cloned()
-                .collect_vec();
-
-            if ids.len() == 1 {
-                let mut substitution = NameSubstitution::new();
-                substitution.insert((ids[0].clone(), 0), Substitutable::name(name));
-                Some(rename_symbols(t, &substitution))
-            } else {
-                None
-            }
+                .map(|id| {
+                    let mut substitution = NameSubstitution::new();
+                    substitution.insert((id.clone(), 0), Substitutable::name(name));
+                    rename_symbols(t, &substitution)
+                })
+                .collect()
         };
 
         let entries = self
             .array_entries
             .iter()
-            .filter_map(|entry| replace_index_id(entry))
+            .flat_map(|entry| replace_index_id(entry))
             .collect_vec();
 
         for term in entries {
@@ -220,13 +218,17 @@ impl MinedTerms {
             |term: &Term| -> usize { int_atomics.iter().position(|t| t == term).unwrap() };
         let mut ineqs = IneqTemplates::new(false);
 
-        for indices in self.array_indices.iter().combinations(2) {
-            let e1 = ArithExpr::<usize>::from_term(indices[0], atomic_to_index);
-            let e2 = ArithExpr::<usize>::from_term(indices[1], atomic_to_index);
+        for (qi, ind) in self
+            .quant_int_var
+            .iter()
+            .cartesian_product(&self.array_indices)
+        {
+            let e1 = ArithExpr::<usize>::from_term(qi, atomic_to_index);
+            let e2 = ArithExpr::<usize>::from_term(ind, atomic_to_index);
 
             for expr in [&e1 - &e2, &e2 - &e1] {
                 if !expr.is_constant() {
-                    ineqs.add_range(expr, (-1, 1));
+                    ineqs.add_range(expr, (-1, 0));
                 }
             }
         }
@@ -237,7 +239,7 @@ impl MinedTerms {
 
             for expr in [&e1 - &e2, &e2 - &e1] {
                 if !expr.is_constant() {
-                    ineqs.add_range(expr, (-1, 1));
+                    ineqs.add_range(expr, (-1, 0));
                 }
             }
         }
@@ -268,14 +270,9 @@ pub struct ChcMiner {
 impl ChcMiner {
     fn mine_chc(&mut self, chc: &Chc) {
         let chc_terms = chc.terms();
-        let chc_predicates = chc.predicates();
-        let mut known = HashMap::new();
-        let mut index_ids = vec![];
-        for v in &chc.variables {
-            if v.sort.is_int() {
-                known.insert(Term::id(&v.name), TermType::ArrayIndex);
-                index_ids.push(v.name.clone());
-            }
+        let mut chc_predicates = chc.predicates();
+        if let Some((name, args)) = chc.head.predicate() {
+            chc_predicates.push((name.clone(), args.clone()));
         }
 
         for (pred, args) in &chc_predicates {
@@ -291,6 +288,19 @@ impl ChcMiner {
                 })
                 .collect();
             let miner = self.miners.entry(pred.clone()).or_default();
+
+            let mut known = HashMap::new();
+            let mut index_ids = vec![];
+            for v in &chc.variables {
+                if v.sort.is_int() {
+                    let name = match substitution.get(&(v.name.clone(), 0)) {
+                        Some(Substitutable::Name(n)) => n.clone(),
+                        _ => v.name.clone(),
+                    };
+                    known.insert(Term::id(&name), TermType::ArrayIndex);
+                    index_ids.push(name);
+                }
+            }
             miner.array_index_ids.extend(index_ids.iter().cloned());
             for t in chc_terms.iter().map(|t| rename_symbols(t, &substitution)) {
                 miner.mine(&t, &known, TermType::Invalid);
@@ -312,7 +322,7 @@ impl ChcMiner {
             // Add quantified index
             if pred.args.iter().any(|arg| arg.is_array_int_int()) {
                 for i in 0..quantified_indices {
-                    terms.add_quantified_index(&PredicateConfig::quant_name(i));
+                    terms.add_quant_int_var(&PredicateConfig::quant_name(i));
                     ids.insert(PredicateConfig::quant_name(i));
                 }
             }

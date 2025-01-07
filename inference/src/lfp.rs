@@ -5,8 +5,16 @@ use contexts::sets::{BaselinePropSet, QFormulaSet};
 use fly::syntax::Module;
 use formats::chc::{chc_sys_from_fo_module, ChcSystem};
 use solver::backends::SolverType;
-use solver::basics::SingleSolver;
+use solver::basics::{BasicSolver, ParallelSolvers, SingleSolver};
 use solver::conf::SolverConf;
+
+fn parallel_z3(seeds: usize) -> impl BasicSolver {
+    ParallelSolvers::new(
+        (0..seeds)
+            .map(|seed| SolverConf::new(SolverType::Z3, true, "lfp", 10, Some(seed)))
+            .collect(),
+    )
+}
 
 pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
     let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, true, &cfg.fname, 30, None));
@@ -18,8 +26,8 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
         context: get_context_for_module(cfg, m),
     };
 
-    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, vec![inv_cfg]);
-    let assignment = fp.get_symbolic_assignment(false);
+    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, vec![inv_cfg], true);
+    let assignment = fp.get_symbolic_assignment();
 
     println!();
     println!("{fp}");
@@ -31,8 +39,8 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
     }
 }
 
-pub fn compute_lfp(chc_sys: &ChcSystem) {
-    let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, true, "lfp", 10, Some(0)));
+pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool) {
+    let solver = parallel_z3(4);
     let univ_indices = 1;
     let disj_length = Some(3);
 
@@ -50,22 +58,15 @@ pub fn compute_lfp(chc_sys: &ChcSystem) {
                 .expect("cannot mine terms for predicate");
             let (int_terms, int_templates) = terms.inequalities();
             println!("========== {} ==========", decl.name);
-            for (e, _) in &int_templates.templates {
+            for e in int_templates.templates.keys() {
                 println!("{e}");
             }
-            let config = PredicateConfig::int_ineqs(
-                decl,
-                int_terms,
-                int_templates,
-                univ_indices,
-                disj_length,
-            );
-            config
+            PredicateConfig::int_ineqs(decl, int_terms, int_templates, univ_indices, disj_length)
         })
         .collect();
 
-    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, chc_sys, predicates);
-    let assignment = fp.get_symbolic_assignment(false);
+    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, chc_sys, predicates, minimize);
+    let assignment = fp.get_symbolic_assignment();
 
     println!();
     println!("{fp}");
