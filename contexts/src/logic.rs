@@ -184,6 +184,15 @@ impl PropFormula {
     pub fn bool_literal(i: usize, b: bool) -> Self {
         PropFormula::Literal(Literal::Bool(i, b))
     }
+
+    pub fn size(&self) -> usize {
+        match self {
+            PropFormula::Bottom => 0,
+            PropFormula::Literal(_) => 1,
+            PropFormula::Binary(_, f1, f2) => f1.size() + f2.size(),
+            PropFormula::Nary(_, fs) => fs.iter().map(|f| f.size()).sum(),
+        }
+    }
 }
 
 fn weaken_or(

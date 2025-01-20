@@ -284,13 +284,13 @@ impl Sexp {
 
                 "+" => return num_op(NumOp::Add, args),
                 "*" => return num_op(NumOp::Mul, args),
-                "-" => {
-                    return if args.len() == 1 {
-                        num_op(NumOp::Sub, &[Sexp::Atom(Atom::I(0)), args[0].clone()])
-                    } else {
-                        num_op(NumOp::Sub, args)
-                    }
+                "-" => return num_op(NumOp::Sub, args),
+
+                "mod" => {
+                    assert_eq!(args.len(), 2);
+                    return num_op(NumOp::Mod, args);
                 }
+
                 "<" => return num_rel(NumRel::Lt, args),
                 "<=" => return num_rel(NumRel::Leq, args),
                 ">=" => return num_rel(NumRel::Geq, args),
@@ -313,6 +313,15 @@ impl Sexp {
                     return Term::ArraySelect {
                         array: Box::new(args[0].term()),
                         index: Box::new(args[1].term()),
+                    };
+                }
+
+                "ite" => {
+                    assert_eq!(args.len(), 3);
+                    return Term::Ite {
+                        cond: Box::new(args[0].term()),
+                        then: Box::new(args[1].term()),
+                        else_: Box::new(args[2].term()),
                     };
                 }
 

@@ -15,7 +15,7 @@ use crate::{
 };
 use fly::quant::QuantifierPrefix;
 use fly::semantics::Evaluable;
-use fly::syntax::{NumOp, NumRel, Quantifier};
+use fly::syntax::{NumRel, Quantifier};
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
     term::subst::{rename_symbols, NameSubstitution},
@@ -164,7 +164,7 @@ impl QuantifiedContext {
                 }
             }
             PropFormula::Literal(Literal::Leq(expr, i)) => {
-                let expr_term = self.to_term_int(expr);
+                let expr_term = expr.to_term(|i| self.int_terms[*i].clone());
                 Term::NumRel(NumRel::Leq, Box::new(expr_term), Box::new(Term::Int(*i)))
             }
             PropFormula::Binary(LogicOp::Or, f1, f2) => {
@@ -180,22 +180,6 @@ impl QuantifiedContext {
                 Term::and(fs.iter().map(|ff| self.to_term_prop(ff)))
             }
         }
-    }
-
-    fn to_term_int(&self, expr: &ArithExpr<usize>) -> Term {
-        Term::num_op(
-            NumOp::Add,
-            [Term::Int(expr.constant)]
-                .into_iter()
-                .chain(expr.summands.iter().map(|(c, p)| {
-                    Term::num_op(
-                        NumOp::Mul,
-                        [Term::Int(*c)]
-                            .into_iter()
-                            .chain(p.iter().map(|index| self.int_terms[*index].clone())),
-                    )
-                })),
-        )
     }
 
     /// Create an extractor for extracting a [`QuantifiedType`] of the given size.
@@ -599,6 +583,7 @@ where
                 .filter(|id| !self.partial.formula_cores.is_blocked(id))
                 .sorted()
                 .collect_vec();
+
             'formula_loop: for (_, id) in ids_to_check {
                 // A formula to check shouldn't already have a core
                 assert!(
@@ -612,50 +597,53 @@ where
                 let formula = head_sets[id.0].get(&id.1);
                 let formula_term =
                     rename_symbols(&head_contexts[id.0].to_term(&formula), &head_subst);
+                let universal = head_contexts[id.0].prefix.is_universal();
                 println!("Querying {}: {}", head_predicate.0, formula_term);
 
                 // ---------- CHC CONSEQUENCE CHECK ----------
-                println!("Checking CHC consequence...");
-                let query_conf = QueryConf {
-                    sig: &chc.signature,
-                    n_states: 1,
-                    cancelers: None,
-                    model_option: ModelOption::None,
-                    evaluate: vec![],
-                    save_tee: false,
-                };
-                let mut assertions = hyp.clone();
-                assertions.push(Term::not(formula_term));
-                let instant = Instant::now();
-                let res = full_assumptions.find_cex(
-                    solver,
-                    &query_conf,
-                    &assertions,
-                    &SmtTactic::Full,
-                    |m| m.clone(),
-                );
-                match res {
-                    CexResult::Cex(_, _) => {
-                        println!(
-                            "    (took {}ms, found SAT(null))",
-                            instant.elapsed().as_millis()
-                        );
+                if !universal {
+                    println!("Checking CHC consequence...");
+                    let query_conf = QueryConf {
+                        sig: &chc.signature,
+                        n_states: 1,
+                        cancelers: None,
+                        model_option: ModelOption::None,
+                        evaluate: vec![],
+                        save_tee: false,
+                    };
+                    let mut assertions = hyp.clone();
+                    assertions.push(Term::not(formula_term));
+                    let instant = Instant::now();
+                    let res = full_assumptions.find_cex(
+                        solver,
+                        &query_conf,
+                        &assertions,
+                        &SmtTactic::Full,
+                        |m| m.clone(),
+                    );
+                    match res {
+                        CexResult::Cex(_, _) => {
+                            println!(
+                                "    (took {}ms, found SAT(null))",
+                                instant.elapsed().as_millis()
+                            );
+                        }
+                        CexResult::UnsatCore(core) => {
+                            println!(
+                                "    (took {}ms, found UNSAT({}))",
+                                instant.elapsed().as_millis(),
+                                core.len()
+                            );
+                            let named_core = core.into_iter().map(|(_, _, id)| id).collect();
+                            self.partial.add_core((chc_index, id), named_core);
+                            continue 'formula_loop;
+                        }
+                        _ => panic!("solver error {res:?}"),
                     }
-                    CexResult::UnsatCore(core) => {
-                        println!(
-                            "    (took {}ms, found UNSAT({}))",
-                            instant.elapsed().as_millis(),
-                            core.len()
-                        );
-                        let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                        self.partial.add_core((chc_index, id), named_core);
-                        continue 'formula_loop;
-                    }
-                    _ => panic!("solver error {res:?}"),
                 }
 
                 let mut size = 1;
-                loop {
+                'size_loop: loop {
                     if extractors[id.0].is_none() {
                         extractors[id.0] = Some(head_contexts[id.0].extractor(size, &head_subst));
                     }
@@ -699,6 +687,12 @@ where
                                 instant.elapsed().as_millis(),
                                 core.len()
                             );
+
+                            if universal {
+                                let named_core = core.into_iter().map(|(_, _, id)| id).collect();
+                                self.partial.add_core((chc_index, id), named_core);
+                                break 'size_loop;
+                            }
                         }
                         _ => panic!("({size}) solver error {res:?}"),
                     }
@@ -757,6 +751,7 @@ impl PredicateConfig {
     pub fn int_ineqs(
         decl: &HoPredicateDecl,
         int_terms: Vec<Term>,
+        bool_terms: Vec<Term>,
         int_templates: IneqTemplates,
         univ_indices: usize,
         disj_length: Option<usize>,
@@ -767,7 +762,7 @@ impl PredicateConfig {
             names: Arc::new(vec![(0..univ_indices).map(Self::quant_name).collect()]),
         };
 
-        let literal_context = PropContext::literals(vec![], int_templates);
+        let literal_context = PropContext::literals((0..bool_terms.len()).collect(), int_templates);
         let prop_cont = PropContext::Nary(LogicOp::Or, disj_length, Box::new(literal_context));
 
         Self {
@@ -776,7 +771,7 @@ impl PredicateConfig {
             context: MultiContext {
                 contexts: vec![QuantifiedContext {
                     prefix,
-                    bool_terms: vec![],
+                    bool_terms,
                     int_terms,
                     prop_cont,
                 }],

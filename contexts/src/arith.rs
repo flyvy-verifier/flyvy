@@ -236,14 +236,11 @@ impl ArithExpr<usize> {
         }
     }
 
-    pub fn from_term<F>(term: &Term, atomics_to_index: F) -> Self
+    pub fn from_term<F>(term: &Term, atomics_to_index: F) -> Option<Self>
     where
         F: FnMut(&Term) -> usize,
     {
-        Self::from_expr(
-            &ArithExpr::<Term>::from_term(term).unwrap(),
-            atomics_to_index,
-        )
+        ArithExpr::<Term>::from_term(term).map(|e| Self::from_expr(&e, atomics_to_index))
     }
 }
 
@@ -340,17 +337,32 @@ impl<T: Ord + Clone + Hash + Eq> ArithExpr<T> {
     where
         F: Fn(&T) -> Term,
     {
-        Term::num_op(
-            NumOp::Add,
-            [Term::Int(self.constant)]
-                .into_iter()
-                .chain(self.summands.iter().map(|(c, p)| {
-                    Term::num_op(
-                        NumOp::Mul,
-                        [Term::Int(*c)].into_iter().chain(p.iter().map(&var)),
-                    )
-                })),
-        )
+        let mut summands = self
+            .summands
+            .iter()
+            .map(|(c, p)| {
+                let mut factors = p.iter().map(&var).collect_vec();
+                if *c != 1 {
+                    factors.insert(0, Term::Int(*c));
+                }
+
+                match factors.len() {
+                    0 => panic!("no factors in product"),
+                    1 => factors.pop().unwrap(),
+                    _ => Term::NumOp(NumOp::Mul, factors),
+                }
+            })
+            .collect_vec();
+
+        if self.constant != 0 {
+            summands.insert(0, Term::Int(self.constant));
+        }
+
+        match summands.len() {
+            0 => Term::Int(0),
+            1 => summands.pop().unwrap(),
+            _ => Term::NumOp(NumOp::Add, summands),
+        }
     }
 
     /// Return the atomic participants in this arithmetic expression.

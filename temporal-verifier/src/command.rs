@@ -780,7 +780,11 @@ impl App {
                 },
             ) => {
                 let chc_sys = formats::parser::parse_smtlib2(&file);
-                compute_lfp(&chc_sys, minimize);
+                for disj_length in 3..=4 {
+                    if compute_lfp(&chc_sys, minimize, Some(disj_length)) {
+                        return;
+                    };
+                }
             }
             _ => unimplemented!("command does not support this file format"),
         }

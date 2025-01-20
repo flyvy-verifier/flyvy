@@ -232,6 +232,10 @@ impl Chc {
 }
 
 impl ChcSystem {
+    pub fn predicate_decl(&self, name: &String) -> &HoPredicateDecl {
+        self.predicates.iter().find(|p| &p.name == name).unwrap()
+    }
+
     /// Create a new CHC system with the given signature and unknown predicates.
     pub fn new(signature: Signature, predicates: Vec<HoPredicateDecl>) -> Self {
         Self {
@@ -280,9 +284,11 @@ impl ChcSystem {
         &self,
         solver: &B,
         assignment: &SymbolicAssignment<K>,
+        only_queries: bool,
     ) -> bool {
         self.chcs
             .iter()
+            .filter(|chc| !only_queries || matches!(chc.head, Component::Formulas(_)))
             .all(|chc| chc.check_assignment(solver, assignment))
     }
 }
