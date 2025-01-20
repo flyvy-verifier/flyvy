@@ -219,7 +219,7 @@ fn weaken_or(
     }
 
     // Weaken bottom and add new disjunct
-    if !k.is_some_and(|k| disjs.len() >= k) {
+    if k.is_none_or(|k| disjs.len() < k) {
         for w in disj_cont
             .weaken(obj, &disj_cont.bottom_formula())
             .into_iter()

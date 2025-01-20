@@ -539,7 +539,7 @@ fn quantifier_param(spec: &str) -> impl Iterator<Item = String> + '_ {
         .flat_map(|s| ["--quantifier".to_string(), s.to_string()])
 }
 
-impl<'a> QalphaConfig<'a> {
+impl QalphaConfig<'_> {
     fn params(&self, sim: &SimulationConfig, strategy: &str, baseline: bool) -> Vec<String> {
         let mut args = vec![];
         args.extend(quantifier_param(self.quantifiers));

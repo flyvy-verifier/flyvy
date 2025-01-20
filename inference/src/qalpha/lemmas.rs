@@ -47,7 +47,7 @@ pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
     try_first: Vec<LemmaKey>,
 }
 
-impl<'a, L: BoundedLanguage> OrderedTerms for &WeakenHypotheses<'a, L> {
+impl<L: BoundedLanguage> OrderedTerms for &WeakenHypotheses<'_, L> {
     type Key = LemmaKey;
     type Eval = Model;
 

@@ -98,7 +98,7 @@ impl Assignment {
 }
 
 #[derive(Clone)]
-struct LessThan {
+pub struct LessThan {
     x: Term,
     y: Term,
     strict: bool,
@@ -304,8 +304,8 @@ impl ImperativeChc {
             if p_head.is_some_and(|p| p.0 == p_body[0].0) {
                 // Update
                 let predicate = p_head.unwrap();
-                let decl = chc_sys.predicate_decl(&predicate.0);
-                let substitution = substitute_for_args(&predicate.1);
+                let decl = chc_sys.predicate_decl(predicate.0);
+                let substitution = substitute_for_args(predicate.1);
                 let sorts = decl
                     .args
                     .iter()
@@ -329,7 +329,7 @@ impl ImperativeChc {
             } else {
                 // Query
                 let predicate = p_body[0];
-                let substitution = substitute_for_args(&predicate.1);
+                let substitution = substitute_for_args(predicate.1);
 
                 let mut assertions = vec![];
                 for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
@@ -359,7 +359,7 @@ impl ImperativeChc {
         } else if p_body.is_empty() && p_head.is_some() {
             // Initialization
             let pred = p_head.unwrap();
-            let decl = chc_sys.predicate_decl(&pred.0);
+            let decl = chc_sys.predicate_decl(pred.0);
             let mut assignments = vec![];
             for (i, arg) in pred.1.iter().enumerate() {
                 if let Substitutable::Term(t) = arg {
@@ -393,7 +393,7 @@ impl ImperativeChc {
     ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
         assert_eq!(quantified.len(), 1);
 
-        let mut bools = vec![];
+        let bools = vec![];
         let mut leqs = vec![];
 
         match self {

@@ -18,10 +18,12 @@ use crate::basics::FOModule;
 pub struct FunctionSort(pub Vec<Sort>, pub Sort);
 
 impl FunctionSort {
+    /// Return whether the sort is integer.
     pub fn is_int(&self) -> bool {
         self.0.is_empty() && matches!(self.1, Sort::Int)
     }
 
+    /// Return whether the sort is array with integer indices and values.
     pub fn is_array_int_int(&self) -> bool {
         self.0.is_empty() && self.1.is_array_int_int()
     }
@@ -197,6 +199,7 @@ impl Chc {
         true
     }
 
+    /// Return all terms appearing in the CHC.
     pub fn terms(&self) -> Vec<Term> {
         self.body
             .iter()
@@ -208,6 +211,7 @@ impl Chc {
             .collect()
     }
 
+    /// Return all predicates appearing in the CHC.
     pub fn predicates(&self) -> Vec<(String, Vec<Substitutable>)> {
         self.body
             .iter()
@@ -232,6 +236,7 @@ impl Chc {
 }
 
 impl ChcSystem {
+    /// Return the [`HoPredicateDecl`] matching the given name in the system.
     pub fn predicate_decl(&self, name: &String) -> &HoPredicateDecl {
         self.predicates.iter().find(|p| &p.name == name).unwrap()
     }

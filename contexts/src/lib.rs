@@ -7,7 +7,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![allow(clippy::type_complexity)]
 #![deny(clippy::uninlined_format_args)]
-#![warn(missing_docs)]
+// TODO: #![warn(missing_docs)]
 
 pub mod alg;
 pub mod arith;

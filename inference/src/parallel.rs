@@ -92,7 +92,7 @@ where
     cancel: bool,
 }
 
-impl<'a, P, T, R> ParallelExecution<'a, P, T, R>
+impl<P, T, R> ParallelExecution<'_, P, T, R>
 where
     P: Ord + Clone,
     T: Eq + Hash + Clone,

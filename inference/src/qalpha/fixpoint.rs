@@ -87,7 +87,7 @@ pub fn sample_priority(
     depth: usize,
 ) -> Option<SamplePriority> {
     let sum: usize = universe.iter().product();
-    if !cfg.depth.is_some_and(|d| depth > d) {
+    if cfg.depth.is_none_or(|d| depth <= d) {
         Some((sum, if cfg.dfs { Dfs(depth) } else { Bfs(depth) }))
     } else {
         None

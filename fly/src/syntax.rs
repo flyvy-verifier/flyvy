@@ -60,6 +60,7 @@ impl Sort {
         }
     }
 
+    /// Return whether the sort is an array with integer indices and values.
     pub fn is_array_int_int(&self) -> bool {
         matches!(self, Sort::Array { index, element } if matches!(index.as_ref(), Sort::Int) && matches!(element.as_ref(), Sort::Int))
     }
@@ -532,6 +533,7 @@ impl Term {
         }
     }
 
+    /// Smart constructor for numerical relations.
     pub fn num_rel<I1, I2>(rel: NumRel, x: I1, y: I2) -> Term
     where
         I1: Into<Term>,
@@ -544,6 +546,7 @@ impl Term {
     // Array Operations
     //////////////////
 
+    /// Smart constructor for array select operation.
     pub fn array_select<I1, I2>(array: I1, index: I2) -> Term
     where
         I1: Into<Term>,
@@ -787,7 +790,7 @@ impl Term {
         match self {
             Term::Int(i) => Some(*i),
             Term::NumOp(op, ts) => {
-                assert!(ts.len() > 0);
+                assert!(!ts.is_empty());
                 let is: Option<Vec<IntType>> = ts.iter().map(|t| t.as_int()).collect();
                 is.map(|vals| match op {
                     NumOp::Add => vals.iter().sum(),

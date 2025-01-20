@@ -52,7 +52,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
     let imp_chcs = chc_sys
         .chcs
         .iter()
-        .filter_map(|chc| ImperativeChc::from_chc(chc, &chc_sys))
+        .filter_map(|chc| ImperativeChc::from_chc(chc, chc_sys))
         .collect_vec();
     for imp_chc in &imp_chcs {
         println!("{imp_chc}")
