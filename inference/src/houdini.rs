@@ -68,8 +68,8 @@ impl Houdini {
             };
             log::info!("    Checking {q}");
             let mut solver = self.conf.solver(&self.sig, 1);
-            solver.assert(&self.init);
-            solver.assert(&Term::negate(q.clone()));
+            solver.assert(&self.init).unwrap();
+            solver.assert(&Term::negate(q.clone())).unwrap();
             let resp = solver.check_sat(HashMap::new()).expect("error in solver");
             match resp {
                 SatResp::Sat => {
@@ -116,10 +116,12 @@ impl Houdini {
                 }
                 let mut solver = self.conf.solver(&self.sig, 2);
                 for p in &self.invs {
-                    solver.assert(p);
+                    solver.assert(p).unwrap();
                 }
-                solver.assert(&self.next);
-                solver.assert(&Term::negate(Next::new(&self.sig).prime(q)));
+                solver.assert(&self.next).unwrap();
+                solver
+                    .assert(&Term::negate(Next::new(&self.sig).prime(q)))
+                    .unwrap();
                 let resp = solver.check_sat(HashMap::new()).expect("error in solver");
                 if matches!(resp, SatResp::Sat) {
                     log::info!("        Got model");

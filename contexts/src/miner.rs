@@ -167,6 +167,7 @@ pub enum ImperativeChc {
     Init {
         predicate: String,
         assignments: Vec<Assignment>,
+        assertions: Vec<LessThan>,
         vars: Vec<HoVariable>,
     },
     Update {
@@ -187,6 +188,7 @@ impl Display for ImperativeChc {
             ImperativeChc::Init {
                 predicate,
                 assignments,
+                assertions,
                 vars,
             } => {
                 writeln!(
@@ -195,6 +197,9 @@ impl Display for ImperativeChc {
                     vars.iter().map(|v| &v.name).join(", ")
                 )?;
                 for a in assignments {
+                    writeln!(f, "    {a}")?;
+                }
+                for a in assertions {
                     writeln!(f, "    {a}")?;
                 }
                 Ok(())
@@ -236,16 +241,13 @@ impl Display for ImperativeChc {
 fn substitute_for_args(substs: &[Substitutable]) -> NameSubstitution {
     substs
         .iter()
-        .map(|s| match s {
-            Substitutable::Name(n) | Substitutable::Term(Term::Id(n)) => n.clone(),
-            _ => panic!("substitutable is not an ID: {s}"),
-        })
         .enumerate()
-        .map(|(i, n)| {
-            (
+        .filter_map(|(i, s)| match s {
+            Substitutable::Name(n) | Substitutable::Term(Term::Id(n)) => Some((
                 (n.clone(), 0),
                 Substitutable::Name(PredicateConfig::arg_name(i)),
-            )
+            )),
+            _ => None,
         })
         .collect()
 }
@@ -281,6 +283,7 @@ impl ImperativeChc {
             ImperativeChc::Init {
                 predicate,
                 assignments: _,
+                assertions: _,
                 vars: _,
             }
             | ImperativeChc::Update {
@@ -338,7 +341,7 @@ impl ImperativeChc {
 
                 let comb = assertions.iter().cloned().permutations(2).collect_vec();
                 for a in comb {
-                    if a[0].y == a[1].x {
+                    if a[0].y == a[1].x && is_only_arith(&a[0].x) && is_only_arith(&a[1].y) {
                         assertions.push(LessThan {
                             x: a[0].x.clone(),
                             y: a[1].y.clone(),
@@ -372,12 +375,20 @@ impl ImperativeChc {
             }
             assignments.retain(|a| a.ids().is_empty());
 
+            let substitution = substitute_for_args(pred.1);
+
+            let mut assertions = vec![];
+            for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
+                assertions.append(&mut LessThan::in_term(&t, false));
+            }
+
             let ids: HashSet<String> = assignments.iter().flat_map(|a| a.ids()).collect();
             let vars = chc_vars_in_ids(chc, &ids);
 
             Some(Self::Init {
                 predicate: pred.0.clone(),
                 assignments,
+                assertions,
                 vars,
             })
         } else {
@@ -400,6 +411,7 @@ impl ImperativeChc {
             ImperativeChc::Init {
                 predicate: _,
                 assignments,
+                assertions,
                 vars: _,
             } => {
                 for a in assignments {
@@ -440,6 +452,24 @@ impl ImperativeChc {
                             leqs.push((&x - &y, (0, 0)));
                             leqs.push((&y - &x, (0, 0)));
                         }
+                    }
+                }
+
+                for lt in assertions {
+                    if !lt.ids().is_subset(allowed_ids) {
+                        continue;
+                    }
+
+                    let x_expr =
+                        ArithExpr::<usize>::from_term(&lt.x, |t| position_or_push(ints, t))
+                            .unwrap();
+                    let y_expr =
+                        ArithExpr::<usize>::from_term(&lt.y, |t| position_or_push(ints, t))
+                            .unwrap();
+                    let expr = &x_expr - &y_expr;
+                    let bound = if lt.strict { -1 } else { 0 };
+                    if !expr.is_constant() {
+                        leqs.push((expr, (bound, bound)));
                     }
                 }
             }

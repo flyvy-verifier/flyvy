@@ -53,13 +53,13 @@ fn check_sat_conf(
     }
 
     for t in assertions {
-        solver.assert(t);
+        solver.assert(t)?;
     }
 
     let mut solver_assumptions = HashMap::new();
     for (i, (t, b)) in assumptions {
         let ind = solver.get_indicator(i.to_string().as_str());
-        solver.assert(&Term::iff(&ind, t));
+        solver.assert(&Term::iff(&ind, t))?;
         solver_assumptions.insert(ind, *b);
     }
 
@@ -177,8 +177,8 @@ impl Evaluable for RespModel {
                     },
                     *n_states,
                 );
-                solver.send_raw(sexps);
-                solver.assert(&Term::not(term));
+                solver.send_raw(sexps).unwrap();
+                solver.assert(&Term::not(term)).unwrap();
 
                 match solver.check_sat(HashMap::new()).unwrap() {
                     SatResp::Unsat => true,
@@ -463,7 +463,11 @@ impl BasicSolver for ParallelSolvers {
                 .collect_vec();
             handles
                 .into_iter()
-                .map(|handle| handle.join().unwrap())
+                .map(|handle| {
+                    handle.join().unwrap_or(Err(SolverError::UnexpectedClose(
+                        "thread error".to_string(),
+                    )))
+                })
                 .collect_vec()
         });
 

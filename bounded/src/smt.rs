@@ -48,7 +48,7 @@ pub fn check(
     let search = std::time::Instant::now();
 
     let mut solver = conf.solver(&module.signature, depth + 1);
-    solver.assert(&Term::and(program));
+    solver.assert(&Term::and(program)).unwrap();
     let answer = match solver.check_sat(HashMap::new()).expect("error in solver") {
         SatResp::Sat { .. } => {
             let states = solver

@@ -488,10 +488,10 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
     }
 }
 
-enum ChcCheckResult<M, C> {
-    Canceled,
-    Model(M),
-    Core(C),
+enum TriResult<Y, N> {
+    None,
+    Yes(Y),
+    No(N),
 }
 
 impl<S> ChcSolution<S>
@@ -543,12 +543,13 @@ where
         &mut self,
         solver: &B,
         chc_sys: &ChcSystem,
-    ) -> Option<(String, MultiObject<QuantifiedType>)> {
+    ) -> TriResult<(String, MultiObject<QuantifiedType>), ()> {
         // TODO: add triviality check
         // TODO: cache the ID's to check
 
         let assignment = self.get_symbolic_assignment();
         let cancelers = MultiCanceler::new();
+        let mut out = TriResult::No(());
 
         'chc_loop: for (chc_index, chc) in chc_sys.chcs.iter().enumerate() {
             let head_predicate = match chc.head.predicate() {
@@ -645,9 +646,9 @@ where
                                 core.len()
                             );
                             let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                            return (ChcCheckResult::Core(named_core), vec![], false);
+                            return (TriResult::No(named_core), vec![], false);
                         }
-                        CexResult::Canceled => return (ChcCheckResult::Canceled, vec![], false),
+                        CexResult::Canceled => return (TriResult::None, vec![], false),
                         _ => panic!("solver error {res:?}"),
                     }
                 }
@@ -685,7 +686,7 @@ where
                             );
                             cancelers.cancel();
                             return (
-                                ChcCheckResult::Model((
+                                TriResult::Yes((
                                     head_predicate.0.clone(),
                                     MultiObject(id.0, extractor.extract(&vals)),
                                 )),
@@ -702,11 +703,11 @@ where
 
                             if universal {
                                 let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                                return (ChcCheckResult::Core(named_core), vec![], false);
+                                return (TriResult::No(named_core), vec![], false);
                             }
                         }
-                        CexResult::Canceled => return (ChcCheckResult::Canceled, vec![], false),
-                        _ => panic!("({size}) solver error {res:?}"),
+                        _ => return (TriResult::None, vec![], false),
+                        // _ => panic!("({size}) solver error {res:?}"),
                     }
 
                     size += 1;
@@ -714,22 +715,21 @@ where
             });
 
             let results = worker.run(parallelism());
-            let mut out = None;
             for ((_, id), res) in results {
                 match res {
-                    ChcCheckResult::Canceled => (),
-                    ChcCheckResult::Model(m) => out = Some(m),
-                    ChcCheckResult::Core(named_core) => {
+                    TriResult::None => out = TriResult::None,
+                    TriResult::Yes(m) => out = TriResult::Yes(m),
+                    TriResult::No(named_core) => {
                         self.partial.add_core((chc_index, id), named_core);
                     }
                 }
             }
-            if out.is_some() {
+            if matches!(out, TriResult::Yes(_)) {
                 return out;
             }
         }
 
-        None
+        out
     }
 }
 
@@ -827,17 +827,23 @@ where
         }
     }
 
-    while let Some((name, cex)) = chc_sol.find_cex(solver, chc_sys) {
-        println!("Found CEX: {cex:?}");
-        let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
-        let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
+    loop {
+        match chc_sol.find_cex(solver, chc_sys) {
+            TriResult::Yes((name, cex)) => {
+                println!("Found CEX: {cex:?}");
+                let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
+                let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
 
-        if minimize {
-            pred_sol.update_weakened(&updates);
-            pred_sol.minimize_by_implication(solver);
+                if minimize {
+                    pred_sol.update_weakened(&updates);
+                    pred_sol.minimize_by_implication(solver);
+                }
+
+                chc_sol.partial.update_weakened(&name, &updates, chc_sys);
+            }
+            TriResult::None => print!("cannot sample counter-example or verify proof!"),
+            TriResult::No(()) => break,
         }
-
-        chc_sol.partial.update_weakened(&name, &updates, chc_sys);
     }
 
     chc_sol

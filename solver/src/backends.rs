@@ -108,7 +108,7 @@ impl Backend for &GenericBackend {
     fn get_cmd(&self) -> SolverCmd {
         let seed = self.opts.seed.unwrap_or_else(|| {
             let mut rng = rand::thread_rng();
-            rng.gen()
+            rng.gen::<usize>() % 1000
         });
         match self.solver_type {
             SolverType::Z3 => {
@@ -358,8 +358,10 @@ mod tests {
             Solver::new(&sig, 1, &backend, None).expect("could not create solver for test");
         let ind = solver.get_indicator("i");
         // make sure that the first universe tried is not minimal
-        solver.assert(&term("exists a1:A, a2:A. a1 != a2"));
-        solver.assert(&Term::implies(ind.clone(), term("p(x)")));
+        solver.assert(&term("exists a1:A, a2:A. a1 != a2")).unwrap();
+        solver
+            .assert(&Term::implies(ind.clone(), term("p(x)")))
+            .unwrap();
         let mut assumptions = HashMap::new();
         assumptions.insert(ind, true);
         let resp = solver.check_sat(assumptions).unwrap();

@@ -97,11 +97,15 @@ mod tests {
                 }
                 // not bothering to check initiation
                 let mut solver = conf.solver(signature, 2);
-                solver.assert(&inv_assert.next);
-                solver.assert(&inv_assert.assumed_inv);
-                solver.assert(&Next::new(signature).prime(&inv_assert.assumed_inv));
-                solver.assert(&proof_inv);
-                solver.assert(&Term::negate(Next::new(signature).prime(&inv.x)));
+                solver.assert(&inv_assert.next).unwrap();
+                solver.assert(&inv_assert.assumed_inv).unwrap();
+                solver
+                    .assert(&Next::new(signature).prime(&inv_assert.assumed_inv))
+                    .unwrap();
+                solver.assert(&proof_inv).unwrap();
+                solver
+                    .assert(&Term::negate(Next::new(signature).prime(&inv.x)))
+                    .unwrap();
                 let resp = solver.check_sat(HashMap::new());
                 // if this check fails, don't start new checks
                 if matches!(resp, Ok(SatResp::Unsat) | Err(_)) {

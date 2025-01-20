@@ -87,7 +87,7 @@ impl<B: Backend> Solver<B> {
     ) -> Result<Self, SolverError> {
         let signature = signature.clone();
         let mut proc = SmtProc::new(backend.get_cmd(), tee)?;
-        Self::send_signature(&mut proc, &signature, n_states);
+        Self::send_signature(&mut proc, &signature, n_states)?;
         Ok(Self {
             proc,
             signature,
@@ -111,9 +111,13 @@ impl<B: Backend> Solver<B> {
 
     /// Emit encoding of signature, using `n_states` to determine how many times
     /// to emit each mutable symbol.
-    fn send_signature(proc: &mut SmtProc, sig: &Signature, n_states: usize) {
+    fn send_signature(
+        proc: &mut SmtProc,
+        sig: &Signature,
+        n_states: usize,
+    ) -> Result<(), SolverError> {
         for sort in &sig.sorts {
-            proc.send(&app("declare-sort", [atom_s(sort.clone()), atom_i(0)]));
+            proc.send(&app("declare-sort", [atom_s(sort.clone()), atom_i(0)]))?;
         }
         for r in &sig.relations {
             // immutable symbols are always declared once
@@ -125,7 +129,7 @@ impl<B: Backend> Solver<B> {
                         sexp_l(r.args.iter().map(sexp::sort)),
                         sexp::sort(&r.sort),
                     ],
-                ));
+                ))?;
             }
             // mutable symbols are declared according to n_states (or not at all
             // if n_states=0)
@@ -139,25 +143,28 @@ impl<B: Backend> Solver<B> {
                             sexp_l(r.args.iter().map(sexp::sort)),
                             sexp::sort(&r.sort),
                         ],
-                    ));
+                    ))?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Send raw s-expressions to the solver.
-    pub fn send_raw(&mut self, sexps: &[Sexp]) {
+    pub fn send_raw(&mut self, sexps: &[Sexp]) -> Result<(), SolverError> {
         for s in sexps {
-            self.proc.send(s);
+            self.proc.send(s)?;
         }
         self.last_assumptions = None;
+        Ok(())
     }
 
     /// Send `(assert ...)` to the solver.
-    pub fn assert(&mut self, t: &Term) {
-        self.proc.send(&app("assert", [sexp::term(t)]));
+    pub fn assert(&mut self, t: &Term) -> Result<(), SolverError> {
+        self.proc.send(&app("assert", [sexp::term(t)]))?;
         self.last_assumptions = None;
-        self.asserts.push(t.clone())
+        self.asserts.push(t.clone());
+        Ok(())
     }
 
     /// Create a comment in the tee'd SMT file, if there is one.
@@ -177,10 +184,12 @@ impl<B: Backend> Solver<B> {
         let ind = format!("__ind@{name}");
         // if this is a new indicator variable, declare it in the solver
         if self.indicators.insert(ind.clone()) {
-            self.proc.send(&app(
-                "declare-const",
-                vec![atom_s(ind.clone()), atom_s("Bool")],
-            ));
+            self.proc
+                .send(&app(
+                    "declare-const",
+                    vec![atom_s(ind.clone()), atom_s("Bool")],
+                ))
+                .unwrap();
         }
         self.last_assumptions = None;
         Term::Id(ind)
@@ -304,7 +313,7 @@ impl<B: Backend> Solver<B> {
                     })),
                 ),
             );
-        self.assert(&Term::implies(ind.clone(), univ_card));
+        self.assert(&Term::implies(ind.clone(), univ_card)).unwrap();
         ind
     }
 
@@ -479,15 +488,15 @@ impl<B: Backend> Solver<B> {
     }
 
     /// Call the SMT push command to create a new assertion stack frame.
-    pub fn push(&mut self) {
+    pub fn push(&mut self) -> Result<(), SolverError> {
         self.last_assumptions = None;
-        self.proc.send(&app("push", []));
+        self.proc.send(&app("push", []))
     }
 
     /// Call the SMT pop command to rewind the solver to the last pop.
-    pub fn pop(&mut self) {
+    pub fn pop(&mut self) -> Result<(), SolverError> {
         self.last_assumptions = None;
-        self.proc.send(&app("pop", []));
+        self.proc.send(&app("pop", []))
     }
 }
 

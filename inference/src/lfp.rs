@@ -13,7 +13,7 @@ use solver::conf::SolverConf;
 fn parallel_z3(seeds: usize) -> impl BasicSolver {
     ParallelSolvers::new(
         (0..seeds)
-            .map(|seed| SolverConf::new(SolverType::Z3, true, "lfp", 10, Some(seed)))
+            .map(|seed| SolverConf::new(SolverType::Z3, true, "lfp", 2, None))
             .collect(),
     )
 }
@@ -127,7 +127,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
     println!("{fp}");
 
     println!();
-    let solved = chc_sys.check_assignment(&solver, &assignment, true);
+    let solved = chc_sys.check_assignment(&solver, &assignment, false);
     if solved {
         println!("Success!");
     } else {

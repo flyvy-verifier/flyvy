@@ -17,7 +17,7 @@ use solver::{
 };
 
 fn verify_term<B: Backend>(solver: &mut Solver<B>, t: Term) -> Result<(), QueryError> {
-    solver.assert(&Term::negate(t));
+    solver.assert(&Term::negate(t)).unwrap();
     let resp = solver.check_sat(HashMap::new()).expect("error in solver");
     match resp {
         SatResp::Sat { .. } => {

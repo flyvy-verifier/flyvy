@@ -263,7 +263,7 @@ pub trait OrderedTerms: Copy + Send + Sync {
                 }
                 Ok(BasicSolverResp::Unknown(reason)) => return CexResult::Unknown(reason),
                 Err(SolverError::Killed) => return CexResult::Canceled,
-                Err(e) => panic!("error in solver: {e}"),
+                Err(e) => return CexResult::Unknown(format!("error in solver: {e}")),
             }
         }
     }
@@ -583,17 +583,19 @@ impl FOModule {
                 .chain(hyp.iter())
                 .chain(vec![trans])
             {
-                solver.assert(a);
+                solver.assert(a).unwrap();
             }
             for a in self.module.axioms.iter() {
-                solver.assert(&Next::new(&self.signature).prime(a));
+                solver.assert(&Next::new(&self.signature).prime(a)).unwrap();
             }
             let mut indicators = HashMap::new();
             let mut ind_to_term = HashMap::new();
             let mut new_terms = vec![];
             if let TermOrModel::Term(term) = t {
                 // println!("got term, asserting with no core");
-                solver.assert(&Next::new(&self.signature).prime(term));
+                solver
+                    .assert(&Next::new(&self.signature).prime(term))
+                    .unwrap();
             } else if let Quantified {
                 quantifier: Quantifier::Exists,
                 body,
@@ -617,7 +619,7 @@ impl FOModule {
                         body: Box::new(NAryOp(NOp::And, new_terms)),
                         binders,
                     };
-                    solver.assert(&new_term);
+                    solver.assert(&new_term).unwrap();
                 } else {
                     panic!("bad term for pred!");
                 }
@@ -655,9 +657,9 @@ impl FOModule {
     pub fn implies_cex(&self, conf: &SolverConf, hyp: &[Term], t: &Term) -> Option<Model> {
         let mut solver = conf.solver(&self.signature, 1);
         for a in hyp {
-            solver.assert(a);
+            solver.assert(a).unwrap();
         }
-        solver.assert(&Term::negate(t.clone()));
+        solver.assert(&Term::negate(t.clone())).unwrap();
 
         let resp = solver.check_sat(HashMap::new()).expect("error in solver");
         solver.save_tee();

@@ -183,12 +183,12 @@ impl SmtProc {
             proc.send(&app(
                 "set-option",
                 [atom_s(format!(":{option}")), atom_s(val)],
-            ));
+            ))?;
         }
         // silence a warning from CVC4/CVC5 when run manually without -q
         // TODO: figure out what a good default logic is (possibly will be
         // customized to the solver)
-        proc.send(&app("set-logic", vec![atom_s("AUFLIA")]));
+        proc.send(&app("set-logic", vec![atom_s("AUFNIA")]))?;
         Ok(proc)
     }
 
@@ -204,17 +204,18 @@ impl SmtProc {
         }
     }
 
-    fn send_raw(&mut self, data: &sexp::Sexp) {
-        writeln!(self.stdin, "{data}").expect("I/O error: failed to send to solver");
+    fn send_raw(&mut self, data: &sexp::Sexp) -> Result<()> {
+        writeln!(self.stdin, "{data}")?;
         if let Some(f) = &mut self.tee {
             f.append(data.clone());
         }
+        Ok(())
     }
 
     /// Low-level API to send the solver a command that expects a response,
     /// which is parsed as a single s-expression.
     fn send_with_reply(&mut self, data: &sexp::Sexp) -> Result<sexp::Sexp> {
-        self.send(data);
+        self.send(data)?;
         self.get_response(|s| sexp::parse(s).expect("could not parse solver response"))
     }
 
@@ -291,7 +292,7 @@ impl SmtProc {
         } else {
             app("check-sat-assuming", vec![sexp_l(assumptions.to_vec())])
         };
-        self.send(&cmd);
+        self.send(&cmd)?;
         self.start_call()?;
         let sexp_resp = self.get_response(|s| s.to_string())?;
         let resp = self.parse_sat(&sexp_resp)?;
@@ -373,12 +374,12 @@ impl SmtProc {
 
     /// Low-level API to send the solver a command as an s-expression. This
     /// should only be used for commands that do not require a response.
-    pub fn send(&mut self, data: &sexp::Sexp) {
+    pub fn send(&mut self, data: &sexp::Sexp) -> Result<()> {
         let status_m = self.terminated.clone();
         let mut status = status_m.write().unwrap();
         if self.handle_termination_status(&mut status).is_err() {
             // solver has been cancelled, pretend like the command succeeded
-            return;
+            return Ok(());
         }
         drop(status);
         self.send_raw(data)
@@ -544,10 +545,12 @@ mod tests {
     fn test_get_model_z3() {
         let z3 = Z3Conf::new(&solver_path("z3")).done();
         let mut solver = SmtProc::new(z3, None).unwrap();
-        solver.send(&app("declare-const", [atom_s("a"), atom_s("Bool")]));
+        solver
+            .send(&app("declare-const", [atom_s("a"), atom_s("Bool")]))
+            .unwrap();
 
         let e = parse("(assert (and a (not a)))").unwrap();
-        solver.send(&e);
+        solver.send(&e).unwrap();
 
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
@@ -568,7 +571,7 @@ mod tests {
         };
 
         let e = parse("(assert (and (or true) (and false)))").unwrap();
-        solver.send(&e);
+        solver.send(&e).unwrap();
         let response = solver.check_sat().wrap_err("could not check-sat").unwrap();
         insta::assert_debug_snapshot!(response, @"Unsat");
     }
@@ -587,7 +590,7 @@ mod tests {
         let cvc = CvcConf::new_cvc5(&solver_path("cvc5")).done();
         let mut proc = SmtProc::new(cvc, None).unwrap();
         let e = parse("(assert (= and or))").unwrap();
-        proc.send(&e);
+        proc.send(&e).unwrap();
         let r = proc.check_sat();
         insta::assert_snapshot!(r.unwrap_err());
     }
@@ -598,7 +601,7 @@ mod tests {
         let cvc = CvcConf::new_cvc4(&solver_path("cvc4")).done();
         let mut proc = SmtProc::new(cvc, None).unwrap();
         let e = parse("(assert (= and or))").unwrap();
-        proc.send(&e);
+        proc.send(&e).unwrap();
         let r = proc.check_sat();
         insta::assert_snapshot!(r.unwrap_err());
     }
@@ -609,7 +612,7 @@ mod tests {
         let mut proc = SmtProc::new(z3, None).unwrap();
         // unbound symbol
         let e = parse("(assert p)").unwrap();
-        proc.send(&e);
+        proc.send(&e).unwrap();
         let r = proc.check_sat();
         insta::assert_snapshot!(r.unwrap_err());
     }
@@ -634,7 +637,7 @@ mod tests {
 "
         .trim();
         for line in smt2_file.lines().filter(|line| !line.is_empty()) {
-            proc.send(&parse(line).unwrap());
+            proc.send(&parse(line).unwrap()).unwrap();
         }
         let (send, recv) = mpsc::channel();
         thread::spawn(move || {
@@ -663,8 +666,8 @@ mod tests {
         let mut proc = SmtProc::new(z3, None).unwrap();
         let pid = proc.pid();
 
-        proc.send(&parse("(reset)").unwrap());
-        proc.send(&parse("(set-logic QF_FP)").unwrap());
+        proc.send(&parse("(reset)").unwrap()).unwrap();
+        proc.send(&parse("(set-logic QF_FP)").unwrap()).unwrap();
 
         // this kill will just tell the solver to ignore commands until check_sat().
         pid.kill();
@@ -682,7 +685,7 @@ mod tests {
         .trim();
 
         for line in smt2_file.lines().filter(|line| !line.is_empty()) {
-            proc.send(&parse(line).unwrap());
+            proc.send(&parse(line).unwrap()).unwrap();
         }
         // this should immediately return an error and kill the solver
         match proc.check_sat() {
