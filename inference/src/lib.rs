@@ -23,7 +23,6 @@ pub mod hashmap;
 pub mod houdini;
 pub mod lfp;
 pub mod marco;
-mod parallel;
 pub mod qalpha;
 pub mod updr;
 pub mod utils;

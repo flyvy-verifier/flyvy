@@ -24,7 +24,10 @@ use formats::basics::{CexResult, OrderedTerms, SmtTactic};
 use formats::chc::{ChcSystem, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate};
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
-use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf, RespModel};
+use solver::basics::{
+    BasicCanceler, BasicSolver, BasicSolverResp, ModelOption, MultiCanceler, QueryConf, RespModel,
+};
+use solver::parallel::{parallelism, ParallelWorker, Tasks};
 
 fn prop_var(outer_index: usize, inner_index: usize) -> String {
     format!("__prop_{outer_index}_{inner_index}")
@@ -485,9 +488,16 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
     }
 }
 
+enum ChcCheckResult<M, C> {
+    Canceled,
+    Model(M),
+    Core(C),
+}
+
 impl<S> ChcSolution<S>
 where
-    S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>,
+    S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>
+        + Sync,
 {
     fn new(cfg: Vec<PredicateConfig>, chc_sys: &ChcSystem) -> Self {
         let solutions: HashMap<String, PredicateSolution<S>> = cfg
@@ -538,6 +548,7 @@ where
         // TODO: cache the ID's to check
 
         let assignment = self.get_symbolic_assignment();
+        let cancelers = MultiCanceler::new();
 
         'chc_loop: for (chc_index, chc) in chc_sys.chcs.iter().enumerate() {
             let head_predicate = match chc.head.predicate() {
@@ -576,15 +587,14 @@ where
 
             assert_eq!(head_contexts.len(), head_sets.len());
 
-            let mut extractors: Vec<Option<Extractor>> = vec![None; head_contexts.len()];
             let ids_to_check = self.solutions[head_predicate.0]
                 .minimal_set()
                 .map(|id| (chc_index, id))
                 .filter(|id| !self.partial.formula_cores.is_blocked(id))
-                .sorted()
-                .collect_vec();
+                .map(|id| (id.clone(), id));
 
-            'formula_loop: for (_, id) in ids_to_check {
+            let mut tasks = Tasks::from_iter(ids_to_check);
+            let worker = ParallelWorker::new(&mut tasks, |_, (_, id)| {
                 // A formula to check shouldn't already have a core
                 assert!(
                     !self
@@ -606,7 +616,7 @@ where
                     let query_conf = QueryConf {
                         sig: &chc.signature,
                         n_states: 1,
-                        cancelers: None,
+                        cancelers: Some(cancelers.clone()),
                         model_option: ModelOption::None,
                         evaluate: vec![],
                         save_tee: false,
@@ -635,24 +645,21 @@ where
                                 core.len()
                             );
                             let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                            self.partial.add_core((chc_index, id), named_core);
-                            continue 'formula_loop;
+                            return (ChcCheckResult::Core(named_core), vec![], false);
                         }
+                        CexResult::Canceled => return (ChcCheckResult::Canceled, vec![], false),
                         _ => panic!("solver error {res:?}"),
                     }
                 }
 
                 let mut size = 1;
-                'size_loop: loop {
-                    if extractors[id.0].is_none() {
-                        extractors[id.0] = Some(head_contexts[id.0].extractor(size, &head_subst));
-                    }
-                    let extractor = extractors[id.0].as_ref().unwrap();
+                loop {
+                    let extractor = head_contexts[id.0].extractor(size, &head_subst);
                     let extended_sig = extractor.extend_signature(&chc.signature);
                     let query_conf = QueryConf {
                         sig: &extended_sig,
                         n_states: 1,
-                        cancelers: None,
+                        cancelers: Some(cancelers.clone()),
                         model_option: ModelOption::None,
                         evaluate: extractor.to_evaluate(),
                         save_tee: false,
@@ -676,10 +683,15 @@ where
                                 "    (took {}ms, found SAT({size}))",
                                 instant.elapsed().as_millis()
                             );
-                            return Some((
-                                head_predicate.0.clone(),
-                                MultiObject(id.0, extractor.extract(&vals)),
-                            ));
+                            cancelers.cancel();
+                            return (
+                                ChcCheckResult::Model((
+                                    head_predicate.0.clone(),
+                                    MultiObject(id.0, extractor.extract(&vals)),
+                                )),
+                                vec![],
+                                true,
+                            );
                         }
                         CexResult::UnsatCore(core) => {
                             println!(
@@ -690,15 +702,30 @@ where
 
                             if universal {
                                 let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                                self.partial.add_core((chc_index, id), named_core);
-                                break 'size_loop;
+                                return (ChcCheckResult::Core(named_core), vec![], false);
                             }
                         }
+                        CexResult::Canceled => return (ChcCheckResult::Canceled, vec![], false),
                         _ => panic!("({size}) solver error {res:?}"),
                     }
 
                     size += 1;
                 }
+            });
+
+            let results = worker.run(parallelism());
+            let mut out = None;
+            for ((_, id), res) in results {
+                match res {
+                    ChcCheckResult::Canceled => (),
+                    ChcCheckResult::Model(m) => out = Some(m),
+                    ChcCheckResult::Core(named_core) => {
+                        self.partial.add_core((chc_index, id), named_core);
+                    }
+                }
+            }
+            if out.is_some() {
+                return out;
             }
         }
 
@@ -789,7 +816,8 @@ pub fn find_lfp<B, S>(
 ) -> ChcSolution<S>
 where
     B: BasicSolver,
-    S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>,
+    S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>
+        + Sync,
 {
     let mut chc_sol = ChcSolution::new(cfg, chc_sys);
 

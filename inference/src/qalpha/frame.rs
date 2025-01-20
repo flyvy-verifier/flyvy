@@ -5,7 +5,10 @@
 
 use fly::ouritertools::OurItertools;
 use itertools::Itertools;
-use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler};
+use solver::{
+    basics::{BasicCanceler, BasicSolver, MultiCanceler},
+    parallel::{parallelism, ParallelWorker, Tasks},
+};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, RwLock};
@@ -20,7 +23,6 @@ use formats::basics::{CexResult, FOModule};
 
 use crate::{
     hashmap::{HashMap, HashSet},
-    parallel::{parallelism, ParallelWorker, Tasks},
     qalpha::{
         fixpoint::{sample_priority, SamplePriority},
         language::BoundedLanguage,

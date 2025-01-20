@@ -43,7 +43,7 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
 
 pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usize>) -> bool {
     // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
-    let solver = parallel_z3(8);
+    let solver = parallel_z3(2);
     let univ_indices = 1;
     let quantified = (0..univ_indices)
         .map(PredicateConfig::quant_name)

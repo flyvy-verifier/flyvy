@@ -5,15 +5,16 @@
 //! lemma domain.
 
 use fly::semantics::Model;
-use solver::basics::{BasicCanceler, MultiCanceler};
+use solver::{
+    basics::{BasicCanceler, MultiCanceler},
+    parallel::{parallelism, Tasks},
+};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::{
-    parallel::parallelism,
-    parallel::Tasks,
     qalpha::{
         atoms::generate_literals,
         frame::{InductionFrame, OperationStats},

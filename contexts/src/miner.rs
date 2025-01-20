@@ -437,8 +437,8 @@ impl ImperativeChc {
                             let y =
                                 ArithExpr::<usize>::from_term(value, |t| position_or_push(ints, t))
                                     .unwrap();
-                            // leqs.push((&x - &y, (0, 0)));
-                            // leqs.push((&y - &x, (0, 0)));
+                            leqs.push((&x - &y, (0, 0)));
+                            leqs.push((&y - &x, (0, 0)));
                         }
                     }
                 }

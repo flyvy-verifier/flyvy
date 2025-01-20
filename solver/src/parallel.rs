@@ -3,8 +3,8 @@
 
 //! Advanced parallelism infrastructure
 
-use crate::hashmap::{HashMap, HashSet};
-use std::collections::BTreeMap;
+use indexmap::IndexSet;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::Mutex;
 
@@ -13,7 +13,7 @@ use std::time::Duration;
 
 /// A set of tasks for parallel execution, ordered by priority.
 pub struct Tasks<P: Ord + Clone, T: Eq + Hash> {
-    tasks: BTreeMap<P, HashSet<T>>,
+    tasks: BTreeMap<P, IndexSet<T>>,
     total_inserted: usize,
 }
 
@@ -36,7 +36,7 @@ impl<P: Ord + Clone, T: Eq + Hash> Tasks<P, T> {
         self.tasks.is_empty()
     }
 
-    // Return the total number of tasks inserted.
+    /// Return the total number of tasks inserted.
     pub fn total(&self) -> usize {
         self.total_inserted
     }
@@ -47,7 +47,7 @@ impl<P: Ord + Clone, T: Eq + Hash> Tasks<P, T> {
         if let Some(ts) = self.tasks.get_mut(&priority) {
             ts.insert(task);
         } else {
-            self.tasks.insert(priority, HashSet::from_iter([task]));
+            self.tasks.insert(priority, IndexSet::from_iter([task]));
         }
     }
 
@@ -83,7 +83,7 @@ where
     /// The tasks to be performed.
     tasks: &'a mut Tasks<P, T>,
     /// Running tasks.
-    running: HashSet<T>,
+    running: IndexSet<T>,
     /// Finished tasks and their result.
     results: HashMap<T, R>,
     /// Number of tasks currently being processed.
@@ -168,7 +168,7 @@ where
     pub fn new(tasks: &'a mut Tasks<P, T>, work: F) -> Self {
         let exec = Mutex::new(ParallelExecution {
             tasks,
-            running: HashSet::default(),
+            running: IndexSet::default(),
             results: HashMap::default(),
             processing: 0,
             cancel: false,

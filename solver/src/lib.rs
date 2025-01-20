@@ -19,6 +19,7 @@ pub mod basics;
 pub mod conf;
 pub mod imp;
 pub mod models;
+pub mod parallel;
 pub mod sexp;
 
 pub use smtlib::path::{log_dir, solver_path};
