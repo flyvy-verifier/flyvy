@@ -717,11 +717,12 @@ where
             let results = worker.run(parallelism());
             for ((_, id), res) in results {
                 match res {
-                    TriResult::None => out = TriResult::None,
+                    TriResult::None if !matches!(out, TriResult::Yes(_)) => out = TriResult::None,
                     TriResult::Yes(m) => out = TriResult::Yes(m),
                     TriResult::No(named_core) => {
                         self.partial.add_core((chc_index, id), named_core);
                     }
+                    _ => (),
                 }
             }
             if matches!(out, TriResult::Yes(_)) {
@@ -841,7 +842,7 @@ where
 
                 chc_sol.partial.update_weakened(&name, &updates, chc_sys);
             }
-            TriResult::None => print!("cannot sample counter-example or verify proof!"),
+            TriResult::None => println!("cannot sample counter-example or verify proof!"),
             TriResult::No(()) => break,
         }
     }

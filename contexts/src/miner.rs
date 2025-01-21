@@ -12,6 +12,16 @@ use itertools::Itertools;
 
 use crate::{alg::PredicateConfig, arith::ArithExpr};
 
+pub struct MiningTactic {
+    pub init: bool,
+    pub upper_bounds: bool,
+    pub query_arith: bool,
+    pub query_entries: bool,
+    pub update_index_bound: bool,
+    pub update_entry_asgn: bool,
+    pub update_condition: bool,
+}
+
 pub enum Assignment {
     Int(String, Term),
     ArrayStore(String, Term, Term),
@@ -24,6 +34,22 @@ impl Display for Assignment {
             Assignment::ArrayStore(array, index, value) => write!(f, "{array}[{index}] := {value}"),
         }
     }
+}
+
+fn substitution_from_condition(term: &Term, preferred: &HashSet<String>) -> NameSubstitution {
+    let mut subst = NameSubstitution::new();
+    if let Term::BinOp(BinOp::Equals, t1, t2) = term {
+        if let Term::Id(n) = t1.as_ref() {
+            if t2.ids().is_subset(preferred) {
+                subst.insert((n.clone(), 0), Substitutable::Term(t2.as_ref().clone()));
+            }
+        } else if let Term::Id(n) = t2.as_ref() {
+            if t1.ids().is_subset(preferred) {
+                subst.insert((n.clone(), 0), Substitutable::Term(t1.as_ref().clone()));
+            }
+        }
+    }
+    subst
 }
 
 impl Assignment {
@@ -125,6 +151,26 @@ impl LessThan {
         }
     }
 
+    fn in_update_condition(term: &Term) -> Vec<Self> {
+        match term {
+            Term::Ite {
+                cond,
+                then: _,
+                else_: _,
+            } => Self::in_term(cond, false),
+            Term::NAryOp(_, ts) => ts
+                .iter()
+                .flat_map(|t| Self::in_update_condition(t))
+                .collect(),
+            Term::BinOp(BinOp::Equals, t1, t2) => {
+                let mut lts = Self::in_update_condition(t1);
+                lts.append(&mut Self::in_update_condition(t2));
+                lts
+            }
+            _ => vec![],
+        }
+    }
+
     fn in_term(term: &Term, neg: bool) -> Vec<Self> {
         match term {
             Term::UnaryOp(UOp::Not, t) => Self::in_term(t, !neg),
@@ -172,6 +218,7 @@ pub enum ImperativeChc {
     },
     Update {
         predicate: String,
+        conditions: Vec<LessThan>,
         assignments: Vec<Assignment>,
         vars: Vec<HoVariable>,
     },
@@ -206,6 +253,7 @@ impl Display for ImperativeChc {
             }
             ImperativeChc::Update {
                 predicate,
+                conditions,
                 assignments,
                 vars,
             } => {
@@ -214,6 +262,10 @@ impl Display for ImperativeChc {
                     "UPDATE {predicate}: ({})",
                     vars.iter().map(|v| &v.name).join(", ")
                 )?;
+
+                for c in conditions {
+                    writeln!(f, "    {c}")?;
+                }
                 for a in assignments {
                     writeln!(f, "    {a}")?;
                 }
@@ -288,6 +340,7 @@ impl ImperativeChc {
             }
             | ImperativeChc::Update {
                 predicate,
+                conditions: _,
                 assignments: _,
                 vars: _,
             }
@@ -306,9 +359,9 @@ impl ImperativeChc {
         if p_body.len() == 1 {
             if p_head.is_some_and(|p| p.0 == p_body[0].0) {
                 // Update
-                let predicate = p_head.unwrap();
-                let decl = chc_sys.predicate_decl(predicate.0);
-                let substitution = substitute_for_args(predicate.1);
+                let decl = chc_sys.predicate_decl(p_body[0].0);
+                let mut substitution = substitute_for_args(p_body[0].1);
+                substitution.extend(substitute_for_args(p_head.unwrap().1));
                 let sorts = decl
                     .args
                     .iter()
@@ -316,8 +369,15 @@ impl ImperativeChc {
                     .map(|(i, s)| (PredicateConfig::arg_name(i), s.clone()))
                     .collect();
 
+                let terms = chc.terms();
+
+                let mut conditions = vec![];
+                for t in terms.iter().map(|t| rename_symbols(t, &substitution)) {
+                    conditions.append(&mut &mut LessThan::in_update_condition(&t));
+                }
+
                 let mut assignments = vec![];
-                for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
+                for t in terms.iter().map(|t| rename_symbols(t, &substitution)) {
                     assignments.append(&mut Assignment::in_term(&t, &sorts));
                 }
 
@@ -325,7 +385,8 @@ impl ImperativeChc {
                 let vars = chc_vars_in_ids(chc, &ids);
 
                 Some(Self::Update {
-                    predicate: predicate.0.clone(),
+                    predicate: p_body[0].0.clone(),
+                    conditions,
                     assignments,
                     vars,
                 })
@@ -398,7 +459,9 @@ impl ImperativeChc {
 
     pub fn leqs(
         &self,
+        tactic: &MiningTactic,
         allowed_ids: &HashSet<String>,
+        args: &[FunctionSort],
         quantified: &[String],
         ints: &mut Vec<Term>,
     ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
@@ -407,13 +470,40 @@ impl ImperativeChc {
         let bools = vec![];
         let mut leqs = vec![];
 
+        let mut leq_expr = |x: &Term, y: &Term| {
+            if !x.ids().is_subset(allowed_ids) || !y.ids().is_subset(allowed_ids) {
+                return None;
+            }
+            let x_expr = ArithExpr::<usize>::from_term(x, |t| position_or_push(ints, t)).unwrap();
+            let y_expr = ArithExpr::<usize>::from_term(y, |t| position_or_push(ints, t)).unwrap();
+            let expr = &x_expr - &y_expr;
+            if !expr.is_constant() {
+                return Some(expr);
+            } else {
+                None
+            }
+        };
+
+        if tactic.upper_bounds {
+            for (i, s) in args.iter().enumerate() {
+                if s.is_int() {
+                    let expr = leq_expr(
+                        &Term::Id(PredicateConfig::arg_name(i)),
+                        &Term::id(&quantified[0]),
+                    )
+                    .unwrap();
+                    leqs.push((expr, (-1, 0)));
+                }
+            }
+        }
+
         match self {
             ImperativeChc::Init {
                 predicate: _,
                 assignments,
                 assertions,
                 vars: _,
-            } => {
+            } if tactic.init => {
                 for a in assignments {
                     match a {
                         Assignment::Int(name, term) => {
@@ -474,91 +564,89 @@ impl ImperativeChc {
                 }
             }
 
-            /*
             ImperativeChc::Update {
                 predicate: _,
+                conditions,
                 assignments,
-                vars,
+                vars: _,
             } => {
+                if tactic.update_condition {
+                    for cond in conditions {
+                        let cond_ids = cond.ids();
+                        if cond_ids.len() == 1 && is_only_arith(&cond.x) && is_only_arith(&cond.y) {
+                            let mut substitution = NameSubstitution::new();
+                            substitution.insert(
+                                (cond_ids.into_iter().next().unwrap(), 0),
+                                Substitutable::name(&quantified[0]),
+                            );
+                            let x = rename_symbols(&cond.x, &substitution);
+                            let y = rename_symbols(&cond.y, &substitution);
+                            if let Some(expr) = leq_expr(&x, &y) {
+                                leqs.push((-&expr, (-1, 0)));
+                                leqs.push((expr, (-1, 0)));
+                            }
+                        }
+                    }
+                }
+
                 for a in assignments {
                     match a {
                         Assignment::ArrayStore(name, index, value) => {
-                            // Handles cases like a[i] := i
-                            let vs: Vec<&HoVariable> = index
-                                .ids()
-                                .union(&value.ids())
-                                .filter_map(|n| vars.iter().find(|v| &v.name == n))
-                                .collect();
-                            if vs.len() == 1 {
-                                let mut substitution = NameSubstitution::new();
-                                substitution.insert(
-                                    (vs[0].name.clone(), 0),
-                                    Substitutable::name(&quantified[0]),
-                                );
-
-                                let select = Term::array_select(
-                                    Term::id(name),
-                                    &rename_symbols(index, &substitution),
-                                );
-                                let val = rename_symbols(value, &substitution);
-
-                                if !select.ids().is_subset(allowed_ids)
-                                    || !val.ids().is_subset(allowed_ids)
-                                {
-                                    continue;
+                            if tactic.update_index_bound {
+                                let var = Term::id(&quantified[0]);
+                                if let Some(expr) = leq_expr(index, &var) {
+                                    leqs.push((expr, (-1, 0)));
                                 }
-
-                                let x = ArithExpr::<usize>::from_term(&select, |t| {
-                                    position_or_push(ints, t)
-                                })
-                                .unwrap();
-                                let y = ArithExpr::<usize>::from_term(&val, |t| {
-                                    position_or_push(ints, t)
-                                })
-                                .unwrap();
-                                leqs.push((&x - &y, (0, 0)));
-                                leqs.push((&y - &x, (0, 0)));
+                            }
+                            if tactic.update_entry_asgn {
+                                let index_ids = index.ids();
+                                if index_ids.len() == 1 {
+                                    let mut substitution = NameSubstitution::new();
+                                    substitution.insert(
+                                        (index_ids.into_iter().next().unwrap(), 0),
+                                        Substitutable::name(&quantified[0]),
+                                    );
+                                    let select = Term::array_select(
+                                        Term::id(name),
+                                        rename_symbols(index, &substitution),
+                                    );
+                                    let val = rename_symbols(value, &substitution);
+                                    if let Some(expr) = leq_expr(&select, &val) {
+                                        leqs.push((-&expr, (0, 0)));
+                                        leqs.push((expr, (0, 0)));
+                                    }
+                                }
                             }
                         }
                         _ => (),
                     }
                 }
             }
-            */
+
             ImperativeChc::Query {
                 predicate: _,
                 assertions,
                 vars,
-            } if vars.len() == 1 => {
+            } if vars.len() <= 1 => {
                 let mut substitution = NameSubstitution::new();
-                substitution.insert(
-                    (vars[0].name.clone(), 0),
-                    Substitutable::name(&quantified[0]),
-                );
+                if vars.len() == 1 {
+                    substitution.insert(
+                        (vars[0].name.clone(), 0),
+                        Substitutable::name(&quantified[0]),
+                    );
+                }
 
                 for lt in assertions {
-                    if !lt.ids().contains(&vars[0].name) {
-                        continue;
-                    }
-
+                    // if lt.ids().contains(&vars[0].name) {
                     let x = rename_symbols(&lt.x, &substitution);
                     let y = rename_symbols(&lt.y, &substitution);
-                    if !x.ids().is_subset(allowed_ids) || !y.ids().is_subset(allowed_ids) {
-                        continue;
+                    let is_arith = is_only_arith(&x) && is_only_arith(&y);
+                    if (is_arith & tactic.query_arith) || tactic.query_entries {
+                        if let Some(expr) = leq_expr(&x, &y) {
+                            leqs.push((expr, (-1, 0)));
+                        }
                     }
-                    // if !is_only_arith(&x) || !is_only_arith(&y) {
-                    //     continue;
                     // }
-
-                    let x_expr =
-                        ArithExpr::<usize>::from_term(&x, |t| position_or_push(ints, t)).unwrap();
-                    let y_expr =
-                        ArithExpr::<usize>::from_term(&y, |t| position_or_push(ints, t)).unwrap();
-                    let expr = &x_expr - &y_expr;
-                    // let bound = if lt.strict { -1 } else { 0 };
-                    if !expr.is_constant() {
-                        leqs.push((expr, (-1, 0)));
-                    }
                 }
             }
             _ => (),

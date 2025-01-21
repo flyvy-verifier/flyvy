@@ -1,7 +1,7 @@
 use crate::utils::{get_context_for_module, QalphaConfig};
 use contexts::alg::{find_lfp, PredicateConfig};
 use contexts::arith::{ArithExpr, IneqTemplates};
-use contexts::miner::{position_or_push, ImperativeChc};
+use contexts::miner::{position_or_push, ImperativeChc, MiningTactic};
 use contexts::sets::{BaselinePropSet, QFormulaSet};
 use fly::syntax::{Module, Term};
 use formats::chc::{chc_sys_from_fo_module, ChcSystem};
@@ -13,7 +13,7 @@ use solver::conf::SolverConf;
 fn parallel_z3(seeds: usize) -> impl BasicSolver {
     ParallelSolvers::new(
         (0..seeds)
-            .map(|seed| SolverConf::new(SolverType::Z3, true, "lfp", 2, None))
+            .map(|_seed| SolverConf::new(SolverType::Z3, true, "lfp", 2, None))
             .collect(),
     )
 }
@@ -58,6 +58,16 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
         println!("{imp_chc}")
     }
 
+    let mining_tactic = MiningTactic {
+        init: true,
+        upper_bounds: false,
+        query_arith: true,
+        query_entries: false,
+        update_index_bound: true,
+        update_entry_asgn: true,
+        update_condition: true,
+    };
+
     let predicates = chc_sys
         .predicates
         .iter()
@@ -73,7 +83,13 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
                     .collect();
 
                 for imp_chc in &imp_chcs {
-                    let (bs, ls) = imp_chc.leqs(&allowed_ids, &quantified, &mut int_terms);
+                    let (bs, ls) = imp_chc.leqs(
+                        &mining_tactic,
+                        &allowed_ids,
+                        &decl.args,
+                        &quantified,
+                        &mut int_terms,
+                    );
                     for b in bs {
                         if !bool_terms.contains(&b) {
                             bool_terms.push(b)
@@ -127,7 +143,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
     println!("{fp}");
 
     println!();
-    let solved = chc_sys.check_assignment(&solver, &assignment, false);
+    let solved = chc_sys.check_assignment(&solver, &assignment, true);
     if solved {
         println!("Success!");
     } else {
