@@ -505,7 +505,7 @@ where
             .map(|p| {
                 (
                     p.name.clone(),
-                    PredicateSolution::<S>::new(chc_sys, &p, None),
+                    PredicateSolution::<S>::new(chc_sys, p, None),
                 )
             })
             .collect();

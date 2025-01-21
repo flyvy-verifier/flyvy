@@ -19,46 +19,161 @@ pub struct MiningTactic {
     pub query_entries: bool,
     pub update_index_bound: bool,
     pub update_entry_asgn: bool,
+    pub update_const: bool,
     pub update_condition: bool,
 }
 
+#[derive(Hash, PartialEq, Eq)]
 pub enum Assignment {
     Int(String, Term),
-    ArrayStore(String, Term, Term),
+    ArrayStore {
+        array: String,
+        old_array: String,
+        index: Term,
+        value: Term,
+    },
 }
 
 impl Display for Assignment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Assignment::Int(name, term) => write!(f, "{name} := {term}"),
-            Assignment::ArrayStore(array, index, value) => write!(f, "{array}[{index}] := {value}"),
+            Assignment::ArrayStore {
+                array,
+                old_array,
+                index,
+                value,
+            } => write!(f, "{array}[{index}] := {value} (from {old_array}))"),
         }
     }
 }
 
-fn substitution_from_condition(term: &Term, preferred: &HashSet<String>) -> NameSubstitution {
-    let mut subst = NameSubstitution::new();
-    if let Term::BinOp(BinOp::Equals, t1, t2) = term {
-        if let Term::Id(n) = t1.as_ref() {
-            if t2.ids().is_subset(preferred) {
-                subst.insert((n.clone(), 0), Substitutable::Term(t2.as_ref().clone()));
-            }
-        } else if let Term::Id(n) = t2.as_ref() {
-            if t1.ids().is_subset(preferred) {
-                subst.insert((n.clone(), 0), Substitutable::Term(t1.as_ref().clone()));
+fn saturate_assignments(assignments: &mut HashSet<Assignment>) {
+    for _ in 0..1000 {
+        let mut new_assignments = HashSet::new();
+        for (a1, a2) in assignments.iter().cartesian_product(assignments.iter()) {
+            match (a1, a2) {
+                (Assignment::Int(x1, v1), Assignment::Int(x2, v2)) if v1.ids().contains(x2) => {
+                    let mut substitution = NameSubstitution::new();
+                    substitution.insert((x2.clone(), 0), Substitutable::Term(v2.clone()));
+                    new_assignments.insert(Assignment::Int(
+                        x1.clone(),
+                        rename_symbols(v1, &substitution),
+                    ));
+                }
+
+                (
+                    Assignment::ArrayStore {
+                        array,
+                        old_array,
+                        index,
+                        value,
+                    },
+                    Assignment::Int(i, v),
+                ) if index.ids().contains(i) || value.ids().contains(i) => {
+                    let mut substitution = NameSubstitution::new();
+                    substitution.insert((i.clone(), 0), Substitutable::Term(v.clone()));
+                    new_assignments.insert(Assignment::ArrayStore {
+                        array: array.clone(),
+                        old_array: old_array.clone(),
+                        index: rename_symbols(index, &substitution),
+                        value: rename_symbols(value, &substitution),
+                    });
+                }
+                (
+                    Assignment::ArrayStore {
+                        array: a2,
+                        old_array: a2_old,
+                        index: _,
+                        value: _,
+                    },
+                    Assignment::ArrayStore {
+                        array: a1,
+                        old_array: a1_old,
+                        index,
+                        value,
+                    },
+                ) if a2_old == a1 => {
+                    new_assignments.insert(Assignment::ArrayStore {
+                        array: a2.clone(),
+                        old_array: a1_old.clone(),
+                        index: index.clone(),
+                        value: value.clone(),
+                    });
+                }
+                _ => (),
             }
         }
+
+        let old_len = assignments.len();
+        assignments.extend(new_assignments);
+        if assignments.len() == old_len {
+            return;
+        }
     }
-    subst
+    panic!("too many iterations!");
+}
+
+fn old_arrays(term: &Term) -> HashSet<String> {
+    match term {
+        Term::Id(s) => HashSet::from_iter([s.clone()]),
+        Term::ArrayStore {
+            array,
+            index: _,
+            value: _,
+        } => old_arrays(array),
+        Term::Ite {
+            cond: _,
+            then,
+            else_,
+        } => {
+            let mut arrays = old_arrays(then);
+            arrays.extend(old_arrays(else_));
+            arrays
+        }
+        _ => panic!("found no arrays"),
+    }
 }
 
 impl Assignment {
-    fn ids(&self) -> HashSet<String> {
+    fn rename_symbols(&self, substitution: &NameSubstitution) -> Self {
+        let rename_string = |n: &String| {
+            if let Some(s) = substitution.get(&(n.clone(), 0)) {
+                s.to_name()
+            } else {
+                n.clone()
+            }
+        };
+
+        match self {
+            Assignment::Int(name, term) => {
+                Assignment::Int(rename_string(name), rename_symbols(term, substitution))
+            }
+            Assignment::ArrayStore {
+                array,
+                old_array,
+                index,
+                value,
+            } => Assignment::ArrayStore {
+                array: rename_string(array),
+                old_array: rename_string(old_array),
+                index: rename_symbols(index, substitution),
+                value: rename_symbols(value, substitution),
+            },
+        }
+    }
+
+    fn modified_ids(&self) -> HashSet<String> {
         match self {
             Assignment::Int(_, t) => t.ids(),
-            Assignment::ArrayStore(_, t1, t2) => {
-                let mut ids = t1.ids();
-                ids.extend(t2.ids());
+            Assignment::ArrayStore {
+                array: _,
+                old_array: _,
+                index,
+                value,
+            } => {
+                let mut ids = index.ids();
+                ids.extend(value.ids());
                 ids
             }
         }
@@ -86,11 +201,15 @@ impl Assignment {
             } = src
             {
                 let mut asgns = Assignment::from_eq(dst, array.as_ref(), fsort);
-                asgns.push(Assignment::ArrayStore(
-                    dst.clone(),
-                    index.as_ref().clone(),
-                    value.as_ref().clone(),
-                ));
+                let nested_arrays = old_arrays(array);
+                for a in nested_arrays {
+                    asgns.push(Assignment::ArrayStore {
+                        array: dst.clone(),
+                        old_array: a,
+                        index: index.as_ref().clone(),
+                        value: value.as_ref().clone(),
+                    });
+                }
                 asgns
             } else {
                 vec![]
@@ -158,10 +277,7 @@ impl LessThan {
                 then: _,
                 else_: _,
             } => Self::in_term(cond, false),
-            Term::NAryOp(_, ts) => ts
-                .iter()
-                .flat_map(|t| Self::in_update_condition(t))
-                .collect(),
+            Term::NAryOp(_, ts) => ts.iter().flat_map(Self::in_update_condition).collect(),
             Term::BinOp(BinOp::Equals, t1, t2) => {
                 let mut lts = Self::in_update_condition(t1);
                 lts.append(&mut Self::in_update_condition(t2));
@@ -174,7 +290,7 @@ impl LessThan {
     fn in_term(term: &Term, neg: bool) -> Vec<Self> {
         match term {
             Term::UnaryOp(UOp::Not, t) => Self::in_term(t, !neg),
-            Term::NAryOp(_, ts) => ts.iter().flat_map(|t| Self::in_term(t, !neg)).collect(),
+            Term::NAryOp(_, ts) => ts.iter().flat_map(|t| Self::in_term(t, neg)).collect(),
             Term::BinOp(op, t1, t2) if matches!(op, BinOp::Equals | BinOp::NotEquals) => {
                 let strict = neg ^ matches!(op, BinOp::NotEquals);
                 vec![
@@ -219,7 +335,7 @@ pub enum ImperativeChc {
     Update {
         predicate: String,
         conditions: Vec<LessThan>,
-        assignments: Vec<Assignment>,
+        assignments: HashSet<Assignment>,
         vars: Vec<HoVariable>,
     },
     Query {
@@ -290,18 +406,20 @@ impl Display for ImperativeChc {
     }
 }
 
-fn substitute_for_args(substs: &[Substitutable]) -> NameSubstitution {
-    substs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| match s {
-            Substitutable::Name(n) | Substitutable::Term(Term::Id(n)) => Some((
-                (n.clone(), 0),
-                Substitutable::Name(PredicateConfig::arg_name(i)),
-            )),
-            _ => None,
-        })
-        .collect()
+fn substitute_for_args(
+    args: &[FunctionSort],
+    substs: &[Substitutable],
+    substitution: &mut NameSubstitution,
+    sorts: &mut HashMap<String, FunctionSort>,
+    suffix: &str,
+) {
+    for (i, s) in substs.iter().enumerate() {
+        if let Substitutable::Name(n) | Substitutable::Term(Term::Id(n)) = s {
+            let name = format!("{}{suffix}", PredicateConfig::arg_name(i));
+            substitution.insert((n.clone(), 0), Substitutable::name(&name));
+            sorts.insert(name, args[i].clone());
+        }
+    }
 }
 
 fn chc_vars_in_ids(chc: &Chc, ids: &HashSet<String>) -> Vec<HoVariable> {
@@ -324,7 +442,7 @@ pub fn position_or_push(terms: &mut Vec<Term>, term: &Term) -> usize {
 fn is_only_arith(term: &Term) -> bool {
     match term {
         Term::Int(_) | Term::Id(_) => true,
-        Term::NumOp(_, ts) => ts.iter().all(|t| is_only_arith(t)),
+        Term::NumOp(_, ts) => ts.iter().all(is_only_arith),
         _ => false,
     }
 }
@@ -360,28 +478,56 @@ impl ImperativeChc {
             if p_head.is_some_and(|p| p.0 == p_body[0].0) {
                 // Update
                 let decl = chc_sys.predicate_decl(p_body[0].0);
-                let mut substitution = substitute_for_args(p_body[0].1);
-                substitution.extend(substitute_for_args(p_head.unwrap().1));
-                let sorts = decl
-                    .args
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| (PredicateConfig::arg_name(i), s.clone()))
-                    .collect();
+                let mut substitution = NameSubstitution::new();
+                let mut sorts = HashMap::new();
+                substitute_for_args(
+                    &decl.args,
+                    p_body[0].1,
+                    &mut substitution,
+                    &mut sorts,
+                    "@@old",
+                );
+                substitute_for_args(
+                    &decl.args,
+                    p_head.unwrap().1,
+                    &mut substitution,
+                    &mut sorts,
+                    "@@new",
+                );
+                for v in &chc.variables {
+                    sorts.insert(v.name.clone(), v.sort.clone());
+                }
 
                 let terms = chc.terms();
 
                 let mut conditions = vec![];
                 for t in terms.iter().map(|t| rename_symbols(t, &substitution)) {
-                    conditions.append(&mut &mut LessThan::in_update_condition(&t));
+                    conditions.append(&mut LessThan::in_update_condition(&t));
                 }
 
-                let mut assignments = vec![];
+                let mut assignments = HashSet::new();
                 for t in terms.iter().map(|t| rename_symbols(t, &substitution)) {
-                    assignments.append(&mut Assignment::in_term(&t, &sorts));
+                    assignments.extend(Assignment::in_term(&t, &sorts));
                 }
 
-                let ids: HashSet<String> = assignments.iter().flat_map(|a| a.ids()).collect();
+                saturate_assignments(&mut assignments);
+
+                let remove_temporal = (0..decl.args.len())
+                    .map(PredicateConfig::arg_name)
+                    .flat_map(|n| {
+                        [
+                            ((format!("{n}@@old"), 0), Substitutable::name(&n)),
+                            ((format!("{n}@@new"), 0), Substitutable::name(&n)),
+                        ]
+                    })
+                    .collect();
+                assignments = assignments
+                    .into_iter()
+                    .map(|a| a.rename_symbols(&remove_temporal))
+                    .collect();
+
+                let ids: HashSet<String> =
+                    assignments.iter().flat_map(|a| a.modified_ids()).collect();
                 let vars = chc_vars_in_ids(chc, &ids);
 
                 Some(Self::Update {
@@ -393,7 +539,15 @@ impl ImperativeChc {
             } else {
                 // Query
                 let predicate = p_body[0];
-                let substitution = substitute_for_args(predicate.1);
+                let decl = chc_sys.predicate_decl(predicate.0);
+                let mut substitution = NameSubstitution::new();
+                substitute_for_args(
+                    &decl.args,
+                    predicate.1,
+                    &mut substitution,
+                    &mut HashMap::new(),
+                    "",
+                );
 
                 let mut assertions = vec![];
                 for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
@@ -434,16 +588,23 @@ impl ImperativeChc {
                     ))
                 }
             }
-            assignments.retain(|a| a.ids().is_empty());
+            assignments.retain(|a| a.modified_ids().is_empty());
 
-            let substitution = substitute_for_args(pred.1);
+            let mut substitution = NameSubstitution::new();
+            substitute_for_args(
+                &decl.args,
+                pred.1,
+                &mut substitution,
+                &mut HashMap::new(),
+                "",
+            );
 
             let mut assertions = vec![];
             for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
                 assertions.append(&mut LessThan::in_term(&t, false));
             }
 
-            let ids: HashSet<String> = assignments.iter().flat_map(|a| a.ids()).collect();
+            let ids: HashSet<String> = assignments.iter().flat_map(|a| a.modified_ids()).collect();
             let vars = chc_vars_in_ids(chc, &ids);
 
             Some(Self::Init {
@@ -523,15 +684,20 @@ impl ImperativeChc {
                             leqs.push((&x - &y, (0, 0)));
                             leqs.push((&y - &x, (0, 0)));
                         }
-                        Assignment::ArrayStore(name, index, value) => {
-                            if !allowed_ids.contains(name)
+                        Assignment::ArrayStore {
+                            array,
+                            old_array: _,
+                            index,
+                            value,
+                        } => {
+                            if !allowed_ids.contains(array)
                                 || !index.ids().is_subset(allowed_ids)
                                 || !value.ids().is_subset(allowed_ids)
                             {
                                 continue;
                             }
 
-                            let select = Term::array_select(Term::id(name), index);
+                            let select = Term::array_select(Term::id(array), index);
                             let x = ArithExpr::<usize>::from_term(&select, |t| {
                                 position_or_push(ints, t)
                             })
@@ -589,9 +755,22 @@ impl ImperativeChc {
                     }
                 }
 
+                let updated_ints: HashSet<String> = assignments
+                    .iter()
+                    .filter_map(|a| match a {
+                        Assignment::Int(name, _) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
                 for a in assignments {
                     match a {
-                        Assignment::ArrayStore(name, index, value) => {
+                        Assignment::ArrayStore {
+                            array,
+                            old_array: _,
+                            index,
+                            value,
+                        } => {
                             if tactic.update_index_bound {
                                 let var = Term::id(&quantified[0]);
                                 if let Some(expr) = leq_expr(index, &var) {
@@ -599,15 +778,14 @@ impl ImperativeChc {
                                 }
                             }
                             if tactic.update_entry_asgn {
-                                let index_ids = index.ids();
-                                if index_ids.len() == 1 {
+                                for id in index.ids().intersection(&updated_ints) {
                                     let mut substitution = NameSubstitution::new();
                                     substitution.insert(
-                                        (index_ids.into_iter().next().unwrap(), 0),
+                                        (id.clone(), 0),
                                         Substitutable::name(&quantified[0]),
                                     );
                                     let select = Term::array_select(
-                                        Term::id(name),
+                                        Term::id(array),
                                         rename_symbols(index, &substitution),
                                     );
                                     let val = rename_symbols(value, &substitution);
@@ -618,6 +796,16 @@ impl ImperativeChc {
                                 }
                             }
                         }
+
+                        Assignment::Int(x, term) if tactic.update_const => {
+                            if term.ids().is_empty() {
+                                if let Some(expr) = leq_expr(&Term::id(x), term) {
+                                    leqs.push((-&expr, (0, 0)));
+                                    leqs.push((expr, (0, 0)));
+                                }
+                            }
+                        }
+
                         _ => (),
                     }
                 }

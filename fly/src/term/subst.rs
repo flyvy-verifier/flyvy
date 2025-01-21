@@ -23,10 +23,19 @@ impl Substitutable {
         Self::Name(s.into())
     }
 
+    /// Return the name of this substitutable.
     fn to_term(&self) -> Term {
         match self {
             Substitutable::Name(name) => Term::id(name),
             Substitutable::Term(t) => t.clone(),
+        }
+    }
+
+    /// Return the name of this substitutable.
+    pub fn to_name(&self) -> String {
+        match self {
+            Substitutable::Name(name) | Substitutable::Term(Term::Id(name)) => name.clone(),
+            _ => panic!("substitutatble is not a name"),
         }
     }
 }
