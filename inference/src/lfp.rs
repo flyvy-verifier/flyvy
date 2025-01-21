@@ -1,3 +1,5 @@
+use std::thread;
+
 use crate::utils::{get_context_for_module, QalphaConfig};
 use contexts::alg::{find_lfp, PredicateConfig};
 use contexts::arith::{ArithExpr, IneqTemplates};
@@ -7,19 +9,19 @@ use fly::syntax::{Module, Term};
 use formats::chc::{chc_sys_from_fo_module, ChcSystem};
 use itertools::Itertools;
 use solver::backends::SolverType;
-use solver::basics::{BasicSolver, ParallelSolvers, SingleSolver};
+use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler, ParallelSolvers, SingleSolver};
 use solver::conf::SolverConf;
 
-fn parallel_z3(seeds: usize) -> impl BasicSolver {
+fn parallel_z3(seeds: usize) -> ParallelSolvers {
     ParallelSolvers::new(
         (0..seeds)
-            .map(|_| SolverConf::new(SolverType::Z3, true, "lfp", 2, None))
+            .map(|_| SolverConf::new(SolverType::Z3, false, "lfp", 2, None))
             .collect(),
     )
 }
 
 pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
-    let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, true, &cfg.fname, 30, None));
+    let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, &cfg.fname, 30, None));
     let (chc_sys, name, arguments) = chc_sys_from_fo_module(&cfg.fo);
 
     let inv_cfg = PredicateConfig {
@@ -28,22 +30,87 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
         context: get_context_for_module(cfg, m),
     };
 
-    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, vec![inv_cfg], true);
-    let assignment = fp.get_symbolic_assignment();
+    let res =
+        find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, vec![inv_cfg], true, None);
+    if let Some(fp) = res {
+        let assignment = fp.get_symbolic_assignment();
 
-    println!();
-    println!("{fp}");
-    println!();
-    if chc_sys.check_assignment(&solver, &assignment, true) {
-        println!("Success!");
+        println!();
+        println!("{fp}");
+        println!();
+        if chc_sys.check_assignment(&solver, &assignment, true) {
+            println!("Found LFP - Success!");
+        } else {
+            println!("Found LFP - Failure!");
+        }
     } else {
-        println!("Failure!");
+        println!("Could not find LFP!")
     }
 }
 
-pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usize>) -> bool {
+pub fn verify_via_lfp(chc_sys: &ChcSystem, minimize: bool, disj_lengths: &[usize]) -> bool {
+    let multi_canceler = MultiCanceler::new();
+    let results = thread::scope(|s| {
+        let handles = MiningTactic::TACTICS
+            .iter()
+            .map(|mining_tactic| {
+                let multi_canceler = multi_canceler.clone();
+                s.spawn(move || {
+                    for disj_length in disj_lengths {
+                        log::info!(
+                            "Running LFP algorithm with [{mining_tactic}], disj={disj_length}",
+                        );
+                        if let Some(res) = compute_lfp_single(
+                            chc_sys,
+                            minimize,
+                            Some(*disj_length),
+                            mining_tactic,
+                            &multi_canceler,
+                        ) {
+                            if res.0 {
+                                multi_canceler.cancel();
+                                log::info!("    SUCCESS: [{mining_tactic}], disj={disj_length}");
+                                return Some(res);
+                            } else {
+                                log::info!("    FAILURE: [{mining_tactic}], disj={disj_length}");
+                            }
+                        }
+
+                        if multi_canceler.is_canceled() {
+                            return None;
+                        }
+                    }
+
+                    None
+                })
+            })
+            .collect_vec();
+
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap())
+            .collect_vec()
+    });
+
+    if !results.is_empty() {
+        println!("{}", results[0].1);
+        println!("Success!");
+        true
+    } else {
+        println!("Failure!");
+        false
+    }
+}
+
+pub fn compute_lfp_single(
+    chc_sys: &ChcSystem,
+    minimize: bool,
+    disj_length: Option<usize>,
+    mining_tactic: &MiningTactic,
+    multi_canceler: &MultiCanceler<MultiCanceler<<ParallelSolvers as BasicSolver>::Canceler>>,
+) -> Option<(bool, String)> {
     // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
-    let solver = parallel_z3(4);
+    let solver: ParallelSolvers = parallel_z3(2);
     let univ_indices = 1;
     let quantified = (0..univ_indices)
         .map(PredicateConfig::quant_name)
@@ -54,20 +121,11 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
         .iter()
         .filter_map(|chc| ImperativeChc::from_chc(chc, chc_sys))
         .collect_vec();
+    /*
     for imp_chc in &imp_chcs {
         println!("{imp_chc}")
     }
-
-    let mining_tactic = MiningTactic {
-        init: true,
-        upper_bounds: false,
-        query_arith: true,
-        query_entries: true,
-        update_index_bound: true,
-        update_entry_asgn: false,
-        update_const: true,
-        update_condition: false,
-    };
+    */
 
     let predicates = chc_sys
         .predicates
@@ -112,8 +170,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
                     int_templates.add_range(expr, (-1, 0));
                 }
 
-                println!("========== {} ==========", decl.name);
-                println!("--- ints ---------------");
+                /*
                 for t in &int_terms {
                     println!("{t}");
                 }
@@ -125,6 +182,7 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
                 for b in &bool_terms {
                     println!("{b}");
                 }
+                */
             }
             PredicateConfig::int_ineqs(
                 decl,
@@ -137,19 +195,19 @@ pub fn compute_lfp(chc_sys: &ChcSystem, minimize: bool, disj_length: Option<usiz
         })
         .collect();
 
-    let fp = find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, chc_sys, predicates, minimize);
-    let assignment = fp.get_symbolic_assignment();
+    let res = find_lfp::<_, QFormulaSet<BaselinePropSet>>(
+        &solver,
+        chc_sys,
+        predicates,
+        minimize,
+        Some(multi_canceler),
+    );
 
-    println!();
-    println!("{fp}");
-
-    println!();
-    let solved = chc_sys.check_assignment(&solver, &assignment, true);
-    if solved {
-        println!("Success!");
+    if let Some(fp) = res {
+        let assignment = fp.get_symbolic_assignment();
+        let solved = chc_sys.check_assignment(&solver, &assignment, true);
+        Some((solved, fp.to_string()))
     } else {
-        println!("Failure!");
+        None
     }
-
-    solved
 }

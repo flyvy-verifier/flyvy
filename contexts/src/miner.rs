@@ -23,6 +23,78 @@ pub struct MiningTactic {
     pub update_condition: bool,
 }
 
+impl Display for MiningTactic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut active = vec![];
+        if self.init {
+            active.push("INIT");
+        }
+        if self.upper_bounds {
+            active.push("UPPER_BOUNDS");
+        }
+        if self.query_arith {
+            active.push("QUERY_ARITH");
+        }
+        if self.query_entries {
+            active.push("QUERY_ENTRIES");
+        }
+        if self.update_index_bound {
+            active.push("UPDATE_INDEX_BOUND");
+        }
+        if self.update_entry_asgn {
+            active.push("UPDATE_ENTRY_ASGN");
+        }
+        if self.update_const {
+            active.push("UPDATE_CONST");
+        }
+        if self.update_condition {
+            active.push("UPDATE_CONDITION");
+        }
+        write!(f, "MiningTactic[{}]", active.iter().join(","))
+    }
+}
+
+impl MiningTactic {
+    const FROM_QUERY_UPDATE: Self = Self {
+        init: true,
+        upper_bounds: false,
+        query_arith: true,
+        query_entries: true,
+        update_index_bound: true,
+        update_entry_asgn: false,
+        update_const: true,
+        update_condition: false,
+    };
+
+    const FROM_QUERY: Self = Self {
+        init: false,
+        upper_bounds: false,
+        query_arith: true,
+        query_entries: true,
+        update_index_bound: false,
+        update_entry_asgn: false,
+        update_const: false,
+        update_condition: false,
+    };
+
+    const FROM_ASSIGNMENTS: Self = Self {
+        init: true,
+        upper_bounds: false,
+        query_arith: true,
+        query_entries: false,
+        update_index_bound: true,
+        update_entry_asgn: true,
+        update_const: false,
+        update_condition: true,
+    };
+
+    pub const TACTICS: [Self; 3] = [
+        Self::FROM_QUERY,
+        Self::FROM_QUERY_UPDATE,
+        Self::FROM_ASSIGNMENTS,
+    ];
+}
+
 #[derive(Hash, PartialEq, Eq)]
 pub enum Assignment {
     Int(String, Term),

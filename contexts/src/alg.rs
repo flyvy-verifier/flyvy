@@ -488,10 +488,11 @@ impl<K: Hash + Eq + Clone + Debug> PartialSolution<K> {
     }
 }
 
-enum TriResult<Y, N> {
+enum ChcResult<M, P> {
     None,
-    Yes(Y),
-    No(N),
+    Canceled,
+    CounterModel(M),
+    Proof(P),
 }
 
 impl<S> ChcSolution<S>
@@ -543,13 +544,16 @@ where
         &mut self,
         solver: &B,
         chc_sys: &ChcSystem,
-    ) -> TriResult<(String, MultiObject<QuantifiedType>), ()> {
-        // TODO: add triviality check
+        multi_canceler: Option<&MultiCanceler<MultiCanceler<B::Canceler>>>,
+    ) -> ChcResult<(String, MultiObject<QuantifiedType>), ()> {
         // TODO: cache the ID's to check
 
         let assignment = self.get_symbolic_assignment();
         let cancelers = MultiCanceler::new();
-        let mut out = TriResult::No(());
+        if multi_canceler.is_some_and(|c| !c.add_canceler(cancelers.clone())) {
+            return ChcResult::Canceled;
+        }
+        let mut out = ChcResult::Proof(());
 
         'chc_loop: for (chc_index, chc) in chc_sys.chcs.iter().enumerate() {
             let head_predicate = match chc.head.predicate() {
@@ -557,7 +561,7 @@ where
                 None => continue 'chc_loop,
             };
 
-            println!("Checking CHC #{chc_index} with head {}", head_predicate.0);
+            log::debug!("Checking CHC #{chc_index} with head {}", head_predicate.0);
 
             // The hypotheses of the CHC
             let mut hyp = vec![];
@@ -609,11 +613,11 @@ where
                 let formula_term =
                     rename_symbols(&head_contexts[id.0].to_term(&formula), &head_subst);
                 let universal = head_contexts[id.0].prefix.is_universal();
-                println!("Querying {}: {}", head_predicate.0, formula_term);
+                log::debug!("Querying {}: {}", head_predicate.0, formula_term);
 
                 // ---------- CHC CONSEQUENCE CHECK ----------
                 if !universal {
-                    println!("Checking CHC consequence...");
+                    log::debug!("Checking CHC consequence...");
                     let query_conf = QueryConf {
                         sig: &chc.signature,
                         n_states: 1,
@@ -634,22 +638,23 @@ where
                     );
                     match res {
                         CexResult::Cex(_, _) => {
-                            println!(
+                            log::debug!(
                                 "    (took {}ms, found SAT(null))",
                                 instant.elapsed().as_millis()
                             );
                         }
                         CexResult::UnsatCore(core) => {
-                            println!(
+                            log::debug!(
                                 "    (took {}ms, found UNSAT({}))",
                                 instant.elapsed().as_millis(),
                                 core.len()
                             );
                             let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                            return (TriResult::No(named_core), vec![], false);
+                            return (ChcResult::Proof(named_core), vec![], false);
                         }
-                        CexResult::Canceled => return (TriResult::None, vec![], false),
-                        _ => panic!("solver error {res:?}"),
+                        CexResult::Canceled => return (ChcResult::Canceled, vec![], false),
+                        _ => return (ChcResult::None, vec![], false),
+                        // _ => panic!("solver error {res:?}"),
                     }
                 }
 
@@ -680,13 +685,13 @@ where
 
                     match res {
                         CexResult::Cex(_, vals) => {
-                            println!(
+                            log::debug!(
                                 "    (took {}ms, found SAT({size}))",
                                 instant.elapsed().as_millis()
                             );
                             cancelers.cancel();
                             return (
-                                TriResult::Yes((
+                                ChcResult::CounterModel((
                                     head_predicate.0.clone(),
                                     MultiObject(id.0, extractor.extract(&vals)),
                                 )),
@@ -695,7 +700,7 @@ where
                             );
                         }
                         CexResult::UnsatCore(core) => {
-                            println!(
+                            log::debug!(
                                 "    (took {}ms, found UNSAT({}) for size {size})",
                                 instant.elapsed().as_millis(),
                                 core.len()
@@ -703,10 +708,11 @@ where
 
                             if universal {
                                 let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                                return (TriResult::No(named_core), vec![], false);
+                                return (ChcResult::Proof(named_core), vec![], false);
                             }
                         }
-                        _ => return (TriResult::None, vec![], false),
+                        CexResult::Canceled => return (ChcResult::Canceled, vec![], true),
+                        _ => return (ChcResult::None, vec![], false),
                         // _ => panic!("({size}) solver error {res:?}"),
                     }
 
@@ -714,18 +720,25 @@ where
                 }
             });
 
-            let results = worker.run(parallelism());
+            let results = worker.run(parallelism() / 2);
+
+            if multi_canceler.is_some_and(|c| c.is_canceled()) {
+                return ChcResult::Canceled;
+            }
+
             for ((_, id), res) in results {
                 match res {
-                    TriResult::None if !matches!(out, TriResult::Yes(_)) => out = TriResult::None,
-                    TriResult::Yes(m) => out = TriResult::Yes(m),
-                    TriResult::No(named_core) => {
+                    ChcResult::CounterModel(m) => out = ChcResult::CounterModel(m),
+                    ChcResult::None if !matches!(out, ChcResult::CounterModel(_)) => {
+                        out = ChcResult::None
+                    }
+                    ChcResult::Proof(named_core) => {
                         self.partial.add_core((chc_index, id), named_core);
                     }
                     _ => (),
                 }
             }
-            if matches!(out, TriResult::Yes(_)) {
+            if matches!(out, ChcResult::CounterModel(_)) {
                 return out;
             }
         }
@@ -814,7 +827,8 @@ pub fn find_lfp<B, S>(
     chc_sys: &ChcSystem,
     cfg: Vec<PredicateConfig>,
     minimize: bool,
-) -> ChcSolution<S>
+    multi_canceler: Option<&MultiCanceler<MultiCanceler<B::Canceler>>>,
+) -> Option<ChcSolution<S>>
 where
     B: BasicSolver,
     S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>
@@ -829,9 +843,9 @@ where
     }
 
     loop {
-        match chc_sol.find_cex(solver, chc_sys) {
-            TriResult::Yes((name, cex)) => {
-                println!("Found CEX: {cex:?}");
+        match chc_sol.find_cex(solver, chc_sys, multi_canceler) {
+            ChcResult::CounterModel((name, cex)) => {
+                log::debug!("Found CEX: {cex:?}");
                 let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
                 let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
 
@@ -842,10 +856,11 @@ where
 
                 chc_sol.partial.update_weakened(&name, &updates, chc_sys);
             }
-            TriResult::None => println!("cannot sample counter-example or verify proof!"),
-            TriResult::No(()) => break,
+            ChcResult::Proof(()) => break,
+            ChcResult::Canceled => return None,
+            ChcResult::None => (),
         }
     }
 
-    chc_sol
+    Some(chc_sol)
 }
