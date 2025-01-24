@@ -32,16 +32,18 @@ fn check_sat_conf(
     let assump_sizes: Vec<_> = assumptions.values().map(|(t, _)| t.size()).collect();
     let start_time = std::time::Instant::now();
     let log_result = |res: String| {
-        log::debug!(
-            "            {:?}(timeout={}) returned {res} after {}ms ({} assertions, {} assumptions: max_lit={}, sum_lit={})",
-            solver_conf.solver_type(),
-            solver_conf.get_timeout_ms().unwrap_or(0) / 1000,
-            start_time.elapsed().as_millis(),
-            assertions.len(),
-            assumptions.len(),
-            assump_sizes.iter().max().unwrap_or(&0),
-            assump_sizes.iter().sum::<usize>()
-        );
+        if query_conf.log {
+            log::debug!(
+                "            {:?}(timeout={}) returned {res} after {}ms ({} assertions, {} assumptions: max_lit={}, sum_lit={})",
+                solver_conf.solver_type(),
+                solver_conf.get_timeout_ms().unwrap_or(0) / 1000,
+                start_time.elapsed().as_millis(),
+                assertions.len(),
+                assumptions.len(),
+                assump_sizes.iter().max().unwrap_or(&0),
+                assump_sizes.iter().sum::<usize>()
+            );
+        }
     };
     let mut solver = solver_conf.solver(query_conf.sig, query_conf.n_states);
     if query_conf
@@ -193,17 +195,59 @@ impl Evaluable for RespModel {
 /// Defines a configuration for performing a solver query.
 pub struct QueryConf<'a, C: BasicCanceler> {
     /// The signature used
-    pub sig: &'a Signature,
+    sig: &'a Signature,
     /// The number of states
-    pub n_states: usize,
+    n_states: usize,
     /// Optional [`MultiCanceler`] which can be used to cancel the query at any time
-    pub cancelers: Option<MultiCanceler<C>>,
+    cancelers: Option<MultiCanceler<C>>,
     /// What kind of model to return in case of SAT
-    pub model_option: ModelOption,
+    model_option: ModelOption,
     /// Terms to evaluate in case of SAT
-    pub evaluate: Vec<Term>,
+    evaluate: Vec<Term>,
     /// Whether to save the solver tee after the query
-    pub save_tee: bool,
+    save_tee: bool,
+    /// Log each query
+    log: bool,
+}
+
+impl<'a, C: BasicCanceler> QueryConf<'a, C> {
+    /// Create a new query configuration.
+    pub fn new(sig: &'a Signature) -> Self {
+        Self {
+            sig,
+            n_states: 1,
+            cancelers: None,
+            model_option: ModelOption::None,
+            evaluate: vec![],
+            save_tee: false,
+            log: false,
+        }
+    }
+
+    /// Set number of states.
+    pub fn num_states(&mut self, n_states: usize) {
+        self.n_states = n_states;
+    }
+
+    /// Use the following cancelers in queries.
+    pub fn use_cancelers(&mut self, cancelers: MultiCanceler<C>) {
+        self.cancelers = Some(cancelers);
+    }
+
+    /// Return a model according to the following option.
+    pub fn model_option(&mut self, model_option: ModelOption) {
+        self.model_option = model_option;
+    }
+
+    /// Evaluate the following terms upon a satisfiable query.
+    pub fn evaluate(&mut self, evaluate: Vec<Term>) {
+        self.evaluate = evaluate;
+    }
+
+    /// Set whether to save queries upon encountering errors.
+    pub fn save_tee(&mut self, save_tee: bool) {
+        self.save_tee = save_tee;
+    }
 }
 
 /// A basic solver response
@@ -427,6 +471,7 @@ impl BasicSolver for ParallelSolvers {
             model_option: query_conf.model_option,
             evaluate: query_conf.evaluate.clone(),
             save_tee: query_conf.save_tee,
+            log: query_conf.log,
         };
 
         if query_conf
@@ -511,7 +556,7 @@ impl BasicSolver for ParallelSolvers {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{BasicSolver, ModelOption, QueryConf, SingleSolver};
+    use super::{BasicSolver, QueryConf, SingleSolver};
     use crate::{
         backends::SolverType,
         basics::{BasicSolverResp, RespModel},
@@ -551,14 +596,8 @@ mod tests {
             None,
         ));
 
-        let query_conf = QueryConf {
-            sig: &sig,
-            n_states: 1,
-            cancelers: None,
-            model_option: ModelOption::None,
-            evaluate: vec![term("x"), term("y")],
-            save_tee: false,
-        };
+        let mut query_conf = QueryConf::new(&sig);
+        query_conf.evaluate(vec![term("x"), term("y")]);
 
         let resp = solver.check_sat(
             &query_conf,

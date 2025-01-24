@@ -25,7 +25,7 @@ use formats::chc::{ChcSystem, HoPredicateDecl, SymbolicAssignment, SymbolicPredi
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
 use solver::basics::{
-    BasicCanceler, BasicSolver, BasicSolverResp, ModelOption, MultiCanceler, QueryConf, RespModel,
+    BasicCanceler, BasicSolver, BasicSolverResp, MultiCanceler, QueryConf, RespModel,
 };
 use solver::parallel::{parallelism, ParallelWorker, Tasks};
 
@@ -409,14 +409,7 @@ where
     }
 
     pub fn minimize_by_implication<B: BasicSolver>(&mut self, solver: &B) {
-        let query_conf = QueryConf {
-            sig: &self.signature,
-            n_states: 1,
-            cancelers: None,
-            model_option: ModelOption::None,
-            evaluate: vec![],
-            save_tee: false,
-        };
+        let query_conf = QueryConf::new(&self.signature);
         // Used for collecting previous formulas IDs.
         let mut prev_ids: Vec<MultiId<S::AttributeId>> = vec![];
         let mut assumptions = HashMap::new();
@@ -618,14 +611,8 @@ where
                 // ---------- CHC CONSEQUENCE CHECK ----------
                 if !universal {
                     log::debug!("Checking CHC consequence...");
-                    let query_conf = QueryConf {
-                        sig: &chc.signature,
-                        n_states: 1,
-                        cancelers: Some(cancelers.clone()),
-                        model_option: ModelOption::None,
-                        evaluate: vec![],
-                        save_tee: false,
-                    };
+                    let mut query_conf = QueryConf::new(&chc.signature);
+                    query_conf.use_cancelers(cancelers.clone());
                     let mut assertions = hyp.clone();
                     assertions.push(Term::not(formula_term));
                     let instant = Instant::now();
@@ -662,14 +649,9 @@ where
                 loop {
                     let extractor = head_contexts[id.0].extractor(size, &head_subst);
                     let extended_sig = extractor.extend_signature(&chc.signature);
-                    let query_conf = QueryConf {
-                        sig: &extended_sig,
-                        n_states: 1,
-                        cancelers: Some(cancelers.clone()),
-                        model_option: ModelOption::None,
-                        evaluate: extractor.to_evaluate(),
-                        save_tee: false,
-                    };
+                    let mut query_conf = QueryConf::new(&extended_sig);
+                    query_conf.use_cancelers(cancelers.clone());
+                    query_conf.evaluate(extractor.to_evaluate());
 
                     let mut assertions = hyp.clone();
                     assertions.push(extractor.term.clone());

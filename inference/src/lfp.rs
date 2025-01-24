@@ -9,7 +9,7 @@ use fly::syntax::{Module, Term};
 use formats::chc::{chc_sys_from_fo_module, ChcSystem};
 use itertools::Itertools;
 use solver::backends::SolverType;
-use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler, ParallelSolvers, SingleSolver};
+use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler, ParallelSolvers};
 use solver::conf::SolverConf;
 
 fn parallel_z3(seeds: usize) -> ParallelSolvers {
@@ -20,8 +20,21 @@ fn parallel_z3(seeds: usize) -> ParallelSolvers {
     )
 }
 
+fn parallel_z3_cvc5(seeds: usize, fname: &str) -> ParallelSolvers {
+    ParallelSolvers::new(
+        (0..seeds)
+            .flat_map(|_| {
+                [
+                    SolverConf::new(SolverType::Z3, false, fname, 0, None),
+                    SolverConf::new(SolverType::Cvc5, false, fname, 0, None),
+                ]
+            })
+            .collect(),
+    )
+}
+
 pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
-    let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, &cfg.fname, 30, None));
+    let solver = parallel_z3_cvc5(2, &cfg.fname);
     let (chc_sys, name, arguments) = chc_sys_from_fo_module(&cfg.fo);
 
     let inv_cfg = PredicateConfig {
@@ -121,11 +134,10 @@ pub fn compute_lfp_single(
         .iter()
         .filter_map(|chc| ImperativeChc::from_chc(chc, chc_sys))
         .collect_vec();
-    /*
+
     for imp_chc in &imp_chcs {
-        println!("{imp_chc}")
+        log::debug!("{imp_chc}")
     }
-    */
 
     let predicates = chc_sys
         .predicates

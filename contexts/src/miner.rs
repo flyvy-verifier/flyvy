@@ -897,7 +897,6 @@ impl ImperativeChc {
                 }
 
                 for lt in assertions {
-                    // if lt.ids().contains(&vars[0].name) {
                     let x = rename_symbols(&lt.x, &substitution);
                     let y = rename_symbols(&lt.y, &substitution);
                     let is_arith = is_only_arith(&x) && is_only_arith(&y);
@@ -906,7 +905,6 @@ impl ImperativeChc {
                             leqs.push((expr, (-1, 0)));
                         }
                     }
-                    // }
                 }
             }
             _ => (),

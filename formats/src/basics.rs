@@ -368,14 +368,11 @@ impl FOModule {
             return CexResult::Canceled;
         }
 
-        let query_conf = QueryConf {
-            sig: &self.signature,
-            n_states: 2,
-            cancelers: Some(local_cancelers.clone()),
-            model_option: ModelOption::Minimal,
-            evaluate: vec![],
-            save_tee,
-        };
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.num_states(2);
+        query_conf.use_cancelers(local_cancelers.clone());
+        query_conf.model_option(ModelOption::Minimal);
+        query_conf.save_tee(save_tee);
         let next = Next::new(&self.signature);
         let mut assertions = self.module.axioms.clone();
         assertions.extend(self.module.axioms.iter().map(|a| next.prime(a)));
@@ -480,14 +477,10 @@ impl FOModule {
             return CexResult::Canceled;
         }
 
-        let query_conf = QueryConf {
-            sig: &self.signature,
-            n_states: 1,
-            cancelers: Some(local_cancelers),
-            model_option: ModelOption::Minimal,
-            evaluate: vec![],
-            save_tee,
-        };
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.use_cancelers(local_cancelers);
+        query_conf.model_option(ModelOption::Minimal);
+        query_conf.save_tee(save_tee);
         let mut assertions = self.module.axioms.clone();
         assertions.push(Term::not(t));
         hyp.find_cex(solver, &query_conf, &assertions, &self.smt_tactic, |m| {
@@ -505,14 +498,10 @@ impl FOModule {
         let cancelers = MultiCanceler::new();
         let empty_assumptions = HashMap::new();
         let next = Next::new(&self.signature);
-        let query_conf = QueryConf {
-            sig: &self.signature,
-            n_states: 2,
-            cancelers: Some(cancelers.clone()),
-            model_option: ModelOption::Minimal,
-            evaluate: vec![],
-            save_tee: false,
-        };
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.num_states(2);
+        query_conf.use_cancelers(cancelers.clone());
+        query_conf.model_option(ModelOption::Minimal);
 
         let state_term = state.to_term();
         let samples = Mutex::new(vec![]);

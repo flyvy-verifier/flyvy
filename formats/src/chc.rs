@@ -8,7 +8,7 @@ use fly::{
 };
 use itertools::Itertools;
 use petgraph::{Directed, Graph};
-use solver::basics::{BasicSolver, BasicSolverResp, ModelOption, QueryConf};
+use solver::basics::{BasicSolver, BasicSolverResp, QueryConf};
 
 use crate::basics::FOModule;
 
@@ -166,14 +166,7 @@ impl Chc {
         solver: &B,
         assignment: &SymbolicAssignment<K>,
     ) -> bool {
-        let query_conf = QueryConf {
-            sig: &self.signature,
-            n_states: 1,
-            cancelers: None,
-            model_option: ModelOption::None,
-            evaluate: vec![],
-            save_tee: false,
-        };
+        let query_conf = QueryConf::new(&self.signature);
         let hyp = self
             .instantiate_body(assignment)
             .into_iter()
