@@ -6,6 +6,7 @@ use contexts::arith::{ArithExpr, IneqTemplates};
 use contexts::miner::{position_or_push, ImperativeChc, MiningTactic};
 use contexts::sets::{BaselinePropSet, QFormulaSet};
 use fly::syntax::{Module, Term};
+use formats::basics::SmtTactic;
 use formats::chc::{chc_sys_from_fo_module, ChcSystem};
 use itertools::Itertools;
 use solver::backends::SolverType;
@@ -34,17 +35,23 @@ fn parallel_z3_cvc5(seeds: usize, fname: &str) -> ParallelSolvers {
 }
 
 pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
-    let solver = parallel_z3_cvc5(2, &cfg.fname);
+    let solver = parallel_z3_cvc5(1, &cfg.fname);
     let (chc_sys, name, arguments) = chc_sys_from_fo_module(&cfg.fo);
 
     let inv_cfg = PredicateConfig {
         name,
         arguments,
-        context: get_context_for_module(cfg, m),
+        context: get_context_for_module(cfg, m, &solver),
     };
 
-    let res =
-        find_lfp::<_, QFormulaSet<BaselinePropSet>>(&solver, &chc_sys, vec![inv_cfg], true, None);
+    let res = find_lfp::<_, QFormulaSet<BaselinePropSet>>(
+        &solver,
+        &chc_sys,
+        vec![inv_cfg],
+        true,
+        None,
+        &SmtTactic::Gradual,
+    );
     if let Some(fp) = res {
         let assignment = fp.get_symbolic_assignment();
 
@@ -213,6 +220,7 @@ pub fn compute_lfp_single(
         predicates,
         minimize,
         Some(multi_canceler),
+        &SmtTactic::Full,
     );
 
     if let Some(fp) = res {

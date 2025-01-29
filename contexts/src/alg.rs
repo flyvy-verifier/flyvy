@@ -14,7 +14,7 @@ use crate::{
     sets::MultiAttributeSet,
 };
 use fly::quant::QuantifierPrefix;
-use fly::semantics::Evaluable;
+use fly::semantics::{Evaluable, Model};
 use fly::syntax::{NumRel, Quantifier};
 use fly::{
     syntax::{NOp, RelationDecl, Signature, Sort, Term},
@@ -24,9 +24,7 @@ use formats::basics::{CexResult, OrderedTerms, SmtTactic};
 use formats::chc::{ChcSystem, HoPredicateDecl, SymbolicAssignment, SymbolicPredicate};
 use itertools::Itertools;
 use smtlib::sexp::InterpretedValue;
-use solver::basics::{
-    BasicCanceler, BasicSolver, BasicSolverResp, MultiCanceler, QueryConf, RespModel,
-};
+use solver::basics::{BasicCanceler, BasicSolver, ModelOption, MultiCanceler, QueryConf};
 use solver::parallel::{parallelism, ParallelWorker, Tasks};
 
 fn prop_var(outer_index: usize, inner_index: usize) -> String {
@@ -238,15 +236,15 @@ where
     K: Ord + Hash + Eq + Clone + Send + Sync,
 {
     next_id: usize,
-    formulas: BTreeMap<(usize, usize, K), Term>,
+    formulas: BTreeMap<K, Term>,
 }
 
 impl<K> OrderedTerms for &OrderedFormulas<K>
 where
     K: Ord + Hash + Eq + Clone + Send + Sync,
 {
-    type Key = (usize, usize, K);
-    type Eval = RespModel;
+    type Key = K;
+    type Eval = Model;
 
     fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
         vec![]
@@ -276,8 +274,7 @@ where
     }
 
     fn add(&mut self, key: K, term: Term) {
-        let size = term.size();
-        self.formulas.insert((size, self.next_id, key), term);
+        self.formulas.insert(key, term);
         self.next_id += 1;
     }
 }
@@ -408,41 +405,36 @@ where
         }
     }
 
-    pub fn minimize_by_implication<B: BasicSolver>(&mut self, solver: &B) {
-        let query_conf = QueryConf::new(&self.signature);
-        // Used for collecting previous formulas IDs.
-        let mut prev_ids: Vec<MultiId<S::AttributeId>> = vec![];
-        let mut assumptions = HashMap::new();
-        for (i, id) in self.solution.iter().sorted().enumerate() {
-            let formula_term = self.context.to_term(&self.solution.get(&id));
-            if !self.implication_cores.is_blocked(&id) {
-                let res = solver.check_sat(&query_conf, &[Term::not(&formula_term)], &assumptions);
-                match res {
-                    Ok(BasicSolverResp::Unsat(core)) => {
-                        self.implication_cores.block(
-                            id.clone(),
-                            core.iter().map(|i| prev_ids[*i].clone()).collect(),
-                        );
-                    }
-                    Ok(BasicSolverResp::Sat(_, _)) => {
-                        assumptions.insert(i, (formula_term, true));
-                    }
-                    _ => panic!("solver error {res:?}"),
-                }
+    fn check_implied_by_preceding<B: BasicSolver>(
+        &self,
+        solver: &B,
+        smt_tactic: &SmtTactic,
+        id: &MultiId<S::AttributeId>,
+        cancelers: MultiCanceler<B::Canceler>,
+    ) -> CexResult<MultiId<S::AttributeId>> {
+        let mut assumptions = OrderedFormulas::new();
+        for f_id in self.solution.iter().sorted() {
+            if &f_id < id {
+                let formula_term = self.context.to_term(&self.solution.get(&f_id));
+                assumptions.add(f_id, formula_term);
+            } else {
+                break;
             }
-            prev_ids.push(id);
         }
-    }
 
-    pub fn update_weakened(
-        &mut self,
-        updates: &HashMap<MultiId<S::AttributeId>, Vec<MultiId<S::AttributeId>>>,
-    ) {
-        for (id, weakenings) in updates {
-            self.implication_cores.weaken(id, weakenings);
-            self.implication_cores.remove_blocked(id);
-            self.implication_cores.remove_blocking(id);
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.use_cancelers(cancelers);
+        if !matches!(smt_tactic, SmtTactic::Full) {
+            query_conf.model_option(ModelOption::Any);
         }
+        let formula_term = self.context.to_term(&self.solution.get(&id));
+        assumptions.find_cex(
+            solver,
+            &query_conf,
+            &[Term::not(&formula_term)],
+            smt_tactic,
+            |m| m.trace()[0].clone(),
+        )
     }
 
     pub fn minimal_set(&self) -> impl Iterator<Item = MultiId<S::AttributeId>> + '_ {
@@ -491,7 +483,8 @@ enum ChcResult<M, P> {
 impl<S> ChcSolution<S>
 where
     S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>
-        + Sync,
+        + Sync
+        + Send,
 {
     fn new(cfg: Vec<PredicateConfig>, chc_sys: &ChcSystem) -> Self {
         let solutions: HashMap<String, PredicateSolution<S>> = cfg
@@ -538,6 +531,8 @@ where
         solver: &B,
         chc_sys: &ChcSystem,
         multi_canceler: Option<&MultiCanceler<MultiCanceler<B::Canceler>>>,
+        smt_tactic: &SmtTactic,
+        minimize: bool,
     ) -> ChcResult<(String, MultiObject<QuantifiedType>), ()> {
         // TODO: cache the ID's to check
 
@@ -589,67 +584,122 @@ where
                 .minimal_set()
                 .map(|id| (chc_index, id))
                 .filter(|id| !self.partial.formula_cores.is_blocked(id))
-                .map(|id| (id.clone(), id));
+                .map(|id| ((1, id.clone()), id));
 
             let mut tasks = Tasks::from_iter(ids_to_check);
             let worker = ParallelWorker::new(&mut tasks, |_, (_, id)| {
                 // A formula to check shouldn't already have a core
-                assert!(
-                    !self
-                        .partial
-                        .formula_cores
-                        .is_blocked(&(chc_index, id.clone())),
-                    "formula to check already had UNSAT-core"
-                );
+                if self
+                    .partial
+                    .formula_cores
+                    .is_blocked(&(chc_index, id.clone()))
+                {
+                    return (ChcResult::None, vec![], false);
+                }
 
                 let formula = head_sets[id.0].get(&id.1);
-                let formula_term =
-                    rename_symbols(&head_contexts[id.0].to_term(&formula), &head_subst);
+                let formula_term_original = head_contexts[id.0].to_term(&formula);
+                let formula_term = rename_symbols(&formula_term_original, &head_subst);
                 let universal = head_contexts[id.0].prefix.is_universal();
-                log::debug!("Querying {}: {}", head_predicate.0, formula_term);
 
-                // ---------- CHC CONSEQUENCE CHECK ----------
-                if !universal {
-                    log::debug!("Checking CHC consequence...");
-                    let mut query_conf = QueryConf::new(&chc.signature);
-                    query_conf.use_cancelers(cancelers.clone());
-                    let mut assertions = hyp.clone();
-                    assertions.push(Term::not(formula_term));
+                // ---------- IMPLICATION CHECK --------------
+                if minimize {
+                    log::debug!(
+                        "Querying ==> {}{id:?}: {formula_term_original}",
+                        head_predicate.0,
+                    );
                     let instant = Instant::now();
-                    let res = full_assumptions.find_cex(
+                    let res = head_sol.check_implied_by_preceding(
                         solver,
-                        &query_conf,
-                        &assertions,
-                        &SmtTactic::Full,
-                        |m| m.clone(),
+                        smt_tactic,
+                        &id,
+                        cancelers.clone(),
                     );
                     match res {
                         CexResult::Cex(_, _) => {
                             log::debug!(
-                                "    (took {}ms, found SAT(null))",
+                                "    (took {}ms, found SAT(impl |= {id:?}))",
                                 instant.elapsed().as_millis()
                             );
                         }
                         CexResult::UnsatCore(core) => {
                             log::debug!(
-                                "    (took {}ms, found UNSAT({}))",
+                                "    (took {}ms, found UNSAT({core:?} ==> {id:?}))",
                                 instant.elapsed().as_millis(),
-                                core.len()
                             );
-                            let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                            return (ChcResult::Proof(named_core), vec![], false);
+                            let check_next = core
+                                .iter()
+                                .map(|c_id| {
+                                    ((0, (chc_index, c_id.clone())), (chc_index, c_id.clone()))
+                                })
+                                .collect();
+                            let named_core = core
+                                .into_iter()
+                                .map(|id| (head_predicate.0.clone(), id))
+                                .collect();
+                            return (ChcResult::Proof(named_core), check_next, false);
                         }
                         CexResult::Canceled => return (ChcResult::Canceled, vec![], false),
                         _ => return (ChcResult::None, vec![], false),
-                        // _ => panic!("solver error {res:?}"),
+                    }
+                }
+
+                // ---------- CHC CONSEQUENCE CHECK ----------
+                if !universal {
+                    log::debug!("Querying ~~> {}{id:?}: {formula_term}", head_predicate.0);
+                    let mut query_conf = QueryConf::new(&chc.signature);
+                    if !matches!(smt_tactic, SmtTactic::Full) {
+                        query_conf.model_option(ModelOption::Any);
+                    }
+                    query_conf.use_cancelers(cancelers.clone());
+                    let mut assertions = hyp.clone();
+                    assertions.push(Term::not(&formula_term));
+                    let instant = Instant::now();
+                    let res = full_assumptions.find_cex(
+                        solver,
+                        &query_conf,
+                        &assertions,
+                        smt_tactic,
+                        |m| m.trace()[0].clone(),
+                    );
+                    match res {
+                        CexResult::Cex(_, _) => {
+                            log::debug!(
+                                "    (took {}ms, found SAT(null |= {id:?}))",
+                                instant.elapsed().as_millis()
+                            );
+                        }
+                        CexResult::UnsatCore(core) => {
+                            log::debug!(
+                                "    (took {}ms, found UNSAT({core:?} ~~> {id:?}))",
+                                instant.elapsed().as_millis(),
+                            );
+                            let check_next = core
+                                .iter()
+                                .filter(|(c_name, _)| c_name == head_predicate.0)
+                                .map(|(_, c_id)| {
+                                    ((0, (chc_index, c_id.clone())), (chc_index, c_id.clone()))
+                                })
+                                .collect();
+                            return (ChcResult::Proof(core), check_next, false);
+                        }
+                        CexResult::Canceled => return (ChcResult::Canceled, vec![], false),
+                        _ => return (ChcResult::None, vec![], false),
                     }
                 }
 
                 let mut size = 1;
                 loop {
+                    log::debug!(
+                        "Querying ~~>({size}) {}{id:?}: {formula_term}",
+                        head_predicate.0,
+                    );
                     let extractor = head_contexts[id.0].extractor(size, &head_subst);
                     let extended_sig = extractor.extend_signature(&chc.signature);
                     let mut query_conf = QueryConf::new(&extended_sig);
+                    if !matches!(smt_tactic, SmtTactic::Full) {
+                        query_conf.model_option(ModelOption::Any);
+                    }
                     query_conf.use_cancelers(cancelers.clone());
                     query_conf.evaluate(extractor.to_evaluate());
 
@@ -661,14 +711,14 @@ where
                         solver,
                         &query_conf,
                         &assertions,
-                        &SmtTactic::Full,
-                        |m| m.clone(),
+                        &smt_tactic,
+                        |m| m.trace()[0].clone(),
                     );
 
                     match res {
                         CexResult::Cex(_, vals) => {
                             log::debug!(
-                                "    (took {}ms, found SAT({size}))",
+                                "    (took {}ms, found SAT({size} |= {id:?}))",
                                 instant.elapsed().as_millis()
                             );
                             cancelers.cancel();
@@ -683,19 +733,23 @@ where
                         }
                         CexResult::UnsatCore(core) => {
                             log::debug!(
-                                "    (took {}ms, found UNSAT({}) for size {size})",
+                                "    (took {}ms, found UNSAT({core:?} ~~> {id:?}) for size {size})",
                                 instant.elapsed().as_millis(),
-                                core.len()
                             );
 
                             if universal {
-                                let named_core = core.into_iter().map(|(_, _, id)| id).collect();
-                                return (ChcResult::Proof(named_core), vec![], false);
+                                let check_next = core
+                                    .iter()
+                                    .filter(|(c_name, _)| c_name == head_predicate.0)
+                                    .map(|(_, c_id)| {
+                                        ((0, (chc_index, c_id.clone())), (chc_index, c_id.clone()))
+                                    })
+                                    .collect();
+                                return (ChcResult::Proof(core), check_next, false);
                             }
                         }
                         CexResult::Canceled => return (ChcResult::Canceled, vec![], true),
                         _ => return (ChcResult::None, vec![], false),
-                        // _ => panic!("({size}) solver error {res:?}"),
                     }
 
                     size += 1;
@@ -810,31 +864,25 @@ pub fn find_lfp<B, S>(
     cfg: Vec<PredicateConfig>,
     minimize: bool,
     multi_canceler: Option<&MultiCanceler<MultiCanceler<B::Canceler>>>,
+    smt_tactic: &SmtTactic,
 ) -> Option<ChcSolution<S>>
 where
     B: BasicSolver,
     S: AttributeSet<Object = QuantifiedType, Attribute = PropFormula, Cont = QuantifiedContext>
-        + Sync,
+        + Sync
+        + Send,
 {
     let mut chc_sol = ChcSolution::new(cfg, chc_sys);
 
-    if minimize {
-        for pred_sol in chc_sol.solutions.values_mut() {
-            pred_sol.minimize_by_implication(solver);
-        }
-    }
-
     loop {
-        match chc_sol.find_cex(solver, chc_sys, multi_canceler) {
+        log::debug!("Querying for CEX...");
+        match chc_sol.find_cex(solver, chc_sys, multi_canceler, smt_tactic, minimize) {
             ChcResult::CounterModel((name, cex)) => {
                 log::debug!("Found CEX: {cex:?}");
                 let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
+                log::debug!("Weakening {} formulas...", pred_sol.solution.len());
                 let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
-
-                if minimize {
-                    pred_sol.update_weakened(&updates);
-                    pred_sol.minimize_by_implication(solver);
-                }
+                log::debug!("Weakened: {} formulas.", pred_sol.solution.len());
 
                 chc_sol.partial.update_weakened(&name, &updates, chc_sys);
             }

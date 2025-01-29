@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::qalpha::fixpoint::Strategy;
+use crate::qalpha::{atoms::generate_literals, fixpoint::Strategy};
 use contexts::{
     arith::IneqTemplates,
     context::MultiContext,
@@ -8,6 +8,8 @@ use contexts::{
 };
 use fly::{quant::QuantifierConfig, syntax::Module};
 use formats::basics::FOModule;
+use itertools::Itertools;
+use solver::basics::BasicSolver;
 
 pub enum QfBody {
     PDnf,
@@ -59,11 +61,27 @@ pub struct QalphaConfig {
     pub baseline: bool,
 }
 
-pub fn get_context_for_module(cfg: &QalphaConfig, m: &Module) -> MultiContext<QuantifiedContext> {
+pub fn get_context_for_module<B: BasicSolver>(
+    cfg: &QalphaConfig,
+    m: &Module,
+    solver: &B,
+) -> MultiContext<QuantifiedContext> {
     let mut contexts = vec![];
 
     let size = cfg.quant_cfg.num_vars();
-    let atoms = cfg.quant_cfg.atoms(&m.signature, cfg.qf_cfg.nesting, true);
+    let literals: Vec<_> = generate_literals(
+        &m.signature,
+        &cfg.quant_cfg,
+        cfg.qf_cfg.nesting,
+        true,
+        &cfg.fo,
+        solver,
+    );
+    let atoms: Vec<_> = literals
+        .iter()
+        .map(|l| l.0.as_ref().clone())
+        .unique()
+        .collect();
     for prefix in cfg.quant_cfg.exact_prefixes(size, size) {
         contexts.push(QuantifiedContext {
             prefix,
