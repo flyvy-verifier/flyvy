@@ -86,17 +86,18 @@ pub struct PropModel {
 #[derive(Clone)]
 pub struct LiteralContext {
     /// Propositional atoms with given identifiers
-    bool_atoms: Vec<usize>,
+    bool_atoms: Vec<(usize, Option<bool>)>,
     /// Templates for integer atoms
     int_templates: IneqTemplates,
 }
 
 impl LiteralContext {
     fn weaken_bottom(&self, obj: &PropModel) -> Vec<PropFormula> {
-        let bools = self
-            .bool_atoms
-            .iter()
-            .map(|&i| Literal::Bool(i, obj.bools[i]));
+        let bools = self.bool_atoms.iter().filter_map(|&(i, val)| match val {
+            Some(b) if b == obj.bools[i] => Some(Literal::Bool(i, b)),
+            None => Some(Literal::Bool(i, obj.bools[i])),
+            _ => None,
+        });
         let ints = self
             .int_templates
             .templates
@@ -195,6 +196,22 @@ impl PropFormula {
     }
 }
 
+fn filter_disj(disj: &[PropFormula]) -> bool {
+    for d in disj {
+        match d {
+            PropFormula::Literal(Literal::Bool(t, b))
+                if disj
+                    .binary_search(&PropFormula::bool_literal(*t, !b))
+                    .is_ok() =>
+            {
+                return false;
+            }
+            _ => (),
+        }
+    }
+    true
+}
+
 fn weaken_or(
     k: Option<usize>,
     disj_cont: &PropContext,
@@ -214,7 +231,9 @@ fn weaken_or(
             let mut new_or = rest.clone();
             let pos = new_or.binary_search(&w).unwrap_or_else(|e| e);
             new_or.insert(pos, w);
-            res.push(PropFormula::Nary(LogicOp::Or, new_or));
+            if filter_disj(&new_or) {
+                res.push(PropFormula::Nary(LogicOp::Or, new_or));
+            }
         }
     }
 
@@ -227,7 +246,9 @@ fn weaken_or(
             let mut new_or = disjs.to_owned();
             let pos = new_or.binary_search(&w).unwrap_or_else(|e| e);
             new_or.insert(pos, w);
-            res.push(PropFormula::Nary(LogicOp::Or, new_or));
+            if filter_disj(&new_or) {
+                res.push(PropFormula::Nary(LogicOp::Or, new_or));
+            }
         }
     }
 
@@ -269,7 +290,7 @@ impl PropContext {
     }
 
     /// Create a new propositional context of literals.
-    pub fn literals(bool_atoms: Vec<usize>, int_templates: IneqTemplates) -> Self {
+    pub fn literals(bool_atoms: Vec<(usize, Option<bool>)>, int_templates: IneqTemplates) -> Self {
         Self::Literals(LiteralContext {
             bool_atoms,
             int_templates,
@@ -485,7 +506,7 @@ impl Context for QuantifiedContext {
 /// c -> (c_1 & ... & c_k), where c, c_1, ..., c_k are cubes of literals.
 /// Both the size of c (`clause_size`) and the number of cubes after the implication (`cubes`) can be bounded.
 pub fn pdnf_context(
-    bool_atoms: Vec<usize>,
+    bool_atoms: Vec<(usize, Option<bool>)>,
     int_templates: IneqTemplates,
     clause_size: Option<usize>,
     cubes: Option<usize>,
@@ -521,7 +542,10 @@ mod tests {
     #[test]
     fn test_bottom() {
         // TODO: test out each constructor separately
-        let cont0 = Box::new(PropContext::literals(vec![0, 1], IneqTemplates::new(false)));
+        let cont0 = Box::new(PropContext::literals(
+            vec![(0, None), (1, None)],
+            IneqTemplates::new(false),
+        ));
         let cont_or_bin = PropContext::Binary(LogicOp::Or, cont0.clone(), cont0.clone());
         let cont_and_bin = PropContext::Binary(LogicOp::And, cont0.clone(), cont0.clone());
         let cont_or = PropContext::Nary(LogicOp::Or, Some(3), cont0.clone());
@@ -624,7 +648,10 @@ mod tests {
 
     #[test]
     fn test_weaken() {
-        let cont0 = Box::new(PropContext::literals(vec![0, 1], IneqTemplates::new(false)));
+        let cont0 = Box::new(PropContext::literals(
+            vec![(0, None), (1, None)],
+            IneqTemplates::new(false),
+        ));
         let cont_or_bin = PropContext::Binary(LogicOp::Or, cont0.clone(), cont0.clone());
         let cont_and_bin = PropContext::Binary(LogicOp::And, cont0.clone(), cont0.clone());
         let cont_or = PropContext::Nary(LogicOp::Or, Some(2), cont0.clone());

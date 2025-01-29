@@ -304,6 +304,10 @@ where
         self.blocked_to_blocking.contains_key(b)
     }
 
+    fn is_blocking(&self, c: &C) -> bool {
+        self.blocking_to_blocked.contains_key(c)
+    }
+
     fn block(&mut self, b: B, core: HashSet<C>) {
         for c in &core {
             let blocked = self.blocking_to_blocked.entry(c.clone()).or_default();
@@ -533,7 +537,7 @@ where
         multi_canceler: Option<&MultiCanceler<MultiCanceler<B::Canceler>>>,
         smt_tactic: &SmtTactic,
         minimize: bool,
-    ) -> ChcResult<(String, MultiObject<QuantifiedType>), ()> {
+    ) -> ChcResult<Vec<(String, MultiObject<QuantifiedType>)>, ()> {
         // TODO: cache the ID's to check
 
         let assignment = self.get_symbolic_assignment();
@@ -541,7 +545,8 @@ where
         if multi_canceler.is_some_and(|c| !c.add_canceler(cancelers.clone())) {
             return ChcResult::Canceled;
         }
-        let mut out = ChcResult::Proof(());
+        let mut out: ChcResult<Vec<(String, MultiObject<QuantifiedType>)>, ()> =
+            ChcResult::Proof(());
 
         'chc_loop: for (chc_index, chc) in chc_sys.chcs.iter().enumerate() {
             let head_predicate = match chc.head.predicate() {
@@ -584,7 +589,24 @@ where
                 .minimal_set()
                 .map(|id| (chc_index, id))
                 .filter(|id| !self.partial.formula_cores.is_blocked(id))
-                .map(|id| ((1, id.clone()), id));
+                .map(|id| {
+                    let priority = if self
+                        .partial
+                        .formula_cores
+                        .is_blocking(&(head_predicate.0.clone(), id.1.clone()))
+                    {
+                        0
+                    } else {
+                        1
+                    };
+                    ((priority, id.clone()), id)
+                });
+
+            let check_implication = minimize
+                && chc
+                    .body
+                    .iter()
+                    .any(|p| p.predicate().is_some_and(|(s, _)| s == head_predicate.0));
 
             let mut tasks = Tasks::from_iter(ids_to_check);
             let worker = ParallelWorker::new(&mut tasks, |_, (_, id)| {
@@ -603,7 +625,7 @@ where
                 let universal = head_contexts[id.0].prefix.is_universal();
 
                 // ---------- IMPLICATION CHECK --------------
-                if minimize {
+                if check_implication {
                     log::debug!(
                         "Querying ==> {}{id:?}: {formula_term_original}",
                         head_predicate.0,
@@ -764,7 +786,13 @@ where
 
             for ((_, id), res) in results {
                 match res {
-                    ChcResult::CounterModel(m) => out = ChcResult::CounterModel(m),
+                    ChcResult::CounterModel(m) => {
+                        if let ChcResult::CounterModel(models) = &mut out {
+                            models.push(m);
+                        } else {
+                            out = ChcResult::CounterModel(vec![m]);
+                        }
+                    }
                     ChcResult::None if !matches!(out, ChcResult::CounterModel(_)) => {
                         out = ChcResult::None
                     }
@@ -839,7 +867,10 @@ impl PredicateConfig {
             names: Arc::new(vec![(0..univ_indices).map(Self::quant_name).collect()]),
         };
 
-        let literal_context = PropContext::literals((0..bool_terms.len()).collect(), int_templates);
+        let literal_context = PropContext::literals(
+            (0..bool_terms.len()).map(|i| (i, None)).collect(),
+            int_templates,
+        );
         let prop_cont = PropContext::Nary(LogicOp::Or, disj_length, Box::new(literal_context));
 
         Self {
@@ -877,14 +908,16 @@ where
     loop {
         log::debug!("Querying for CEX...");
         match chc_sol.find_cex(solver, chc_sys, multi_canceler, smt_tactic, minimize) {
-            ChcResult::CounterModel((name, cex)) => {
-                log::debug!("Found CEX: {cex:?}");
-                let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
-                log::debug!("Weakening {} formulas...", pred_sol.solution.len());
-                let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
-                log::debug!("Weakened: {} formulas.", pred_sol.solution.len());
+            ChcResult::CounterModel(cexs) => {
+                log::debug!("Found {} CEXs", cexs.len());
+                for (name, cex) in cexs {
+                    let pred_sol = chc_sol.solutions.get_mut(&name).unwrap();
+                    log::debug!("Weakening {} formulas...", pred_sol.solution.len());
+                    let updates = pred_sol.solution.weaken(&pred_sol.context, &cex);
+                    log::debug!("Weakened: {} formulas.", pred_sol.solution.len());
 
-                chc_sol.partial.update_weakened(&name, &updates, chc_sys);
+                    chc_sol.partial.update_weakened(&name, &updates, chc_sys);
+                }
             }
             ChcResult::Proof(()) => break,
             ChcResult::Canceled => return None,

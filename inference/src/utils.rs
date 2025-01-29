@@ -6,8 +6,12 @@ use contexts::{
     context::MultiContext,
     logic::{pdnf_context, QuantifiedContext},
 };
-use fly::{quant::QuantifierConfig, syntax::Module};
+use fly::{
+    quant::QuantifierConfig,
+    syntax::{BinOp, Module, Term},
+};
 use formats::basics::FOModule;
+use im::HashMap;
 use itertools::Itertools;
 use solver::basics::BasicSolver;
 
@@ -69,7 +73,7 @@ pub fn get_context_for_module<B: BasicSolver>(
     let mut contexts = vec![];
 
     let size = cfg.quant_cfg.num_vars();
-    let literals: Vec<_> = generate_literals(
+    let mut literals: Vec<_> = generate_literals(
         &m.signature,
         &cfg.quant_cfg,
         cfg.qf_cfg.nesting,
@@ -77,18 +81,41 @@ pub fn get_context_for_module<B: BasicSolver>(
         &cfg.fo,
         solver,
     );
-    let atoms: Vec<_> = literals
+    let universal_vars = cfg.quant_cfg.strictly_universal_vars();
+    literals.retain(|lit| match (lit.0.as_ref(), lit.1) {
+        (Term::BinOp(BinOp::Equals, t1, t2), false) => match (t1.as_ref(), t2.as_ref()) {
+            (Term::Id(name1), Term::Id(name2)) => {
+                !universal_vars.contains(name1) && !universal_vars.contains(name2)
+            }
+            (Term::Id(name), _) | (_, Term::Id(name)) => !universal_vars.contains(name),
+            _ => true,
+        },
+        _ => true,
+    });
+    let bool_terms: Vec<_> = literals
         .iter()
         .map(|l| l.0.as_ref().clone())
         .unique()
         .collect();
+    let mut bool_map: HashMap<Term, Option<bool>> = HashMap::new();
+    for lit in &literals {
+        let e = bool_map.entry(lit.0.as_ref().clone()).or_default();
+        match &e {
+            Some(b) if *b != lit.1 => *e = None,
+            None => *e = Some(lit.1),
+            _ => (),
+        }
+    }
+    let bool_atoms = (0..bool_terms.len())
+        .map(|i| (i, bool_map[&bool_terms[i]]))
+        .collect_vec();
     for prefix in cfg.quant_cfg.exact_prefixes(size, size) {
         contexts.push(QuantifiedContext {
             prefix,
-            bool_terms: atoms.clone(),
+            bool_terms: bool_terms.clone(),
             int_terms: vec![],
             prop_cont: pdnf_context(
-                (0..atoms.len()).collect(),
+                bool_atoms.clone(),
                 IneqTemplates::new(false),
                 cfg.qf_cfg.clause_size,
                 cfg.qf_cfg.cubes,
