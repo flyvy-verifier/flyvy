@@ -19,7 +19,7 @@ use fly::syntax::{Module, Signature, Term};
 
 use bounded::simulator::{MultiSimulator, SatSimulator};
 
-use formats::basics::{CexResult, FOModule};
+use formats::basics::{CexResult, FOModule, TCexResult, TStructure};
 
 use crate::{
     hashmap::{HashMap, HashSet},
@@ -30,6 +30,8 @@ use crate::{
     },
     utils::SimulationConfig,
 };
+
+use super::lemmas::GeneralModel;
 
 macro_rules! timed {
     ($blk:block) => {{
@@ -332,8 +334,46 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         ctis
     }
 
+    /// Get an initial state which violates one of the frame's lemmas.
+    pub fn init_cex_t<S: BasicSolver>(&self, fo: &FOModule, solver: &S) -> Vec<TStructure> {
+        self.log_info("Finding initial CTI...");
+        let results = ParallelWorker::new(
+            &mut self.weaken_lemmas.keys().map(|key| (*key, *key)).collect(),
+            |_, key| {
+                {
+                    let manager = self.lemmas.read().unwrap();
+                    if manager.blocked_to_core.contains_key(key) {
+                        return (None, vec![], false);
+                    }
+                }
+
+                let term = self.weaken_lemmas.key_to_term(key);
+                let quant = self.weaken_lemmas.key_to_quant(key);
+                let res = fo.init_cex_t(solver, &quant, &term);
+                let found = res.is_some();
+                return (res, vec![], found);
+            },
+        )
+        .run(self.solver_parallelism);
+
+        let mut ctis = vec![];
+        let mut manager = self.lemmas.write().unwrap();
+        for (key, out) in results {
+            match out {
+                Some(model) => ctis.push(model),
+                None => {
+                    manager.blocked_to_core.insert(key, Blocked::Initial);
+                }
+            }
+        }
+
+        self.log_info(format!("{} initial CTI(s) found.", ctis.len()));
+
+        ctis
+    }
+
     /// Weaken the lemmas in the frame.
-    pub fn weaken(&mut self, models: &[Model]) -> bool {
+    pub fn weaken(&mut self, models: &[GeneralModel]) -> bool {
         let mut changed = false;
         let weaken_time = timed!({
             for model in models {
@@ -364,7 +404,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         changed
     }
 
-    pub fn remove_unsat(&mut self, models: &[Model]) {
+    pub fn remove_unsat(&mut self, models: &[GeneralModel]) {
         let removed = models
             .iter()
             .flat_map(|model| {
@@ -659,6 +699,187 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         ctis
     }
 
+    /// Get an post-state of the frame which violates one of the frame's lemmas.
+    pub fn trans_cex_t<S: BasicSolver>(
+        &self,
+        fo: &FOModule,
+        solver: &S,
+        cancelers: MultiCanceler<MultiCanceler<S::Canceler>>,
+    ) -> Vec<TStructure> {
+        self.log_info("Finding transition CTI...");
+        let mut tasks = if self.property_directed {
+            let manager = self.lemmas.read().unwrap();
+            manager
+                .safety_core
+                .as_ref()
+                .unwrap()
+                .constituents()
+                .into_iter()
+                .map(|key| ((0_u8, key), key))
+                .collect()
+        } else {
+            self.weaken_lemmas
+                .keys()
+                .map(|key| ((1_u8, *key), *key))
+                .collect()
+        };
+
+        let first_sat = Mutex::new(None);
+        let start_time = Instant::now();
+        // The tasks here are lemmas ID's, and each result is an Option<CexResult>.
+        let results = ParallelWorker::new(
+            &mut tasks,
+            |(check_implied, _), key| {
+                let previous: Vec<LemmaKey>;
+                {
+                    let blocked = self.lemmas.read().unwrap();
+                    if let Some(core) = blocked.blocked_to_core.get(key) {
+                        return (
+                            None,
+                            core.constituents()
+                                .into_iter()
+                                .map(|k| ((1, k), k))
+                                .collect(),
+                            false,
+                        );
+                    }
+                    previous = blocked.core_to_blocked.keys().cloned().sorted().collect();
+                }
+
+                let (mut permanent, try_first): (Vec<_>, Vec<_>) = previous.into_iter().partition(|k| k.is_universal());
+                let permanent_imply = permanent.iter().filter(|k| *k < key).cloned().collect();
+                let try_first_imply = try_first.iter().filter(|k| *k < key).cloned().collect();
+
+                let idx = self.key_to_idx[key];
+                let term = self.weaken_lemmas.key_to_term(key);
+                let quant = self.weaken_lemmas.key_to_quant(key);
+                self.log_info(format!("            ({idx}) Checking formula (permanent={}): {term}", permanent.len()));
+                // Check if the lemma is implied by the lemmas preceding it.
+                if *check_implied == 1 {
+                    let query_start = Instant::now();
+                    // If that fails, use a semantic implication check.
+                    let res = fo.implication_cex(
+                        solver,
+                        &self.weaken_lemmas.hypotheses(permanent_imply, Some(*key), try_first_imply),
+                        &term,
+                        Some(cancelers.clone()),
+                        false,
+                    );
+                    if let CexResult::UnsatCore(core) = res {
+                        self.log_info(format!(
+                            "{:>8}ms. ({idx}) Semantic implication found UNSAT with {} formulas in core",
+                            query_start.elapsed().as_millis(),
+                            core.len(),
+                        ));
+                        let blocking_core = Blocked::Consequence(core.iter().cloned().collect());
+                        {
+                            let mut manager = self.lemmas.write().unwrap();
+                            manager.add_blocked(*key, blocking_core);
+                        }
+                        let core_tasks = core.iter().cloned().map(|k| ((0, k), k)).collect();
+                        return (Some(TCexResult::UnsatCore(core)), core_tasks, false);
+                    }
+                }
+
+                // Check if the lemma is inductively implied by the entire frame.
+                if !permanent.contains(key) {
+                    permanent.push(*key);
+                }
+                let query_start = Instant::now();
+                let res = fo.trans_cex_t(
+                    solver,
+                    &quant,
+                    &self.weaken_lemmas.hypotheses(permanent, None, try_first),
+                    &term,
+                    false,
+                    Some(cancelers.clone()),
+                    false,
+                );
+                match &res {
+                    TCexResult::Cex(tstruct) => {
+                        cancelers.cancel();
+                        {
+                            let mut first_sat_lock = first_sat.lock().unwrap();
+                            if first_sat_lock.is_none() {
+                                *first_sat_lock = Some(Instant::now());
+                            }
+                        }
+                        self.log_info(format!(
+                            "{:>8}ms. ({idx}) Transition found SAT with T-structure size {:?}",
+                            query_start.elapsed().as_millis(),
+                            tstruct.1.len()
+                        ));
+                        (Some(res), vec![], true)
+                    }
+                    TCexResult::UnsatCore(core) => {
+                        self.log_info(format!(
+                            "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
+                            query_start.elapsed().as_millis(),
+                            core.len()
+                        ));
+                        let core = Blocked::Transition(core.iter().cloned().collect());
+                        let core_tasks = core
+                            .constituents()
+                            .into_iter()
+                            .map(|k| ((0, k), k))
+                            .collect();
+                        {
+                            let mut manager = self.lemmas.write().unwrap();
+                            manager.add_blocked(*key, core);
+                        }
+                        (Some(res), core_tasks, false)
+                    }
+                    TCexResult::Canceled => (Some(res), vec![], true),
+                    TCexResult::Unknown(reason) => {
+                        self.log_info(format!(
+                            "{:>8}ms. ({idx}) Transition found unknown: {reason}",
+                            query_start.elapsed().as_millis()
+                        ));
+                        (Some(res), vec![], false)
+                    }
+                }
+            },
+        )
+        .run(self.solver_parallelism);
+
+        cancelers.cancel();
+
+        let mut ctis = vec![];
+        let mut total_sat = 0_usize;
+        let mut total_unsat = 0_usize;
+        let mut unknown = false;
+        for (_, out) in results {
+            match out {
+                Some(TCexResult::Cex(tstruct)) => {
+                    total_sat += 1;
+                    ctis.push(tstruct);
+                }
+                Some(TCexResult::UnsatCore(_)) => {
+                    total_unsat += 1;
+                }
+                Some(TCexResult::Unknown(_)) => {
+                    unknown = true;
+                }
+                _ => (),
+            }
+        }
+
+        if ctis.is_empty() && unknown {
+            panic!("SMT queries got 'unknown' and no SAT results.")
+        }
+
+        self.log_info(format!(
+            "    SMT STATS: total_time={:.5}s, until_sat={:.5}s, sat_found={}, unsat_found={}",
+            (Instant::now() - start_time).as_secs_f64(),
+            (first_sat.into_inner().unwrap().unwrap_or(start_time) - start_time).as_secs_f64(),
+            total_sat,
+            total_unsat,
+        ));
+        self.log_info(format!("{} transition CTI(s) found.", ctis.len()));
+
+        ctis
+    }
+
     /// Return whether the current frame inductively implies the safety assertions
     /// of the given module.
     pub fn is_safe<S: BasicSolver>(
@@ -745,15 +966,18 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                 self.simulator.initials_new(&u)
             })
             .sorted_by_key(|model| sample_priority(&self.sim_config, &model.universe, 0).unwrap())
+            .map(GeneralModel::Model)
             .collect_vec();
         self.log_info(format!("Gathered {} initial states.", models.len()));
         self.weaken(&models);
         let mut samples = Tasks::new();
         for model in models {
-            samples.insert(
-                sample_priority(&self.sim_config, &model.universe, 0).unwrap(),
-                model,
-            )
+            if let GeneralModel::Model(model) = model {
+                samples.insert(
+                    sample_priority(&self.sim_config, &model.universe, 0).unwrap(),
+                    model,
+                );
+            }
         }
 
         samples

@@ -5,6 +5,7 @@
 //! lemma domain.
 
 use fly::semantics::Model;
+use itertools::Itertools;
 use solver::{
     basics::{BasicCanceler, MultiCanceler},
     parallel::{parallelism, Tasks},
@@ -54,6 +55,8 @@ pub enum TraversalDepth {
 }
 
 use TraversalDepth::*;
+
+use super::lemmas::GeneralModel;
 
 impl TraversalDepth {
     pub fn depth(&self) -> usize {
@@ -327,7 +330,11 @@ pub fn qalpha<L, S>(
     let log_domain_size = lang.log_size();
     println!("Approximate domain size: 10^{log_domain_size:.2}");
 
-    let fixpoint = run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo);
+    let fixpoint = if cfg.use_contexts {
+        run_qalpha_t::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo)
+    } else {
+        run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo)
+    };
     fixpoint.report(print_nondet);
 }
 
@@ -482,14 +489,20 @@ where
     // Overapproximate initial states.
     if cfg.strategy.is_weaken() {
         loop {
-            let ctis = frame.init_cex(fo, solver);
+            let ctis = frame
+                .init_cex(fo, solver)
+                .into_iter()
+                .map(GeneralModel::Model)
+                .collect_vec();
             if ctis.is_empty() {
                 break;
             }
             frame.weaken(&ctis);
             for cex in ctis {
-                frame.see(&cex);
-                samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
+                if let GeneralModel::Model(cex) = cex {
+                    frame.see(&cex);
+                    samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
+                }
             }
         }
 
@@ -500,7 +513,7 @@ where
     let mut run_sim = !samples.is_empty();
     let mut run_smt = cfg.strategy.is_weaken() || (cfg.strategy.is_houdini() && !run_sim);
     while run_sim || run_smt {
-        let mut ctis: Vec<Model> = vec![];
+        let mut ctis: Vec<GeneralModel> = vec![];
         let canceler = MultiCanceler::new();
         // Get new samples and CTI's, and if enabled, check the safety of the frame.
         let not_safe = thread::scope(|s| {
@@ -513,7 +526,11 @@ where
             });
 
             ctis = if run_sim {
-                frame.extend(&mut samples, canceler.clone())
+                frame
+                    .extend(&mut samples, canceler.clone())
+                    .into_iter()
+                    .map(GeneralModel::Model)
+                    .collect()
             } else {
                 vec![]
             };
@@ -533,7 +550,7 @@ where
                     );
                 }
             }
-            ctis.extend(smt_cti);
+            ctis.extend(smt_cti.into_iter().map(GeneralModel::Model));
 
             false
         });
@@ -653,4 +670,96 @@ where
     }
 
     Some(frame.trans_cex(fo, solver, canceler))
+}
+
+/// Run the qalpha algorithm on the configured lemma domains.
+fn run_qalpha_t<L, S>(
+    cfg: Arc<QalphaConfig>,
+    lang: Arc<L>,
+    solver: &S,
+    m: &Module,
+    fo: &FOModule,
+) -> FoundFixpoint
+where
+    L: BoundedLanguage,
+    S: BasicSolver,
+{
+    assert!(matches!(cfg.strategy, Strategy::Weaken));
+    let start = std::time::Instant::now();
+
+    let mut frame: InductionFrame<L> = InductionFrame::new(
+        m,
+        m.signature.clone(),
+        lang,
+        cfg.sim.clone(),
+        cfg.strategy.property_directed(),
+        parallelism() / (2 * cfg.seeds),
+    );
+
+    let mut total_states = 0;
+
+    // Overapproximate initial states.
+    loop {
+        let ctis = frame
+            .init_cex_t(fo, solver)
+            .into_iter()
+            .map(GeneralModel::TStructure)
+            .collect_vec();
+        if ctis.is_empty() {
+            break;
+        }
+        total_states += ctis.len();
+        frame.weaken(&ctis);
+    }
+
+    frame.finish_initial();
+
+    // Handle transition CTI's.
+    loop {
+        let canceler = MultiCanceler::new();
+        let ctis = frame
+            .trans_cex_t(fo, solver, canceler)
+            .into_iter()
+            .map(GeneralModel::TStructure)
+            .collect_vec();
+        if ctis.is_empty() {
+            break;
+        }
+        total_states += ctis.len();
+        frame.weaken(&ctis);
+    }
+
+    if !matches!(cfg.strategy, Strategy::None) {
+        frame.log_info("Checking safety...");
+        frame.is_safe(fo, solver, None);
+    }
+    let time = start.elapsed();
+    let proof = frame.proof();
+    let reduced_proof = frame.reduced_proof();
+    let safety_proof = frame.safety_proof();
+    let covering = reduced_proof
+        .as_ref()
+        .map(|reduced| invariant_cover(m, solver, fo, reduced));
+    let success = match cfg.strategy {
+        Strategy::None => true,
+        Strategy::Houdini => reduced_proof.is_some(),
+        Strategy::HoudiniPd => safety_proof.is_some(),
+        Strategy::Weaken => reduced_proof.is_some(),
+        Strategy::WeakenPd => safety_proof.is_some(),
+    };
+
+    FoundFixpoint::new(
+        time,
+        success,
+        proof,
+        frame.weaken_lemmas.len(),
+        frame.weaken_lemmas.max_size,
+        reduced_proof,
+        safety_proof,
+        covering,
+        total_states,
+        total_states,
+        frame.weaken_stats(),
+        frame.get_unsat_stats(),
+    )
 }

@@ -21,6 +21,7 @@ use fly::{
     syntax::{NOp, Quantifier, Sort, Term, UOp},
     term::subst::Substitution,
 };
+use formats::basics::{QuantifiedSetting, TInterp, TStructure};
 
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -165,6 +166,35 @@ pub trait BoundedLanguage: Sync + Send {
     where
         I: Fn(&Self::Formula) -> bool + Send + Sync;
 
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync;
+
+    fn weaken_tstruct<I>(
+        &self,
+        f: &Self::Formula,
+        tstruct: &TStructure,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        assert!(!f.eval_tstruct(tstruct));
+        let weakenings: Vec<_> = tstruct
+            .1
+            .par_iter()
+            .flat_map_iter(|tinterp| self.weaken_tinterp(f, &tstruct.0, tinterp, &ignore))
+            .collect();
+
+        Self::minimize(empty(), weakenings)
+    }
+
     fn simplify(&self, f: &Self::Formula) -> Vec<Term>;
 
     fn weaken_set<I>(&self, set: &mut Self::Set, model: &Model, assignment: &Assignment, ignore: I)
@@ -190,12 +220,23 @@ pub trait BoundedLanguage: Sync + Send {
     }
 
     fn log_size(&self) -> f64;
+
+    fn quant_setting(&self, f: &Self::Formula) -> QuantifiedSetting;
 }
 
 pub trait BoundedFormula: Ord + Hash + Clone + Sync + Send + Debug {
     fn subsumes(&self, other: &Self) -> bool;
 
     fn eval(&self, model: &Model, assignment: &Assignment) -> bool;
+
+    fn eval_tinterp(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> bool;
+
+    fn eval_tstruct(&self, tstruct: &TStructure) -> bool {
+        tstruct
+            .1
+            .iter()
+            .any(|tinterp| self.eval_tinterp(&tstruct.0, tinterp))
+    }
 
     fn substitute(&self, substitution: &Substitution) -> Self;
 
@@ -226,6 +267,8 @@ pub trait FormulaSet:
     fn get_subsuming(&self, f: &Self::Formula) -> Vec<FormulaId>;
 
     fn get_unsat(&self, model: &Model, assignment: &Assignment) -> Vec<FormulaId>;
+
+    fn get_unsat_t(&self, tstruct: &TStructure) -> Vec<FormulaId>;
 
     fn len(&self) -> usize {
         self.as_ref().len()
@@ -266,6 +309,13 @@ pub trait FormulaSet:
 
     fn get_unsat_formulas(&mut self, model: &Model, assignment: &Assignment) -> Vec<Self::Formula> {
         self.get_unsat(model, assignment)
+            .iter()
+            .map(|id| self.remove(id))
+            .collect_vec()
+    }
+
+    fn get_unsat_formulas_t(&mut self, tstruct: &TStructure) -> Vec<Self::Formula> {
+        self.get_unsat_t(tstruct)
             .iter()
             .map(|id| self.remove(id))
             .collect_vec()
@@ -353,6 +403,46 @@ impl<S: FormulaSet<Formula = Bounded<Literal>>> BoundedLanguage for EqLanguage<L
     fn log_size(&self) -> f64 {
         ((self.0.len() + 1) as f64).log10()
     }
+
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        match f {
+            Bounded::Bottom => self
+                .0
+                .iter()
+                .filter(|literal| literal.eval_tinterp(prefix, tinterp))
+                .cloned()
+                .flat_map(|literal| apply_reduction(&self.1, self, literal))
+                .filter(|literal| !ignore(literal))
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    fn quant_setting(&self, _: &Self::Formula) -> QuantifiedSetting {
+        let terms = self
+            .0
+            .iter()
+            .filter_map(|b| match b {
+                Bounded::Bottom => None,
+                Bounded::Some(l) => Some(l.0.as_ref().clone()),
+            })
+            .unique()
+            .collect();
+
+        QuantifiedSetting {
+            prefix: None,
+            terms,
+        }
+    }
 }
 
 impl<L: Ord> PartialOrd for Bounded<L> {
@@ -381,6 +471,13 @@ impl BoundedFormula for Bounded<Literal> {
         match self {
             Bounded::Bottom => false,
             Bounded::Some(l) => model.eval_assign(&l.0, assignment) == l.1 as Element,
+        }
+    }
+
+    fn eval_tinterp(&self, _: &QuantifierPrefix, tinterp: &TInterp) -> bool {
+        match self {
+            Bounded::Bottom => false,
+            Bounded::Some(l) => tinterp[l.0.as_ref()] == l.1,
         }
     }
 
@@ -470,6 +567,10 @@ impl FormulaSet for EqSet<Literal> {
             .map(|(_, id)| *id)
             .collect()
     }
+
+    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
+        unimplemented!()
+    }
 }
 
 // ========== Binary OR ==========
@@ -539,6 +640,29 @@ where
             .collect()
     }
 
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        let (w0, w1) = rayon::join(
+            || self.0.weaken_tinterp(&f.0, prefix, tinterp, |_| false),
+            || self.1.weaken_tinterp(&f.1, prefix, tinterp, |_| false),
+        );
+
+        w0.into_iter()
+            .map(|f0| BinOr(f0, f.1.clone()))
+            .chain(w1.into_iter().map(|f1| BinOr(f.0.clone(), f1)))
+            .flat_map(|x| apply_reduction(&self.2, self, x))
+            .filter(|x| !ignore(x))
+            .collect()
+    }
+
     fn simplify(&self, f: &Self::Formula) -> Vec<Term> {
         match self.3.as_ref() {
             Some(simplify) => (simplify)(self, f),
@@ -548,6 +672,16 @@ where
 
     fn log_size(&self) -> f64 {
         self.0.log_size() + self.1.log_size()
+    }
+
+    fn quant_setting(&self, f: &Self::Formula) -> QuantifiedSetting {
+        let q1 = self.0.quant_setting(&f.0);
+        let q2 = self.1.quant_setting(&f.1);
+
+        QuantifiedSetting {
+            prefix: None,
+            terms: q1.terms.into_iter().chain(q2.terms).unique().collect(),
+        }
     }
 }
 
@@ -573,6 +707,10 @@ impl<F1: BoundedFormula, F2: BoundedFormula> BoundedFormula for BinOr<F1, F2> {
 
     fn eval(&self, model: &Model, assignment: &Assignment) -> bool {
         self.0.eval(model, assignment) || self.1.eval(model, assignment)
+    }
+
+    fn eval_tinterp(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> bool {
+        self.0.eval_tinterp(prefix, tinterp) || self.1.eval_tinterp(prefix, tinterp)
     }
 
     fn substitute(&self, substitution: &Substitution) -> Self {
@@ -695,6 +833,10 @@ impl<S1: FormulaSet, S2: FormulaSet> FormulaSet for BinOrSet<S1, S2> {
             })
             .collect()
     }
+
+    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
+        unimplemented!()
+    }
 }
 
 // ========== N-ary OR ==========
@@ -811,6 +953,65 @@ where
         )
     }
 
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        // If possible, add a weakening of bottom to the disjunction.
+        let bottom_weakenings: Vec<Self::Formula> = if f.0.len() < self.size {
+            self.language
+                .weaken_tinterp(&self.language.bottom(), prefix, tinterp, |_| false)
+                .into_iter()
+                .map(|bot_w| {
+                    let mut w = f.clone();
+                    let disjuncts = Arc::make_mut(&mut w.0);
+                    disjuncts.push(bot_w);
+                    disjuncts.sort();
+                    w
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
+        // Always also try to weaken one of the disjuncts.
+        let disj_weakenings: HashSet<Self::Formula> =
+            f.0.par_iter()
+                .enumerate()
+                .flat_map_iter(|(i, disj)| {
+                    let mut f_removed = f.clone();
+                    Arc::make_mut(&mut f_removed.0).remove(i);
+                    self.language
+                        .weaken_tinterp(disj, prefix, tinterp, |_| false)
+                        .into_iter()
+                        .map(move |disj_w| (f_removed.clone(), disj_w))
+                })
+                .map(|(f_removed, disj_w)| {
+                    let mut w = f_removed.clone();
+                    let disjuncts = Arc::make_mut(&mut w.0);
+                    disjuncts.push(disj_w);
+                    disjuncts.sort();
+                    w
+                })
+                .collect();
+
+        // Keep minimal weakenings only.
+        Self::minimize(
+            empty(),
+            bottom_weakenings
+                .into_iter()
+                .flat_map(|x| apply_reduction(&self.reduction, self, x))
+                .filter(|x| !ignore(x))
+                .chain(disj_weakenings),
+        )
+    }
+
     fn simplify(&self, f: &Self::Formula) -> Vec<Term> {
         match self.simplify.as_ref() {
             Some(simplify) => (simplify)(self, f),
@@ -822,6 +1023,15 @@ where
         // The size is approximated as n^k, where n is the sub-language size and k is the length of the disjunction.
         // With this, log10(n^k) = k * log10(n).
         (self.size as f64) * self.language.log_size()
+    }
+
+    fn quant_setting(&self, _: &Self::Formula) -> QuantifiedSetting {
+        let terms = self.language.quant_setting(&self.language.bottom()).terms;
+
+        QuantifiedSetting {
+            prefix: None,
+            terms,
+        }
     }
 }
 
@@ -862,6 +1072,10 @@ impl<F: BoundedFormula> BoundedFormula for Or<F> {
 
     fn eval(&self, model: &Model, assignment: &Assignment) -> bool {
         self.0.iter().any(|f| f.eval(model, assignment))
+    }
+
+    fn eval_tinterp(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> bool {
+        self.0.iter().any(|f| f.eval_tinterp(prefix, tinterp))
     }
 
     fn substitute(&self, substitution: &Substitution) -> Self {
@@ -1112,6 +1326,10 @@ impl<S: FormulaSet> FormulaSet for OrSet<S> {
     fn get_unsat(&self, model: &Model, assignment: &Assignment) -> Vec<FormulaId> {
         self.trie.get_unsat_or(model, assignment)
     }
+
+    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
+        unimplemented!()
+    }
 }
 
 // ========== N-ary AND ==========
@@ -1190,6 +1408,38 @@ where
         }
     }
 
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        let (sat, unsat): (Vec<_>, Vec<_>) =
+            f.0.iter()
+                .partition(|conj| conj.eval_tinterp(prefix, tinterp));
+        let conj_weakenings: HashSet<_> = unsat
+            .par_iter()
+            .flat_map_iter(|conj| self.0.weaken_tinterp(conj, prefix, tinterp, |_| false))
+            .collect();
+
+        let mut v = L::minimize(sat.into_iter().cloned(), conj_weakenings);
+        v.sort();
+        if v.is_empty() {
+            return vec![];
+        }
+
+        let and = apply_reduction(&self.1, self, And(Arc::new(v)));
+        if and.first().is_some_and(ignore) {
+            vec![]
+        } else {
+            and
+        }
+    }
+
     fn simplify(&self, f: &Self::Formula) -> Vec<Term> {
         match self.2.as_ref() {
             Some(simplify) => (simplify)(self, f),
@@ -1201,6 +1451,15 @@ where
         // The size is equal to 2^n, where n is the sub-language size.
         // With this, log10(2^n) = n * log10(2)
         10_f64.powf(self.0.log_size()) * 2_f64.log10()
+    }
+
+    fn quant_setting(&self, _: &Self::Formula) -> QuantifiedSetting {
+        let terms = self.0.quant_setting(&self.0.bottom()).terms;
+
+        QuantifiedSetting {
+            prefix: None,
+            terms,
+        }
     }
 }
 
@@ -1252,6 +1511,10 @@ impl<F: BoundedFormula> BoundedFormula for And<F> {
 
     fn eval(&self, model: &Model, assignment: &Assignment) -> bool {
         self.0.iter().all(|f| f.eval(model, assignment))
+    }
+
+    fn eval_tinterp(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> bool {
+        self.0.iter().all(|f| f.eval_tinterp(prefix, tinterp))
     }
 
     fn substitute(&self, substitution: &Substitution) -> Self {
@@ -1372,6 +1635,10 @@ impl<S: FormulaSet> FormulaSet for AndSet<S> {
             .filter(|(_, id_seq)| !id_seq.is_disjoint(&unsat_conj))
             .map(|(id, _)| *id)
             .collect()
+    }
+
+    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
+        unimplemented!()
     }
 }
 
@@ -1654,6 +1921,61 @@ where
         Self::minimize(empty(), weakenings)
     }
 
+    fn weaken_tinterp<I>(
+        &self,
+        f: &Self::Formula,
+        prefix: &QuantifierPrefix,
+        tinterp: &TInterp,
+        ignore: I,
+    ) -> Vec<Self::Formula>
+    where
+        I: Fn(&Self::Formula) -> bool + Send + Sync,
+    {
+        // Currently not supporting fmap at this level; not very well defined.
+        assert!(self.reduction.is_none());
+        assert_eq!(f.prefix.quantifiers, prefix.quantifiers);
+
+        let prefixes: Vec<_> = f
+            .prefix
+            .quantifiers
+            .iter()
+            .zip(self.cfg.quantifiers.iter())
+            .map(|q| match q {
+                (Quantifier::Exists, _) => vec![Quantifier::Exists],
+                (_, None) => vec![Quantifier::Forall, Quantifier::Exists],
+                _ => vec![Quantifier::Forall],
+            })
+            .multi_cartesian_product_fixed()
+            .collect();
+
+        let weakenings: Vec<Self::Formula> = prefixes
+            .iter()
+            .flat_map(|this_prefix| {
+                if &prefix.quantifiers != this_prefix {
+                    return vec![self.canonicalize(self.add_prefix(f.body.clone(), this_prefix))];
+                }
+
+                let new_f = self.add_prefix(f.body.clone(), this_prefix);
+                // The following checks are needed, because weaken assumes that the provided formulas aren't satisfied.
+                if ignore(&new_f) {
+                    vec![]
+                } else if new_f.eval_tinterp(prefix, tinterp) {
+                    vec![self.canonicalize(new_f)]
+                } else {
+                    let my_ignore =
+                        |f: &L::Formula| ignore(&self.add_prefix(f.clone(), this_prefix));
+                    self.language
+                        .weaken_tinterp(&f.body, prefix, tinterp, my_ignore)
+                        .into_iter()
+                        .map(move |body| self.canonicalize(self.add_prefix(body, this_prefix)))
+                        .collect()
+                }
+            })
+            .collect();
+
+        Self::minimize(empty(), weakenings)
+    }
+
     fn simplify(&self, f: &Self::Formula) -> Vec<Term> {
         match self.simplify.as_ref() {
             Some(simplify) => (simplify)(self, f),
@@ -1672,6 +1994,18 @@ where
                     _ => 0_f64,
                 })
                 .sum::<f64>()
+    }
+
+    fn quant_setting(&self, f: &Self::Formula) -> QuantifiedSetting {
+        let prefix = QuantifierPrefix {
+            quantifiers: f.prefix.quantifiers.clone(),
+            sorts: self.cfg.sorts.clone(),
+            names: self.cfg.names.clone(),
+        };
+        QuantifiedSetting {
+            prefix: Some(prefix),
+            terms: self.language.quant_setting(&f.body).terms,
+        }
     }
 }
 
@@ -1769,6 +2103,10 @@ impl<F: BoundedFormula> BoundedFormula for Quant<F> {
 
     fn eval(&self, model: &Model, assignment: &Assignment) -> bool {
         self.eval_rec(0, model, assignment)
+    }
+
+    fn eval_tinterp(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> bool {
+        self.prefix.quantifiers != prefix.quantifiers || self.body.eval_tinterp(prefix, tinterp)
     }
 
     fn substitute(&self, substitution: &Substitution) -> Self {
@@ -2014,6 +2352,10 @@ impl<S: FormulaSet> FormulaSet for QuantSet<S> {
             })
             .collect()
     }
+
+    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
+        unimplemented!()
+    }
 }
 
 // ========== Baseline Set ==========
@@ -2067,6 +2409,15 @@ impl<F: BoundedFormula> FormulaSet for BaselineSet<F> {
             .to
             .par_iter()
             .filter(|(x, _)| !x.eval(model, assignment))
+            .map(|(_, id)| *id)
+            .collect()
+    }
+
+    fn get_unsat_t(&self, tstruct: &TStructure) -> Vec<FormulaId> {
+        self.0
+            .to
+            .par_iter()
+            .filter(|(x, _)| !x.eval_tstruct(tstruct))
             .map(|(_, id)| *id)
             .collect()
     }

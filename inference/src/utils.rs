@@ -63,6 +63,8 @@ pub struct QalphaConfig {
     pub seeds: usize,
 
     pub baseline: bool,
+
+    pub use_contexts: bool,
 }
 
 pub fn get_context_for_module<B: BasicSolver>(

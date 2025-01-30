@@ -21,7 +21,7 @@ use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Term},
 };
-use formats::basics::OrderedTerms;
+use formats::basics::{OrderedTerms, QuantifiedSetting, TStructure};
 
 macro_rules! timed {
     ($blk:block) => {{
@@ -29,6 +29,11 @@ macro_rules! timed {
         $blk
         start.elapsed()
     }};
+}
+
+pub enum GeneralModel {
+    Model(Model),
+    TStructure(TStructure),
 }
 
 /// Manages lemmas from a [`BoundedLanguage`] and allows weakening them simultaneously.
@@ -39,6 +44,7 @@ pub struct WeakenLemmaSet<L: BoundedLanguage> {
     rev_sorted: HashMap<Term, (LemmaKey, FormulaId)>,
     total: FormulaId,
     pub max_size: usize,
+    quant_settings: HashMap<LemmaKey, QuantifiedSetting>,
 }
 pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
     set: &'a WeakenLemmaSet<L>,
@@ -93,6 +99,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
             rev_sorted: HashMap::default(),
             total: 0,
             max_size: 0,
+            quant_settings: HashMap::default(),
         }
     }
 
@@ -128,6 +135,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
     fn insert(&mut self, f: L::Formula) -> Vec<LemmaKey> {
         let simplified = self.lang.simplify(&f);
+        let quant = self.lang.quant_setting(&f);
         self.set.insert(f);
 
         simplified
@@ -141,6 +149,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
                     self.total += 1;
                     assert!(self.sorted.insert(key, term.clone()).is_none());
                     assert!(self.rev_sorted.insert(term, (key, 1)).is_none());
+                    assert!(self.quant_settings.insert(key, quant.clone()).is_none());
                     Some(key)
                 }
             })
@@ -158,6 +167,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
                 if *count == 0 {
                     let (key, _) = self.rev_sorted.remove(term).unwrap();
                     assert!(self.sorted.remove(&key).is_some());
+                    assert!(self.quant_settings.remove(&key).is_some());
                     Some(key)
                 } else {
                     None
@@ -170,7 +180,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         !self.set.get_unsat(model, &Assignment::new()).is_empty()
     }
 
-    pub fn weaken(&mut self, model: &Model) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
+    pub fn weaken(&mut self, model: &GeneralModel) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
         let start_time = Instant::now();
         let empty_assigment = Assignment::new();
 
@@ -180,7 +190,10 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let mut total_added = 0_usize;
 
         let unsat_time = timed!({
-            unsat = self.set.get_unsat_formulas(model, &empty_assigment);
+            unsat = match model {
+                GeneralModel::Model(model) => self.set.get_unsat_formulas(model, &empty_assigment),
+                GeneralModel::TStructure(tstruct) => self.set.get_unsat_formulas_t(tstruct),
+            }
         });
         for f in &unsat {
             removed.append(&mut self.remove(f));
@@ -192,7 +205,14 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let weaken_time = timed!({
             weakenings = unsat
                 .par_iter()
-                .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment, ignore))
+                .flat_map_iter(|f| match model {
+                    GeneralModel::Model(model) => {
+                        self.lang.weaken(f, model, &empty_assigment, ignore)
+                    }
+                    GeneralModel::TStructure(tstruct) => {
+                        self.lang.weaken_tstruct(f, tstruct, ignore)
+                    }
+                })
                 .collect::<Vec<_>>();
         });
 
@@ -228,11 +248,14 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         (removed, added)
     }
 
-    pub fn remove_unsat(&mut self, model: &Model) -> Vec<LemmaKey> {
+    pub fn remove_unsat(&mut self, model: &GeneralModel) -> Vec<LemmaKey> {
         let start_time = Instant::now();
         let empty_assigment = Assignment::new();
 
-        let unsat = self.set.get_unsat_formulas(model, &empty_assigment);
+        let unsat = match model {
+            GeneralModel::Model(model) => self.set.get_unsat_formulas(model, &empty_assigment),
+            GeneralModel::TStructure(tstruct) => self.set.get_unsat_formulas_t(tstruct),
+        };
         let mut removed: Vec<LemmaKey> = vec![];
 
         for f in &unsat {
@@ -274,6 +297,10 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
     pub fn key_to_term(&self, key: &LemmaKey) -> Term {
         self.sorted[key].clone()
+    }
+
+    pub fn key_to_quant(&self, key: &LemmaKey) -> QuantifiedSetting {
+        self.quant_settings.get(key).unwrap().clone()
     }
 }
 

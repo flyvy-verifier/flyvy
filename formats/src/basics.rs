@@ -9,10 +9,10 @@ use std::{
     thread,
 };
 
-use fly::syntax::Term::*;
 use fly::syntax::*;
-use fly::term::{prime::clear_next, prime::Next};
+use fly::term::prime::{clear_next, Next};
 use fly::{ouritertools::OurItertools, semantics::Model, transitions::*};
+use fly::{quant::QuantifierPrefix, syntax::Term::*};
 use fly::{semantics::Evaluable, syntax::BinOp};
 use smtlib::{
     proc::{SatResp, SolverError},
@@ -39,6 +39,19 @@ pub enum CexResult<K: Eq + Hash> {
     Unknown(String),
 }
 
+#[derive(Debug)]
+/// The result of an SMT query looking for a TStructure counterexample
+pub enum TCexResult<K: Eq + Hash> {
+    /// The counterexample given as a TSturcture
+    Cex(TStructure),
+    /// An UNSAT-core sufficent for showing that the query has no counterexample
+    UnsatCore(HashSet<K>),
+    /// Indicates that the query has been canceled
+    Canceled,
+    /// An unknown query response
+    Unknown(String),
+}
+
 impl<K: Eq + Hash> CexResult<K> {
     /// Convert into an [`Option`], which either contains a counterexample or [`None`].
     pub fn into_trace(self) -> Option<Vec<Model>> {
@@ -55,6 +68,27 @@ impl<K: Eq + Hash> CexResult<K> {
         match self {
             CexResult::Cex(_, _) => true,
             CexResult::UnsatCore(_) => false,
+            _ => panic!("cex result is neither sat or unsat"),
+        }
+    }
+}
+
+impl<K: Eq + Hash> TCexResult<K> {
+    /// Convert into an [`Option`], which either contains a counterexample or [`None`].
+    pub fn into_model(self) -> Option<TStructure> {
+        match self {
+            TCexResult::Cex(tstruct) => Some(tstruct),
+            TCexResult::UnsatCore(_) => None,
+            _ => panic!("cex result is neither sat or unsat"),
+        }
+    }
+
+    /// Return `true` if the [`TCexResult`] contains a counterexample, or `false` if it contains an UNSAT-core.
+    /// If the query is either `Canceled` or `Unknown`, this panics.
+    pub fn is_cex(&self) -> bool {
+        match self {
+            TCexResult::Cex(_) => true,
+            TCexResult::UnsatCore(_) => false,
             _ => panic!("cex result is neither sat or unsat"),
         }
     }
@@ -343,6 +377,17 @@ impl FOModule {
             })
     }
 
+    /// Get an initial counterexample for the given term.
+    pub fn init_cex_t<B: BasicSolver>(
+        &self,
+        solver: &B,
+        quant: &QuantifiedSetting,
+        t: &Term,
+    ) -> Option<TStructure> {
+        self.implication_cex_t(solver, quant, &self.module.inits, t, None, false)
+            .into_model()
+    }
+
     /// Get a transition counterexample for the given term in the post-state, when assuming the given hypotheses in the pre-state.
     pub fn trans_cex<H, B, C>(
         &self,
@@ -455,6 +500,158 @@ impl FOModule {
         CexResult::UnsatCore(unsat_core)
     }
 
+    /// Get a transition counterexample for the given term in the post-state, when assuming the given hypotheses in the pre-state.
+    pub fn trans_cex_t<H, B, C>(
+        &self,
+        solver: &B,
+        quant: &QuantifiedSetting,
+        hyp: H,
+        t: &Term,
+        with_safety: bool,
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
+        save_tee: bool,
+    ) -> TCexResult<H::Key>
+    where
+        H: OrderedTerms<Eval = Model>,
+        C: BasicCanceler,
+        B: BasicSolver<Canceler = C>,
+    {
+        let transitions = self.disj_trans();
+        let local_cancelers: MultiCanceler<C> = MultiCanceler::new();
+
+        if cancelers
+            .as_ref()
+            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
+        {
+            return TCexResult::Canceled;
+        }
+
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.num_states(2);
+        query_conf.use_cancelers(local_cancelers.clone());
+        query_conf.model_option(ModelOption::Any);
+        query_conf.save_tee(save_tee);
+        let next = Next::new(&self.signature);
+        let mut assertions = self.module.axioms.clone();
+        assertions.extend(self.module.axioms.iter().map(|a| next.prime(a)));
+        if with_safety {
+            assertions.extend(self.module.proofs.iter().map(|p| p.safety.x.clone()))
+        }
+        assertions.push(Term::not(next.prime(t)));
+
+        let cex_results: Vec<TCexResult<H::Key>> = thread::scope(|s| {
+            transitions
+                .into_iter()
+                .map(|transition| {
+                    s.spawn(|| {
+                        let transition = transition;
+
+                        let mut local_assertions = assertions.clone();
+                        local_assertions.extend(transition.clone().into_iter().cloned());
+
+                        let res = hyp.find_cex(
+                            solver,
+                            &query_conf,
+                            &local_assertions,
+                            &self.smt_tactic,
+                            |m| m.trace()[0].clone(),
+                        );
+                        match res {
+                            CexResult::UnsatCore(core) => return TCexResult::UnsatCore(core),
+                            CexResult::Canceled => return TCexResult::Canceled,
+                            CexResult::Unknown(s) => return TCexResult::Unknown(s),
+                            _ => (),
+                        }
+
+                        let mut size = 1;
+                        loop {
+                            let extractor = quant.extractor(size);
+                            let signature = extractor.extend_signature(&self.signature);
+                            let next = Next::new(&signature);
+                            let mut query_conf = QueryConf::new(&signature);
+                            query_conf.num_states(2);
+                            query_conf.use_cancelers(local_cancelers.clone());
+                            query_conf.model_option(ModelOption::Any);
+                            query_conf.evaluate(extractor.to_evaluate());
+                            query_conf.save_tee(save_tee);
+                            let mut local_assertions = self.module.axioms.clone();
+                            local_assertions.extend(transition.clone().into_iter().cloned());
+                            local_assertions.push(extractor.not_satisfies(&t));
+                            local_assertions.push(next.prime(&extractor.term));
+                            let res = hyp.find_cex(
+                                solver,
+                                &query_conf,
+                                &local_assertions,
+                                &self.smt_tactic,
+                                |m| m.trace()[0].clone(),
+                            );
+
+                            match res {
+                                CexResult::Cex(_, values) => {
+                                    return TCexResult::Cex(extractor.extract(&values));
+                                }
+                                CexResult::UnsatCore(_) => (),
+                                CexResult::Canceled => return TCexResult::Canceled,
+                                CexResult::Unknown(s) => return TCexResult::Unknown(s),
+                            }
+
+                            size += 1;
+                        }
+                    })
+                })
+                .collect_vec()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect_vec()
+        });
+
+        // Check whether any counterexample has been found
+        if cex_results
+            .iter()
+            .any(|res| matches!(res, TCexResult::Cex(_)))
+        {
+            return cex_results
+                .into_iter()
+                .find(|res| matches!(res, TCexResult::Cex(_)))
+                .unwrap();
+        }
+
+        // Check whether any query has been canceled
+        if cex_results
+            .iter()
+            .any(|res| matches!(res, TCexResult::Canceled))
+        {
+            return TCexResult::Canceled;
+        }
+
+        // Check whether any query has returned 'unknown'
+        if cex_results
+            .iter()
+            .any(|res| matches!(res, TCexResult::Unknown(_)))
+        {
+            return TCexResult::Unknown(
+                cex_results
+                    .into_iter()
+                    .filter_map(|res| match res {
+                        TCexResult::Unknown(reason) => Some(reason),
+                        _ => None,
+                    })
+                    .join("\n"),
+            );
+        }
+
+        // Otherwise, all results must be UNSAT-cores
+        let unsat_core = cex_results
+            .into_iter()
+            .flat_map(|res| match res {
+                TCexResult::UnsatCore(core) => core,
+                _ => unreachable!(),
+            })
+            .collect();
+
+        TCexResult::UnsatCore(unsat_core)
+    }
+
     /// Get a (single-state) implication counterexamaple for the given term, when assuming the given hypotheses
     pub fn implication_cex<H, B, C>(
         &self,
@@ -486,6 +683,73 @@ impl FOModule {
         hyp.find_cex(solver, &query_conf, &assertions, &self.smt_tactic, |m| {
             m.trace()[0].clone()
         })
+    }
+
+    /// Get a (single-state) implication counterexamaple for the given term, when assuming the given hypotheses
+    pub fn implication_cex_t<H, B, C>(
+        &self,
+        solver: &B,
+        quant: &QuantifiedSetting,
+        hyp: H,
+        t: &Term,
+        cancelers: Option<MultiCanceler<MultiCanceler<C>>>,
+        save_tee: bool,
+    ) -> TCexResult<H::Key>
+    where
+        H: OrderedTerms<Eval = Model>,
+        C: BasicCanceler,
+        B: BasicSolver<Canceler = C>,
+    {
+        let local_cancelers: MultiCanceler<C> = MultiCanceler::new();
+        if cancelers
+            .as_ref()
+            .is_some_and(|c| !c.add_canceler(local_cancelers.clone()))
+        {
+            return TCexResult::Canceled;
+        }
+
+        let mut query_conf = QueryConf::new(&self.signature);
+        query_conf.use_cancelers(local_cancelers.clone());
+        query_conf.model_option(ModelOption::Minimal);
+        query_conf.save_tee(save_tee);
+        let mut assertions = self.module.axioms.clone();
+        assertions.push(Term::not(t));
+        let res = hyp.find_cex(solver, &query_conf, &assertions, &self.smt_tactic, |m| {
+            m.trace()[0].clone()
+        });
+
+        match res {
+            CexResult::Cex(_, _) => (),
+            CexResult::UnsatCore(core) => return TCexResult::UnsatCore(core),
+            CexResult::Canceled => return TCexResult::Canceled,
+            CexResult::Unknown(s) => return TCexResult::Unknown(s),
+        }
+
+        let mut size = 1;
+        loop {
+            let extractor = quant.extractor(size);
+            let signature = extractor.extend_signature(&self.signature);
+            let mut query_conf = QueryConf::new(&signature);
+            query_conf.use_cancelers(local_cancelers.clone());
+            query_conf.model_option(ModelOption::Any);
+            query_conf.evaluate(extractor.to_evaluate());
+            query_conf.save_tee(save_tee);
+            let mut assertions = self.module.axioms.clone();
+            assertions.push(extractor.not_satisfies(&t));
+            assertions.push(extractor.term.clone());
+            let res = hyp.find_cex(solver, &query_conf, &assertions, &self.smt_tactic, |m| {
+                m.trace()[0].clone()
+            });
+
+            match res {
+                CexResult::Cex(_, values) => return TCexResult::Cex(extractor.extract(&values)),
+                CexResult::UnsatCore(_) => (),
+                CexResult::Canceled => return TCexResult::Canceled,
+                CexResult::Unknown(s) => return TCexResult::Unknown(s),
+            }
+
+            size += 1;
+        }
     }
 
     /// Return up to `width` simulated post-states from the given pre-state
@@ -739,6 +1003,139 @@ impl From<&str> for SmtTactic {
             "minimal" => Self::Minimal,
             "full" => Self::Full,
             _ => panic!("invalid choice of SMT technique!"),
+        }
+    }
+}
+
+pub type TInterp = HashMap<Term, bool>;
+pub type TStructure = (QuantifierPrefix, Vec<TInterp>);
+
+#[derive(Clone)]
+pub struct QuantifiedSetting {
+    pub prefix: Option<QuantifierPrefix>,
+    pub terms: Vec<Term>,
+}
+
+/// A contruction for extracting a [`QuantifiedType`] from an SMT query.
+#[derive(Clone)]
+pub struct Extractor {
+    prefix: QuantifierPrefix,
+    type_count: usize,
+    bools: Vec<Term>,
+    term: Term,
+    vars: Vec<Vec<String>>,
+}
+
+fn prop_var(outer_index: usize, inner_index: usize) -> String {
+    format!("__prop_{outer_index}_{inner_index}")
+}
+
+impl Extractor {
+    fn extract(&self, values: &HashMap<Term, InterpretedValue>) -> TStructure {
+        (
+            self.prefix.clone(),
+            (0..self.type_count)
+                .map(|outer_index| {
+                    self.bools
+                        .iter()
+                        .enumerate()
+                        .map(|(inner_index, t)| {
+                            (
+                                t.clone(),
+                                values[&Term::Id(prop_var(outer_index, inner_index))]
+                                    .bool()
+                                    .unwrap(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    fn to_evaluate(&self) -> Vec<Term> {
+        self.vars
+            .iter()
+            .flat_map(|v| v.iter())
+            .map(|name| Term::id(name))
+            .collect()
+    }
+
+    fn extend_signature(&self, sig: &Signature) -> Signature {
+        let mut extended_sig = sig.clone();
+        for vs in &self.vars {
+            for v in vs {
+                extended_sig.relations.push(RelationDecl {
+                    mutable: false,
+                    name: v.clone(),
+                    args: vec![],
+                    sort: Sort::Bool,
+                })
+            }
+        }
+
+        extended_sig
+    }
+
+    fn ext_not_satisfies(&self, term: &Term, outer_index: usize) -> Term {
+        if let Some(i) = self.bools.iter().position(|t| t == term) {
+            return Term::not(Term::id(&self.vars[outer_index][i]));
+        }
+
+        match term {
+            Literal(b) => Literal(!b),
+            UnaryOp(UOp::Not, t) => Term::not(self.ext_not_satisfies(t, outer_index)),
+            NAryOp(NOp::Or, ts) => {
+                Term::and(ts.iter().map(|t| self.ext_not_satisfies(t, outer_index)))
+            }
+            NAryOp(NOp::And, ts) => {
+                Term::or(ts.iter().map(|t| self.ext_not_satisfies(t, outer_index)))
+            }
+            Quantified {
+                quantifier: _,
+                binders: _,
+                body,
+            } => self.ext_not_satisfies(body, outer_index),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn not_satisfies(&self, term: &Term) -> Term {
+        Term::and((0..self.type_count).map(|outer_index| self.ext_not_satisfies(term, outer_index)))
+    }
+}
+
+impl QuantifiedSetting {
+    pub fn extractor(&self, size: usize) -> Extractor {
+        assert!(size >= 1);
+
+        let vars = (0..size)
+            .map(|i| (0..self.terms.len()).map(|j| prop_var(i, j)).collect_vec())
+            .collect_vec();
+
+        let cubes = (0..size)
+            .map(|i| {
+                Term::and(
+                    self.terms
+                        .iter()
+                        .enumerate()
+                        .map(|(j, t): (usize, &Term)| Term::iff(Term::id(&vars[i][j]), t)),
+                )
+            })
+            .collect_vec();
+
+        let term = if let Some(prefix) = &self.prefix {
+            Term::not(prefix.quantify(Term::not(Term::or(cubes))))
+        } else {
+            Term::or(cubes)
+        };
+
+        Extractor {
+            prefix: self.prefix.clone().unwrap(),
+            type_count: size,
+            bools: self.terms.clone(),
+            term,
+            vars,
         }
     }
 }

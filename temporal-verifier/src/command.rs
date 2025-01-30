@@ -6,7 +6,7 @@
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use formats::chc::ChcSystem;
-use inference::lfp::{qalpha_via_contexts, verify_via_lfp};
+use inference::lfp::verify_via_lfp;
 use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
 use solver::basics::SingleSolver;
@@ -276,6 +276,8 @@ impl QalphaArgs {
             strategy: Strategy::from(self.strategy.as_str()),
             seeds: self.smt_cfg.seeds,
             baseline: self.baseline,
+
+            use_contexts: self.use_contexts,
         }
     }
 }
@@ -606,11 +608,8 @@ impl App {
             ) => {
                 m.inline_defs();
                 let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                if qargs.use_contexts {
-                    qalpha_via_contexts(infer_cfg.as_ref(), &m);
-                } else {
-                    qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
-                }
+                qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+
                 if args.time {
                     timing::report();
                 }
