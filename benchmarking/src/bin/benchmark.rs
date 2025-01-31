@@ -6,7 +6,7 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use benchmarking::{
-    qalpha::{qalpha_benchmarks, QalphaMeasurement},
+    qalpha::{qalpha_benchmarks, OverrideParams, QalphaMeasurement},
     report::{load_results, ReportableMeasurement},
     run::{get_examples, BenchmarkConfig, BenchmarkMeasurement},
     time_bench::{compile_flyvy_bin, compile_time_bin, REPO_ROOT_PATH},
@@ -34,6 +34,15 @@ struct QalphaParams {
     /// File to output the results in TSV format to
     #[arg(long)]
     tsv: Option<String>,
+    /// Whether to use the baseline datastructure instead of LSet
+    #[arg(long)]
+    baseline: bool,
+    /// Whether to use an alternative context in inference
+    #[arg(long)]
+    use_contexts: bool,
+    /// Overrides simulation depth in executions
+    #[arg(long)]
+    sim_depth: Option<usize>,
 }
 
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
@@ -121,7 +130,12 @@ fn benchmark_verify(time_limit: Duration, solver: &str) -> Vec<BenchmarkMeasurem
 
 fn run_qalpha(params: &QalphaParams) -> Vec<QalphaMeasurement> {
     let name_glob = Pattern::new(&params.name_glob).expect("could not parse pattern");
-    qalpha_benchmarks(params.time_limit.into())
+    let override_params = OverrideParams {
+        baseline: params.baseline,
+        use_contexts: params.use_contexts,
+        sim_depth: params.sim_depth,
+    };
+    qalpha_benchmarks(params.time_limit.into(), &override_params)
         .into_iter()
         .filter(|(name, _)| name_glob.matches_path(name))
         .map(|(file, config)| {

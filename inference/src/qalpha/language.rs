@@ -268,7 +268,20 @@ pub trait FormulaSet:
 
     fn get_unsat(&self, model: &Model, assignment: &Assignment) -> Vec<FormulaId>;
 
-    fn get_unsat_t(&self, tstruct: &TStructure) -> Vec<FormulaId>;
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId>;
+
+    fn get_unsat_ts(&self, tstruct: &TStructure) -> Vec<FormulaId> {
+        let mut res: Option<HashSet<_>> = None;
+        for tinterp in &tstruct.1 {
+            let unsat = HashSet::from_iter(self.get_unsat_ti(&tstruct.0, tinterp));
+            if let Some(set) = &mut res {
+                set.retain(|id| unsat.contains(id));
+            } else {
+                res = Some(unsat);
+            }
+        }
+        res.unwrap().into_iter().collect()
+    }
 
     fn len(&self) -> usize {
         self.as_ref().len()
@@ -315,7 +328,7 @@ pub trait FormulaSet:
     }
 
     fn get_unsat_formulas_t(&mut self, tstruct: &TStructure) -> Vec<Self::Formula> {
-        self.get_unsat_t(tstruct)
+        self.get_unsat_ts(tstruct)
             .iter()
             .map(|id| self.remove(id))
             .collect_vec()
@@ -568,8 +581,13 @@ impl FormulaSet for EqSet<Literal> {
             .collect()
     }
 
-    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
-        unimplemented!()
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        self.map
+            .to
+            .iter()
+            .filter(|(lit, _)| !lit.eval_tinterp(prefix, tinterp))
+            .map(|(_, id)| *id)
+            .collect()
     }
 }
 
@@ -834,8 +852,18 @@ impl<S1: FormulaSet, S2: FormulaSet> FormulaSet for BinOrSet<S1, S2> {
             .collect()
     }
 
-    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
-        unimplemented!()
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        self.set1
+            .get_unsat_ti(prefix, tinterp)
+            .par_iter()
+            .flat_map_iter(|id1| {
+                let (set2, map2) = self.proj1.get(id1).unwrap();
+                set2.get_unsat_ti(prefix, tinterp)
+                    .iter()
+                    .map(|id2| *map2.get(id2).unwrap())
+                    .collect_vec()
+            })
+            .collect()
     }
 }
 
@@ -1247,6 +1275,19 @@ impl<S: FormulaSet> Trie<S> {
         unsat
     }
 
+    fn get_unsat_or_t(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        let mut unsat: Vec<FormulaId> = self
+            .next
+            .get_unsat_ti(prefix, tinterp)
+            .par_iter()
+            .flat_map_iter(|id| self.edges.get(id).unwrap().get_unsat_or_t(prefix, tinterp))
+            .collect();
+        if let Some(id) = self.value {
+            unsat.push(id);
+        }
+        unsat
+    }
+
     /*
     fn get_unsat_and(&self, model_assignment: Option<(&Model, &Assignment)>) -> Vec<F> {
         if let Some((model, assignment)) = model_assignment {
@@ -1327,8 +1368,8 @@ impl<S: FormulaSet> FormulaSet for OrSet<S> {
         self.trie.get_unsat_or(model, assignment)
     }
 
-    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
-        unimplemented!()
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        self.trie.get_unsat_or_t(prefix, tinterp)
     }
 }
 
@@ -1637,8 +1678,13 @@ impl<S: FormulaSet> FormulaSet for AndSet<S> {
             .collect()
     }
 
-    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
-        unimplemented!()
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        let unsat_conj = HashSet::from_iter(self.all_present.get_unsat_ti(prefix, tinterp));
+        self.id_to_id_seq
+            .par_iter()
+            .filter(|(_, id_seq)| !id_seq.is_disjoint(&unsat_conj))
+            .map(|(id, _)| *id)
+            .collect()
     }
 }
 
@@ -2353,8 +2399,13 @@ impl<S: FormulaSet> FormulaSet for QuantSet<S> {
             .collect()
     }
 
-    fn get_unsat_t(&self, _: &TStructure) -> Vec<FormulaId> {
-        unimplemented!()
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        let (body_set, map) = &self.sets[&prefix.quantifiers];
+        body_set
+            .get_unsat_ti(prefix, tinterp)
+            .iter()
+            .map(|id| *map.get(id).unwrap())
+            .collect_vec()
     }
 }
 
@@ -2413,11 +2464,11 @@ impl<F: BoundedFormula> FormulaSet for BaselineSet<F> {
             .collect()
     }
 
-    fn get_unsat_t(&self, tstruct: &TStructure) -> Vec<FormulaId> {
+    fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
         self.0
             .to
             .par_iter()
-            .filter(|(x, _)| !x.eval_tstruct(tstruct))
+            .filter(|(x, _)| !x.eval_tinterp(prefix, tinterp))
             .map(|(_, id)| *id)
             .collect()
     }

@@ -1085,6 +1085,9 @@ impl Extractor {
         match term {
             Literal(b) => Literal(!b),
             UnaryOp(UOp::Not, t) => Term::not(self.ext_not_satisfies(t, outer_index)),
+            Term::BinOp(BinOp::NotEquals, t1, t2) => Term::not(
+                self.ext_not_satisfies(&Term::equals(t1.as_ref(), t2.as_ref()), outer_index),
+            ),
             NAryOp(NOp::Or, ts) => {
                 Term::and(ts.iter().map(|t| self.ext_not_satisfies(t, outer_index)))
             }
@@ -1096,7 +1099,7 @@ impl Extractor {
                 binders: _,
                 body,
             } => self.ext_not_satisfies(body, outer_index),
-            _ => unimplemented!(),
+            t => unimplemented!("{t}"),
         }
     }
 

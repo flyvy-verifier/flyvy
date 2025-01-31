@@ -21,7 +21,10 @@ use inference::qalpha::fixpoint::FixpointStats;
 /// Each benchmark is represented as a tuple of a name and a configuration. The
 /// name is used as the output directory so it should be unique across
 /// benchmarks.
-pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)> {
+pub fn qalpha_benchmarks(
+    time_limit: Duration,
+    params: &OverrideParams,
+) -> Vec<(PathBuf, BenchmarkConfig)> {
     let configs = vec![
         QalphaConfig {
             file: PathBuf::from("fol/lockserv.fly"),
@@ -275,7 +278,7 @@ pub fn qalpha_benchmarks(time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)
         },
     ];
 
-    let benchmarks = named_benchmarks(configs, time_limit);
+    let benchmarks = named_benchmarks(configs, time_limit, params);
     check_unique_benchmarks(&benchmarks);
     benchmarks
 }
@@ -336,6 +339,7 @@ enum SimulationBound {
     None,
     Sum(usize),
     Exact(Vec<SortCount>),
+    Depth(usize),
 }
 
 impl SimulationBound {
@@ -349,6 +353,7 @@ impl SimulationBound {
                     ["--bound".to_string(), format!("{sort}={count}")]
                 })
                 .collect(),
+            SimulationBound::Depth(d) => vec![format!("--depth={d}")],
         }
     }
 }
@@ -539,8 +544,39 @@ fn quantifier_param(spec: &str) -> impl Iterator<Item = String> + '_ {
         .flat_map(|s| ["--quantifier".to_string(), s.to_string()])
 }
 
+/// Parameters that override default settings.
+pub struct OverrideParams {
+    /// Use baseline datastructure instead of LSet.
+    pub baseline: bool,
+    /// Use an alternative context in inference.
+    pub use_contexts: bool,
+    /// Use this simulation depth (if present)
+    pub sim_depth: Option<usize>,
+}
+
+impl ToString for OverrideParams {
+    fn to_string(&self) -> String {
+        let mut parts = vec![];
+        if self.use_contexts {
+            parts.push("contexts".to_string());
+        }
+        if self.baseline {
+            parts.push("baseline".to_string());
+        }
+        if let Some(d) = self.sim_depth {
+            parts.push(format!("{d}"));
+        }
+        parts.join("-")
+    }
+}
+
 impl QalphaConfig<'_> {
-    fn params(&self, sim: &SimulationConfig, strategy: &str, baseline: bool) -> Vec<String> {
+    fn params(
+        &self,
+        sim: &SimulationConfig,
+        strategy: &str,
+        params: &OverrideParams,
+    ) -> Vec<String> {
         let mut args = vec![];
         args.extend(quantifier_param(self.quantifiers));
         args.push(format!("--clause-size={}", self.clause_size));
@@ -548,55 +584,63 @@ impl QalphaConfig<'_> {
         if let Some(n) = self.nesting {
             args.push(format!("--nesting={n}"));
         }
-        args.extend(sim.params());
         args.push(format!("--strategy={strategy}"));
-        if baseline {
+
+        if params.baseline {
             args.push("--baseline".to_string());
+        }
+        if params.use_contexts {
+            args.push("--use-contexts".to_string());
+        }
+        if let Some(d) = params.sim_depth {
+            args.push(format!("--depth={d}"));
+        } else {
+            args.extend(sim.params());
         }
         args
     }
 
-    pub fn benchmarks(&self, time_limit: Duration) -> Vec<(PathBuf, BenchmarkConfig)> {
-        [false, true]
-            .into_iter()
-            .flat_map(|baseline| {
-                [
-                    // Safety benchmark (property directed)
-                    (
-                        self.full_path("safety", baseline),
-                        BenchmarkConfig {
-                            command: command(),
-                            params: self.params(&self.sim, "weaken-pd", false),
-                            file: example_path(&self.file),
-                            time_limit,
-                        },
-                    ),
-                    // Fixpoint benchmark
-                    (
-                        self.full_path("fixpoint", baseline),
-                        BenchmarkConfig {
-                            command: command(),
-                            params: self.params(&self.sim, "weaken", baseline),
-                            file: example_path(&self.file),
-                            time_limit,
-                        },
-                    ),
-                ]
-            })
-            .collect()
+    pub fn benchmarks(
+        &self,
+        time_limit: Duration,
+        params: &OverrideParams,
+    ) -> Vec<(PathBuf, BenchmarkConfig)> {
+        vec![
+            // Safety benchmark (property directed)
+            (
+                self.full_path("safety", params),
+                BenchmarkConfig {
+                    command: command(),
+                    params: self.params(&self.sim, "weaken-pd", params),
+                    file: example_path(&self.file),
+                    time_limit,
+                },
+            ),
+            // Fixpoint benchmark
+            (
+                self.full_path("fixpoint", params),
+                BenchmarkConfig {
+                    command: command(),
+                    params: self.params(&self.sim, "weaken", params),
+                    file: example_path(&self.file),
+                    time_limit,
+                },
+            ),
+        ]
     }
 
     /// Give this benchmark a systematic path that includes enough information
     /// to (hopefully) make it unique.
-    fn full_path(&self, experiment_name: &str, baseline: bool) -> PathBuf {
+    fn full_path(&self, experiment_name: &str, params: &OverrideParams) -> PathBuf {
         let mut path_string = format!(
             "{}/{}/{}/{experiment_name}",
             self.fragment,
             self.expected,
             self.file.display(),
         );
-        if baseline {
-            path_string = format!("{path_string}-baseline");
+        let params_str = params.to_string();
+        if !params_str.is_empty() {
+            path_string = format!("{path_string}-{}", params_str);
         }
         PathBuf::from(path_string)
     }
@@ -609,10 +653,11 @@ impl QalphaConfig<'_> {
 fn named_benchmarks(
     configs: Vec<QalphaConfig>,
     time_limit: Duration,
+    params: &OverrideParams,
 ) -> Vec<(PathBuf, BenchmarkConfig)> {
     configs
         .into_iter()
-        .flat_map(|config| config.benchmarks(time_limit))
+        .flat_map(|config| config.benchmarks(time_limit, params))
         .collect()
 }
 
