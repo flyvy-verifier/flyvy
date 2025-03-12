@@ -6,10 +6,10 @@
 
 # these are the versions used by download-solvers.sh and expected by the
 # integration tests
-Z3_VERSION="4.13.4"
+Z3_VERSION="4.14.1"
 # this is part of the Linux release URL
 Z3_GLIBC_VERSION="2.35"
 # this is part of the OSX release URL
-Z3_OSX_VERSION="13.7.1"
+Z3_OSX_VERSION="13.7.4"
 CVC4_VERSION="1.8"
-CVC5_VERSION="1.0.4"
+CVC5_VERSION="1.2.1"

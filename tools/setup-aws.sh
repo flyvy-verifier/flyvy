@@ -22,7 +22,7 @@ source "$HOME/.cargo/env"
 
 if [ ! -e ~/temporal-verifier ]; then
   # TODO: remove branch when qalpha is merged
-  git clone -b qalpha-simulations https://github.com/vmware-research/temporal-verifier
+  git clone -b qalpha-contexts https://github.com/flyvy-verifier/flyvy
 fi
 cd ~/temporal-verifier
 ./tools/download-solvers.sh
@@ -33,10 +33,10 @@ rm solvers/z3
 
 # compile Z3 from source
 # takes about 10min on z1d.xlarge
-wget 'https://github.com/Z3Prover/z3/archive/refs/tags/z3-4.12.2.tar.gz'
-tar -xf z3-4.12.2.tar.gz
+wget 'https://github.com/Z3Prover/z3/archive/refs/tags/z3-4.14.1.tar.gz'
+tar -xf z3-4.14.1.tar.gz
 
-cd z3-z3-4.12.2
+cd z3-4.14.1
 ./configure >/dev/null
 cd build
 time make -j"$(nproc)"

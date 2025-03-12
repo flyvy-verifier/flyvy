@@ -20,17 +20,17 @@ UNAME=$(uname)
 if [ "$UNAME" = "Linux" ]; then
   Z3_FILE="z3-${Z3_VERSION}-x64-glibc-${Z3_GLIBC_VERSION}"
   CVC4_FILE="cvc4-${CVC4_VERSION}-x86_64-linux-opt"
-  CVC5_FILE="cvc5-Linux"
+  CVC5_FILE="cvc5-Linux-x86_64-static"
 elif [ "$UNAME" = "Darwin" ]; then
   UNAME_M=$(uname -m)
   if [ "${UNAME_M}" = "arm64" ]; then
     Z3_FILE="z3-${Z3_VERSION}-arm64-osx-${Z3_OSX_VERSION}"
-    CVC5_FILE="cvc5-macOS-arm64"
+    CVC5_FILE="cvc5-macOS-arm64-static"
     # x86 binary, don't have an arm64 build
     CVC4_FILE="cvc4-${CVC4_VERSION}-macos-opt"
   elif [ "${UNAME_M}" = "x86_64" ]; then
     Z3_FILE="z3-${Z3_VERSION}-x64-osx-${Z3_OSX_VERSION}"
-    CVC5_FILE="cvc5-macOS"
+    CVC5_FILE="cvc5-macOS-x86_64-static"
     CVC4_FILE="cvc4-${CVC4_VERSION}-macos-opt"
   else
     echo "unexpected architecture for macOS: ${UNAME_M}" 1>&2
@@ -42,7 +42,7 @@ else
 fi
 Z3_URL="https://github.com/Z3Prover/z3/releases/download/z3-${Z3_VERSION}/${Z3_FILE}.zip"
 CVC4_URL="https://github.com/CVC4/CVC4/releases/download/${CVC4_VERSION}/${CVC4_FILE}"
-CVC5_URL="https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/${CVC5_FILE}"
+CVC5_URL="https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/${CVC5_FILE}.zip"
 
 mkdir -p solvers
 if [ -x solvers/z3 ] && ./solvers/z3 --version | grep --fixed-strings --quiet "$Z3_VERSION"; then
@@ -60,9 +60,13 @@ fi
 if [ -x solvers/cvc5 ] && ./solvers/cvc5 --version | grep --fixed-strings --quiet "$CVC5_VERSION"; then
   echo "found CVC5"
 else
+  cd solvers
   echo "downloading CVC5"
-  wget -nv -O solvers/cvc5 "$CVC5_URL"
-  chmod +x solvers/cvc5
+  wget -nv -O cvc5.zip "$CVC5_URL"
+  unzip -q cvc5.zip && rm cvc5.zip
+  mv "$CVC5_FILE/bin/cvc5" ./
+  rm -r "$CVC5_FILE"
+  cd ..
 fi
 
 # TODO: github.com/CVC4/CVC4 was removed and redirects to CVC5 so there's no
