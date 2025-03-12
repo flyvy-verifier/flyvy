@@ -18,10 +18,14 @@ use rayon::prelude::*;
 
 use crate::qalpha::language::{BoundedLanguage, FormulaId, FormulaSet};
 use fly::{
+    ouritertools::OurItertools,
+    quant::QuantifierPrefix,
     semantics::{Assignment, Model},
     syntax::{Quantifier, Term},
 };
-use formats::basics::{OrderedTerms, QuantifiedSetting, TStructure};
+use formats::basics::{OrderedTerms, QuantifiedSetting, TInterp, TStructure};
+
+use super::language::extend_assignment;
 
 macro_rules! timed {
     ($blk:block) => {{
@@ -34,6 +38,77 @@ macro_rules! timed {
 pub enum GeneralModel {
     Model(Model),
     TStructure(TStructure),
+}
+
+impl GeneralModel {
+    pub fn decompose(&self, prefix: &QuantifierPrefix, terms: &[Term]) -> Vec<Self> {
+        match self {
+            GeneralModel::Model(model) => {
+                Self::decompose_rec(model, prefix, terms, 0, &Assignment::new())
+                    .into_iter()
+                    .map(|tinterps| Self::TStructure((prefix.clone(), tinterps)))
+                    .collect()
+            }
+            GeneralModel::TStructure(_) => unimplemented!(),
+        }
+    }
+
+    fn decompose_rec(
+        model: &Model,
+        prefix: &QuantifierPrefix,
+        terms: &[Term],
+        index: usize,
+        assignment: &Assignment,
+    ) -> Vec<Vec<TInterp>> {
+        if index >= prefix.len() {
+            let tinterp = vec![terms
+                .iter()
+                .map(|t| (t.clone(), model.eval_assign(t, assignment) != 0))
+                .collect()];
+            return vec![tinterp];
+        }
+
+        let assignments = extend_assignment(
+            assignment,
+            &prefix.names[index],
+            &prefix.sorts[index],
+            model,
+        );
+        let tstructs: Vec<Vec<TInterp>> = match prefix.quantifiers[index] {
+            Quantifier::Forall => assignments
+                .iter()
+                .flat_map(|asgn| Self::decompose_rec(model, prefix, terms, index + 1, asgn))
+                .sorted_by_key(|t| t.len())
+                .collect(),
+            Quantifier::Exists => assignments
+                .iter()
+                .map(|asgn| Self::decompose_rec(model, prefix, terms, index + 1, asgn))
+                .multi_cartesian_product_fixed()
+                .map(|tstructs| {
+                    let mut tinterps = vec![];
+                    for tinterp in tstructs.into_iter().flatten() {
+                        if !tinterps.contains(&tinterp) {
+                            tinterps.push(tinterp);
+                        }
+                    }
+                    tinterps
+                })
+                .sorted_by_key(|t| t.len())
+                .collect(),
+        };
+
+        let mut res = vec![];
+        for tstruct in tstructs {
+            if !res
+                .iter()
+                .any(|ts: &Vec<TInterp>| ts.iter().all(|ti| tstruct.contains(ti)))
+            {
+                res.push(tstruct);
+            }
+        }
+
+        res
+    }
 }
 
 /// Manages lemmas from a [`BoundedLanguage`] and allows weakening them simultaneously.

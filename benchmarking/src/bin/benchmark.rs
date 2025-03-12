@@ -37,6 +37,9 @@ struct QalphaParams {
     /// Whether to use the baseline datastructure instead of LSet
     #[arg(long)]
     baseline: bool,
+    /// Whether to decompose first-order structures into T-Structures before weakening
+    #[arg(long)]
+    decompose: bool,
     /// Whether to use an alternative context in inference
     #[arg(long)]
     use_contexts: bool,
@@ -132,6 +135,7 @@ fn run_qalpha(params: &QalphaParams) -> Vec<QalphaMeasurement> {
     let name_glob = Pattern::new(&params.name_glob).expect("could not parse pattern");
     let override_params = OverrideParams {
         baseline: params.baseline,
+        decompose: params.decompose,
         use_contexts: params.use_contexts,
         sim_depth: params.sim_depth,
     };

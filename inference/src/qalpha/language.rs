@@ -74,7 +74,7 @@ fn permutations(from: &[Vec<String>], to: &[Vec<String>]) -> Vec<Substitution> {
         .collect()
 }
 
-fn extend_assignment(
+pub fn extend_assignment(
     assignment: &Assignment,
     vars: &[String],
     sort: &Sort,

@@ -21,7 +21,7 @@ use crate::{
         frame::{InductionFrame, OperationStats},
         language::{advanced, baseline, BoundedLanguage},
     },
-    utils::{QalphaConfig, QfBody, SimulationConfig},
+    utils::{get_context_for_module, QalphaConfig, QfBody, SimulationConfig},
 };
 use fly::syntax::{BinOp, Module, Term, ThmStmt};
 use formats::basics::FOModule;
@@ -485,15 +485,34 @@ where
     // Initialize simulations.
     let mut samples: Tasks<SamplePriority, Model> = frame.initial_samples();
     let mut full_houdini_frame: Option<Vec<Term>> = None;
+    let contexts = if cfg.decompose {
+        Some(get_context_for_module(&cfg, m, solver))
+    } else {
+        None
+    };
+    let decompose_ctis = |ctis: Vec<GeneralModel>| {
+        if cfg.decompose {
+            let mut new_ctis = vec![];
+            for model in ctis {
+                for c in &contexts.as_ref().unwrap().contexts {
+                    new_ctis.extend(model.decompose(&c.prefix, &c.bool_terms));
+                }
+            }
+            new_ctis
+        } else {
+            ctis
+        }
+    };
 
     // Overapproximate initial states.
     if cfg.strategy.is_weaken() {
         loop {
-            let ctis = frame
+            let mut ctis = frame
                 .init_cex(fo, solver)
                 .into_iter()
                 .map(GeneralModel::Model)
                 .collect_vec();
+            ctis = decompose_ctis(ctis);
             if ctis.is_empty() {
                 break;
             }
@@ -571,6 +590,8 @@ where
                 frame.get_unsat_stats(),
             );
         }
+
+        ctis = decompose_ctis(ctis);
 
         if run_sim {
             frame.log_info(format!(

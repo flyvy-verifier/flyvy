@@ -64,6 +64,7 @@ pub struct QalphaConfig {
 
     pub baseline: bool,
 
+    pub decompose: bool,
     pub use_contexts: bool,
 }
 

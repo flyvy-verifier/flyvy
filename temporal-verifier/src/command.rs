@@ -239,6 +239,9 @@ struct QalphaArgs {
     smt_cfg: SmtOptimizationArgs,
 
     #[arg(long)]
+    decompose: bool,
+
+    #[arg(long)]
     use_contexts: bool,
 
     /// File name for a .fly file containing the program to analyse
@@ -277,6 +280,7 @@ impl QalphaArgs {
             seeds: self.smt_cfg.seeds,
             baseline: self.baseline,
 
+            decompose: self.decompose,
             use_contexts: self.use_contexts,
         }
     }
