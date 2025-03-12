@@ -326,7 +326,7 @@ impl Display for LessThan {
         if self.strict {
             write!(f, "{} < {}", self.x, self.y)
         } else {
-            write!(f, "{} <= {}", self.y, self.x)
+            write!(f, "{} <= {}", self.x, self.y)
         }
     }
 }
@@ -660,7 +660,6 @@ impl ImperativeChc {
                     ))
                 }
             }
-            assignments.retain(|a| a.modified_ids().is_empty());
 
             let mut substitution = NameSubstitution::new();
             substitute_for_args(
@@ -671,19 +670,20 @@ impl ImperativeChc {
                 "",
             );
 
+            for a in assignments.iter_mut() {
+                *a = a.rename_symbols(&substitution);
+            }
+
             let mut assertions = vec![];
             for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
                 assertions.append(&mut LessThan::in_term(&t, false));
             }
 
-            let ids: HashSet<String> = assignments.iter().flat_map(|a| a.modified_ids()).collect();
-            let vars = chc_vars_in_ids(chc, &ids);
-
             Some(Self::Init {
                 predicate: pred.0.clone(),
                 assignments,
                 assertions,
-                vars,
+                vars: vec![],
             })
         } else {
             None

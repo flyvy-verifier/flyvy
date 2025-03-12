@@ -43,6 +43,10 @@ impl IneqTemplates {
     /// Add the given range to the template of the given expression, for `leq` literals and
     /// `geq` literals as specified.
     pub fn add_range(&mut self, mut a: ArithExpr<usize>, mut r: IntRange) {
+        if a.summands.is_empty() {
+            return;
+        }
+
         r.0 -= a.constant;
         r.1 -= a.constant;
         a.constant = 0;

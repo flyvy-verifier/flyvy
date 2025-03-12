@@ -32,16 +32,17 @@ cd ~/flyvy
 rm solvers/z3
 
 # compile Z3 from source
-# takes about 10min on z1d.xlarge
 wget 'https://github.com/Z3Prover/z3/archive/refs/tags/z3-4.14.1.tar.gz'
 tar -xf z3-4.14.1.tar.gz
-
-cd z3-4.14.1
+mv z3-z3-4.14.1 z3
+cd z3
 ./configure >/dev/null
 cd build
 time make -j"$(nproc)"
 sudo make install
-cd
+cp z3 ~/flyvy/solvers/z3
+rm -r z3
 
+cd ~/flyvy
 cargo build --release
 cargo build
