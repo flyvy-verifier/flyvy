@@ -20,11 +20,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # shellcheck disable=SC1091
 source "$HOME/.cargo/env"
 
-if [ ! -e ~/temporal-verifier ]; then
+if [ ! -e ~/flyvy ]; then
   # TODO: remove branch when qalpha is merged
   git clone -b qalpha-contexts https://github.com/flyvy-verifier/flyvy
 fi
-cd ~/temporal-verifier
+cd ~/flyvy
 ./tools/download-solvers.sh
 
 # don't use downloaded z3, it won't work due to an outdated libstd++ in the
