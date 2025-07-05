@@ -526,7 +526,7 @@ impl Term {
         }
         assert!(!ts.is_empty());
 
-        if ts.len() == 1 {
+        if ts.len() == 1 && matches!(op, NumOp::Add | NumOp::Mul) {
             ts.pop().unwrap()
         } else {
             Self::NumOp(op, ts)

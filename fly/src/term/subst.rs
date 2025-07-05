@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, fmt::Display};
 
-use crate::syntax::{Term, UOp};
+use crate::syntax::{Binder, Term, UOp};
 
 /// A possible substitute for something else in a generalized substitution that supports renaming symbols:
 /// either a new name (with a new number of primes) or a [`Term`] (only if the thing being replaced is some [`Term::Id`]).
@@ -184,6 +184,105 @@ fn rename_symbols_rec(
         },
 
         _ => panic!("unsupported term in subsutitution: {term:?}"),
+    }
+}
+
+fn fresh_name(name: &str, substitution: &HashMap<String, String>) -> String {
+    let mut fresh_name = name.to_string();
+    let mut i: usize = 0;
+    while substitution.contains_key(&fresh_name) {
+        fresh_name = format!("{name}_{}", i);
+        i += 1;
+    }
+    fresh_name
+}
+
+/// Eliminate shadowed variables in a term by renaming them to fresh names.
+/// The given substitution maps the original names to the fresh names (or to the original names if they are not shadowed).
+pub fn eliminate_shadowed_vars(term: &Term, substitution: &HashMap<String, String>) -> Term {
+    match term {
+        Term::Literal(_) | Term::Int(_) => term.clone(),
+        Term::Id(name) => Term::id(
+            &substitution
+                .get(name)
+                .expect(&format!("missing name for {name} in shadow elimination")),
+        ),
+        Term::App(name, 0, terms) => Term::App(
+            name.clone(),
+            0,
+            terms
+                .iter()
+                .map(|t| eliminate_shadowed_vars(t, substitution))
+                .collect(),
+        ),
+        Term::UnaryOp(UOp::Not, term) => Term::UnaryOp(
+            UOp::Not,
+            Box::new(eliminate_shadowed_vars(term, substitution)),
+        ),
+        Term::BinOp(bin_op, t1, t2) => Term::BinOp(
+            *bin_op,
+            Box::new(eliminate_shadowed_vars(t1, substitution)),
+            Box::new(eliminate_shadowed_vars(t2, substitution)),
+        ),
+        Term::NAryOp(nop, terms) => Term::NAryOp(
+            *nop,
+            terms
+                .iter()
+                .map(|t| eliminate_shadowed_vars(t, substitution))
+                .collect(),
+        ),
+        Term::NumRel(num_rel, t1, t2) => Term::NumRel(
+            *num_rel,
+            Box::new(eliminate_shadowed_vars(t1, substitution)),
+            Box::new(eliminate_shadowed_vars(t2, substitution)),
+        ),
+        Term::ArrayStore {
+            array,
+            index,
+            value,
+        } => Term::ArrayStore {
+            array: Box::new(eliminate_shadowed_vars(array, substitution)),
+            index: Box::new(eliminate_shadowed_vars(index, substitution)),
+            value: Box::new(eliminate_shadowed_vars(value, substitution)),
+        },
+        Term::ArraySelect { array, index } => Term::ArraySelect {
+            array: Box::new(eliminate_shadowed_vars(array, substitution)),
+            index: Box::new(eliminate_shadowed_vars(index, substitution)),
+        },
+        Term::NumOp(num_op, terms) => Term::NumOp(
+            *num_op,
+            terms
+                .iter()
+                .map(|t| eliminate_shadowed_vars(t, substitution))
+                .collect(),
+        ),
+        Term::Ite { cond, then, else_ } => Term::Ite {
+            cond: Box::new(eliminate_shadowed_vars(cond, substitution)),
+            then: Box::new(eliminate_shadowed_vars(then, substitution)),
+            else_: Box::new(eliminate_shadowed_vars(else_, substitution)),
+        },
+        Term::Quantified {
+            quantifier,
+            binders,
+            body,
+        } => {
+            let mut new_substitution = substitution.clone();
+            let mut new_binders = vec![];
+            for binder in binders {
+                let fresh_name = fresh_name(&binder.name, &new_substitution);
+                new_binders.push(Binder {
+                    name: fresh_name.clone(),
+                    sort: binder.sort.clone(),
+                });
+                new_substitution.insert(binder.name.clone(), fresh_name);
+            }
+            Term::Quantified {
+                quantifier: *quantifier,
+                binders: new_binders,
+                body: Box::new(eliminate_shadowed_vars(body, &new_substitution)),
+            }
+        }
+        _ => unimplemented!("unsupported term in eliminate_shadowed_vars: {term:?}"),
     }
 }
 

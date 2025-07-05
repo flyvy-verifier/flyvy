@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use fly::{
     syntax::{RelationDecl, Signature, Sort, Term},
-    term::subst::{rename_symbols, NameSubstitution, Substitutable},
+    term::subst::{eliminate_shadowed_vars, rename_symbols, NameSubstitution, Substitutable},
 };
 use itertools::Itertools;
 use petgraph::{Directed, Graph};
@@ -18,6 +18,12 @@ use crate::basics::FOModule;
 pub struct FunctionSort(pub Vec<Sort>, pub Sort);
 
 impl FunctionSort {
+    /// Create a new function sort from a simple sort.
+    /// The function sort will have no arguments.
+    pub fn from_sort(sort: &Sort) -> Self {
+        FunctionSort(vec![], sort.clone())
+    }
+
     /// Return whether the sort is integer.
     pub fn is_int(&self) -> bool {
         self.0.is_empty() && matches!(self.1, Sort::Int)
@@ -147,6 +153,28 @@ impl Component {
 }
 
 impl Chc {
+    /// Check whether the CHC is linear, i.e., whether its body contains at most one predicate.
+    pub fn is_linear(&self) -> bool {
+        self.body.iter().filter(|c| c.predicate().is_some()).count() <= 1
+    }
+
+    pub fn is_fact(&self) -> bool {
+        self.body
+            .iter()
+            .all(|c| matches!(c, Component::Formulas(_)))
+            && matches!(self.head, Component::Predicate(_, _))
+    }
+
+    /// Check whether the CHC is a query, i.e., whether it has at least one predicate in the body
+    /// and the head contains no unknown predicates.
+    pub fn is_query(&self) -> bool {
+        self.body.iter().filter(|c| c.predicate().is_some()).count() >= 1
+            && match &self.head {
+                Component::Predicate(_, args) => args.is_empty(),
+                Component::Formulas(_) => true,
+            }
+    }
+
     /// Instantiate the body of the CHC using the given assignment as conjunction of formulas.
     /// Returns a sequence of terms with their corresponding keys (for those originating in a
     /// [`SymbolicAssignment`]).
@@ -226,6 +254,27 @@ impl Chc {
             Component::Formulas(_) => false,
         }
     }
+
+    fn eliminate_shadowed_vars(&mut self) {
+        let substitution: HashMap<String, String> = self
+            .signature
+            .relations
+            .iter()
+            .filter(|r| r.args.is_empty())
+            .map(|r| (r.name.clone(), r.name.clone()))
+            .collect();
+        for component in self.body.iter_mut().chain([&mut self.head]) {
+            match component {
+                Component::Predicate(_, _) => (),
+                Component::Formulas(terms) => {
+                    *terms = terms
+                        .iter()
+                        .map(|t| eliminate_shadowed_vars(t, &substitution))
+                        .collect()
+                }
+            }
+        }
+    }
 }
 
 impl ChcSystem {
@@ -288,6 +337,12 @@ impl ChcSystem {
             .iter()
             .filter(|chc| !only_queries || matches!(chc.head, Component::Formulas(_)))
             .all(|chc| chc.check_assignment(solver, assignment))
+    }
+
+    pub fn eliminate_shadowed_vars(&mut self) {
+        for chc in &mut self.chcs {
+            chc.eliminate_shadowed_vars();
+        }
     }
 }
 

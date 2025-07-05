@@ -782,7 +782,8 @@ impl App {
                     ..
                 },
             ) => {
-                let chc_sys = formats::parser::parse_smtlib2(&file);
+                let mut chc_sys = formats::parser::parse_smtlib2(&file);
+                chc_sys.eliminate_shadowed_vars();
                 verify_via_lfp(&chc_sys, minimize, &[3, 4]);
             }
             _ => unimplemented!("command does not support this file format"),

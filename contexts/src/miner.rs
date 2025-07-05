@@ -392,6 +392,11 @@ impl LessThan {
 
                 vec![LessThan { x, y, strict }]
             }
+            Term::Quantified {
+                quantifier: _,
+                binders: _,
+                body,
+            } => Self::in_term(body, neg),
             _ => vec![],
         }
     }
@@ -623,6 +628,7 @@ impl ImperativeChc {
 
                 let mut assertions = vec![];
                 for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
+                    println!("Processing term: {t}");
                     assertions.append(&mut LessThan::in_term(&t, true));
                 }
 

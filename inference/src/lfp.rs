@@ -3,6 +3,7 @@ use std::thread;
 use crate::utils::{get_context_for_module, QalphaConfig};
 use contexts::alg::{find_lfp, PredicateConfig};
 use contexts::arith::{ArithExpr, IneqTemplates};
+use contexts::lang::LanguageSynth;
 use contexts::miner::{position_or_push, ImperativeChc, MiningTactic};
 use contexts::sets::{BaselinePropSet, QFormulaSet};
 use fly::syntax::{Module, Term};
@@ -71,7 +72,7 @@ pub fn qalpha_via_contexts(cfg: &QalphaConfig, m: &Module) {
 pub fn verify_via_lfp(chc_sys: &ChcSystem, minimize: bool, disj_lengths: &[usize]) -> bool {
     let multi_canceler = MultiCanceler::new();
     let results = thread::scope(|s| {
-        let handles = MiningTactic::TACTICS
+        let handles = ["abc"]
             .iter()
             .map(|mining_tactic| {
                 let multi_canceler = multi_canceler.clone();
@@ -80,13 +81,9 @@ pub fn verify_via_lfp(chc_sys: &ChcSystem, minimize: bool, disj_lengths: &[usize
                         log::info!(
                             "Running LFP algorithm with [{mining_tactic}], disj={disj_length}",
                         );
-                        if let Some(res) = compute_lfp_single(
-                            chc_sys,
-                            minimize,
-                            Some(*disj_length),
-                            mining_tactic,
-                            &multi_canceler,
-                        ) {
+                        if let Some(res) =
+                            compute_lfp(chc_sys, minimize, Some(*disj_length), &multi_canceler)
+                        {
                             if res.0 {
                                 multi_canceler.cancel();
                                 log::info!("    SUCCESS: [{mining_tactic}], disj={disj_length}");
@@ -119,6 +116,70 @@ pub fn verify_via_lfp(chc_sys: &ChcSystem, minimize: bool, disj_lengths: &[usize
     } else {
         println!("Failure!");
         false
+    }
+}
+
+pub fn compute_lfp(
+    chc_sys: &ChcSystem,
+    minimize: bool,
+    disj_length: Option<usize>,
+    multi_canceler: &MultiCanceler<MultiCanceler<<ParallelSolvers as BasicSolver>::Canceler>>,
+) -> Option<(bool, String)> {
+    // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
+    let solver: ParallelSolvers = parallel_z3(2);
+
+    let mut lang = LanguageSynth::new(chc_sys);
+
+    let predicates = chc_sys
+        .predicates
+        .iter()
+        .map(|decl| {
+            let (univ_indices, bool_terms, int_terms, leqs) = lang.leqs_for(&decl.name);
+            let mut int_templates = IneqTemplates::new(false);
+
+            for (expr, r) in leqs {
+                int_templates.add_range(expr, r);
+            }
+
+            println!("--- bools --------------");
+            for b in &bool_terms {
+                println!("{b}");
+            }
+            println!("--- ints ----------");
+            for t in &int_terms {
+                println!("{t}");
+            }
+            println!("--- int exprs ----------");
+            for (e, r) in &int_templates.templates {
+                println!("{e} <= {r}");
+            }
+
+            PredicateConfig::int_ineqs(
+                decl,
+                int_terms,
+                bool_terms,
+                int_templates,
+                univ_indices,
+                disj_length,
+            )
+        })
+        .collect();
+
+    let res = find_lfp::<_, QFormulaSet<BaselinePropSet>>(
+        &solver,
+        chc_sys,
+        predicates,
+        minimize,
+        Some(multi_canceler),
+        &SmtTactic::Full,
+    );
+
+    if let Some(fp) = res {
+        let assignment = fp.get_symbolic_assignment();
+        let solved = chc_sys.check_assignment(&solver, &assignment, true);
+        Some((solved, fp.to_string()))
+    } else {
+        None
     }
 }
 
