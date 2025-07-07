@@ -77,7 +77,8 @@ fn unrolling(t: &Term) -> Unrolling {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 

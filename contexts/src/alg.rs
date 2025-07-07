@@ -771,7 +771,7 @@ where
                             }
                         }
                         CexResult::Canceled => return (ChcResult::Canceled, vec![], true),
-                        _ => return (ChcResult::None, vec![], false),
+                        CexResult::Unknown(_) => return (ChcResult::None, vec![], false),
                     }
 
                     size += 1;

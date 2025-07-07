@@ -30,7 +30,7 @@ impl Display for MiningTactic {
             active.push("INIT");
         }
         if self.qf_bounds {
-            active.push("UPPER_BOUNDS");
+            active.push("QF_BOUNDS");
         }
         if self.query_arith {
             active.push("QUERY_ARITH");
@@ -101,8 +101,8 @@ impl MiningTactic {
 
     pub const TACTICS: [Self; 4] = [
         Self::FROM_QUERY,
-        Self::FROM_QUERY_UPDATE,
         Self::FROM_ASSIGNMENTS,
+        Self::FROM_QUERY_UPDATE,
         Self::FROM_ASSIGNMENTS_QF,
     ];
 }
@@ -114,6 +114,10 @@ pub enum Assignment {
         array: String,
         old_array: String,
         index: Term,
+        value: Term,
+    },
+    ArrayConst {
+        array: String,
         value: Term,
     },
 }
@@ -128,6 +132,9 @@ impl Display for Assignment {
                 index,
                 value,
             } => write!(f, "{array}[{index}] := {value} (from {old_array}))"),
+            Assignment::ArrayConst { array, value } => {
+                write!(f, "{array} := const_array({value})")
+            }
         }
     }
 }
@@ -244,6 +251,10 @@ impl Assignment {
                 index: rename_symbols(index, substitution),
                 value: rename_symbols(value, substitution),
             },
+            Assignment::ArrayConst { array, value } => Assignment::ArrayConst {
+                array: rename_string(array),
+                value: rename_symbols(value, substitution),
+            },
         }
     }
 
@@ -260,6 +271,7 @@ impl Assignment {
                 ids.extend(value.ids());
                 ids
             }
+            Assignment::ArrayConst { array: _, value } => value.ids(),
         }
     }
 
@@ -273,6 +285,12 @@ impl Assignment {
             let mut asgns = Self::from_eq(dst, then, fsort);
             asgns.append(&mut Self::from_eq(dst, else_, fsort));
             return asgns;
+        }
+        if let Term::ArrayConst(t) = src {
+            return vec![Self::ArrayConst {
+                array: dst.clone(),
+                value: t.as_ref().clone(),
+            }];
         }
 
         if fsort.is_int() {
@@ -666,7 +684,6 @@ impl ImperativeChc {
                 let mut assertions = vec![];
                 let mut introduced_quant = vec![];
                 for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
-                    println!("Processing term: {t}");
                     assertions.append(&mut LessThan::in_term(&t, true, &mut introduced_quant));
                 }
 
@@ -682,7 +699,6 @@ impl ImperativeChc {
                 }
 
                 let ids: HashSet<String> = assertions.iter().flat_map(|a| a.ids()).collect();
-                println!("Ids in assertions: {ids:?}");
                 let mut vars = chc_vars_in_ids(chc, &ids);
                 vars.extend(introduced_quant.into_iter().map(|b| HoVariable {
                     name: b.name,
@@ -821,6 +837,20 @@ impl ImperativeChc {
                             leqs.push((&x - &y, (0, 0)));
                             leqs.push((&y - &x, (0, 0)));
                         }
+                        Assignment::ArrayConst { array, value } if value.ids().is_empty() => {
+                            let select =
+                                Term::array_select(Term::id(array), Term::id(&quantified[0]));
+                            let x = ArithExpr::<usize>::from_term(&select, |t| {
+                                position_or_push(ints, t)
+                            })
+                            .unwrap();
+                            let y =
+                                ArithExpr::<usize>::from_term(value, |t| position_or_push(ints, t))
+                                    .unwrap();
+                            leqs.push((&x - &y, (0, 0)));
+                            leqs.push((&y - &x, (0, 0)));
+                        }
+                        _ => (),
                     }
                 }
 

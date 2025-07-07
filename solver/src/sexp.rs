@@ -120,6 +120,14 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
             value,
         } => app("store", [term(array), term(index), term(value)]),
         Term::ArraySelect { array, index } => app("select", [term(array), term(index)]),
+        Term::ArrayConst(c) => Sexp::List(vec![
+            Sexp::List(vec![
+                atom_s("as"),
+                atom_s("const"),
+                Sexp::List(vec![atom_s("Array"), atom_s("Int"), atom_s("Int")]),
+            ]),
+            term(&c),
+        ]),
     }
 }
 

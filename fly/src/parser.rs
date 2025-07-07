@@ -104,6 +104,9 @@ grammar parser() for str {
             _ => Term::Id(s),
         } }
         i:int() { Term::Int(i) }
+        "const_array(" _ t:term() _ ")" {
+            Term::ArrayConst(Box::new(t))
+        }
         "(" _ t:term() _ ")" { t }
     }
 

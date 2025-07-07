@@ -134,7 +134,8 @@ pub fn has_all_sort_annotations_term(term: &Term) -> bool {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => true,
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => true,
         Term::App(_f, _p, xs) => xs.iter().all(has_all_sort_annotations_term),
         Term::UnaryOp(_, x) => has_all_sort_annotations_term(x),
         Term::BinOp(_, x, y) => {
@@ -699,7 +700,9 @@ impl InternalContext<'_> {
                 }
                 Ok(MaybeUnknownSort::Known(Sort::Int))
             }
-            Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
+            Term::ArrayStore { .. } | Term::ArraySelect { .. } | Term::ArrayConst(_) => {
+                unimplemented!()
+            }
         }
     }
 
@@ -777,7 +780,9 @@ impl InternalContext<'_> {
                 }
                 self.annotate_solved_sorts_term(body)
             }
-            Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
+            Term::ArrayStore { .. } | Term::ArraySelect { .. } | Term::ArrayConst(_) => {
+                unimplemented!()
+            }
         }
     }
 

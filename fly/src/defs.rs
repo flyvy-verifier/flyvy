@@ -42,7 +42,8 @@ fn subst(t: &mut Term, repl: &HashMap<String, &Term>) {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 
@@ -96,7 +97,8 @@ fn inline_def_term(def: &Definition, t: &mut Term) {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 

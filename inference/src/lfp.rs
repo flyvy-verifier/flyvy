@@ -130,7 +130,7 @@ pub fn compute_lfp_single(
     multi_canceler: &MultiCanceler<MultiCanceler<<ParallelSolvers as BasicSolver>::Canceler>>,
 ) -> Option<(bool, String)> {
     // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
-    let solver: ParallelSolvers = parallel_z3(2);
+    let solver: ParallelSolvers = parallel_z3(4);
     let univ_indices = 1;
     let quantified = (0..univ_indices)
         .map(PredicateConfig::quant_name)

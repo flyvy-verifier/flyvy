@@ -153,6 +153,7 @@ fn contains_mutable_relations(term: &Term, relations: &[RelationDecl]) -> bool {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }

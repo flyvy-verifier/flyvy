@@ -242,7 +242,8 @@ fn contains_changed(term: &Term, changed: &[RelationDecl]) -> bool {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => {
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => {
             unimplemented!()
         }
     }
@@ -262,7 +263,8 @@ fn strip_primes(term: &Term) -> Option<(Term, usize)> {
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 
@@ -445,7 +447,8 @@ fn flatten_term_rec(
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 
@@ -563,7 +566,8 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
         | Term::NumRel(_, _, _)
         | Term::NumOp(_, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => unimplemented!(),
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => unimplemented!(),
     }
 }
 

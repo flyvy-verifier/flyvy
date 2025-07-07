@@ -237,8 +237,10 @@ pub type IntType = isize;
 pub enum Term {
     /// A constant true or false
     Literal(bool),
-    /// A an integer value
+    /// An integer value
     Int(IntType),
+    /// An array storing a constant value (currently only supports integer arrays)
+    ArrayConst(Box<Term>),
     /// A reference to a bound variable or function in the signature
     Id(String),
     /// Application. `App(f, n_primes, args)` represents applying the function
@@ -665,7 +667,9 @@ impl Term {
                 then_is_bool
             }
             Term::Int(_) | Term::NumOp(_, _) => false,
-            Term::ArrayStore { .. } | Term::ArraySelect { .. } => unimplemented!(),
+            Term::ArrayStore { .. } | Term::ArraySelect { .. } | Term::ArrayConst(_) => {
+                unimplemented!()
+            }
         }
     }
 
@@ -697,6 +701,7 @@ impl Term {
                 value,
             } => array.is_nontemporal() && index.is_nontemporal() && value.is_nontemporal(),
             Term::ArraySelect { array, index } => array.is_nontemporal() && index.is_nontemporal(),
+            Term::ArrayConst(c) => c.is_nontemporal(),
         }
     }
 
@@ -710,7 +715,8 @@ impl Term {
             | Term::NumRel(_, _, _)
             | Term::NumOp(_, _)
             | Term::ArrayStore { .. }
-            | Term::ArraySelect { .. } => 1,
+            | Term::ArraySelect { .. }
+            | Term::ArrayConst(_) => 1,
             Term::UnaryOp(_, t) => t.size(),
             Term::BinOp(_, t1, t2) => t1.size() + t2.size(),
             Term::NAryOp(_, ts) => ts.iter().map(Term::size).sum(),
@@ -748,6 +754,7 @@ impl Term {
             Term::ArraySelect { array, index } => {
                 [array, index].iter().flat_map(|t| t.ids()).collect()
             }
+            Term::ArrayConst(c) => c.ids(),
         }
     }
 
@@ -782,6 +789,7 @@ impl Term {
             Term::ArraySelect { array, index } => {
                 [array, index].iter().flat_map(|t| t.names()).collect()
             }
+            Term::ArrayConst(c) => c.names(),
         }
     }
 

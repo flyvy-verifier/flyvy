@@ -325,6 +325,11 @@ impl Sexp {
                     };
                 }
 
+                "(as const (Array Int Int))" => {
+                    assert_eq!(args.len(), 1);
+                    return Term::ArrayConst(Box::new(args[0].term()));
+                }
+
                 id => return Term::app(id, 0, args.iter().map(|a| a.term())),
             }
         }
@@ -349,7 +354,7 @@ peg::parser! {
 grammar parser() for str {
   rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '+' | '-' | '*' | '!' | '.']
   rule ident_char() = ident_start() / ['0'..='9' | '#' | '%' | '-']
-  rule ident() = quiet! { ident_start() ident_char()* } / expected!("atom")
+  rule ident() = quiet! { ident_start() ident_char()* } / "(as const (Array Int Int))" / expected!("atom")
 
   rule whitespace() = [' ' | '\t' | '\n' | '\r']
   rule _ = whitespace()*

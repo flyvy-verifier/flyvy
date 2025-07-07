@@ -34,7 +34,8 @@ fn precedence(t: &Term) -> usize {
         | Int(_)
         | App(_, _, _)
         | Term::ArrayStore { .. }
-        | Term::ArraySelect { .. } => 1000,
+        | Term::ArraySelect { .. }
+        | Term::ArrayConst(_) => 1000,
     }
 }
 
@@ -176,6 +177,7 @@ pub fn term(t: &Term) -> String {
             value,
         } => format!("{}[{} -> {}]", term(array), term(index), term(value)),
         Term::ArraySelect { array, index } => format!("{}[{}]", term(array), term(index)),
+        Term::ArrayConst(c) => format!("const_array({})", term(c)),
     }
 }
 
