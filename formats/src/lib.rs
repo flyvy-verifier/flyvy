@@ -10,5 +10,4 @@
 
 pub mod basics;
 pub mod chc;
-pub mod miner;
 pub mod parser;

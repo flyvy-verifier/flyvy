@@ -12,7 +12,6 @@
 pub mod alg;
 pub mod arith;
 pub mod context;
-pub mod lang;
 pub mod logic;
 pub mod miner;
 pub mod sets;
