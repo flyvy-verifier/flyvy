@@ -12,11 +12,12 @@ use itertools::Itertools;
 use solver::backends::SolverType;
 use solver::basics::{BasicCanceler, BasicSolver, MultiCanceler, ParallelSolvers};
 use solver::conf::SolverConf;
+use solver::parallel::parallelism;
 
-fn parallel_z3(seeds: usize) -> ParallelSolvers {
+fn parallel_z3(seeds: usize, timeout: usize) -> ParallelSolvers {
     ParallelSolvers::new(
         (0..seeds)
-            .map(|_| SolverConf::new(SolverType::Z3, false, "lfp", 2, None))
+            .map(|_| SolverConf::new(SolverType::Z3, false, "lfp", timeout, None))
             .collect(),
     )
 }
@@ -130,7 +131,7 @@ pub fn compute_lfp_single(
     multi_canceler: &MultiCanceler<MultiCanceler<<ParallelSolvers as BasicSolver>::Canceler>>,
 ) -> Option<(bool, String)> {
     // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
-    let solver: ParallelSolvers = parallel_z3(4);
+    let solver: ParallelSolvers = parallel_z3(4, 2);
     let univ_indices = 1;
 
     let imp_chcs = chc_sys
@@ -248,6 +249,7 @@ pub fn compute_lfp_single(
         &SmtTactic::Full,
     );
 
+    let solver: ParallelSolvers = parallel_z3(parallelism(), 0);
     if let Some(fp) = res {
         let assignment = fp.get_symbolic_assignment();
         let solved = chc_sys.check_assignment(&solver, &assignment, true);
