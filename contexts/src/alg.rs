@@ -778,7 +778,7 @@ where
                 }
             });
 
-            let results = worker.run(parallelism() / 2);
+            let results = worker.run(parallelism());
 
             if multi_canceler.is_some_and(|c| c.is_canceled()) {
                 return ChcResult::Canceled;

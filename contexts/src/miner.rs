@@ -68,7 +68,7 @@ impl MiningTactic {
 
     const FROM_QUERY: Self = Self {
         init: false,
-        qf_bounds: false,
+        qf_bounds: true,
         query_arith: true,
         query_entries: true,
         update_index_bound: false,
