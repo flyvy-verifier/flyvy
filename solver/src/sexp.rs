@@ -111,6 +111,7 @@ fn term_primes(t: &Term, num_primes: usize) -> Sexp {
                 NumOp::Sub => "-",
                 NumOp::Mul => "*",
                 NumOp::Mod => "mod",
+                NumOp::Div => "/",
             };
             app(op, args)
         }

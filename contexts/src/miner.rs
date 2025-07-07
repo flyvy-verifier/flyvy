@@ -404,7 +404,11 @@ impl LessThan {
                 .iter()
                 .flat_map(|t| Self::in_term(t, neg, introduced_quant))
                 .collect(),
-            Term::BinOp(op, t1, t2) if matches!(op, BinOp::Equals | BinOp::NotEquals) => {
+            Term::BinOp(op, t1, t2)
+                if matches!(op, BinOp::Equals | BinOp::NotEquals)
+                    && is_only_arith_and_select(t1)
+                    && is_only_arith_and_select(t2) =>
+            {
                 let strict = neg ^ matches!(op, BinOp::NotEquals);
                 vec![
                     LessThan {
@@ -444,12 +448,16 @@ impl LessThan {
                 body,
             } => {
                 assert!(
-                    binders
+                    binders.iter().all(|b| !introduced_quant
                         .iter()
-                        .all(|b| !introduced_quant.iter().any(|q| q.name == b.name)),
-                    "same quantified variable introduced twice"
+                        .any(|q| q.name == b.name && q.sort != b.sort)),
+                    "quantified variable introduced twice with different sorts"
                 );
-                introduced_quant.extend(binders.iter().cloned());
+                for b in binders {
+                    if !introduced_quant.contains(b) {
+                        introduced_quant.push(b.clone());
+                    }
+                }
                 Self::in_term(body, neg, introduced_quant)
             }
             _ => vec![],
@@ -575,6 +583,14 @@ fn is_only_arith(term: &Term) -> bool {
     match term {
         Term::Int(_) | Term::Id(_) => true,
         Term::NumOp(_, ts) => ts.iter().all(is_only_arith),
+        _ => false,
+    }
+}
+
+fn is_only_arith_and_select(term: &Term) -> bool {
+    match term {
+        Term::Int(_) | Term::Id(_) | Term::ArraySelect { array: _, index: _ } => true,
+        Term::NumOp(_, ts) => ts.iter().all(is_only_arith_and_select),
         _ => false,
     }
 }
@@ -745,16 +761,18 @@ impl ImperativeChc {
                 assertions.append(&mut LessThan::in_term(&t, false, &mut introduced_quant));
             }
 
-            assert!(
-                introduced_quant.is_empty(),
-                "introduced quantifiers in initialization",
-            );
+            let ids: HashSet<String> = assertions.iter().flat_map(|a| a.ids()).collect();
+            let mut vars = chc_vars_in_ids(chc, &ids);
+            vars.extend(introduced_quant.into_iter().map(|b| HoVariable {
+                name: b.name,
+                sort: FunctionSort::from_sort(&b.sort),
+            }));
 
             Some(Self::Init {
                 predicate: pred.0.clone(),
                 assignments,
                 assertions,
-                vars: vec![],
+                vars,
             })
         } else {
             None
@@ -764,12 +782,10 @@ impl ImperativeChc {
     pub fn leqs(
         &self,
         tactic: &MiningTactic,
-        allowed_ids: &HashSet<String>,
-        quantified: &[String],
+        allowed_ids: &mut HashSet<String>,
+        quantified: &mut Vec<String>,
         ints: &mut Vec<Term>,
     ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
-        assert_eq!(quantified.len(), 1);
-
         let bools = vec![];
         let mut leqs = vec![];
 
@@ -792,11 +808,24 @@ impl ImperativeChc {
                 predicate: _,
                 assignments,
                 assertions,
-                vars: _,
+                vars,
             } if tactic.init => {
+                if quantified.len() < vars.len() {
+                    quantified.extend(
+                        (quantified.len()..vars.len()).map(|i| PredicateConfig::quant_name(i)),
+                    );
+                    allowed_ids.extend(quantified.iter().cloned());
+                }
+                let quant_subst: NameSubstitution = vars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| ((v.name.clone(), 0), Substitutable::name(&quantified[i])))
+                    .collect();
+
                 for a in assignments {
                     match a {
                         Assignment::Int(name, term) => {
+                            let term = rename_symbols(&term, &quant_subst);
                             if !allowed_ids.contains(name) || !term.ids().is_subset(allowed_ids) {
                                 continue;
                             }
@@ -808,7 +837,7 @@ impl ImperativeChc {
                             })
                             .unwrap();
                             let y =
-                                ArithExpr::<usize>::from_term(term, |t| position_or_push(ints, t))
+                                ArithExpr::<usize>::from_term(&term, |t| position_or_push(ints, t))
                                     .unwrap();
                             leqs.push((&x - &y, (0, 0)));
                             leqs.push((&y - &x, (0, 0)));
@@ -819,6 +848,9 @@ impl ImperativeChc {
                             index,
                             value,
                         } => {
+                            let index = rename_symbols(index, &quant_subst);
+                            let value = rename_symbols(value, &quant_subst);
+
                             if !allowed_ids.contains(array)
                                 || !index.ids().is_subset(allowed_ids)
                                 || !value.ids().is_subset(allowed_ids)
@@ -831,9 +863,10 @@ impl ImperativeChc {
                                 position_or_push(ints, t)
                             })
                             .unwrap();
-                            let y =
-                                ArithExpr::<usize>::from_term(value, |t| position_or_push(ints, t))
-                                    .unwrap();
+                            let y = ArithExpr::<usize>::from_term(&value, |t| {
+                                position_or_push(ints, t)
+                            })
+                            .unwrap();
                             leqs.push((&x - &y, (0, 0)));
                             leqs.push((&y - &x, (0, 0)));
                         }
@@ -855,16 +888,16 @@ impl ImperativeChc {
                 }
 
                 for lt in assertions {
-                    if !lt.ids().is_subset(allowed_ids) {
+                    let ltx = rename_symbols(&lt.x, &quant_subst);
+                    let lty = rename_symbols(&lt.y, &quant_subst);
+                    if !ltx.ids().is_subset(allowed_ids) || !lty.ids().is_subset(allowed_ids) {
                         continue;
                     }
 
                     let x_expr =
-                        ArithExpr::<usize>::from_term(&lt.x, |t| position_or_push(ints, t))
-                            .unwrap();
+                        ArithExpr::<usize>::from_term(&ltx, |t| position_or_push(ints, t)).unwrap();
                     let y_expr =
-                        ArithExpr::<usize>::from_term(&lt.y, |t| position_or_push(ints, t))
-                            .unwrap();
+                        ArithExpr::<usize>::from_term(&lty, |t| position_or_push(ints, t)).unwrap();
                     let expr = &x_expr - &y_expr;
                     let bound = if lt.strict { -1 } else { 0 };
                     if !expr.is_constant() {

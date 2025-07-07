@@ -285,6 +285,7 @@ impl Sexp {
                 "+" => return num_op(NumOp::Add, args),
                 "*" => return num_op(NumOp::Mul, args),
                 "-" => return num_op(NumOp::Sub, args),
+                "/" => return num_op(NumOp::Div, args),
 
                 "mod" => {
                     assert_eq!(args.len(), 2);
@@ -352,7 +353,7 @@ impl Sexp {
 
 peg::parser! {
 grammar parser() for str {
-  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '+' | '-' | '*' | '!' | '.']
+  rule ident_start() = ['a'..='z' | 'A'..='Z' | '_' | '\'' | '<' | '>' | ':' | '=' | '$' | '@' | '+' | '-' | '*' | '!' | '.' | '/']
   rule ident_char() = ident_start() / ['0'..='9' | '#' | '%' | '-']
   rule ident() = quiet! { ident_start() ident_char()* } / "(as const (Array Int Int))" / expected!("atom")
 

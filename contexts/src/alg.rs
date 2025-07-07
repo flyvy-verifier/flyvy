@@ -778,7 +778,7 @@ where
                 }
             });
 
-            let results = worker.run(parallelism());
+            let results = worker.run(parallelism() / 2);
 
             if multi_canceler.is_some_and(|c| c.is_canceled()) {
                 return ChcResult::Canceled;
@@ -857,13 +857,13 @@ impl PredicateConfig {
         int_terms: Vec<Term>,
         bool_terms: Vec<Term>,
         int_templates: IneqTemplates,
-        univ_indices: usize,
+        quantified: Vec<String>,
         disj_length: Option<usize>,
     ) -> QuantifiedContext {
         let prefix = QuantifierPrefix {
             quantifiers: vec![Quantifier::Forall],
             sorts: Arc::new(vec![Sort::Int]),
-            names: Arc::new(vec![(0..univ_indices).map(Self::quant_name).collect()]),
+            names: Arc::new(vec![quantified]),
         };
 
         let literal_context = PropContext::literals(

@@ -33,6 +33,11 @@ impl FunctionSort {
         self.0.is_empty() && matches!(self.1, Sort::Int)
     }
 
+    /// Return whether the sort is Boolean.
+    pub fn is_bool(&self) -> bool {
+        self.0.is_empty() && matches!(self.1, Sort::Bool)
+    }
+
     /// Return whether the sort is array with integer indices and values.
     pub fn is_array_int_int(&self) -> bool {
         self.0.is_empty() && self.1.is_array_int_int()

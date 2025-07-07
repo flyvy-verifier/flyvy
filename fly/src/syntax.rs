@@ -166,6 +166,8 @@ pub enum NumOp {
     Mul,
     /// Modulo
     Mod,
+    /// Division
+    Div,
 }
 
 impl fmt::Display for NumOp {
@@ -178,6 +180,7 @@ impl fmt::Display for NumOp {
                 NumOp::Sub => "-",
                 NumOp::Mul => "*",
                 NumOp::Mod => "mod",
+                NumOp::Div => "/",
             }
         )
     }
@@ -813,6 +816,10 @@ impl Term {
                     NumOp::Mod => {
                         assert_eq!(vals.len(), 2);
                         vals[0] % vals[1]
+                    }
+                    NumOp::Div => {
+                        assert_eq!(vals.len(), 2);
+                        vals[0] / vals[1]
                     }
                 })
             }

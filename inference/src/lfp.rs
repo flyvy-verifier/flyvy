@@ -132,9 +132,6 @@ pub fn compute_lfp_single(
     // let solver = SingleSolver::new(SolverConf::new(SolverType::Z3, false, "lfp", 10, None));
     let solver: ParallelSolvers = parallel_z3(4);
     let univ_indices = 1;
-    let quantified = (0..univ_indices)
-        .map(PredicateConfig::quant_name)
-        .collect_vec();
 
     let imp_chcs = chc_sys
         .chcs
@@ -150,7 +147,16 @@ pub fn compute_lfp_single(
         .predicates
         .iter()
         .map(|decl| {
-            let mut bool_terms = vec![];
+            let mut quantified = (0..univ_indices)
+                .map(PredicateConfig::quant_name)
+                .collect_vec();
+            let mut bool_terms = decl
+                .args
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.is_bool())
+                .map(|(i, _)| Term::Id(PredicateConfig::arg_name(i)))
+                .collect_vec();
             let mut int_terms = vec![];
             let mut int_templates = IneqTemplates::new(false);
             let mut qf_bool_terms = vec![];
@@ -158,15 +164,19 @@ pub fn compute_lfp_single(
             let mut qf_int_templates = IneqTemplates::new(false);
 
             if !decl.args.is_empty() {
-                let allowed_ids = (0..decl.args.len())
+                let mut allowed_ids = (0..decl.args.len())
                     .map(PredicateConfig::arg_name)
                     .chain(quantified.iter().cloned())
                     .collect();
 
                 for imp_chc in &imp_chcs {
                     if imp_chc.relevant_for(&decl.name) {
-                        let (bs, ls) =
-                            imp_chc.leqs(&mining_tactic, &allowed_ids, &quantified, &mut int_terms);
+                        let (bs, ls) = imp_chc.leqs(
+                            &mining_tactic,
+                            &mut allowed_ids,
+                            &mut quantified,
+                            &mut int_terms,
+                        );
                         for b in bs {
                             if !bool_terms.contains(&b) {
                                 bool_terms.push(b)
@@ -221,7 +231,7 @@ pub fn compute_lfp_single(
                 int_terms,
                 bool_terms,
                 int_templates,
-                univ_indices,
+                quantified,
                 disj_length,
             );
 
