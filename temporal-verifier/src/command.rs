@@ -784,6 +784,11 @@ impl App {
             ) => {
                 let mut chc_sys = formats::parser::parse_smtlib2(&file);
                 chc_sys.eliminate_shadowed_vars();
+                assert_eq!(
+                    chc_sys.non_nullary_predicate_count(),
+                    1,
+                    "curretly only supports one non-nullary predicate in LFP"
+                );
                 verify_via_lfp(&chc_sys, minimize, &[3, 4]);
             }
             _ => unimplemented!("command does not support this file format"),

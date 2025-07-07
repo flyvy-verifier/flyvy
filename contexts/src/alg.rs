@@ -853,14 +853,13 @@ impl PredicateConfig {
         format!("__qvar_{i}")
     }
 
-    pub fn int_ineqs(
-        decl: &HoPredicateDecl,
+    pub fn quantified_disjunctions(
         int_terms: Vec<Term>,
         bool_terms: Vec<Term>,
         int_templates: IneqTemplates,
         univ_indices: usize,
         disj_length: Option<usize>,
-    ) -> Self {
+    ) -> QuantifiedContext {
         let prefix = QuantifierPrefix {
             quantifiers: vec![Quantifier::Forall],
             sorts: Arc::new(vec![Sort::Int]),
@@ -873,17 +872,45 @@ impl PredicateConfig {
         );
         let prop_cont = PropContext::Nary(LogicOp::Or, disj_length, Box::new(literal_context));
 
+        QuantifiedContext {
+            prefix,
+            bool_terms,
+            int_terms,
+            prop_cont,
+        }
+    }
+
+    pub fn qf_units(
+        int_terms: Vec<Term>,
+        bool_terms: Vec<Term>,
+        int_templates: IneqTemplates,
+    ) -> QuantifiedContext {
+        let prefix = QuantifierPrefix {
+            quantifiers: vec![],
+            sorts: Arc::new(vec![]),
+            names: Arc::new(vec![]),
+        };
+
+        let literal_context = PropContext::literals(
+            (0..bool_terms.len()).map(|i| (i, None)).collect(),
+            int_templates,
+        );
+
+        QuantifiedContext {
+            prefix,
+            bool_terms,
+            int_terms,
+            prop_cont: literal_context,
+        }
+    }
+
+    pub fn from_quant_contexts(decl: &HoPredicateDecl, contexts: Vec<QuantifiedContext>) -> Self {
         Self {
             name: decl.name.clone(),
-            arguments: (0..decl.args.len()).map(Self::arg_name).collect(),
-            context: MultiContext {
-                contexts: vec![QuantifiedContext {
-                    prefix,
-                    bool_terms,
-                    int_terms,
-                    prop_cont,
-                }],
-            },
+            arguments: (0..decl.args.len())
+                .map(PredicateConfig::arg_name)
+                .collect(),
+            context: MultiContext { contexts },
         }
     }
 }

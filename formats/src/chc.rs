@@ -18,6 +18,10 @@ use crate::basics::FOModule;
 pub struct FunctionSort(pub Vec<Sort>, pub Sort);
 
 impl FunctionSort {
+    pub fn int() -> Self {
+        FunctionSort(vec![], Sort::Int)
+    }
+
     /// Create a new function sort from a simple sort.
     /// The function sort will have no arguments.
     pub fn from_sort(sort: &Sort) -> Self {
@@ -163,6 +167,13 @@ impl Chc {
             .iter()
             .all(|c| matches!(c, Component::Formulas(_)))
             && matches!(self.head, Component::Predicate(_, _))
+    }
+
+    pub fn is_update(&self) -> bool {
+        self.body
+            .iter()
+            .any(|c| c.predicate().is_some_and(|(_, args)| !args.is_empty()))
+            && matches!(&self.head, Component::Predicate(_, args) if !args.is_empty())
     }
 
     /// Check whether the CHC is a query, i.e., whether it has at least one predicate in the body
@@ -343,6 +354,13 @@ impl ChcSystem {
         for chc in &mut self.chcs {
             chc.eliminate_shadowed_vars();
         }
+    }
+
+    pub fn non_nullary_predicate_count(&self) -> usize {
+        self.predicates
+            .iter()
+            .filter(|p| !p.args.is_empty())
+            .count()
     }
 }
 

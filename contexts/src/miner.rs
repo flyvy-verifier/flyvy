@@ -4,7 +4,7 @@ use std::{
 };
 
 use fly::{
-    syntax::{BinOp, IntType, NOp, NumRel, Term, UOp},
+    syntax::{BinOp, Binder, IntType, NOp, NumRel, Term, UOp},
     term::subst::{rename_symbols, NameSubstitution, Substitutable},
 };
 use formats::chc::{Chc, ChcSystem, FunctionSort, HoVariable};
@@ -14,7 +14,7 @@ use crate::{alg::PredicateConfig, arith::ArithExpr};
 
 pub struct MiningTactic {
     pub init: bool,
-    pub upper_bounds: bool,
+    pub qf_bounds: bool,
     pub query_arith: bool,
     pub query_entries: bool,
     pub update_index_bound: bool,
@@ -29,7 +29,7 @@ impl Display for MiningTactic {
         if self.init {
             active.push("INIT");
         }
-        if self.upper_bounds {
+        if self.qf_bounds {
             active.push("UPPER_BOUNDS");
         }
         if self.query_arith {
@@ -57,7 +57,7 @@ impl Display for MiningTactic {
 impl MiningTactic {
     const FROM_QUERY_UPDATE: Self = Self {
         init: true,
-        upper_bounds: false,
+        qf_bounds: false,
         query_arith: true,
         query_entries: true,
         update_index_bound: true,
@@ -68,7 +68,7 @@ impl MiningTactic {
 
     const FROM_QUERY: Self = Self {
         init: false,
-        upper_bounds: false,
+        qf_bounds: false,
         query_arith: true,
         query_entries: true,
         update_index_bound: false,
@@ -79,7 +79,7 @@ impl MiningTactic {
 
     const FROM_ASSIGNMENTS: Self = Self {
         init: true,
-        upper_bounds: false,
+        qf_bounds: false,
         query_arith: true,
         query_entries: false,
         update_index_bound: true,
@@ -88,10 +88,22 @@ impl MiningTactic {
         update_condition: true,
     };
 
-    pub const TACTICS: [Self; 3] = [
+    const FROM_ASSIGNMENTS_QF: Self = Self {
+        init: true,
+        qf_bounds: true,
+        query_arith: true,
+        query_entries: false,
+        update_index_bound: true,
+        update_entry_asgn: true,
+        update_const: false,
+        update_condition: true,
+    };
+
+    pub const TACTICS: [Self; 4] = [
         Self::FROM_QUERY,
         Self::FROM_QUERY_UPDATE,
         Self::FROM_ASSIGNMENTS,
+        Self::FROM_ASSIGNMENTS_QF,
     ];
 }
 
@@ -348,7 +360,15 @@ impl LessThan {
                 cond,
                 then: _,
                 else_: _,
-            } => Self::in_term(cond, false),
+            } => {
+                let mut introduced_quant = vec![];
+                let res = Self::in_term(cond, false, &mut introduced_quant);
+                assert!(
+                    introduced_quant.is_empty(),
+                    "introduced quantifiers in update condition"
+                );
+                res
+            }
             Term::NAryOp(_, ts) => ts.iter().flat_map(Self::in_update_condition).collect(),
             Term::BinOp(BinOp::Equals, t1, t2) => {
                 let mut lts = Self::in_update_condition(t1);
@@ -359,10 +379,13 @@ impl LessThan {
         }
     }
 
-    fn in_term(term: &Term, neg: bool) -> Vec<Self> {
+    fn in_term(term: &Term, neg: bool, introduced_quant: &mut Vec<Binder>) -> Vec<Self> {
         match term {
-            Term::UnaryOp(UOp::Not, t) => Self::in_term(t, !neg),
-            Term::NAryOp(_, ts) => ts.iter().flat_map(|t| Self::in_term(t, neg)).collect(),
+            Term::UnaryOp(UOp::Not, t) => Self::in_term(t, !neg, introduced_quant),
+            Term::NAryOp(_, ts) => ts
+                .iter()
+                .flat_map(|t| Self::in_term(t, neg, introduced_quant))
+                .collect(),
             Term::BinOp(op, t1, t2) if matches!(op, BinOp::Equals | BinOp::NotEquals) => {
                 let strict = neg ^ matches!(op, BinOp::NotEquals);
                 vec![
@@ -377,6 +400,11 @@ impl LessThan {
                         strict,
                     },
                 ]
+            }
+            Term::BinOp(BinOp::Implies, t1, t2) => {
+                let mut lts = Self::in_term(t1, !neg, introduced_quant);
+                lts.append(&mut Self::in_term(t2, neg, introduced_quant));
+                lts
             }
             Term::NumRel(rel, t1, t2) => {
                 let (mut x, mut y) = match rel {
@@ -394,9 +422,18 @@ impl LessThan {
             }
             Term::Quantified {
                 quantifier: _,
-                binders: _,
+                binders,
                 body,
-            } => Self::in_term(body, neg),
+            } => {
+                assert!(
+                    binders
+                        .iter()
+                        .all(|b| !introduced_quant.iter().any(|q| q.name == b.name)),
+                    "same quantified variable introduced twice"
+                );
+                introduced_quant.extend(binders.iter().cloned());
+                Self::in_term(body, neg, introduced_quant)
+            }
             _ => vec![],
         }
     }
@@ -627,9 +664,10 @@ impl ImperativeChc {
                 );
 
                 let mut assertions = vec![];
+                let mut introduced_quant = vec![];
                 for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
                     println!("Processing term: {t}");
-                    assertions.append(&mut LessThan::in_term(&t, true));
+                    assertions.append(&mut LessThan::in_term(&t, true, &mut introduced_quant));
                 }
 
                 let comb = assertions.iter().cloned().permutations(2).collect_vec();
@@ -644,7 +682,12 @@ impl ImperativeChc {
                 }
 
                 let ids: HashSet<String> = assertions.iter().flat_map(|a| a.ids()).collect();
-                let vars = chc_vars_in_ids(chc, &ids);
+                println!("Ids in assertions: {ids:?}");
+                let mut vars = chc_vars_in_ids(chc, &ids);
+                vars.extend(introduced_quant.into_iter().map(|b| HoVariable {
+                    name: b.name,
+                    sort: FunctionSort::from_sort(&b.sort),
+                }));
 
                 Some(ImperativeChc::Query {
                     predicate: predicate.0.clone(),
@@ -681,9 +724,15 @@ impl ImperativeChc {
             }
 
             let mut assertions = vec![];
+            let mut introduced_quant = vec![];
             for t in chc.terms().iter().map(|t| rename_symbols(t, &substitution)) {
-                assertions.append(&mut LessThan::in_term(&t, false));
+                assertions.append(&mut LessThan::in_term(&t, false, &mut introduced_quant));
             }
+
+            assert!(
+                introduced_quant.is_empty(),
+                "introduced quantifiers in initialization",
+            );
 
             Some(Self::Init {
                 predicate: pred.0.clone(),
@@ -700,7 +749,6 @@ impl ImperativeChc {
         &self,
         tactic: &MiningTactic,
         allowed_ids: &HashSet<String>,
-        args: &[FunctionSort],
         quantified: &[String],
         ints: &mut Vec<Term>,
     ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
@@ -722,19 +770,6 @@ impl ImperativeChc {
                 None
             }
         };
-
-        if tactic.upper_bounds {
-            for (i, s) in args.iter().enumerate() {
-                if s.is_int() {
-                    let expr = leq_expr(
-                        &Term::Id(PredicateConfig::arg_name(i)),
-                        &Term::id(&quantified[0]),
-                    )
-                    .unwrap();
-                    leqs.push((expr, (-1, 0)));
-                }
-            }
-        }
 
         match self {
             ImperativeChc::Init {
@@ -852,6 +887,7 @@ impl ImperativeChc {
                             if tactic.update_index_bound {
                                 let var = Term::id(&quantified[0]);
                                 if let Some(expr) = leq_expr(index, &var) {
+                                    leqs.push((-&expr, (-1, 0)));
                                     leqs.push((expr, (-1, 0)));
                                 }
                             }
@@ -914,6 +950,60 @@ impl ImperativeChc {
                 }
             }
             _ => (),
+        }
+
+        (bools, leqs)
+    }
+
+    pub fn qf_leqs(
+        &self,
+        tactic: &MiningTactic,
+        args: &[FunctionSort],
+        ints: &mut Vec<Term>,
+    ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
+        let bools = vec![];
+        let mut leqs = vec![];
+
+        if tactic.qf_bounds {
+            // Generate inequalities of the form x + y <> z
+            for comb in args.iter().enumerate().combinations(2) {
+                if comb.iter().all(|(_, s)| s.is_int()) {
+                    let mut exprs = vec![];
+                    for (i, _) in comb {
+                        let expr = ArithExpr::<usize>::from_term(
+                            &Term::id(&PredicateConfig::arg_name(i)),
+                            |t| position_or_push(ints, t),
+                        )
+                        .unwrap();
+                        exprs.push(expr);
+                    }
+
+                    leqs.push((&exprs[0] - &exprs[1], (-1, 1)));
+                    leqs.push((&exprs[1] - &exprs[0], (-1, 1)));
+                }
+            }
+
+            // Generate inequalities of the form x + y <> z
+            for comb in args.iter().enumerate().combinations(3) {
+                if comb.iter().all(|(_, s)| s.is_int()) {
+                    let mut exprs = vec![];
+                    for (i, _) in comb {
+                        let expr = ArithExpr::<usize>::from_term(
+                            &Term::id(&PredicateConfig::arg_name(i)),
+                            |t| position_or_push(ints, t),
+                        )
+                        .unwrap();
+                        exprs.push(expr);
+                    }
+
+                    leqs.push((&(&exprs[0] + &exprs[1]) - &exprs[2], (-1, 1)));
+                    leqs.push((&exprs[2] - &(&exprs[0] + &exprs[1]), (-1, 1)));
+                    leqs.push((&(&exprs[0] + &exprs[2]) - &exprs[1], (-1, 1)));
+                    leqs.push((&exprs[1] - &(&exprs[0] + &exprs[2]), (-1, 1)));
+                    leqs.push((&(&exprs[1] + &exprs[2]) - &exprs[0], (-1, 1)));
+                    leqs.push((&exprs[0] - &(&exprs[1] + &exprs[2]), (-1, 1)));
+                }
+            }
         }
 
         (bools, leqs)

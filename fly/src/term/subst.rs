@@ -35,7 +35,7 @@ impl Substitutable {
     pub fn to_name(&self) -> String {
         match self {
             Substitutable::Name(name) | Substitutable::Term(Term::Id(name)) => name.clone(),
-            _ => panic!("substitutatble is not a name"),
+            _ => panic!("substitutatble is not a name: {self:?}"),
         }
     }
 }
