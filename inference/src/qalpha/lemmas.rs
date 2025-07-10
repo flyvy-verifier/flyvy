@@ -76,13 +76,17 @@ impl GeneralModel {
         );
         let tstructs: Vec<Vec<TInterp>> = match prefix.quantifiers[index] {
             Quantifier::Forall => assignments
-                .iter()
+                .par_iter()
                 .flat_map(|asgn| Self::decompose_rec(model, prefix, terms, index + 1, asgn))
+                .collect::<Vec<_>>()
+                .into_iter()
                 .sorted_by_key(|t| t.len())
                 .collect(),
             Quantifier::Exists => assignments
-                .iter()
+                .par_iter()
                 .map(|asgn| Self::decompose_rec(model, prefix, terms, index + 1, asgn))
+                .collect::<Vec<_>>()
+                .into_iter()
                 .multi_cartesian_product_fixed()
                 .map(|tstructs| {
                     let mut tinterps = vec![];
@@ -100,7 +104,7 @@ impl GeneralModel {
         let mut res = vec![];
         for tstruct in tstructs {
             if !res
-                .iter()
+                .par_iter()
                 .any(|ts: &Vec<TInterp>| ts.iter().all(|ti| tstruct.contains(ti)))
             {
                 res.push(tstruct);

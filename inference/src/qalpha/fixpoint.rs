@@ -492,13 +492,16 @@ where
     };
     let decompose_ctis = |ctis: Vec<GeneralModel>| {
         if cfg.decompose {
-            let mut new_ctis = vec![];
-            for model in ctis {
-                for c in &contexts.as_ref().unwrap().contexts {
-                    new_ctis.extend(model.decompose(&c.prefix, &c.bool_terms));
-                }
-            }
-            new_ctis
+            ctis.par_iter()
+                .flat_map(|model| {
+                    contexts
+                        .as_ref()
+                        .unwrap()
+                        .contexts
+                        .par_iter()
+                        .flat_map_iter(|c| model.decompose(&c.prefix, &c.bool_terms))
+                })
+                .collect::<Vec<_>>()
         } else {
             ctis
         }
