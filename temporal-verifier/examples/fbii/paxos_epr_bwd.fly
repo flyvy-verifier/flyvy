@@ -1,0 +1,61 @@
+# Copyright 2022-2023 VMware, Inc.
+# SPDX-License-Identifier: BSD-2-Clause
+
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/paxos_epr.pyv
+
+# sorts:
+sort round
+sort value
+sort quorum
+sort node
+
+# constants:
+immutable none: round
+
+# functions:
+
+
+# relations:
+immutable le(round, round): bool
+immutable member(node, quorum): bool
+mutable one_a(round): bool
+mutable one_b(node, round): bool
+mutable left_round(node, round): bool
+mutable proposal(round, value): bool
+mutable vote(node, round, value): bool
+mutable decision(round, value): bool
+
+# fbii
+immutable r1: round
+immutable r2: round
+immutable v1: value
+immutable v2: value
+# assume always (!le(r2, r1))
+assume always (v1 != v2)
+
+# step 1, fwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
+# assume always (exists quorum_1:quorum. forall node_1:node. !decision(r1, v1) | !member(node_1, quorum_1) | vote(node_1, r1, v1) | false)
+
+# step 2, bwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
+# assume always (exists quorum_1:quorum. forall node_1:node. !left_round(node_1, r1) | !member(node_1, quorum_1) | vote(node_1, r1, v1) | false)
+
+# step 3 (final), fwd, run with: --quantifier "F round 1" --quantifier "F node 1" --clause-size=3 --cubes=0
+
+# axioms:
+assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# init (bad):
+assume (decision(r1, v1) & decision(r2, v2))
+
+# transitions:
+assume always
+    (exists r:round. r != none & (forall R:round. one_a(R) <-> (one_a(R))' | R = r) & (forall x0:node, x1:round. (one_b(x0, x1))' = one_b(x0, x1)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) |
+    (exists n:node, r:round. (r != none & one_a(r) & !left_round(n, r))' & (forall N:node, R:round. one_b(N, R) <-> (one_b(N, R))' | N = n & R = r) & (forall N:node, R:round. left_round(N, R) <-> (left_round(N, R))' | N = n & !le(r, R)) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) |
+    (exists r:round, q:quorum, maxr:round, v:value. (r != none & (forall V:value. !proposal(r, V)) & (forall N:node. member(N, q) -> one_b(N, r)) & (maxr = none & (forall N:node, MAXR:round, V:value. !(member(N, q) & !le(r, MAXR) & vote(N, MAXR, V))) | maxr != none & (exists N:node. member(N, q) & !le(r, maxr) & vote(N, maxr, v)) & (forall N:node, MAXR:round, V:value. member(N, q) & !le(r, MAXR) & vote(N, MAXR, V) -> le(MAXR, maxr))))' & (forall R:round, V:value. proposal(R, V) <-> (proposal(R, V))' | R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b(x0, x1))' = one_b(x0, x1)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) |
+    (exists n:node, v:value, r:round. (r != none & !left_round(n, r) & proposal(r, v))' & (forall N:node, R:round, V:value. vote(N, R, V) <-> (vote(N, R, V))' | N = n & R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b(x0, x1))' = one_b(x0, x1)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) |
+    (exists r:round, v:value, q:quorum. (r != none & (forall N:node. member(N, q) -> vote(N, r, v)))' & (forall R:round, V:value. decision(R, V) <-> (decision(R, V))' | R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b(x0, x1))' = one_b(x0, x1)) & (forall x0:node, x1:round. (left_round(x0, x1))' = left_round(x0, x1)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)))
+
+# safety:
+assert always !((forall R:round. !one_a(R)) & (forall N:node, R:round. !one_b(N, R)) & (forall N:node, R:round. !left_round(N, R)) & (forall R:round, V:value. !proposal(R, V)) & (forall N:node, R:round, V:value. !vote(N, R, V)) & (forall R:round, V:value. !decision(R, V)))
