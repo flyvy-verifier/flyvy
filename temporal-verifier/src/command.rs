@@ -5,6 +5,8 @@
 
 use bounded::checker::CheckerAnswer;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use fly::term::prime::reverse_module;
+use inference::qalpha::fbii::qalpha_fbii;
 use inference::qalpha::fixpoint::defaults;
 use path_slash::PathExt;
 use solver::basics::SingleSolver;
@@ -25,12 +27,12 @@ use fly::semantics::models_to_string;
 use fly::syntax::{Module, Signature};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{
-    FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
+    Direction, FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
 };
 use inference::houdini;
 use inference::qalpha::{
     fixpoint::{qalpha_dynamic, Strategy},
-    quant::{parse_quantifier, QuantifierConfig},
+    quant::parse_quantifiers,
 };
 use inference::updr::Updr;
 use solver::backends;
@@ -91,26 +93,6 @@ struct QuantifierConfigArgs {
     /// Quantifier of the form `<quantifier: F/E/*> <sort> <count>` which is appended to the
     /// quantifier structure of the first-order language; multiple quantifiers are permitted
     quantifier: Vec<String>,
-}
-
-impl QuantifierConfigArgs {
-    fn to_cfg(&self, sig: &Signature) -> QuantifierConfig {
-        let mut quantifiers = vec![];
-        let mut sorts = vec![];
-        let mut counts = vec![];
-        for quantifier_spec in &self.quantifier {
-            match parse_quantifier(sig, quantifier_spec) {
-                Ok((q, sort, count)) => {
-                    quantifiers.push(q);
-                    sorts.push(sort);
-                    counts.push(count);
-                }
-                Err(err) => panic!("{err}"),
-            }
-        }
-
-        QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
-    }
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -231,7 +213,7 @@ impl QalphaArgs {
                 SmtTactic::from(self.smt_cfg.smt_tactic.as_str()),
             ),
 
-            quant_cfg: Arc::new(self.quant_cfg.to_cfg(&m.signature)),
+            quant_cfg: Arc::new(parse_quantifiers(&self.quant_cfg.quantifier, &m.signature)),
 
             qf_cfg: self.qf_cfg.to_cfg(),
 
@@ -250,6 +232,75 @@ impl QalphaArgs {
     }
 }
 
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct FbiiArgs {
+    #[command(flatten)]
+    qalpha_args: QalphaArgs,
+    #[arg(short, long)]
+    iter: Vec<String>,
+}
+
+impl FbiiArgs {
+    fn to_cfgs(&self, m: &Module, fname: String) -> Vec<(Direction, QalphaConfig)> {
+        let universe = if self.qalpha_args.sim_cfg.bound.is_empty()
+            || self.qalpha_args.sim_cfg.bound_sum.is_some()
+        {
+            vec![defaults::SIMULATION_SORT_SIZE; m.signature.sorts.len()]
+        } else {
+            let universe_map = get_universe(&m.signature, &self.qalpha_args.sim_cfg.bound);
+            m.signature.sorts.iter().map(|s| universe_map[s]).collect()
+        };
+
+        let mut cfgs = vec![];
+        let fo = FOModule::new(
+            m,
+            !self.qalpha_args.smt_cfg.no_disj,
+            SmtTactic::from(self.qalpha_args.smt_cfg.smt_tactic.as_str()),
+        );
+
+        for it in &self.iter {
+            let parts = it
+                .split('|')
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>();
+            assert!(parts.len() > 0 && (parts[0] == "fwd" || parts[0] == "bwd"));
+            let direction = if parts[0] == "fwd" {
+                Direction::Fwd
+            } else {
+                Direction::Bwd
+            };
+
+            cfgs.push((
+                direction,
+                QalphaConfig {
+                    fname: fname.clone(),
+
+                    // will be overwritten by the direction later
+                    fo: fo.clone(),
+
+                    quant_cfg: Arc::new(parse_quantifiers(&parts[1..], &m.signature)),
+
+                    qf_cfg: self.qalpha_args.qf_cfg.to_cfg(),
+
+                    sim: SimulationConfig {
+                        universe: universe.clone(),
+                        sum: self.qalpha_args.sim_cfg.bound_sum,
+                        depth: self.qalpha_args.sim_cfg.depth,
+                        guided: self.qalpha_args.sim_cfg.guided,
+                        dfs: self.qalpha_args.sim_cfg.dfs,
+                    },
+
+                    strategy: Strategy::from(self.qalpha_args.strategy.as_str()),
+                    seeds: self.qalpha_args.smt_cfg.seeds,
+                    baseline: self.qalpha_args.baseline,
+                },
+            ));
+        }
+
+        cfgs
+    }
+}
+
 #[derive(clap::Subcommand, Clone, Debug, PartialEq, Eq)]
 enum InferCommand {
     /// Run Houdini
@@ -264,6 +315,7 @@ enum InferCommand {
     /// a given first-order logical language. The language is mostly specified using a quantifier
     /// structure and a quantifier-free body restricting the formulas in the language.
     Qalpha(QalphaArgs),
+    Fbii(FbiiArgs),
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -387,6 +439,10 @@ impl InferCommand {
         match self {
             InferCommand::Houdini { solver: _, file } => file,
             InferCommand::Qalpha(QalphaArgs { file, .. }) => file,
+            InferCommand::Fbii(FbiiArgs {
+                qalpha_args: QalphaArgs { file, .. },
+                ..
+            }) => file,
         }
     }
 }
@@ -561,10 +617,29 @@ impl App {
             ) => {
                 m.inline_defs();
                 let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+                let fixpoint = qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+                fixpoint.report(!args.no_print_nondet);
                 if args.time {
                     timing::report();
                 }
+            }
+            Command::Infer(
+                ref args @ InferArgs {
+                    infer_cmd: InferCommand::Fbii(ref fbargs),
+                    ..
+                },
+            ) => {
+                m.inline_defs();
+                let bwd_m = reverse_module(&m);
+                let cfgs = fbargs.to_cfgs(&m, args.infer_cmd.file().to_string());
+                qalpha_fbii(
+                    cfgs,
+                    &m,
+                    &bwd_m,
+                    !fbargs.qalpha_args.smt_cfg.no_disj,
+                    SmtTactic::from(fbargs.qalpha_args.smt_cfg.smt_tactic.as_str()),
+                    !args.no_print_nondet,
+                );
             }
             Command::Inline { .. } => {
                 let mut m = m;

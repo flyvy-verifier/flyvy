@@ -158,7 +158,7 @@ fn invariant_cover<S: BasicSolver>(
 }
 
 /// An inductive fixpoint
-struct FoundFixpoint {
+pub struct FoundFixpoint {
     /// The last frame of the fixpoint computation.
     /// This is inductive iff `reduced_proof` is not `None`
     proof: Vec<Term>,
@@ -210,7 +210,7 @@ impl FoundFixpoint {
         }
     }
 
-    fn report(&self, print_nondet: bool) {
+    pub fn report(&self, print_nondet: bool) {
         let print_inv = |name: &str, size: usize, inv: &[Term]| {
             println!("{name} (size={size}) {{");
             for lemma in inv {
@@ -247,6 +247,14 @@ impl FoundFixpoint {
             println!("=============== JSON ===============");
             println!("{}", serde_json::to_string(&self.stats).unwrap());
         }
+    }
+
+    pub fn is_safe(&self) -> bool {
+        self.safety_proof.is_some()
+    }
+
+    pub fn reduced(&self) -> Vec<Term> {
+        self.reduced_proof.as_ref().unwrap().clone()
     }
 }
 
@@ -311,30 +319,24 @@ fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     ])
 }
 
-pub fn qalpha<L, S>(
-    cfg: Arc<QalphaConfig>,
-    lang: Arc<L>,
-    m: &Module,
-    solver: &S,
-    print_nondet: bool,
-) where
+fn qalpha<L, S>(cfg: Arc<QalphaConfig>, lang: Arc<L>, m: &Module, solver: &S) -> FoundFixpoint
+where
     L: BoundedLanguage,
     S: BasicSolver,
 {
-    println!("Running qalpha algorithm...");
+    log::info!("Running qalpha algorithm...");
     let log_domain_size = lang.log_size();
-    println!("Approximate domain size: 10^{log_domain_size:.2}");
+    log::info!("Approximate domain size: 10^{log_domain_size:.2}");
 
-    let fixpoint = run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo);
-    fixpoint.report(print_nondet);
+    run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo)
 }
 
-pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
+pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) -> FoundFixpoint {
     // TODO: add fallback solver option or remove it from command arguments
     let solver = parallel_solver(&cfg, cfg.seeds);
 
     // TODO: make nesting and include_eq configurable or remove them from command arguments
-    println!("Generating literals...");
+    log::info!("Generating literals...");
     let mut literals: Vec<_>;
     let cube_literals: Vec<_>;
     let gen_time = timed!({
@@ -365,7 +367,7 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
         });
     });
 
-    println!(
+    log::info!(
         "Generated {} literals in {}ms ({} containing variables after first existential)",
         literals.len(),
         if print_nondet {
@@ -386,7 +388,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
         (QfBody::Cnf, false) => qalpha(
             cfg.clone(),
@@ -397,7 +398,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
         (QfBody::PDnf, true) => qalpha(
             cfg.clone(),
@@ -410,7 +410,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
         (QfBody::PDnf, false) => qalpha(
             cfg.clone(),
@@ -423,7 +422,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
         (QfBody::Dnf, true) => qalpha(
             cfg.clone(),
@@ -434,7 +432,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
         (QfBody::Dnf, false) => qalpha(
             cfg.clone(),
@@ -445,7 +442,6 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) {
             ),
             m,
             &solver,
-            print_nondet,
         ),
     }
 }

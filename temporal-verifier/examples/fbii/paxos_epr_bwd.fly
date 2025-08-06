@@ -36,10 +36,12 @@ immutable v2: value
 assume always (v1 != v2)
 
 # step 1, fwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
-# assume always (exists quorum_1:quorum. forall node_1:node. !decision(r1, v1) | !member(node_1, quorum_1) | vote(node_1, r1, v1) | false)
+# assume always (exists quorum_1:quorum. forall node_1:node. !decision(r1, v1) | !member(node_1, quorum_1) | vote(node_1, r1, v1))
+# assume always (exists quorum_1:quorum. forall node_1:node. !decision(r2, v2) | !member(node_1, quorum_1) | vote(node_1, r2, v2))
 
 # step 2, bwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
-# assume always (exists quorum_1:quorum. forall node_1:node. !left_round(node_1, r1) | !member(node_1, quorum_1) | vote(node_1, r1, v1) | false)
+# assume always (exists quorum_1:quorum. forall node_1:node. !left_round(node_1, r1) | !member(node_1, quorum_1) | vote(node_1, r1, v1))
+# assume always (exists quorum_1:quorum. forall node_1:node. !left_round(node_1, r2) | !member(node_1, quorum_1) | vote(node_1, r2, v2))
 
 # step 3 (final), fwd, run with: --quantifier "F round 1" --quantifier "F node 1" --clause-size=3 --cubes=0
 

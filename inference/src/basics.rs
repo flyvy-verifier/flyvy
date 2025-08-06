@@ -5,6 +5,7 @@ use itertools;
 use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fmt::Display,
     hash::Hash,
     sync::{Arc, Mutex},
     thread,
@@ -222,6 +223,7 @@ impl<V: AsRef<[Term]> + Copy + Send + Sync> OrderedTerms for V {
 /// namely single-vocabulary axioms, initial assertions and safety assertions,
 /// and double-vocabulary transition assertions.
 /// `disj` denotes whether to split the transitions disjunctively, if possible.
+#[derive(Clone)]
 pub struct FOModule {
     signature: Arc<Signature>,
     pub module: DestructuredModule,
@@ -671,6 +673,7 @@ impl FOModule {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum SmtTactic {
     Full,
     Gradual,
@@ -736,4 +739,19 @@ pub struct QalphaConfig {
     pub seeds: usize,
 
     pub baseline: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum Direction {
+    Fwd,
+    Bwd,
+}
+
+impl Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Direction::Fwd => write!(f, "forward"),
+            Direction::Bwd => write!(f, "backward"),
+        }
+    }
 }

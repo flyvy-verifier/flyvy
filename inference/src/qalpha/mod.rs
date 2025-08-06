@@ -4,6 +4,7 @@
 //! An implementation of the qalpha algorithm
 
 pub mod atoms;
+pub mod fbii;
 pub mod fixpoint;
 mod frame;
 mod language;

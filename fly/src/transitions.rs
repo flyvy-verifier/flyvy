@@ -9,6 +9,7 @@ use crate::term::prime::Next;
 use thiserror::Error;
 
 /// Contains the different parts of the extracted transition system.
+#[derive(Clone)]
 pub struct DestructuredModule {
     /// The initial conditions (assumes with no primes)
     pub inits: Vec<Term>,
@@ -24,6 +25,7 @@ pub struct DestructuredModule {
 /// Checking an Assert means checking safety & invariants.
 // This is different than the Proof in syntax.rs because safety has always been
 // unwrapped from an Always
+#[derive(Clone)]
 pub struct Proof {
     /// The safety property to check
     pub safety: Spanned<Term>,
@@ -130,7 +132,7 @@ impl DestructuredModule {
     pub fn mutable_axioms<'a>(
         &'a self,
         relations: &'a [RelationDecl],
-    ) -> impl Iterator<Item = &Term> + 'a {
+    ) -> impl Iterator<Item = &'a Term> + 'a {
         self.axioms
             .iter()
             .filter(|term| contains_mutable_relations(term, relations))

@@ -72,10 +72,7 @@ fn select_last(max: usize, boxes: &[usize]) -> usize {
         .unwrap_or(0)
 }
 
-pub fn parse_quantifier(
-    sig: &Signature,
-    s: &str,
-) -> Result<(Option<Quantifier>, Sort, usize), String> {
+fn parse_quantifier(sig: &Signature, s: &str) -> Result<(Option<Quantifier>, Sort, usize), String> {
     let mut parts = s.split_whitespace();
 
     let quantifier = match parts.next().unwrap() {
@@ -94,6 +91,24 @@ pub fn parse_quantifier(
 
     let count = parts.next().unwrap().parse::<usize>().unwrap();
     Ok((quantifier, sort, count))
+}
+
+pub fn parse_quantifiers(quant_strings: &[String], sig: &Signature) -> QuantifierConfig {
+    let mut quantifiers = vec![];
+    let mut sorts = vec![];
+    let mut counts = vec![];
+    for quantifier_spec in quant_strings {
+        match parse_quantifier(sig, quantifier_spec) {
+            Ok((q, sort, count)) => {
+                quantifiers.push(q);
+                sorts.push(sort);
+                counts.push(count);
+            }
+            Err(err) => panic!("{err}"),
+        }
+    }
+
+    QuantifierConfig::new(Arc::new(sig.clone()), quantifiers, sorts, &counts)
 }
 
 /// A [`QuantifierSequence`] is a sequence where each position represents a sorted
