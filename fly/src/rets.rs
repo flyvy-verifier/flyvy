@@ -450,28 +450,35 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
             false => Ok(()),
         },
         Term::BinOp(BinOp::Equals, x, y) => {
+            let mut fixed_x = false;
+            let mut fixed_y = false;
             match strip_primes(x) {
                 Some((Term::Id(f), x_primes)) if changed.iter().any(|c| c.name == *f) => {
-                    **x = Term::App(f.clone(), x_primes, vec![])
+                    **x = Term::App(f.clone(), x_primes, vec![]);
                 }
                 Some((Term::App(f, p, xs), x_primes)) if changed.iter().any(|c| c.name == *f) => {
                     **x = Term::App(f.clone(), p + x_primes, xs.clone())
                 }
-                _ => match strip_primes(y) {
-                    Some((Term::Id(f), y_primes)) if changed.iter().any(|c| c.name == *f) => {
-                        **y = Term::App(f.clone(), y_primes, vec![])
-                    }
-                    Some((Term::App(f, p, xs), y_primes))
-                        if changed.iter().any(|c| c.name == *f) =>
-                    {
-                        **y = Term::App(f.clone(), p + y_primes, xs.clone())
-                    }
-                    _ => {
-                        fix_term(x, changed)?;
-                        fix_term(y, changed)?;
-                        return Ok(());
-                    }
-                },
+                _ => {
+                    fix_term(x, changed)?;
+                    fixed_x = true;
+                }
+            }
+            match strip_primes(y) {
+                Some((Term::Id(f), y_primes)) if changed.iter().any(|c| c.name == *f) => {
+                    **y = Term::App(f.clone(), y_primes, vec![])
+                }
+                Some((Term::App(f, p, xs), y_primes)) if changed.iter().any(|c| c.name == *f) => {
+                    **y = Term::App(f.clone(), p + y_primes, xs.clone())
+                }
+                _ => {
+                    fix_term(y, changed)?;
+                    fixed_y = true;
+                }
+            }
+
+            if fixed_x && fixed_y {
+                return Ok(());
             }
 
             if let Term::Id(id) = &**x {
@@ -515,7 +522,7 @@ fn fix_term(term: &mut Term, changed: &[RelationDecl]) -> Result<(), RetsError> 
                 Term::Id(id) => {
                     **y = Term::equals(Term::Id(binder.name.clone()), Term::Id(id.clone()))
                 }
-                _ => unreachable!(),
+                _ => unreachable!("expected an application or id, got {x} = {y}"),
             };
 
             *term = Term::forall([binder], Term::equals((**x).clone(), (**y).clone()));

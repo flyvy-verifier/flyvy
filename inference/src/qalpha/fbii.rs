@@ -38,12 +38,13 @@ pub fn qalpha_fbii(
         let fixpoint = qalpha_dynamic(Arc::new(cfg), &m, print_nondet);
         let reduced = fixpoint.reduced();
         for t in &reduced {
-            println!("    {}", t);
+            println!("    invariant {}", t);
         }
         println!(
-            "========== Fixpoint found, reduced size={}, safe={} ==========",
+            "========== Fixpoint found, reduced size={}, safe={}, time={} ==========",
             reduced.len(),
-            fixpoint.is_safe()
+            fixpoint.is_safe(),
+            fixpoint.time_sec()
         );
         additional_axioms.extend(reduced);
     }

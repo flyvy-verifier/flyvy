@@ -210,7 +210,7 @@ impl FoundFixpoint {
         }
     }
 
-    pub fn report(&self, print_nondet: bool) {
+    pub fn report(&self, print_nondet: bool, json: bool) {
         let print_inv = |name: &str, size: usize, inv: &[Term]| {
             println!("{name} (size={size}) {{");
             for lemma in inv {
@@ -244,8 +244,10 @@ impl FoundFixpoint {
                 print_inv("safety", safety_proof.len(), safety_proof);
             }
 
-            println!("=============== JSON ===============");
-            println!("{}", serde_json::to_string(&self.stats).unwrap());
+            if json {
+                println!("=============== JSON ===============");
+                println!("{}", serde_json::to_string(&self.stats).unwrap());
+            }
         }
     }
 
@@ -255,6 +257,10 @@ impl FoundFixpoint {
 
     pub fn reduced(&self) -> Vec<Term> {
         self.reduced_proof.as_ref().unwrap().clone()
+    }
+
+    pub fn time_sec(&self) -> f64 {
+        self.stats.time_sec
     }
 }
 
