@@ -173,6 +173,10 @@ struct QalphaArgs {
     #[command(flatten)]
     quant_cfg: QuantifierConfigArgs,
 
+    #[arg(long)]
+    /// Look for the strongest individually inductive lemmas rather than the strongest conjunction
+    no_conj: bool,
+
     #[command(flatten)]
     qf_cfg: QuantifierFreeConfigArgs,
 
@@ -212,6 +216,8 @@ impl QalphaArgs {
                 !self.smt_cfg.no_disj,
                 SmtTactic::from(self.smt_cfg.smt_tactic.as_str()),
             ),
+
+            conj: !self.no_conj,
 
             quant_cfg: Arc::new(parse_quantifiers(&self.quant_cfg.quantifier, &m.signature)),
 
@@ -277,6 +283,8 @@ impl FbiiArgs {
 
                     // will be overwritten by the direction later
                     fo: fo.clone(),
+
+                    conj: !self.qalpha_args.no_conj,
 
                     quant_cfg: Arc::new(parse_quantifiers(&parts[1..], &m.signature)),
 

@@ -14,6 +14,7 @@ use crate::{
     hashmap::{HashMap, HashSet},
     qalpha::{
         atoms::Literal,
+        fixpoint::ForwardCti,
         quant::{QuantifierConfig, QuantifierPrefix},
     },
 };
@@ -169,20 +170,6 @@ pub trait BoundedLanguage: Sync + Send {
 
     fn simplify(&self, f: &Self::Formula) -> Vec<Term>;
 
-    fn weaken_set<I>(&self, set: &mut Self::Set, model: &Model, assignment: &Assignment, ignore: I)
-    where
-        I: Fn(&Self::Formula) -> bool + Send + Sync,
-    {
-        let unsat = set.get_unsat_formulas(model, assignment);
-        let my_ignore = |f: &Self::Formula| ignore(f) || !set.get_subsuming(f).is_empty();
-        let weakenings: Vec<_> = unsat
-            .par_iter()
-            .flat_map_iter(|f| self.weaken(f, model, assignment, my_ignore))
-            .collect();
-
-        set.extend_min(weakenings);
-    }
-
     fn minimize<I1, I2>(min_it: I1, it: I2) -> Vec<Self::Formula>
     where
         I1: IntoIterator<Item = Self::Formula>,
@@ -266,11 +253,18 @@ pub trait FormulaSet:
         set_into_iter(self).collect()
     }
 
-    fn get_unsat_formulas(&mut self, model: &Model, assignment: &Assignment) -> Vec<Self::Formula> {
-        self.get_unsat(model, assignment)
-            .iter()
-            .map(|id| self.remove(id))
-            .collect_vec()
+    fn get_unsat_cti(&mut self, cti: &ForwardCti) -> Vec<FormulaId> {
+        let empty_asgn = Assignment::new();
+        let mut unsat = self.get_unsat(&cti.post, &empty_asgn);
+        if let Some(model) = &cti.pre {
+            unsat.retain(|id| self.get_f(id).unwrap().eval(model, &empty_asgn));
+        }
+        unsat
+    }
+
+    fn remove_unsat_cti(&mut self, cti: &ForwardCti) -> Vec<Self::Formula> {
+        let unsat = self.get_unsat_cti(cti);
+        unsat.iter().map(|id| self.remove(id)).collect()
     }
 }
 
@@ -2580,7 +2574,6 @@ mod tests {
         let mut set = advanced::CubeSet::default();
 
         let m110 = model(1, 1, 0);
-        let m000 = model(0, 0, 0);
 
         let weakenings = cb_lang.weaken(&cb, &m110, &Assignment::new(), |_| false);
         assert_eq!(
@@ -2595,9 +2588,6 @@ mod tests {
 
         assert_eq!(set.len(), 1);
         assert!(set.get_unsat(&m110, &Assignment::new()).is_empty());
-
-        cb_lang.weaken_set(&mut set, &m000, &Assignment::new(), |_| false);
-        assert_eq!(set.to_vec(), vec![cube(vec![lit("c", false)])]);
     }
 
     #[test]

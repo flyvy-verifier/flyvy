@@ -728,6 +728,8 @@ pub struct QalphaConfig {
     pub fname: String,
     pub fo: FOModule,
 
+    pub conj: bool,
+
     pub quant_cfg: Arc<QuantifierConfig>,
 
     pub qf_cfg: QuantifierFreeConfig,

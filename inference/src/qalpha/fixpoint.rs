@@ -93,6 +93,22 @@ pub fn sample_priority(
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ForwardCti {
+    pub pre: Option<Model>,
+    pub post: Model,
+}
+
+impl ForwardCti {
+    pub fn new(pre: Option<Model>, post: Model) -> Self {
+        Self { pre, post }
+    }
+
+    pub fn universe(&self) -> &[usize] {
+        &self.post.universe
+    }
+}
+
 pub enum Strategy {
     None,
     Houdini,
@@ -476,7 +492,7 @@ where
     );
 
     // Initialize simulations.
-    let mut samples: Tasks<SamplePriority, Model> = frame.initial_samples();
+    let mut samples: Tasks<SamplePriority, ForwardCti> = frame.initial_samples();
     let mut full_houdini_frame: Option<Vec<Term>> = None;
 
     // Overapproximate initial states.
@@ -487,9 +503,9 @@ where
                 break;
             }
             frame.weaken(&ctis);
-            for cex in ctis {
-                frame.see(&cex);
-                samples.insert(sample_priority(&cfg.sim, &cex.universe, 0).unwrap(), cex);
+            for cti in ctis {
+                frame.see(&cti.post);
+                samples.insert(sample_priority(&cfg.sim, cti.universe(), 0).unwrap(), cti);
             }
         }
 
@@ -500,7 +516,7 @@ where
     let mut run_sim = !samples.is_empty();
     let mut run_smt = cfg.strategy.is_weaken() || (cfg.strategy.is_houdini() && !run_sim);
     while run_sim || run_smt {
-        let mut ctis: Vec<Model> = vec![];
+        let mut ctis: Vec<ForwardCti> = vec![];
         let canceler = MultiCanceler::new();
         // Get new samples and CTI's, and if enabled, check the safety of the frame.
         let not_safe = thread::scope(|s| {
@@ -525,11 +541,11 @@ where
             }
 
             let smt_cti = smt_cti.unwrap();
-            for cex in &smt_cti {
-                if !matches!(frame.see(cex), Some(false)) {
+            for cti in &smt_cti {
+                if !matches!(frame.see(&cti.post), Some(false)) {
                     samples.insert(
-                        sample_priority(&cfg.sim, &cex.universe, 0).unwrap(),
-                        cex.clone(),
+                        sample_priority(&cfg.sim, cti.universe(), 0).unwrap(),
+                        cti.clone(),
                     );
                 }
             }
@@ -631,7 +647,7 @@ fn qalpha_cti<L, S>(
     fo: &FOModule,
     frame: &InductionFrame<'_, L>,
     canceler: MultiCanceler<MultiCanceler<S::Canceler>>,
-) -> Option<Vec<Model>>
+) -> Option<Vec<ForwardCti>>
 where
     L: BoundedLanguage,
     S: BasicSolver,
@@ -652,5 +668,5 @@ where
         }
     }
 
-    Some(frame.trans_cex(fo, solver, canceler))
+    Some(frame.trans_cex(fo, solver, canceler, cfg.conj))
 }

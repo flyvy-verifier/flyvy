@@ -16,6 +16,7 @@ use fly::syntax::{Module, Signature, Term};
 
 use bounded::simulator::{MultiSimulator, SatSimulator};
 
+use crate::qalpha::fixpoint::ForwardCti;
 use crate::{
     basics::{CexResult, FOModule, SimulationConfig},
     hashmap::{HashMap, HashSet},
@@ -309,7 +310,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     }
 
     /// Get an initial state which violates one of the frame's lemmas.
-    pub fn init_cex<S: BasicSolver>(&self, fo: &FOModule, solver: &S) -> Vec<Model> {
+    pub fn init_cex<S: BasicSolver>(&self, fo: &FOModule, solver: &S) -> Vec<ForwardCti> {
         self.log_info("Finding initial CTI...");
         let results = ParallelWorker::new(
             &mut self.weaken_lemmas.keys().map(|key| (*key, *key)).collect(),
@@ -333,7 +334,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         let mut manager = self.lemmas.write().unwrap();
         for (key, out) in results {
             match out {
-                Some(model) => ctis.push(model),
+                Some(model) => ctis.push(ForwardCti::new(None, model)),
                 None => {
                     manager.blocked_to_core.insert(key, Blocked::Initial);
                 }
@@ -346,11 +347,11 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     }
 
     /// Weaken the lemmas in the frame.
-    pub fn weaken(&mut self, models: &[Model]) -> bool {
+    pub fn weaken(&mut self, ctis: &[ForwardCti]) -> bool {
         let mut changed = false;
         let weaken_time = timed!({
-            for model in models {
-                let (r, a) = self.weaken_lemmas.weaken(model);
+            for cti in ctis {
+                let (r, a) = self.weaken_lemmas.weaken(cti);
 
                 if !r.is_empty() {
                     self.remove_by_keys(&r);
@@ -377,11 +378,11 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         changed
     }
 
-    pub fn remove_unsat(&mut self, models: &[Model]) {
+    pub fn remove_unsat(&mut self, models: &[ForwardCti]) {
         let removed = models
             .iter()
-            .flat_map(|model| {
-                let rem = self.weaken_lemmas.remove_unsat(model);
+            .flat_map(|cti| {
+                let rem = self.weaken_lemmas.remove_unsat(cti);
                 if !rem.is_empty() {
                     self.log_info("Removed unsatisfied.");
                 }
@@ -408,15 +409,15 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     /// Extend simulations of traces in order to find a CTI for the current frame.
     pub fn extend<C: BasicCanceler>(
         &self,
-        samples: &mut Tasks<SamplePriority, Model>,
+        samples: &mut Tasks<SamplePriority, ForwardCti>,
         canceler: C,
-    ) -> Vec<Model> {
+    ) -> Vec<ForwardCti> {
         self.log_info("Simulating traces...");
         // Maps models to whether they violate the current frame, and extends them using the simulator.
-        let results = ParallelWorker::new(samples, |(_, t_depth), model| {
+        let results = ParallelWorker::new(samples, |(_, t_depth), cti| {
             let unsat;
             let unsat_time = timed!({
-                unsat = self.weaken_lemmas.unsat(model);
+                unsat = self.weaken_lemmas.unsat(&cti.post);
             });
 
             let depth = if unsat && self.sim_config.guided {
@@ -433,12 +434,12 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
             };
 
             let new_samples =
-                if let Some(p) = sample_priority(&self.sim_config, &model.universe, depth + 1) {
+                if let Some(p) = sample_priority(&self.sim_config, cti.universe(), depth + 1) {
                     let sim = self
                         .simulator
-                        .simulate_new(model)
+                        .simulate_new(&cti.post)
                         .into_iter()
-                        .map(|sample| (p.clone(), sample))
+                        .map(|sample| (p.clone(), ForwardCti::new(Some(cti.post.clone()), sample)))
                         .collect_vec();
                     log::debug!("Found {} simulated samples from CTI.", sim.len());
                     sim
@@ -492,13 +493,14 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         manager.core_to_blocked = HashMap::default();
     }
 
-    /// Get an post-state of the frame which violates one of the frame's lemmas.
+    /// Get a state pair that violates the inductiveness of one of the frame's lemmas.
     pub fn trans_cex<S: BasicSolver>(
         &self,
         fo: &FOModule,
         solver: &S,
         cancelers: MultiCanceler<MultiCanceler<S::Canceler>>,
-    ) -> Vec<Model> {
+        conj: bool,
+    ) -> Vec<ForwardCti> {
         self.log_info("Finding transition CTI...");
         let mut tasks = if self.property_directed {
             let manager = self.lemmas.read().unwrap();
@@ -578,55 +580,108 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                     permanent.push(*key);
                 }
                 let query_start = Instant::now();
-                let res = fo.trans_cex(
-                    solver,
-                    &self.weaken_lemmas.hypotheses(permanent, None, try_first),
-                    &term,
-                    false,
-                    Some(cancelers.clone()),
-                    false,
-                );
-                match &res {
-                    CexResult::Cex(models) => {
-                        cancelers.cancel();
-                        {
-                            let mut first_sat_lock = first_sat.lock().unwrap();
-                            if first_sat_lock.is_none() {
-                                *first_sat_lock = Some(Instant::now());
+                if conj {
+                    let res =  fo.trans_cex(
+                        solver,
+                        &self.weaken_lemmas.hypotheses(permanent, None, try_first),
+                        &term,
+                        false,
+                        Some(cancelers.clone()),
+                        false,
+                    );
+                    match &res {
+                        CexResult::Cex(models) => {
+                            cancelers.cancel();
+                            {
+                                let mut first_sat_lock = first_sat.lock().unwrap();
+                                if first_sat_lock.is_none() {
+                                    *first_sat_lock = Some(Instant::now());
+                                }
                             }
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found SAT with universe size {:?}",
+                                query_start.elapsed().as_millis(),
+                                models[0].universe
+                            ));
+                            (Some(res), vec![], true)
                         }
-                        self.log_info(format!(
-                            "{:>8}ms. ({idx}) Transition found SAT with universe size {:?}",
-                            query_start.elapsed().as_millis(),
-                            models[0].universe
-                        ));
-                        (Some(res), vec![], true)
-                    }
-                    CexResult::UnsatCore(core) => {
-                        self.log_info(format!(
-                            "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
-                            query_start.elapsed().as_millis(),
-                            core.len()
-                        ));
-                        let core = Blocked::Transition(core.iter().cloned().collect());
-                        let core_tasks = core
-                            .constituents()
-                            .into_iter()
-                            .map(|k| ((0, k), k))
-                            .collect();
-                        {
-                            let mut manager = self.lemmas.write().unwrap();
-                            manager.add_blocked(*key, core);
+                        CexResult::UnsatCore(core) => {
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
+                                query_start.elapsed().as_millis(),
+                                core.len()
+                            ));
+                            let core = Blocked::Transition(core.iter().cloned().collect());
+                            let core_tasks = core
+                                .constituents()
+                                .into_iter()
+                                .map(|k| ((0, k), k))
+                                .collect();
+                            {
+                                let mut manager = self.lemmas.write().unwrap();
+                                manager.add_blocked(*key, core);
+                            }
+                            (Some(res), core_tasks, false)
                         }
-                        (Some(res), core_tasks, false)
+                        CexResult::Canceled => (Some(res), vec![], true),
+                        CexResult::Unknown(reason) => {
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found unknown: {reason}",
+                                query_start.elapsed().as_millis()
+                            ));
+                            (Some(res), vec![], false)
+                        }
                     }
-                    CexResult::Canceled => (Some(res), vec![], true),
-                    CexResult::Unknown(reason) => {
-                        self.log_info(format!(
-                            "{:>8}ms. ({idx}) Transition found unknown: {reason}",
-                            query_start.elapsed().as_millis()
-                        ));
-                        (Some(res), vec![], false)
+                } else {
+                    let res = fo.trans_cex(
+                        solver,
+                        &[term.clone()],
+                        &term,
+                        false,
+                        Some(cancelers.clone()),
+                        false,
+                    );
+                    match res {
+                        CexResult::Cex(models) => {
+                            cancelers.cancel();
+                            {
+                                let mut first_sat_lock = first_sat.lock().unwrap();
+                                if first_sat_lock.is_none() {
+                                    *first_sat_lock = Some(Instant::now());
+                                }
+                            }
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found SAT with universe size {:?}",
+                                query_start.elapsed().as_millis(),
+                                models[0].universe
+                            ));
+                            (Some(CexResult::Cex(models)), vec![], true)
+                        }
+                        CexResult::UnsatCore(core) => {
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found UNSAT with {} formulas in core",
+                                query_start.elapsed().as_millis(),
+                                core.len()
+                            ));
+                            let mut key_core = std::collections::HashSet::new();
+                            if !core.is_empty() {
+                                key_core.insert(*key);
+                            }
+                            let core = Blocked::Transition(key_core.iter().cloned().collect());
+                            {
+                                let mut manager = self.lemmas.write().unwrap();
+                                manager.add_blocked(*key, core);
+                            }
+                            (Some(CexResult::UnsatCore(key_core)), vec![], false)
+                        }
+                        CexResult::Canceled => (Some(CexResult::Canceled), vec![], true),
+                        CexResult::Unknown(reason) => {
+                            self.log_info(format!(
+                                "{:>8}ms. ({idx}) Transition found unknown: {reason}",
+                                query_start.elapsed().as_millis()
+                            ));
+                            (Some(CexResult::Unknown(reason)), vec![], false)
+                        }
                     }
                 }
             },
@@ -643,7 +698,14 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
             match out {
                 Some(CexResult::Cex(mut models)) => {
                     total_sat += 1;
-                    ctis.push(models.pop().unwrap());
+                    assert_eq!(models.len(), 2);
+                    let post = models.pop().unwrap();
+                    let pre = if conj {
+                        None
+                    } else {
+                        Some(models.pop().unwrap())
+                    };
+                    ctis.push(ForwardCti::new(pre, post));
                 }
                 Some(CexResult::UnsatCore(_)) => {
                     total_unsat += 1;
@@ -735,7 +797,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         }
     }
 
-    pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
+    pub fn initial_samples(&mut self) -> Tasks<SamplePriority, ForwardCti> {
         let universes = if let Some(p) = self.sim_config.sum {
             (0..self.signature.sorts.len())
                 .map(|_| (1..=p))
@@ -750,21 +812,22 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
                 .multi_cartesian_product_fixed()
                 .collect_vec()
         };
-        let models = universes
+        let ctis = universes
             .into_iter()
             .flat_map(|u| {
                 self.log_info(format!("Gathering initial states with universe {:?}", &u));
                 self.simulator.initials_new(&u)
             })
-            .sorted_by_key(|model| sample_priority(&self.sim_config, &model.universe, 0).unwrap())
+            .map(|model| ForwardCti::new(None, model))
+            .sorted_by_key(|cti| sample_priority(&self.sim_config, cti.universe(), 0).unwrap())
             .collect_vec();
-        self.log_info(format!("Gathered {} initial states.", models.len()));
-        self.weaken(&models);
+        self.log_info(format!("Gathered {} initial states.", ctis.len()));
+        self.weaken(&ctis);
         let mut samples = Tasks::new();
-        for model in models {
+        for cti in ctis {
             samples.insert(
-                sample_priority(&self.sim_config, &model.universe, 0).unwrap(),
-                model,
+                sample_priority(&self.sim_config, cti.universe(), 0).unwrap(),
+                cti,
             )
         }
 

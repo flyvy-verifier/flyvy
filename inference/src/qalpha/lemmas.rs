@@ -11,7 +11,10 @@ use std::ops::AddAssign;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::hashmap::HashMap;
+use crate::{
+    hashmap::HashMap,
+    qalpha::{fixpoint::ForwardCti, language::BoundedFormula},
+};
 
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -167,11 +170,22 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
             .collect()
     }
 
+    pub fn unsat_cti(&self, cti: &ForwardCti) -> bool {
+        let empty_asgn = Assignment::new();
+        let unsat = self.set.get_unsat(&cti.post, &empty_asgn);
+        match &cti.pre {
+            Some(model) => unsat
+                .iter()
+                .any(|id| self.set.get_f(id).unwrap().eval(model, &empty_asgn)),
+            None => !unsat.is_empty(),
+        }
+    }
+
     pub fn unsat(&self, model: &Model) -> bool {
         !self.set.get_unsat(model, &Assignment::new()).is_empty()
     }
 
-    pub fn weaken(&mut self, model: &Model) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
+    pub fn weaken(&mut self, cti: &ForwardCti) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
         let start_time = Instant::now();
         let empty_assigment = Assignment::new();
 
@@ -181,7 +195,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let mut total_added = 0_usize;
 
         let unsat_time = timed!({
-            unsat = self.set.get_unsat_formulas(model, &empty_assigment);
+            unsat = self.set.remove_unsat_cti(cti);
         });
         for f in &unsat {
             removed.append(&mut self.remove(f));
@@ -193,7 +207,7 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let weaken_time = timed!({
             weakenings = unsat
                 .par_iter()
-                .flat_map_iter(|f| self.lang.weaken(f, model, &empty_assigment, ignore))
+                .flat_map_iter(|f| self.lang.weaken(f, &cti.post, &empty_assigment, ignore))
                 .collect::<Vec<_>>();
         });
 
@@ -229,11 +243,10 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         (removed, added)
     }
 
-    pub fn remove_unsat(&mut self, model: &Model) -> Vec<LemmaKey> {
+    pub fn remove_unsat(&mut self, cti: &ForwardCti) -> Vec<LemmaKey> {
         let start_time = Instant::now();
-        let empty_assigment = Assignment::new();
 
-        let unsat = self.set.get_unsat_formulas(model, &empty_assigment);
+        let unsat = self.set.remove_unsat_cti(cti);
         let mut removed: Vec<LemmaKey> = vec![];
 
         for f in &unsat {
