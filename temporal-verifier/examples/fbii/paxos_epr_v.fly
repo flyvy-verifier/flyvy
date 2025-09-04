@@ -43,3 +43,10 @@ assume always
 
 # safety:
 assert always (forall V1:value, V2:value. decision(V1) & decision(V2) -> V1 = V2)
+proof {
+    invariant forall R:round, V1:value, V2:value. proposal(R, V1) & proposal(R, V2) -> V1 = V2
+    invariant forall N:node, R:round, V:value. vote(N, R, V) -> proposal(R, V)
+    invariant forall V:value. decision(V) -> (exists R:round, Q:quorum. forall N:node. member(N, Q) -> vote(N, R, V))
+    invariant forall N:node, R2:round, R1:round. one_b(N, R2) & !le(R2, R1) -> left_round(N, R1)
+    invariant forall R1:round, R2:round, V1:value, V2:value, Q:quorum. !le(R2, R1) & proposal(R2, V2) & V1 != V2 -> (exists N:node. member(N, Q) & left_round(N, R1) & !vote(N, R1, V1))
+}

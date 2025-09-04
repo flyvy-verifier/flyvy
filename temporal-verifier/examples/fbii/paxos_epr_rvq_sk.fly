@@ -51,3 +51,14 @@ assume always
 
 # safety:
 assert always (decision(r1, v1, q1) & decision(r2, v2, q2) -> v1 = v2)
+proof {
+    invariant forall R:round. proposal(R, v1) & proposal(R, v2) -> v1 = v2
+    invariant forall N:node, R:round. vote(N, R, v1) -> proposal(R, v1)
+    invariant forall N:node, R:round. vote(N, R, v2) -> proposal(R, v2)
+    invariant decision(r1, v1, q1) -> (forall N:node. member(N, q1) -> vote(N, r1, v1))
+    invariant decision(r2, v2, q2) -> (forall N:node. member(N, q2) -> vote(N, r2, v2))
+    invariant forall N:node, R2:round. one_b(N, R2) & !le(R2, r1) -> left_round(N, r1)
+    invariant forall N:node, R2:round. one_b(N, R2) & !le(R2, r2) -> left_round(N, r2)
+    invariant forall R2:round. !le(R2, r1) & proposal(R2, v2) & v1 != v2 -> (exists N:node. member(N, q1) & left_round(N, r1) & !vote(N, r1, v1))
+    invariant forall R2:round. !le(R2, r2) & proposal(R2, v1) & v1 != v2 -> (exists N:node. member(N, q2) & left_round(N, r2) & !vote(N, r2, v2))
+}

@@ -57,8 +57,9 @@ proof {
     # invariant forall R:round, V:value. proposal(i, R, v1) -> active(R)
     # invariant forall R:round, V:value. proposal(i, R, v2) -> active(R)
     ##############################
-    invariant forall R:round, V1:value, V2:value. proposal(i, R, V1) & proposal(i, R, V2) -> V1 = V2
-    # invariant forall R:round. proposal(i, R, v1) & proposal(i, R, v2) -> v1 = v2
+    # invariant forall R:round, V1:value, V2:value. proposal(i, R, V1) & proposal(i, R, V2) -> V1 = V2
+    invariant forall R:round, V:value. proposal(i, R, v1) & proposal(i, R, V) -> v1 = V
+    invariant forall R:round, V:value. proposal(i, R, v2) & proposal(i, R, V) -> v2 = V
     ##############################
     invariant forall N:node, R:round, V:value. vote(N, i, R, V) -> proposal(i, R, V)
     # invariant forall N:node, R:round. vote(N, i, R, v1) -> proposal(i, R, v1)

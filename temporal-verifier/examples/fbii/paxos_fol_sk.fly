@@ -1,0 +1,40 @@
+# sorts:
+sort round
+sort value
+sort quorum
+sort node
+
+# constants:
+immutable round_zero: round
+
+# functions:
+mutable current_round(node): round
+
+# relations:
+immutable le(round, round): bool
+immutable member(node, quorum): bool
+mutable one_a(round): bool
+mutable one_b_never_voted(node, round): bool
+mutable one_b_with_max_vote(node, round, round, value): bool
+mutable proposal(round, value): bool
+mutable vote(node, round, value): bool
+mutable decision(round, value): bool
+
+# fbii
+immutable r1: round
+immutable r2: round
+immutable v1: value
+immutable v2: value
+
+# axioms:
+assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall X:round. le(round_zero, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
+
+# init:
+assume (forall R:round. !one_a(R)) & (forall N:node, R:round. !one_b_never_voted(N, R)) & (forall N:node, R1:round, R2:round, V:value. !one_b_with_max_vote(N, R1, R2, V)) & (forall N:node. current_round(N) = round_zero) & (forall R:round, V:value. !proposal(R, V)) & (forall N:node, R:round, V:value. !vote(N, R, V)) & (forall R:round, V:value. !decision(R, V))
+
+# transitions:
+assume always (exists r:round. (forall R:round. (one_a(R))' <-> one_a(R) | R = r) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1)) & (forall x0:node. (current_round(x0))' = current_round(x0))) | (exists n:node, r:round. (forall V:value. one_a(r) & !le(r, current_round(n)) & (forall R:round. !le(r, R) -> !vote(n, R, V)) & (forall N:node, R:round. (one_b_never_voted(N, R))' <-> one_b_never_voted(N, R) | N = n & R = r) & (forall N:node. N != n -> (current_round(N))' = current_round(N)) & (current_round(n))' = r) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) | (exists n:node, r:round, maxr:round, v:value. one_a(r) & !le(r, current_round(n)) & !le(r, maxr) & vote(n, maxr, v) & (forall R:round, V:value. !le(r, R) & vote(n, R, V) -> le(R, maxr)) & (forall N:node, R:round, MAXR:round, V:value. (one_b_with_max_vote(N, R, MAXR, V))' <-> one_b_with_max_vote(N, R, MAXR, V) | N = n & R = r & MAXR = maxr & V = v) & (forall N:node. N != n -> (current_round(N))' = current_round(N)) & (current_round(n))' = r & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1))) | (exists r:round, q:quorum, v:value. (forall V:value. !proposal(r, V)) & (forall N:node. member(N, q) -> one_b_never_voted(N, r)) & (forall R:round, V:value. (proposal(R, V))' <-> proposal(R, V) | R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1)) & (forall x0:node. (current_round(x0))' = current_round(x0))) | (exists r:round, q:quorum, maxr:round, v:value. (forall V:value. !proposal(r, V)) & (forall N:node. member(N, q) -> one_b_never_voted(N, r) | (exists R:round, V:value. one_b_with_max_vote(N, r, R, V))) & (exists N:node. member(N, q) & one_b_with_max_vote(N, r, maxr, v)) & (forall N:node, MAXR:round, V:value. member(N, q) & one_b_with_max_vote(N, r, MAXR, V) -> le(MAXR, maxr)) & (forall R:round, V:value. (proposal(R, V))' <-> proposal(R, V) | R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1)) & (forall x0:node. (current_round(x0))' = current_round(x0))) | (exists n:node, v:value, r:round. le(current_round(n), r) & proposal(r, v) & (forall N:node, R:round, V:value. (vote(N, R, V))' <-> vote(N, R, V) | N = n & R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:round, x1:value. (decision(x0, x1))' = decision(x0, x1)) & (forall x0:node. (current_round(x0))' = current_round(x0))) | (exists r:round, v:value, q:quorum. (forall N:node. member(N, q) -> vote(N, r, v)) & (forall R:round, V:value. (decision(R, V))' <-> decision(R, V) | R = r & V = v) & (forall x0:round. (one_a(x0))' = one_a(x0)) & (forall x0:node, x1:round. (one_b_never_voted(x0, x1))' = one_b_never_voted(x0, x1)) & (forall x0:node, x1:round, x2:round, x3:value. (one_b_with_max_vote(x0, x1, x2, x3))' = one_b_with_max_vote(x0, x1, x2, x3)) & (forall x0:round, x1:value. (proposal(x0, x1))' = proposal(x0, x1)) & (forall x0:node, x1:round, x2:value. (vote(x0, x1, x2))' = vote(x0, x1, x2)) & (forall x0:node. (current_round(x0))' = current_round(x0)))
+
+# safety:
+assert always (decision(r1, v1) & decision(r2, v2) -> v1 = v2)
+

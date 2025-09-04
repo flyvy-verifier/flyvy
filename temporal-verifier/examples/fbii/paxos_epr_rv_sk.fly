@@ -60,14 +60,13 @@ assume always
 # safety:
 assert always (decision(r1, v1) & decision(r2, v2) -> v1 = v2)
 proof {
-    invariant forall round_1:round. forall node_1:node. le(round_1, r2) | left_round(node_1, r2) | !one_b(node_1, round_1) | false
-    invariant forall round_1:round. forall node_1:node. le(round_1, r1) | left_round(node_1, r1) | !one_b(node_1, round_1) | false
-    invariant forall round_1:round. forall node_1:node. one_a(round_1) | !one_b(node_1, round_1) | false
-    invariant forall round_1:round. !decision(round_1, v1) | proposal(round_1, v1) | false
-    invariant forall round_1:round. forall node_1:node. proposal(round_1, v2) | !vote(node_1, round_1, v2) | false
-    invariant forall round_1:round. le(round_1, r1) | !proposal(round_1, v2) | false
-    invariant forall round_1:round. one_a(round_1) | !proposal(round_1, v2) | false
-    invariant forall round_1:round. forall node_1:node. proposal(round_1, v1) | !vote(node_1, round_1, v1) | false
-    invariant forall round_1:round. !proposal(round_1, v1) | !proposal(round_1, v2) | false
-    invariant forall round_1:round. le(round_1, r2) | !proposal(round_1, v1) | false
+    invariant forall R:round. proposal(R, v1) & proposal(R, v2) -> v1 = v2
+    invariant forall N:node, R:round. vote(N, R, v1) -> proposal(R, v1)
+    invariant forall N:node, R:round. vote(N, R, v2) -> proposal(R, v2)
+    invariant decision(r1, v1) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, r1, v1))
+    invariant decision(r2, v2) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, r2, v2))
+    invariant forall N:node, R2:round. one_b(N, R2) & !le(R2, r1) -> left_round(N, r1)
+    invariant forall N:node, R2:round. one_b(N, R2) & !le(R2, r2) -> left_round(N, r2)
+    invariant forall R2:round, Q:quorum. !le(R2, r1) & proposal(R2, v2) & v1 != v2 -> (exists N:node. member(N, Q) & left_round(N, r1) & !vote(N, r1, v1))
+    invariant forall R2:round, Q:quorum. !le(R2, r2) & proposal(R2, v1) & v1 != v2 -> (exists N:node. member(N, Q) & left_round(N, r2) & !vote(N, r2, v2))
 }
