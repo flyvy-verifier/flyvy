@@ -1,3 +1,7 @@
+## This file was generated from mypyvy.
+##
+## ./src/mypyvy.py typecheck --print-program=fly examples/fol/paxos_fol.pyv
+
 # sorts:
 sort round
 sort value
@@ -26,6 +30,14 @@ immutable r2: round
 immutable v1: value
 immutable v2: value
 
+# witnesses
+immutable q1: quorum
+immutable q2: quorum
+
+# from step 1, fwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
+assume always (forall node_1:node. !decision(r1, v1) | !member(node_1, q1) | vote(node_1, r1, v1))
+assume always (forall node_1:node. !decision(r2, v2) | !member(node_1, q2) | vote(node_1, r2, v2))
+
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall X:round. le(round_zero, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
 
@@ -37,4 +49,28 @@ assume always (exists r:round. (forall R:round. (one_a(R))' <-> one_a(R) | R = r
 
 # safety:
 assert always (decision(r1, v1) & decision(r2, v2) -> v1 = v2)
+proof {
+    invariant decision(r1, v1) & decision(r2, v2) -> v1 = v2
+    invariant forall R:round. proposal(R, v1) & proposal(R, v2) -> v1 = v2
+    invariant forall N:node, R:round. vote(N, R, v1) -> proposal(R, v1)
+    invariant forall N:node, R:round. vote(N, R, v2) -> proposal(R, v2)
+    invariant decision(r1, v1) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, r1, v1))
+    invariant decision(r2, v2) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, r2, v2))
+    invariant (forall Q:quorum. exists N:node. member(N, Q) & !le(current_round(N), r1) & !vote(N, r1, v1)) | (forall R:round. !le(R, r1) & v1 != v2 -> !proposal(R, v2))
+    invariant (forall Q:quorum. exists N:node. member(N, Q) & !le(current_round(N), r2) & !vote(N, r2, v2)) | (forall R:round. !le(R, r2) & v1 != v2 -> !proposal(R, v1))
+    # invariant forall N:node, R1:round, R2:round, V2:value. one_b_with_max_vote(N, R1, R2, V2) -> vote(N, R2, V2)
+    invariant forall N:node, R1:round, R2:round. one_b_with_max_vote(N, R1, R2, v1) -> vote(N, R2, v1)
+    invariant forall N:node, R1:round, R2:round. one_b_with_max_vote(N, R1, R2, v2) -> vote(N, R2, v2)
+    #
+    # invariant forall R2:round, R1:round, N:node, V:value. !(!le(R2, R1) & vote(N, R1, V) & one_b_never_voted(N, R2))
+    invariant forall R2:round, R1:round, N:node. !(!le(R2, R1) & vote(N, R1, v1) & one_b_never_voted(N, R2))
+    invariant forall R2:round, R1:round, N:node. !(!le(R2, R1) & vote(N, R1, v2) & one_b_never_voted(N, R2))
+    #
+    # invariant forall N:node, R1:round, R2:round, V2:value, R3:round, V3:value. one_b_with_max_vote(N, R1, R2, V2) & vote(N, R3, V3) & !le(R1, R3) -> le(R3, R2)
+    invariant forall N:node, R1:round, R2:round, V2:value. one_b_with_max_vote(N, R1, R2, V2) & vote(N, r1, v1) & !le(R1, r1) -> le(r1, R2)
+    invariant forall N:node, R1:round, R2:round, V2:value. one_b_with_max_vote(N, R1, R2, V2) & vote(N, r2, v2) & !le(R1, r2) -> le(r2, R2)
+    #
+    invariant forall N:node, R1:round. one_b_never_voted(N, R1) -> le(R1, current_round(N))
+    invariant forall N:node, R1:round, R2:round, V:value. one_b_with_max_vote(N, R1, R2, V) -> le(R1, current_round(N))
+}
 
