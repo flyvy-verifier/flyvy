@@ -45,8 +45,8 @@ immutable q1: quorum
 immutable q2: quorum
 
 # from step 1, fwd, run with: --quantifier "E quorum 1" --quantifier "F node 1" --clause-size=3 --cubes=0
-assume always (forall node_1:node. !decision(node_1, i, r1, v1) | !member(node_1, q1) | vote(node_1, i, r1, v1))
-assume always (forall node_1:node. !decision(node_1, i, r2, v2) | !member(node_1, q2) | vote(node_1, i, r2, v2))
+assume always (forall node_1:node. !decision(n1, i, r1, v1) | !member(node_1, q1) | vote(node_1, i, r1, v1))
+assume always (forall node_1:node. !decision(n2, i, r2, v2) | !member(node_1, q2) | vote(node_1, i, r2, v2))
 
 # axioms:
 assume always (forall X:round. le(X, X)) & (forall X:round, Y:round, Z:round. le(X, Y) & le(Y, Z) -> le(X, Z)) & (forall X:round, Y:round. le(X, Y) & le(Y, X) -> X = Y) & (forall X:round, Y:round. le(X, Y) | le(Y, X)) & (forall Q1:quorum, Q2:quorum. exists N:node. member(N, Q1) & member(N, Q2))
@@ -73,8 +73,8 @@ proof {
     # invariant forall N:node, R:round. vote(N, i, R, v2) -> proposal(i, R, v2)
     ##############################
     # invariant forall R:round, V:value. (exists N:node. decision(N, i, R, V)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, R, V))
-    invariant (exists N:node. decision(N, i, r1, v1)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r1, v1))
-    invariant (exists N:node. decision(N, i, r2, v2)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r2, v2))
+    invariant decision(n1, i, r1, v1) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r1, v1))
+    invariant decision(n2, i, r2, v2) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r2, v2))
     ##############################
     # invariant forall N:node, V:value. !vote(N, i, none, V)
     invariant forall N:node. !vote(N, i, none, v1)

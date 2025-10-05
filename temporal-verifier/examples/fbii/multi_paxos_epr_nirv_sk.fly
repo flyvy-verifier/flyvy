@@ -66,8 +66,8 @@ proof {
     # invariant forall N:node, R:round. vote(N, i, R, v2) -> proposal(i, R, v2)
     ##############################
     # invariant forall R:round, V:value. (exists N:node. decision(N, i, R, V)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, R, V))
-    invariant (exists N:node. decision(N, i, r1, v1)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r1, v1))
-    invariant (exists N:node. decision(N, i, r2, v2)) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r2, v2))
+    invariant decision(n1, i, r1, v1) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r1, v1))
+    invariant decision(n2, i, r2, v2) -> (exists Q:quorum. forall N:node. member(N, Q) -> vote(N, i, r2, v2))
     ##############################
     # invariant forall N:node, V:value. !vote(N, i, none, V)
     invariant forall N:node. !vote(N, i, none, v1)
