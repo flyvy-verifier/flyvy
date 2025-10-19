@@ -779,6 +779,130 @@ impl Signature {
 
         terms
     }
+
+    /// Compute all terms up to a certain nesting depth (optional), using the given sorted terms as the basis.
+    /// If include_eq is true, include equality terms between any two same-sorted, non-Bool terms.
+    ///
+    /// Both sorted_terms and the returned vector match self.sorts w.r.t sorted indices, and have an extra final entry for the Bool sort.
+    pub fn terms_from_basis(
+        &self,
+        sorted_terms: &[Vec<String>],
+        mut depth: Option<usize>,
+        include_eq: bool,
+    ) -> Vec<Vec<Term>> {
+        let sort_idx = |sort: &Sort| -> usize {
+            match sort {
+                Sort::Bool => self.sorts.len(),
+                _ => self.sort_idx(sort),
+            }
+        };
+
+        let mut terms = vec![vec![]; self.sorts.len() + 1];
+        let mut new_terms = vec![vec![]; self.sorts.len() + 1];
+
+        // Generate sorted variables and constants.
+        for (i, names) in sorted_terms.iter().enumerate() {
+            for name in names {
+                new_terms[i].push(Term::Id(name.clone()));
+            }
+        }
+
+        // If depth is bounded, this maintains the terms for depth - 1 to be used in equality terms.
+        let mut terms_depth_minus_one: Option<Vec<Vec<Term>>> = None;
+
+        // Generate Boolean nullary relations.
+        for rel_decl in &self.relations {
+            if rel_decl.args.is_empty() && matches!(rel_decl.sort, Sort::Bool) {
+                new_terms[sort_idx(&rel_decl.sort)].push(Term::Id(rel_decl.name.clone()));
+            }
+        }
+
+        // Generated terms up to the given nesting depth, or until no new terms can be generated.
+        while !new_terms.iter().all(|v| v.is_empty()) && depth.unwrap_or(1) > 0 {
+            if let Some(n) = depth {
+                depth = Some(n - 1);
+            }
+
+            let mut new_new_terms = vec![vec![]; self.sorts.len() + 1];
+            'rel_loop: for rel_decl in &self.relations {
+                if rel_decl.args.is_empty() {
+                    continue 'rel_loop;
+                }
+
+                'ind_loop: for new_ind in (0..rel_decl.args.len())
+                    .map(|_| [false, true])
+                    .multi_cartesian_product_fixed()
+                {
+                    // Only generate terms where at least one argument is a newly generated term,
+                    // to make sure each term is generated exactly once.
+                    if !new_ind.iter().any(|&x| x) {
+                        continue 'ind_loop;
+                    }
+
+                    let mut arg_terms = vec![];
+                    for i in 0..rel_decl.args.len() {
+                        if new_ind[i] {
+                            arg_terms.push(&new_terms[sort_idx(&rel_decl.args[i])]);
+                        } else {
+                            arg_terms.push(&terms[sort_idx(&rel_decl.args[i])]);
+                        }
+                    }
+
+                    if !arg_terms.iter().any(|v| v.is_empty()) {
+                        for args in arg_terms
+                            .iter()
+                            .map(|&t| t.iter())
+                            .multi_cartesian_product_fixed()
+                        {
+                            let term_vec = args.iter().map(|&x| x.clone()).collect();
+                            new_new_terms[sort_idx(&rel_decl.sort)].push(Term::App(
+                                rel_decl.name.clone(),
+                                0,
+                                term_vec,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            for (i, ts) in new_terms.iter_mut().enumerate() {
+                terms[i].append(ts);
+            }
+            new_terms = new_new_terms
+        }
+
+        if include_eq && depth.is_some() {
+            terms_depth_minus_one = Some(terms.clone());
+        }
+
+        for (i, vt) in new_terms.iter_mut().enumerate() {
+            terms[i].append(vt);
+        }
+
+        // Generate equality terms.
+        if include_eq {
+            let terms_for_eq = terms_depth_minus_one.as_ref().unwrap_or(&terms);
+            let mut eq_terms = vec![];
+            for term in terms_for_eq.iter().take(self.sorts.len()) {
+                eq_terms.append(
+                    &mut term
+                        .iter()
+                        .combinations(2)
+                        .map(|v| {
+                            Term::BinOp(
+                                BinOp::Equals,
+                                Box::new(v[0].clone()),
+                                Box::new(v[1].clone()),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            terms[self.sorts.len()].append(&mut eq_terms);
+        }
+
+        terms
+    }
 }
 
 /// A definition and its body. These are essentially treated as macros over the

@@ -625,7 +625,7 @@ impl App {
             ) => {
                 m.inline_defs();
                 let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                let fixpoint = qalpha_dynamic(infer_cfg, &m, !args.no_print_nondet);
+                let fixpoint = qalpha_dynamic(infer_cfg, &m, None, !args.no_print_nondet);
                 fixpoint.report(!args.no_print_nondet, true);
                 if args.time {
                     timing::report();

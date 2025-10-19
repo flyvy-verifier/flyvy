@@ -189,15 +189,27 @@ impl<Q: Clone + Hash + Eq> QuantifierSequence<Q> {
         &self,
         signature: &Signature,
         nesting: Option<usize>,
+        constants: Option<Vec<Vec<String>>>,
         include_eq: bool,
     ) -> Vec<Term> {
-        let mut sorted_vars = vec![vec![]; signature.sorts.len()];
+        let mut sorted_terms = vec![vec![]; signature.sorts.len()];
         for (i, v) in self.names.iter().enumerate() {
-            sorted_vars[signature.sort_idx(&self.sorts[i])].extend(v.iter().cloned());
+            sorted_terms[signature.sort_idx(&self.sorts[i])].extend(v.iter().cloned());
+        }
+        if let Some(consts) = constants {
+            for (i, c) in consts.iter().enumerate() {
+                sorted_terms[i].extend(c.iter().cloned());
+            }
+        } else {
+            for r in &signature.relations {
+                if r.args.is_empty() && !matches!(r.sort, Sort::Bool) {
+                    sorted_terms[signature.sort_idx(&r.sort)].push(r.name.clone());
+                }
+            }
         }
 
         signature
-            .terms_by_sort(&sorted_vars, nesting, include_eq)
+            .terms_from_basis(&sorted_terms, nesting, include_eq)
             .pop()
             .unwrap()
     }

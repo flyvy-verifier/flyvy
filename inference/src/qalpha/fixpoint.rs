@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::qalpha::atoms::Literal;
 use crate::{
     basics::{FOModule, QalphaConfig, QfBody, SimulationConfig},
     parallel::parallelism,
@@ -353,7 +354,12 @@ where
     run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo)
 }
 
-pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) -> FoundFixpoint {
+pub fn qalpha_dynamic(
+    cfg: Arc<QalphaConfig>,
+    m: &Module,
+    raw_literals: Option<Vec<Literal>>,
+    print_nondet: bool,
+) -> FoundFixpoint {
     // TODO: add fallback solver option or remove it from command arguments
     let solver = parallel_solver(&cfg, cfg.seeds);
 
@@ -362,14 +368,16 @@ pub fn qalpha_dynamic(cfg: Arc<QalphaConfig>, m: &Module, print_nondet: bool) ->
     let mut literals: Vec<_>;
     let cube_literals: Vec<_>;
     let gen_time = timed!({
-        literals = generate_literals(
-            &m.signature,
-            &cfg.quant_cfg,
-            cfg.qf_cfg.nesting,
-            true,
-            &cfg.fo,
-            &solver,
-        );
+        literals = raw_literals.unwrap_or_else(|| {
+            generate_literals(
+                &m.signature,
+                &cfg.quant_cfg,
+                cfg.qf_cfg.nesting,
+                true,
+                &cfg.fo,
+                &solver,
+            )
+        });
         let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
         cube_literals = literals
             .iter()

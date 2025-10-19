@@ -35,7 +35,7 @@ pub fn qalpha_fbii(
             .chain(m.statements)
             .collect();
         cfg.fo = FOModule::new(&m, disj, smt_tactic);
-        let fixpoint = qalpha_dynamic(Arc::new(cfg), &m, print_nondet);
+        let fixpoint = qalpha_dynamic(Arc::new(cfg), &m, None, print_nondet);
         let reduced = fixpoint.reduced();
         for t in &reduced {
             println!("    invariant {}", t);
