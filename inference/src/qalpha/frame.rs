@@ -24,7 +24,7 @@ use crate::{
     qalpha::{
         fixpoint::{sample_priority, SamplePriority},
         language::BoundedLanguage,
-        lemmas::{LemmaKey, WeakenLemmaSet},
+        lemmas::{CompoundKey, MultiWeakenLemmaSet},
     },
 };
 
@@ -176,11 +176,12 @@ pub struct InductionFrame<'a, L: BoundedLanguage> {
     /// The signature of the module associated with this induction frame.
     signature: Arc<Signature>,
     /// Manages lemmas inductively proven by the frame.
-    lemmas: RwLock<LemmaManager<LemmaKey>>,
-    /// The mapping from a key to the lemma's position in the ordering.
-    key_to_idx: HashMap<LemmaKey, usize>,
+    lemmas: RwLock<LemmaManager<CompoundKey>>,
+    /// The mapping from a compound key to the lemma's position in the ordering.
+    key_to_idx: HashMap<CompoundKey, usize>,
     /// The lemmas in the frame, maintained in a way that supports weakening them.
-    pub weaken_lemmas: WeakenLemmaSet<L>,
+    /// Multiple lemma sets can be maintained simultaneously, one for each BoundedLanguage instance.
+    pub weaken_lemmas: MultiWeakenLemmaSet<L>,
     /// Whether to extend CTI traces, and how much.
     sim_config: SimulationConfig,
     /// The time of creation of the frame (for logging purposes)
@@ -219,13 +220,14 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     pub fn new(
         module: &'a Module,
         signature: Arc<Signature>,
-        lang: Arc<L>,
+        langs: Vec<Arc<L>>,
         sim_config: SimulationConfig,
         property_directed: bool,
         parallelism_count: usize,
     ) -> Self {
         assert!(parallelism_count > 0);
-        let mut weaken_lemmas = WeakenLemmaSet::new(lang);
+        assert!(!langs.is_empty(), "At least one language must be provided");
+        let mut weaken_lemmas = MultiWeakenLemmaSet::new(langs);
         weaken_lemmas.init();
         let key_to_idx = weaken_lemmas.key_to_idx();
 
@@ -275,7 +277,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     /// provided that `is_safe` has been called and returned `true`.
     pub fn safety_proof(&self) -> Option<Vec<Term>> {
         let manager = self.lemmas.read().unwrap();
-        let extended_core: HashSet<LemmaKey> =
+        let extended_core: HashSet<CompoundKey> =
             manager.blocked_closure(manager.safety_core.as_ref()?.constituents())?;
 
         let indices = extended_core
@@ -397,7 +399,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         }
     }
 
-    fn remove_by_keys(&self, removed: &[LemmaKey]) {
+    fn remove_by_keys(&self, removed: &[CompoundKey]) {
         {
             let mut manager = self.lemmas.write().unwrap();
             for key in removed {
@@ -525,7 +527,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
         let results = ParallelWorker::new(
             &mut tasks,
             |(check_implied, _), key| {
-                let previous: Vec<LemmaKey>;
+                let previous: Vec<CompoundKey>;
                 {
                     let blocked = self.lemmas.read().unwrap();
                     if let Some(core) = blocked.blocked_to_core.get(key) {

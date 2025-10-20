@@ -493,7 +493,7 @@ where
     let mut frame: InductionFrame<L> = InductionFrame::new(
         m,
         m.signature.clone(),
-        lang,
+        vec![lang],
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
         parallelism() / (2 * cfg.seeds),

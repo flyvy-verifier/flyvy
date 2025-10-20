@@ -36,6 +36,24 @@ macro_rules! timed {
     }};
 }
 
+/// A compound key that uniquely identifies a formula across multiple WeakenLemmaSet instances.
+/// Contains the index of the set and the LemmaKey within that set.
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+pub struct CompoundKey {
+    pub set_idx: usize,
+    pub key: LemmaKey,
+}
+
+impl CompoundKey {
+    pub fn new(set_idx: usize, key: LemmaKey) -> Self {
+        CompoundKey { set_idx, key }
+    }
+
+    pub fn is_universal(&self) -> bool {
+        self.key.is_universal()
+    }
+}
+
 /// Manages lemmas from a [`BoundedLanguage`] and allows weakening them simultaneously.
 pub struct WeakenLemmaSet<L: BoundedLanguage> {
     lang: Arc<L>,
@@ -45,11 +63,30 @@ pub struct WeakenLemmaSet<L: BoundedLanguage> {
     total: FormulaId,
     pub max_size: usize,
 }
+
+/// Manages multiple WeakenLemmaSet instances for the same BoundedLanguage type.
+/// Provides a unified view with CompoundKeys that track which set each formula belongs to.
+pub struct MultiWeakenLemmaSet<L: BoundedLanguage> {
+    /// The individual lemma sets
+    sets: Vec<WeakenLemmaSet<L>>,
+    /// A sorted map of all compound keys to terms across all sets
+    pub sorted: BTreeMap<CompoundKey, Term>,
+    /// Maximum size across all sets
+    pub max_size: usize,
+}
+
 pub struct WeakenHypotheses<'a, L: BoundedLanguage> {
     set: &'a WeakenLemmaSet<L>,
     permanent: Vec<(LemmaKey, Term)>,
     before: Option<LemmaKey>,
     try_first: Vec<LemmaKey>,
+}
+
+pub struct MultiWeakenHypotheses<'a, L: BoundedLanguage> {
+    multi_set: &'a MultiWeakenLemmaSet<L>,
+    permanent: Vec<(CompoundKey, Term)>,
+    before: Option<CompoundKey>,
+    try_first: Vec<CompoundKey>,
 }
 
 impl<'a, L: BoundedLanguage> OrderedTerms for &WeakenHypotheses<'a, L> {
@@ -84,6 +121,49 @@ impl<'a, L: BoundedLanguage> OrderedTerms for &WeakenHypotheses<'a, L> {
                 .collect()
         } else {
             self.set.sorted.clone()
+        }
+    }
+}
+
+impl<'a, L: BoundedLanguage> OrderedTerms for &MultiWeakenHypotheses<'a, L> {
+    type Key = CompoundKey;
+
+    fn permanent(&self) -> Vec<(&Self::Key, &Term)> {
+        self.permanent.iter().map(|(k, t)| (k, t)).collect()
+    }
+
+    fn first_unsat(self, model: &Model) -> Option<(Self::Key, Term)> {
+        // First check try_first formulas
+        for compound_key in &self.try_first {
+            let term = &self.multi_set.sorted[compound_key];
+            if model.eval(term) == 0 {
+                return Some((*compound_key, term.clone()));
+            }
+        }
+
+        // Then check formulas in order, respecting the `before` boundary
+        // CompoundKey ordering naturally respects set indices first, then LemmaKey within each set
+        let is_after = |k: &CompoundKey| self.before.as_ref().is_some_and(|b| k >= b);
+
+        self.multi_set
+            .sorted
+            .iter()
+            .find(|(key, term)| is_after(key) || model.eval(term) == 0)
+            .filter(|(key, _)| !is_after(key))
+            .map(|(key, term)| (*key, term.clone()))
+    }
+
+    fn all_terms(self) -> BTreeMap<Self::Key, Term> {
+        if let Some(before) = self.before {
+            // Use range to get all terms before the `before` key
+            // CompoundKey's Ord implementation ensures proper ordering across sets
+            self.multi_set
+                .sorted
+                .range(..before)
+                .map(|(key, term)| (*key, term.clone()))
+                .collect()
+        } else {
+            self.multi_set.sorted.clone()
         }
     }
 }
@@ -288,6 +368,139 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
 
     pub fn key_to_term(&self, key: &LemmaKey) -> Term {
         self.sorted[key].clone()
+    }
+}
+
+impl<L: BoundedLanguage> MultiWeakenLemmaSet<L> {
+    pub fn new(langs: Vec<Arc<L>>) -> Self {
+        let sets: Vec<WeakenLemmaSet<L>> = langs
+            .into_iter()
+            .map(|lang| WeakenLemmaSet::new(lang))
+            .collect();
+
+        Self {
+            sets,
+            sorted: BTreeMap::new(),
+            max_size: 0,
+        }
+    }
+
+    pub fn simplified_len(&self) -> usize {
+        self.sorted.len()
+    }
+
+    pub fn len(&self) -> usize {
+        self.sets.iter().map(|set| set.len()).sum()
+    }
+
+    pub fn to_terms(&self) -> Vec<Term> {
+        self.sorted.values().cloned().collect()
+    }
+
+    pub fn to_terms_keys(&self) -> impl Iterator<Item = (&Term, &CompoundKey)> + '_ {
+        self.sorted.iter().map(|(k, t)| (t, k))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &CompoundKey> {
+        self.sorted.keys()
+    }
+
+    pub fn key_to_idx(&self) -> HashMap<CompoundKey, usize> {
+        self.sorted
+            .keys()
+            .cloned()
+            .enumerate()
+            .map(|(i, k)| (k, i))
+            .collect()
+    }
+
+    pub fn key_to_term(&self, key: &CompoundKey) -> Term {
+        self.sorted[key].clone()
+    }
+
+    pub fn init(&mut self) {
+        for (set_idx, set) in self.sets.iter_mut().enumerate() {
+            set.init();
+            // Populate sorted with compound keys
+            for (key, term) in &set.sorted {
+                self.sorted
+                    .insert(CompoundKey::new(set_idx, *key), term.clone());
+            }
+        }
+        // max_size is the sum of all sets' lengths
+        let total_len = self.len();
+        self.max_size = self.max_size.max(total_len);
+    }
+
+    pub fn hypotheses(
+        &self,
+        permanent: Vec<CompoundKey>,
+        before: Option<CompoundKey>,
+        try_first: Vec<CompoundKey>,
+    ) -> MultiWeakenHypotheses<'_, L> {
+        MultiWeakenHypotheses {
+            multi_set: self,
+            permanent: permanent
+                .into_iter()
+                .map(|k| (k, self.sorted[&k].clone()))
+                .collect(),
+            before,
+            try_first,
+        }
+    }
+
+    pub fn weaken(&mut self, cti: &ForwardCti) -> (Vec<CompoundKey>, Vec<CompoundKey>) {
+        let mut all_removed = Vec::new();
+        let mut all_added = Vec::new();
+
+        // Weaken each set and collect compound keys
+        for (set_idx, set) in self.sets.iter_mut().enumerate() {
+            let (removed, added) = set.weaken(cti);
+            
+            // Remove compound keys from sorted map
+            for key in &removed {
+                let compound_key = CompoundKey::new(set_idx, *key);
+                self.sorted.remove(&compound_key);
+                all_removed.push(compound_key);
+            }
+            
+            // Add compound keys to sorted map
+            for key in &added {
+                let compound_key = CompoundKey::new(set_idx, *key);
+                let term = set.sorted[key].clone();
+                self.sorted.insert(compound_key, term);
+                all_added.push(compound_key);
+            }
+        }
+
+        // Update max_size with the current total length
+        let total_len = self.len();
+        self.max_size = self.max_size.max(total_len);
+
+        (all_removed, all_added)
+    }
+
+    pub fn remove_unsat(&mut self, cti: &ForwardCti) -> Vec<CompoundKey> {
+        let mut all_removed = Vec::new();
+
+        // Remove unsat from each set
+        for (set_idx, set) in self.sets.iter_mut().enumerate() {
+            let removed = set.remove_unsat(cti);
+            
+            // Remove compound keys from sorted map
+            for key in &removed {
+                let compound_key = CompoundKey::new(set_idx, *key);
+                self.sorted.remove(&compound_key);
+                all_removed.push(compound_key);
+            }
+        }
+
+        all_removed
+    }
+
+    pub fn unsat(&self, model: &Model) -> bool {
+        // Return true if any set has an unsat formula
+        self.sets.iter().any(|set| set.unsat(model))
     }
 }
 
