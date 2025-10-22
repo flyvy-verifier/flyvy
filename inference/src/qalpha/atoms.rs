@@ -122,6 +122,7 @@ pub fn generate_literals<C: FromParallelIterator<Literal>, S: BasicSolver>(
     quant_cfg: &QuantifierConfig,
     nesting: Option<usize>,
     include_eq: bool,
+    constants: Option<Vec<Vec<String>>>,
     fo: &FOModule,
     solver: &S,
 ) -> C {
@@ -133,7 +134,7 @@ pub fn generate_literals<C: FromParallelIterator<Literal>, S: BasicSolver>(
         .collect();
 
     quant_cfg
-        .atoms(signature, nesting, None, include_eq)
+        .atoms(signature, nesting, constants, include_eq)
         .into_par_iter()
         // Make sure all equality atoms "t1 = t2" satisfy t1 <= t2.
         // This is done to allow substitutions without creating equivalent equalities.

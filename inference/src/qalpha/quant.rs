@@ -489,6 +489,16 @@ impl QuantifierPrefix {
             .zip(self.quantifiers.iter())
             .all(|(ns, q)| ns.is_empty() || matches!(q, Quantifier::Forall))
     }
+
+    /// Convert this [`QuantifierPrefix`] to a [`QuantifierConfig`] by wrapping each
+    /// concrete quantifier in `Some()`.
+    pub fn to_config(&self) -> QuantifierConfig {
+        QuantifierConfig {
+            quantifiers: self.quantifiers.iter().map(|q| Some(*q)).collect(),
+            sorts: self.sorts.clone(),
+            names: self.names.clone(),
+        }
+    }
 }
 
 impl Debug for QuantifierPrefix {
@@ -544,6 +554,354 @@ impl Ord for QuantifierPrefix {
 
         Ordering::Equal
     }
+}
+
+/// Generate all [`QuantifierPrefix`]es of a given length that respect the specified sort ordering.
+///
+/// # Arguments
+/// * `signature` - The signature containing sort information
+/// * `sort_order` - The ordered sequence of sorts (variables will follow this order). Must not contain duplicates.
+/// * `prefix_length` - The total number of quantified variables in the prefix
+/// * `max_per_sort` - Optional per-sort limits on the number of variables. If `None`, no limit is imposed.
+///                     If provided, must have the same length as `sort_order`.
+///
+/// # Returns
+/// A vector of all valid [`QuantifierPrefix`]es where:
+/// - The total number of variables equals `prefix_length`
+/// - Variables are ordered according to `sort_order` (earlier sorts come before later sorts)
+/// - Each position can be either universally or existentially quantified
+/// - No sort exceeds its corresponding limit in `max_per_sort` (if specified)
+pub fn ordered_prefixes(
+    signature: Arc<Signature>,
+    sort_order: &[Sort],
+    prefix_length: usize,
+    max_per_sort: Option<&[usize]>,
+) -> Vec<QuantifierPrefix> {
+    // Check that sort_order has no duplicates
+    assert!(
+        sort_order.iter().all_unique(),
+        "sort_order must not contain duplicate sorts"
+    );
+
+    if prefix_length == 0 {
+        return vec![QuantifierPrefix::new(signature, vec![], vec![], &[])];
+    }
+
+    // Distribute prefix_length variables across the sorts in sort_order
+    let max_limits = max_per_sort
+        .map(|limits| {
+            assert_eq!(limits.len(), sort_order.len());
+            limits.to_vec()
+        })
+        .unwrap_or_else(|| vec![prefix_length; sort_order.len()]);
+    let distributions = distribute(prefix_length, &max_limits);
+
+    distributions
+        .into_iter()
+        .flat_map(|counts| {
+            // For each distribution, generate all combinations of quantifiers
+            // Filter out positions with 0 variables and their corresponding quantifiers
+            let non_zero_positions: Vec<usize> = counts
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &count)| if count > 0 { Some(i) } else { None })
+                .collect();
+
+            if non_zero_positions.is_empty() {
+                return vec![];
+            }
+
+            // Generate all possible quantifier assignments (Forall or Exists) for non-zero positions
+            (0..non_zero_positions.len())
+                .map(|_| vec![Quantifier::Forall, Quantifier::Exists])
+                .multi_cartesian_product_fixed()
+                .map(|quantifiers| {
+                    let filtered_sorts: Vec<Sort> = non_zero_positions
+                        .iter()
+                        .map(|&i| sort_order[i].clone())
+                        .collect();
+                    let filtered_counts: Vec<usize> =
+                        non_zero_positions.iter().map(|&i| counts[i]).collect();
+
+                    QuantifierPrefix::new(
+                        signature.clone(),
+                        quantifiers,
+                        filtered_sorts,
+                        &filtered_counts,
+                    )
+                })
+                .collect_vec()
+        })
+        .collect()
+}
+
+/// Generate all [`QuantifierPrefix`]es of a given length that follow the exists* forall* pattern
+/// and respect the specified sort ordering.
+///
+/// This function generates prefixes where all existential quantifiers come before all universal
+/// quantifiers. For a prefix with N quantifier positions, it generates N+1 prefixes of the form
+/// exists^i forall^(N-i) for i in 0..=N.
+///
+/// # Arguments
+/// * `signature` - The signature containing sort information
+/// * `sort_order` - The ordered sequence of sorts (variables will follow this order). Must not contain duplicates.
+/// * `prefix_length` - The total number of quantified variables in the prefix
+/// * `max_per_sort` - Optional per-sort limits on the number of variables. If `None`, no limit is imposed.
+///                     If provided, must have the same length as `sort_order`.
+///
+/// # Returns
+/// A vector of all valid [`QuantifierPrefix`]es where:
+/// - The total number of variables equals `prefix_length`
+/// - All existential quantifiers come before all universal quantifiers
+/// - Variables are ordered according to `sort_order`
+/// - No sort exceeds its corresponding limit in `max_per_sort` (if specified)
+pub fn ordered_prefixes_exists_forall(
+    signature: Arc<Signature>,
+    sort_order: &[Sort],
+    prefix_length: usize,
+    max_per_sort: Option<&[usize]>,
+) -> Vec<QuantifierPrefix> {
+    // Check that sort_order has no duplicates
+    assert!(
+        sort_order.iter().all_unique(),
+        "sort_order must not contain duplicate sorts"
+    );
+
+    if prefix_length == 0 {
+        return vec![QuantifierPrefix::new(signature, vec![], vec![], &[])];
+    }
+
+    // Distribute prefix_length variables across the sorts in sort_order
+    let max_limits = max_per_sort
+        .map(|limits| {
+            assert_eq!(limits.len(), sort_order.len());
+            limits.to_vec()
+        })
+        .unwrap_or_else(|| vec![prefix_length; sort_order.len()]);
+    let distributions = distribute(prefix_length, &max_limits);
+
+    distributions
+        .into_iter()
+        .flat_map(|counts| {
+            // Filter out positions with 0 variables
+            let non_zero_positions: Vec<usize> = counts
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &count)| if count > 0 { Some(i) } else { None })
+                .collect();
+
+            if non_zero_positions.is_empty() {
+                return vec![];
+            }
+
+            let num_positions = non_zero_positions.len();
+
+            // For i in 0..=num_positions, create exists^i forall^(num_positions - i)
+            (0..=num_positions)
+                .map(|num_exists_positions| {
+                    let quantifiers: Vec<Quantifier> = (0..num_positions)
+                        .map(|i| {
+                            if i < num_exists_positions {
+                                Quantifier::Exists
+                            } else {
+                                Quantifier::Forall
+                            }
+                        })
+                        .collect();
+
+                    let filtered_sorts: Vec<Sort> = non_zero_positions
+                        .iter()
+                        .map(|&i| sort_order[i].clone())
+                        .collect();
+                    let filtered_counts: Vec<usize> =
+                        non_zero_positions.iter().map(|&i| counts[i]).collect();
+
+                    QuantifierPrefix::new(
+                        signature.clone(),
+                        quantifiers,
+                        filtered_sorts,
+                        &filtered_counts,
+                    )
+                })
+                .collect_vec()
+        })
+        .collect()
+}
+
+/// Generate all combinations of [`QuantifierPrefix`]es with their maximal constant sets,
+/// filtered to include only saturated pairs.
+///
+/// This function generates prefix+constant pairs by:
+/// 1. Generating all possible prefix structures with 0 to `prefix_length` variables
+/// 2. For each prefix, generating ALL combinations of maximal constant sets
+/// 3. Filtering to keep only pairs where all sorts are saturated
+///
+/// A constant set is "maximal" for a prefix if, for each sort, it contains exactly
+/// `min(total_per_sort[i] - vars_used[i], available_constants[i])` constants.
+///
+/// A sort S is "saturated" in a (prefix, constants) pair if either:
+/// - The prefix has `prefix_length` variables (at maximum length), OR
+/// - `vars_of_sort_S + constants_of_sort_S == total_per_sort[S]` (sort is at its limit)
+///
+/// The saturation filter eliminates redundant pairs: if a sort is not saturated, we could
+/// extend the prefix with another variable of that sort, which we will do exhaustively.
+/// Therefore, we only keep pairs where all sorts are saturated.
+///
+/// # Arguments
+/// * `signature` - The signature containing sort and relation information
+/// * `sort_order` - The ordered sequence of sorts (variables will follow this order). Must not contain duplicates.
+/// * `prefix_length` - The maximum number of quantified variables in any prefix
+/// * `constant_limit` - The maximum total number of constants across all sorts
+/// * `total_per_sort` - The total number of terms (variables + constants) for each sort.
+///                      Must have the same length as `sort_order`.
+/// * `exists_forall_only` - If true, only generate prefixes following the exists* forall* pattern.
+///
+/// # Returns
+/// A vector of tuples, where each tuple contains:
+/// - A [`QuantifierPrefix`] with quantified variables (from 0 to `prefix_length` variables)
+/// - A `Vec<Vec<String>>` with a maximal constant set for each sort in `signature.sorts` order.
+///   Constants within each sort are ordered according to their appearance in `signature.sorts`.
+///
+/// Only pairs where all sorts are saturated are included.
+pub fn ordered_prefixes_with_constants(
+    signature: Arc<Signature>,
+    sort_order: &[Sort],
+    prefix_length: usize,
+    constant_limit: usize,
+    total_per_sort: &[usize],
+    exists_forall_only: bool,
+) -> Vec<(QuantifierPrefix, Vec<Vec<String>>)> {
+    assert_eq!(sort_order.len(), total_per_sort.len());
+
+    // Check that sort_order has no duplicates
+    assert!(
+        sort_order.iter().all_unique(),
+        "sort_order must not contain duplicate sorts"
+    );
+
+    // Get all constants from the signature, grouped by sort and ordered by signature.sorts
+    let mut constants_by_sort: Vec<Vec<String>> = vec![vec![]; signature.sorts.len()];
+    for r in &signature.relations {
+        if r.args.is_empty() && !matches!(r.sort, Sort::Bool) {
+            let sort_idx = signature.sort_idx(&r.sort);
+            constants_by_sort[sort_idx].push(r.name.clone());
+        }
+    }
+
+    // Generate all possible prefix structures with 0 to prefix_length variables
+    let all_prefixes: Vec<QuantifierPrefix> = (0..=prefix_length)
+        .flat_map(|num_vars| {
+            if exists_forall_only {
+                ordered_prefixes_exists_forall(
+                    signature.clone(),
+                    sort_order,
+                    num_vars,
+                    Some(total_per_sort), // Respect total_per_sort as max constraint
+                )
+            } else {
+                ordered_prefixes(
+                    signature.clone(),
+                    sort_order,
+                    num_vars,
+                    Some(total_per_sort), // Respect total_per_sort as max constraint
+                )
+            }
+        })
+        .collect();
+
+    // For each prefix, compute all maximal constant sets
+    all_prefixes
+        .into_iter()
+        .flat_map(|prefix| {
+            // Count how many variables this prefix uses per sort (in sort_order indexing)
+            let mut vars_per_sort_order = vec![0; sort_order.len()];
+            for (i, names) in prefix.names.iter().enumerate() {
+                let sort_idx = sort_order
+                    .iter()
+                    .position(|s| s == &prefix.sorts[i])
+                    .expect("Prefix sort should be in sort_order");
+                vars_per_sort_order[sort_idx] += names.len();
+            }
+
+            // Calculate maximal constants per sort (in sort_order indexing)
+            let max_constants_per_sort_order: Vec<usize> = total_per_sort
+                .iter()
+                .zip(vars_per_sort_order.iter())
+                .enumerate()
+                .map(|(i, (total, vars))| {
+                    let available = total.saturating_sub(*vars);
+                    let sort_idx = signature.sort_idx(&sort_order[i]);
+                    available.min(constants_by_sort[sort_idx].len())
+                })
+                .collect();
+
+            // Calculate the maximum total constants we can have for this prefix
+            // It's the minimum of: sum of per-sort maximums, and constant_limit
+            let total_max_constants: usize = max_constants_per_sort_order.iter().sum();
+            let max_constants_to_distribute = total_max_constants.min(constant_limit);
+
+            // Use distribute to find all ways to distribute exactly max_constants_to_distribute constants
+            // across the sorts, respecting the per-sort maximal limits
+            let constant_distributions =
+                distribute(max_constants_to_distribute, &max_constants_per_sort_order);
+
+            // For each distribution, generate all combinations of constants
+            constant_distributions
+                .into_iter()
+                .flat_map(|distribution| {
+                    // For each sort, generate all ways to select distribution[i] constants
+                    let constant_combinations: Vec<Vec<Vec<String>>> = sort_order
+                        .iter()
+                        .enumerate()
+                        .map(|(i, sort)| {
+                            let sort_idx = signature.sort_idx(sort);
+                            let num_to_select = distribution[i];
+                            if num_to_select == 0 {
+                                vec![vec![]]
+                            } else {
+                                constants_by_sort[sort_idx]
+                                    .iter()
+                                    .cloned()
+                                    .combinations(num_to_select)
+                                    .collect()
+                            }
+                        })
+                        .collect();
+
+                    // Generate all combinations across sorts for this distribution
+                    constant_combinations
+                        .into_iter()
+                        .multi_cartesian_product_fixed()
+                        .collect_vec()
+                })
+                .filter_map(|selected_constants_by_order| {
+                    // Check saturation: a sort is saturated if either:
+                    // 1. The prefix is at max length (prefix_length), OR
+                    // 2. vars_in_sort + constants_in_sort == total_per_sort[sort]
+                    let is_prefix_at_max = prefix.num_vars() == prefix_length;
+
+                    let all_sorts_saturated = (0..sort_order.len()).all(|i| {
+                        let total_for_sort =
+                            vars_per_sort_order[i] + selected_constants_by_order[i].len();
+                        is_prefix_at_max || total_for_sort == total_per_sort[i]
+                    });
+
+                    // Only keep this combination if all sorts are saturated
+                    if !all_sorts_saturated {
+                        return None;
+                    }
+
+                    // Convert from sort_order indexing to signature.sorts indexing
+                    let mut selected_constants = vec![vec![]; signature.sorts.len()];
+                    for (i, sort) in sort_order.iter().enumerate() {
+                        let sort_idx = signature.sort_idx(sort);
+                        selected_constants[sort_idx] = selected_constants_by_order[i].clone();
+                    }
+                    Some((prefix.clone(), selected_constants))
+                })
+                .collect_vec()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -632,5 +990,397 @@ sort C
                 HashMap::from_iter([(a(1), ta(2)), (c(2), tc(2)),]),
             ]
         ));
+    }
+
+    #[test]
+    fn test_ordered_prefixes() {
+        let signature = Arc::new(parser::parse_signature(
+            r#"
+sort A
+sort B
+sort C
+"#
+            .trim(),
+        ));
+
+        let sort = Sort::uninterpreted;
+        let sort_order = vec![sort("A"), sort("B"), sort("C")];
+
+        // Test with prefix_length = 0
+        let prefixes = ordered_prefixes(signature.clone(), &sort_order, 0, None);
+        assert_eq!(prefixes.len(), 1);
+        assert_eq!(prefixes[0].num_vars(), 0);
+
+        // Test with prefix_length = 1
+        let prefixes = ordered_prefixes(signature.clone(), &sort_order, 1, None);
+        // Should have 3 sorts * 2 quantifiers = 6 prefixes
+        assert_eq!(prefixes.len(), 6);
+        assert!(prefixes.iter().all(|p| p.num_vars() == 1));
+
+        // Test with prefix_length = 2
+        let prefixes = ordered_prefixes(signature.clone(), &sort_order, 2, None);
+        // Should have multiple distributions: (2,0,0), (1,1,0), (1,0,1), (0,2,0), (0,1,1), (0,0,2)
+        // Each with 2 quantifier choices (Forall/Exists) or 4 for two positions
+        assert!(prefixes.len() > 0);
+        assert!(prefixes.iter().all(|p| p.num_vars() == 2));
+
+        // Verify ordering is preserved - earlier sorts should come before later sorts
+        for prefix in &prefixes {
+            let mut seen_sorts = vec![];
+            for (i, names) in prefix.names.iter().enumerate() {
+                if !names.is_empty() {
+                    seen_sorts.push(&prefix.sorts[i]);
+                }
+            }
+            // Check that seen_sorts maintains the order from sort_order
+            for i in 0..seen_sorts.len() - 1 {
+                let idx1 = sort_order.iter().position(|s| s == seen_sorts[i]).unwrap();
+                let idx2 = sort_order
+                    .iter()
+                    .position(|s| s == seen_sorts[i + 1])
+                    .unwrap();
+                assert!(idx1 < idx2, "Sort ordering not preserved in prefix");
+            }
+        }
+
+        // Test with max_per_sort constraint
+        let prefixes = ordered_prefixes(signature.clone(), &sort_order, 3, Some(&[1, 1, 1]));
+        // With max 1 variable per sort and 3 total variables, we need all 3 sorts
+        // Each distribution should be (1,1,1), giving 2^3 = 8 quantifier combinations
+        assert_eq!(prefixes.len(), 8);
+        assert!(prefixes.iter().all(|p| p.num_vars() == 3));
+        // Verify no sort has more than 1 variable
+        for prefix in &prefixes {
+            for names in prefix.names.iter() {
+                assert!(
+                    names.len() <= 1,
+                    "Sort has more than max_per_sort variables"
+                );
+            }
+        }
+
+        // Test max_per_sort = [2, 2, 2] with prefix_length = 4
+        let prefixes = ordered_prefixes(signature.clone(), &sort_order, 4, Some(&[2, 2, 2]));
+        assert!(prefixes.len() > 0);
+        assert!(prefixes.iter().all(|p| p.num_vars() == 4));
+        // Verify no sort has more than 2 variables
+        for prefix in &prefixes {
+            for names in prefix.names.iter() {
+                assert!(
+                    names.len() <= 2,
+                    "Sort has more than max_per_sort variables"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ordered_prefixes_with_constants() {
+        let signature = Arc::new(parser::parse_signature(
+            r#"
+sort A
+sort B
+sort C
+
+mutable c1: A
+mutable c2: A
+mutable c3: B
+"#
+            .trim(),
+        ));
+
+        let sort = Sort::uninterpreted;
+        let sort_order = vec![sort("A"), sort("B"), sort("C")];
+
+        // Test with total_per_sort = [2, 1, 0] and prefix_length = 3
+        // New behavior: generates all prefixes with 0-3 variables, each with maximal constants
+        // For each prefix, constants are maximal: min(total_per_sort[i] - vars[i], available_constants[i])
+        let total_per_sort = vec![2, 1, 0];
+        let results = ordered_prefixes_with_constants(
+            signature.clone(),
+            &sort_order,
+            3,
+            100, // constant_limit: set high to not affect this test
+            &total_per_sort,
+            false,
+        );
+
+        assert!(results.len() > 0);
+
+        // Verify that for each result, variables + constants per sort does not exceed total_per_sort
+        // and that constants are maximal given the variable distribution
+        for (prefix, constants) in &results {
+            // Count variables per sort from the prefix
+            let mut vars_per_sort = vec![0; sort_order.len()];
+            for (i, names) in prefix.names.iter().enumerate() {
+                let sort_idx = sort_order
+                    .iter()
+                    .position(|s| s == &prefix.sorts[i])
+                    .unwrap();
+                vars_per_sort[sort_idx] += names.len();
+            }
+
+            // Verify constraints
+            for i in 0..sort_order.len() {
+                let total = vars_per_sort[i] + constants[i].len();
+                // Total should not exceed total_per_sort
+                assert!(
+                    total <= total_per_sort[i],
+                    "Sort {:?}: total {} exceeds limit {}",
+                    sort_order[i],
+                    total,
+                    total_per_sort[i]
+                );
+
+                // Constants should be maximal: min(total_per_sort[i] - vars[i], available)
+                let sort_idx = signature.sort_idx(&sort_order[i]);
+                let available_constants = if sort_idx == signature.sort_idx(&sort("A")) {
+                    2 // c1, c2
+                } else if sort_idx == signature.sort_idx(&sort("B")) {
+                    1 // c3
+                } else {
+                    0 // C has no constants
+                };
+                let max_possible = (total_per_sort[i] - vars_per_sort[i]).min(available_constants);
+                assert_eq!(
+                    constants[sort_idx].len(),
+                    max_possible,
+                    "Sort {:?}: expected {} constants (maximal), got {}",
+                    sort_order[i],
+                    max_possible,
+                    constants[sort_idx].len()
+                );
+            }
+        }
+
+        // Verify that we're generating prefixes with different variable counts (0 to prefix_length)
+        let var_counts: std::collections::HashSet<usize> = results
+            .iter()
+            .map(|(prefix, _)| prefix.num_vars())
+            .collect();
+        assert!(
+            var_counts.len() > 1,
+            "Should generate prefixes with varying numbers of variables"
+        );
+
+        // Test with uniform total_per_sort = [1, 1, 1]
+        let results = ordered_prefixes_with_constants(
+            signature.clone(),
+            &sort_order,
+            3,
+            100,
+            &[1, 1, 1],
+            false,
+        );
+        assert!(results.len() > 0);
+
+        // Verify all results respect the constraints
+        for (prefix, constants) in &results {
+            // Total vars + constants should not exceed 3 (sum of total_per_sort)
+            let total = prefix.num_vars() + constants.iter().map(|c| c.len()).sum::<usize>();
+            assert!(total <= 3, "Total atomic terms {} exceeds limit 3", total);
+
+            // Verify per-sort constraints
+            let mut vars_per_sort = vec![0; sort_order.len()];
+            for (i, names) in prefix.names.iter().enumerate() {
+                let sort_idx = sort_order
+                    .iter()
+                    .position(|s| s == &prefix.sorts[i])
+                    .unwrap();
+                vars_per_sort[sort_idx] += names.len();
+            }
+
+            for i in 0..sort_order.len() {
+                let sort_idx = signature.sort_idx(&sort_order[i]);
+                let total_for_sort = vars_per_sort[i] + constants[sort_idx].len();
+                assert!(
+                    total_for_sort <= 1,
+                    "Sort {:?}: total {} exceeds per-sort limit 1",
+                    sort_order[i],
+                    total_for_sort
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_prefix_to_config() {
+        let signature = Arc::new(parser::parse_signature(
+            r#"
+sort A
+sort B
+"#
+            .trim(),
+        ));
+
+        let sort = Sort::uninterpreted;
+        let prefix = QuantifierPrefix::new(
+            signature.clone(),
+            vec![Quantifier::Forall, Quantifier::Exists],
+            vec![sort("A"), sort("B")],
+            &[2, 1],
+        );
+
+        let config = prefix.to_config();
+
+        // Verify the config has the same structure
+        assert_eq!(config.len(), prefix.len());
+        assert_eq!(config.sorts, prefix.sorts);
+        assert_eq!(config.names, prefix.names);
+
+        // Verify quantifiers are wrapped in Some()
+        assert_eq!(config.quantifiers[0], Some(Quantifier::Forall));
+        assert_eq!(config.quantifiers[1], Some(Quantifier::Exists));
+
+        // Verify the config has the same number of variables
+        assert_eq!(config.num_vars(), prefix.num_vars());
+    }
+
+    #[test]
+    fn test_saturation_filter() {
+        // Test that the saturation filter correctly eliminates redundant pairs.
+        //
+        // Key insight: A (prefix, constants) pair is redundant if we can add more variables
+        // to the prefix while respecting total_per_sort limits. The saturation filter ensures
+        // that for each pair, either:
+        // 1. The prefix is at max length (can't add more variables), OR
+        // 2. Every sort is "saturated" - has reached its total_per_sort limit
+        //
+        // This way, any unsaturated pair with a shorter prefix will be dominated by
+        // a pair with a longer prefix that we generate exhaustively.
+
+        let signature = Arc::new(parser::parse_signature(
+            r#"
+sort A
+sort B
+
+mutable c1_A: A
+mutable c2_A: A
+mutable c1_B: B
+mutable c2_B: B
+"#
+            .trim(),
+        ));
+
+        let sort = Sort::uninterpreted;
+        let sort_order = vec![sort("A"), sort("B")];
+
+        // Test with prefix_length=3, total_per_sort=[2, 2]
+        // This means:
+        // - Prefixes can have 0-3 variables total
+        // - Each sort can have at most 2 total terms (vars + constants)
+        // - We have 2 constants available per sort
+        let results =
+            ordered_prefixes_with_constants(signature.clone(), &sort_order, 3, 100, &[2, 2], false);
+
+        // Helper to check if a result matches a description
+        let has_prefix_with = |num_a_vars: usize,
+                               num_b_vars: usize,
+                               num_a_consts: usize,
+                               num_b_consts: usize|
+         -> bool {
+            results.iter().any(|(prefix, constants)| {
+                let mut vars_per_sort = vec![0; 2];
+                for (i, names) in prefix.names.iter().enumerate() {
+                    let sort_idx = sort_order
+                        .iter()
+                        .position(|s| s == &prefix.sorts[i])
+                        .unwrap();
+                    vars_per_sort[sort_idx] += names.len();
+                }
+                let a_sort_idx = signature.sort_idx(&sort("A"));
+                let b_sort_idx = signature.sort_idx(&sort("B"));
+
+                vars_per_sort[0] == num_a_vars
+                    && vars_per_sort[1] == num_b_vars
+                    && constants[a_sort_idx].len() == num_a_consts
+                    && constants[b_sort_idx].len() == num_b_consts
+            })
+        };
+
+        // SHOULD BE INCLUDED (saturated cases):
+
+        // Case 1: Prefix at max length (3 vars) - must include maximal constants
+        // Note: Even at max length, we must use maximal constants (can't have "room" to add more).
+        // For "2 A-vars, 1 B-var": A has 2 terms (at limit), B has 1 var so needs 1 const for 2 total
+        assert!(
+            has_prefix_with(2, 1, 0, 1),
+            "Should include: 2 A-vars, 1 B-var, 1 B-const (prefix at max, maximal constants)"
+        );
+        // For "1 A-var, 2 B-vars": A has 1 var so needs 1 const, B has 2 terms (at limit)
+        assert!(
+            has_prefix_with(1, 2, 1, 0),
+            "Should include: 1 A-var, 2 B-vars, 1 A-const (prefix at max, maximal constants)"
+        );
+
+        // Case 2: All sorts saturated at their limits (regardless of prefix length)
+        assert!(
+            has_prefix_with(0, 0, 2, 2),
+            "Should include: 0 vars, 2 A-consts, 2 B-consts (all sorts saturated)"
+        );
+        assert!(
+            has_prefix_with(1, 0, 1, 2),
+            "Should include: 1 A-var, 1 A-const, 2 B-consts (all sorts saturated)"
+        );
+        assert!(
+            has_prefix_with(0, 1, 2, 1),
+            "Should include: 1 B-var, 2 A-consts, 1 B-const (all sorts saturated)"
+        );
+        assert!(
+            has_prefix_with(1, 1, 1, 1),
+            "Should include: 1 A-var, 1 B-var, 1 A-const, 1 B-const (all sorts saturated)"
+        );
+
+        // SHOULD BE FILTERED OUT (not saturated):
+        // These pairs have prefix not at max AND at least one sort not at its limit,
+        // meaning we could extend the prefix with another variable.
+
+        assert!(
+            !has_prefix_with(1, 0, 0, 0),
+            "Should filter: 1 A-var only (B not saturated, not at max)"
+        );
+        assert!(
+            !has_prefix_with(0, 1, 0, 0),
+            "Should filter: 1 B-var only (A not saturated, not at max)"
+        );
+        assert!(
+            !has_prefix_with(1, 0, 1, 0),
+            "Should filter: 1 A-var, 1 A-const (B not saturated, not at max)"
+        );
+        assert!(
+            !has_prefix_with(2, 0, 0, 1),
+            "Should filter: 2 A-vars, 1 B-const (B has 1 term < 2, not at max)"
+        );
+
+        // Verify that ALL included results satisfy the saturation property
+        for (prefix, constants) in &results {
+            let mut vars_per_sort = vec![0; 2];
+            for (i, names) in prefix.names.iter().enumerate() {
+                let sort_idx = sort_order
+                    .iter()
+                    .position(|s| s == &prefix.sorts[i])
+                    .unwrap();
+                vars_per_sort[sort_idx] += names.len();
+            }
+
+            let is_at_max = prefix.num_vars() == 3;
+            let a_sort_idx = signature.sort_idx(&sort("A"));
+            let b_sort_idx = signature.sort_idx(&sort("B"));
+
+            let a_saturated = vars_per_sort[0] + constants[a_sort_idx].len() == 2;
+            let b_saturated = vars_per_sort[1] + constants[b_sort_idx].len() == 2;
+            let all_saturated = a_saturated && b_saturated;
+
+            assert!(
+                is_at_max || all_saturated,
+                "Found non-saturated pair: {} A-vars, {} B-vars, {} A-consts, {} B-consts (at_max={}, all_sat={})",
+                vars_per_sort[0],
+                vars_per_sort[1],
+                constants[a_sort_idx].len(),
+                constants[b_sort_idx].len(),
+                is_at_max,
+                all_saturated
+            );
+        }
     }
 }

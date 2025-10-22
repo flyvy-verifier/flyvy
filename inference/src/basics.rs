@@ -741,6 +741,14 @@ pub struct QalphaConfig {
     pub seeds: usize,
 
     pub baseline: bool,
+
+    pub exists_forall_only: bool,
+
+    // Multi-prefix configuration (only used when multi-prefix mode is enabled)
+    pub multi_prefix_length: Option<usize>,
+    pub multi_constant_limit: Option<usize>,
+    pub multi_sort_order: Option<Vec<Sort>>,
+    pub multi_total_per_sort: Option<Vec<usize>>,
 }
 
 #[derive(Clone, Copy)]

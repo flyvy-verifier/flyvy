@@ -20,6 +20,7 @@ use crate::{
         atoms::generate_literals,
         frame::{InductionFrame, OperationStats},
         language::{advanced, baseline, BoundedLanguage},
+        quant::ordered_prefixes_with_constants,
     },
 };
 use fly::syntax::{BinOp, Module, Term, ThmStmt};
@@ -342,16 +343,19 @@ fn fallback_solver(cfg: &QalphaConfig) -> impl BasicSolver {
     ])
 }
 
-fn qalpha<L, S>(cfg: Arc<QalphaConfig>, lang: Arc<L>, m: &Module, solver: &S) -> FoundFixpoint
+fn qalpha<L, S>(cfg: Arc<QalphaConfig>, langs: Vec<Arc<L>>, m: &Module, solver: &S) -> FoundFixpoint
 where
     L: BoundedLanguage,
     S: BasicSolver,
 {
     log::info!("Running qalpha algorithm...");
-    let log_domain_size = lang.log_size();
-    log::info!("Approximate domain size: 10^{log_domain_size:.2}");
 
-    run_qalpha::<L, S>(cfg.clone(), lang, solver, m, &cfg.fo)
+    // Calculate the total domain size as the sum of individual language sizes
+    let total_size: f64 = langs.iter().map(|lang| 10_f64.powf(lang.log_size())).sum();
+    let log_domain_size = total_size.log10();
+    log::info!("Approximate total domain size: 10^{log_domain_size:.2}");
+
+    run_qalpha::<L, S>(cfg.clone(), langs, solver, m, &cfg.fo)
 }
 
 pub fn qalpha_dynamic(
@@ -374,6 +378,7 @@ pub fn qalpha_dynamic(
                 &cfg.quant_cfg,
                 cfg.qf_cfg.nesting,
                 true,
+                None,
                 &cfg.fo,
                 &solver,
             )
@@ -411,75 +416,209 @@ pub fn qalpha_dynamic(
     match (&cfg.qf_cfg.qf_body, cfg.baseline) {
         (QfBody::Cnf, true) => qalpha(
             cfg.clone(),
-            baseline::quant_cnf_language(
+            vec![baseline::quant_cnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.clause_size.unwrap(),
                 literals,
-            ),
+            )],
             m,
             &solver,
         ),
         (QfBody::Cnf, false) => qalpha(
             cfg.clone(),
-            advanced::quant_cnf_language(
+            vec![advanced::quant_cnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.clause_size.unwrap(),
                 literals,
-            ),
+            )],
             m,
             &solver,
         ),
         (QfBody::PDnf, true) => qalpha(
             cfg.clone(),
-            baseline::quant_pdnf_language(
+            vec![baseline::quant_pdnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.clause_size.unwrap(),
                 cfg.qf_cfg.cubes.unwrap(),
                 literals,
                 cube_literals,
-            ),
+            )],
             m,
             &solver,
         ),
         (QfBody::PDnf, false) => qalpha(
             cfg.clone(),
-            advanced::quant_pdnf_language(
+            vec![advanced::quant_pdnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.clause_size.unwrap(),
                 cfg.qf_cfg.cubes.unwrap(),
                 literals,
                 cube_literals,
-            ),
+            )],
             m,
             &solver,
         ),
         (QfBody::Dnf, true) => qalpha(
             cfg.clone(),
-            baseline::quant_dnf_language(
+            vec![baseline::quant_dnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.cubes.unwrap(),
                 literals,
-            ),
+            )],
             m,
             &solver,
         ),
         (QfBody::Dnf, false) => qalpha(
             cfg.clone(),
-            advanced::quant_dnf_language(
+            vec![advanced::quant_dnf_language(
                 cfg.quant_cfg.clone(),
                 cfg.qf_cfg.cubes.unwrap(),
                 literals,
-            ),
+            )],
             m,
             &solver,
         ),
     }
 }
 
+/// Run qalpha with multiple languages, one per (prefix, constants) combination.
+///
+/// This function generates multiple bounded languages by:
+/// 1. Calling `ordered_prefixes_with_constants` to get all prefix+constant combinations
+/// 2. For each combination, generating literals specific to those constants
+/// 3. Creating a language from those literals
+/// 4. Running qalpha with all generated languages together
+///
+/// # Arguments
+/// * `cfg` - The qalpha configuration (must have baseline=false, qf_body=PDnf, and multi_* fields set)
+/// * `m` - The module to verify
+/// * `print_nondet` - Whether to print nondeterministic timing information
+pub fn qalpha_multi_prefix(
+    cfg: Arc<QalphaConfig>,
+    m: &Module,
+    print_nondet: bool,
+) -> FoundFixpoint {
+    assert!(
+        !cfg.baseline,
+        "qalpha_multi_prefix requires baseline=false (advanced language)"
+    );
+    assert!(
+        matches!(cfg.qf_cfg.qf_body, QfBody::PDnf),
+        "qalpha_multi_prefix currently only supports QfBody::PDnf"
+    );
+
+    let prefix_length = cfg
+        .multi_prefix_length
+        .expect("multi_prefix_length must be set");
+    let constant_limit = cfg
+        .multi_constant_limit
+        .expect("multi_constant_limit must be set");
+    let sort_order = cfg
+        .multi_sort_order
+        .as_ref()
+        .expect("multi_sort_order must be set");
+    let total_per_sort = cfg
+        .multi_total_per_sort
+        .as_ref()
+        .expect("multi_total_per_sort must be set");
+
+    let solver = parallel_solver(&cfg, cfg.seeds);
+
+    log::info!("Generating prefixes with constants...");
+    let prefix_combinations = ordered_prefixes_with_constants(
+        m.signature.clone(),
+        sort_order,
+        prefix_length,
+        constant_limit,
+        total_per_sort,
+        cfg.exists_forall_only,
+    );
+    log::info!(
+        "Generated {} prefix+constant combinations",
+        prefix_combinations.len()
+    );
+
+    // Log each combination
+    for (i, (prefix, constants)) in prefix_combinations.iter().enumerate() {
+        log::info!(
+            "Combination {}: prefix = {:?}, constants = {:?}",
+            i + 1,
+            prefix,
+            constants.iter().flatten().collect::<Vec<_>>()
+        );
+    }
+
+    log::info!("Generating languages for each combination...");
+    let languages: Vec<_>;
+    let gen_time = timed!({
+        languages = prefix_combinations
+            .into_par_iter()
+            .map(|(prefix, constants)| {
+                // Convert prefix to config
+                let quant_cfg = prefix.to_config();
+
+                // Generate literals with the specific constants
+                let literals: Vec<Literal> = generate_literals(
+                    &m.signature,
+                    &quant_cfg,
+                    cfg.qf_cfg.nesting,
+                    true,
+                    Some(constants),
+                    &cfg.fo,
+                    &solver,
+                );
+
+                // Filter literals based on quantifier structure
+                let non_universal_vars = quant_cfg.vars_after_first_exist();
+                let cube_literals: Vec<_> = literals
+                    .iter()
+                    .filter(|literal| !literal.ids().is_disjoint(&non_universal_vars))
+                    .cloned()
+                    .collect();
+
+                let mut filtered_literals = literals;
+                let universal_vars = quant_cfg.strictly_universal_vars();
+                filtered_literals.retain(|lit| match (lit.0.as_ref(), lit.1) {
+                    (Term::BinOp(BinOp::Equals, t1, t2), false) => match (t1.as_ref(), t2.as_ref())
+                    {
+                        (Term::Id(name1), Term::Id(name2)) => {
+                            !universal_vars.contains(name1) && !universal_vars.contains(name2)
+                        }
+                        (Term::Id(name), _) | (_, Term::Id(name)) => !universal_vars.contains(name),
+                        _ => true,
+                    },
+                    _ => true,
+                });
+
+                // Create PDnf language
+                advanced::quant_pdnf_language(
+                    Arc::new(quant_cfg),
+                    cfg.qf_cfg.clause_size.unwrap(),
+                    cfg.qf_cfg.cubes.unwrap(),
+                    filtered_literals,
+                    cube_literals,
+                )
+            })
+            .collect();
+    });
+
+    log::info!(
+        "Generated {} languages in {}ms",
+        languages.len(),
+        if print_nondet {
+            gen_time.as_millis()
+        } else {
+            0
+        }
+    );
+
+    qalpha(cfg, languages, m, &solver)
+}
+
 /// Run the qalpha algorithm on the configured lemma domains.
 fn run_qalpha<L, S>(
     cfg: Arc<QalphaConfig>,
-    lang: Arc<L>,
+    langs: Vec<Arc<L>>,
     solver: &S,
     m: &Module,
     fo: &FOModule,
@@ -493,7 +632,7 @@ where
     let mut frame: InductionFrame<L> = InductionFrame::new(
         m,
         m.signature.clone(),
-        vec![lang],
+        langs,
         cfg.sim.clone(),
         cfg.strategy.property_directed(),
         parallelism() / (2 * cfg.seeds),

@@ -4,7 +4,7 @@ use fly::syntax::{Module, Term, ThmStmt};
 
 use crate::{
     basics::{Direction, FOModule, QalphaConfig, SmtTactic},
-    qalpha::fixpoint::qalpha_dynamic,
+    qalpha::fixpoint::{qalpha_dynamic, qalpha_multi_prefix},
 };
 
 pub fn qalpha_fbii(
@@ -18,11 +18,22 @@ pub fn qalpha_fbii(
     let mut additional_axioms = vec![];
     for (direction, mut cfg) in cfgs {
         cfg.fo.module.axioms.extend(additional_axioms.clone());
+
+        let prefix_info = if cfg.multi_prefix_length.is_some() {
+            format!(
+                "multi-prefix (length={}, exists_forall={})",
+                cfg.multi_prefix_length.unwrap(),
+                cfg.exists_forall_only
+            )
+        } else {
+            format!("{:?}", cfg.quant_cfg)
+        };
+
         println!(
-            "Running FBII({}) in {} direction with prefix: {:?}",
+            "Running FBII({}) in {} direction with prefix: {}",
             additional_axioms.len(),
             direction,
-            cfg.quant_cfg
+            prefix_info
         );
         let mut m = match direction {
             Direction::Fwd => fwd_m,
@@ -35,7 +46,14 @@ pub fn qalpha_fbii(
             .chain(m.statements)
             .collect();
         cfg.fo = FOModule::new(&m, disj, smt_tactic);
-        let fixpoint = qalpha_dynamic(Arc::new(cfg), &m, None, print_nondet);
+
+        // Choose between multi-prefix and dynamic based on config
+        let fixpoint = if cfg.multi_prefix_length.is_some() {
+            qalpha_multi_prefix(Arc::new(cfg), &m, print_nondet)
+        } else {
+            qalpha_dynamic(Arc::new(cfg), &m, None, print_nondet)
+        };
+
         let reduced = fixpoint.reduced();
         for t in &reduced {
             println!("    invariant {}", t);

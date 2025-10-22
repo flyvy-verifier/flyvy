@@ -450,24 +450,33 @@ impl<L: BoundedLanguage> MultiWeakenLemmaSet<L> {
     }
 
     pub fn weaken(&mut self, cti: &ForwardCti) -> (Vec<CompoundKey>, Vec<CompoundKey>) {
+        // Weaken each set in parallel and collect results
+        let results: Vec<(usize, Vec<LemmaKey>, Vec<LemmaKey>)> = self
+            .sets
+            .par_iter_mut()
+            .enumerate()
+            .map(|(set_idx, set)| {
+                let (removed, added) = set.weaken(cti);
+                (set_idx, removed, added)
+            })
+            .collect();
+
         let mut all_removed = Vec::new();
         let mut all_added = Vec::new();
 
-        // Weaken each set and collect compound keys
-        for (set_idx, set) in self.sets.iter_mut().enumerate() {
-            let (removed, added) = set.weaken(cti);
-            
+        // Process results sequentially to update the sorted map
+        for (set_idx, removed, added) in results {
             // Remove compound keys from sorted map
             for key in &removed {
                 let compound_key = CompoundKey::new(set_idx, *key);
                 self.sorted.remove(&compound_key);
                 all_removed.push(compound_key);
             }
-            
+
             // Add compound keys to sorted map
             for key in &added {
                 let compound_key = CompoundKey::new(set_idx, *key);
-                let term = set.sorted[key].clone();
+                let term = self.sets[set_idx].sorted[key].clone();
                 self.sorted.insert(compound_key, term);
                 all_added.push(compound_key);
             }
@@ -481,12 +490,21 @@ impl<L: BoundedLanguage> MultiWeakenLemmaSet<L> {
     }
 
     pub fn remove_unsat(&mut self, cti: &ForwardCti) -> Vec<CompoundKey> {
+        // Remove unsat from each set in parallel
+        let results: Vec<(usize, Vec<LemmaKey>)> = self
+            .sets
+            .par_iter_mut()
+            .enumerate()
+            .map(|(set_idx, set)| {
+                let removed = set.remove_unsat(cti);
+                (set_idx, removed)
+            })
+            .collect();
+
         let mut all_removed = Vec::new();
 
-        // Remove unsat from each set
-        for (set_idx, set) in self.sets.iter_mut().enumerate() {
-            let removed = set.remove_unsat(cti);
-            
+        // Process results sequentially to update the sorted map
+        for (set_idx, removed) in results {
             // Remove compound keys from sorted map
             for key in &removed {
                 let compound_key = CompoundKey::new(set_idx, *key);
@@ -500,7 +518,7 @@ impl<L: BoundedLanguage> MultiWeakenLemmaSet<L> {
 
     pub fn unsat(&self, model: &Model) -> bool {
         // Return true if any set has an unsat formula
-        self.sets.iter().any(|set| set.unsat(model))
+        self.sets.par_iter().any(|set| set.unsat(model))
     }
 }
 

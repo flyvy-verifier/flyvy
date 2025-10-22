@@ -24,14 +24,14 @@ use codespan_reporting::{
     },
 };
 use fly::semantics::models_to_string;
-use fly::syntax::{Module, Signature};
+use fly::syntax::{Module, Signature, Sort};
 use fly::{self, parser::parse_error_diagnostic, printer, sorts, timing};
 use inference::basics::{
     Direction, FOModule, QalphaConfig, QfBody, QuantifierFreeConfig, SimulationConfig, SmtTactic,
 };
 use inference::houdini;
 use inference::qalpha::{
-    fixpoint::{qalpha_dynamic, Strategy},
+    fixpoint::{qalpha_dynamic, qalpha_multi_prefix, Strategy},
     quant::parse_quantifiers,
 };
 use inference::updr::Updr;
@@ -197,6 +197,30 @@ struct QalphaArgs {
     #[command(flatten)]
     smt_cfg: SmtOptimizationArgs,
 
+    #[arg(long)]
+    /// Use multi-prefix mode
+    multi: bool,
+
+    #[arg(long)]
+    /// Sort ordering for multi-prefix mode (repeatable)
+    sort: Vec<String>,
+
+    #[arg(long)]
+    /// Prefix length for multi-prefix mode
+    prefix_length: Option<usize>,
+
+    #[arg(long)]
+    /// Maximum total number of constants across all sorts for multi-prefix mode
+    constant_limit: Option<usize>,
+
+    #[arg(long)]
+    /// Total atomic terms (vars + constants) per sort for multi-prefix mode (uniform across all sorts)
+    total_per_sort: Option<usize>,
+
+    #[arg(long)]
+    /// Restrict prefixes to exists* forall* pattern in multi-prefix mode
+    exists_forall: bool,
+
     /// File name for a .fly file containing the program to analyse
     file: String,
 }
@@ -209,6 +233,20 @@ impl QalphaArgs {
             let universe_map = get_universe(&m.signature, &self.sim_cfg.bound);
             m.signature.sorts.iter().map(|s| universe_map[s]).collect()
         };
+
+        // Parse sort order if in multi mode
+        let (multi_sort_order, multi_total_per_sort) = if self.multi {
+            let sort_order: Vec<Sort> = self
+                .sort
+                .iter()
+                .map(|s| Sort::Uninterpreted(s.clone()))
+                .collect();
+            let total_per_sort = vec![self.total_per_sort.unwrap(); sort_order.len()];
+            (Some(sort_order), Some(total_per_sort))
+        } else {
+            (None, None)
+        };
+
         QalphaConfig {
             fname,
             fo: FOModule::new(
@@ -234,6 +272,11 @@ impl QalphaArgs {
             strategy: Strategy::from(self.strategy.as_str()),
             seeds: self.smt_cfg.seeds,
             baseline: self.baseline,
+            exists_forall_only: self.exists_forall,
+            multi_prefix_length: self.prefix_length,
+            multi_constant_limit: self.constant_limit,
+            multi_sort_order,
+            multi_total_per_sort,
         }
     }
 }
@@ -255,6 +298,20 @@ impl FbiiArgs {
         } else {
             let universe_map = get_universe(&m.signature, &self.qalpha_args.sim_cfg.bound);
             m.signature.sorts.iter().map(|s| universe_map[s]).collect()
+        };
+
+        // Parse sort order if in multi mode
+        let (multi_sort_order, multi_total_per_sort) = if self.qalpha_args.multi {
+            let sort_order: Vec<Sort> = self
+                .qalpha_args
+                .sort
+                .iter()
+                .map(|s| Sort::Uninterpreted(s.clone()))
+                .collect();
+            let total_per_sort = vec![self.qalpha_args.total_per_sort.unwrap(); sort_order.len()];
+            (Some(sort_order), Some(total_per_sort))
+        } else {
+            (None, None)
         };
 
         let mut cfgs = vec![];
@@ -301,6 +358,11 @@ impl FbiiArgs {
                     strategy: Strategy::from(self.qalpha_args.strategy.as_str()),
                     seeds: self.qalpha_args.smt_cfg.seeds,
                     baseline: self.qalpha_args.baseline,
+                    exists_forall_only: self.qalpha_args.exists_forall,
+                    multi_prefix_length: self.qalpha_args.prefix_length,
+                    multi_constant_limit: self.qalpha_args.constant_limit,
+                    multi_sort_order: multi_sort_order.clone(),
+                    multi_total_per_sort: multi_total_per_sort.clone(),
                 },
             ));
         }
@@ -624,8 +686,52 @@ impl App {
                 },
             ) => {
                 m.inline_defs();
-                let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
-                let fixpoint = qalpha_dynamic(infer_cfg, &m, None, !args.no_print_nondet);
+
+                let fixpoint = if qargs.multi {
+                    // Validate multi-prefix arguments
+                    if qargs.sort.is_empty() {
+                        eprintln!("--multi requires --sort arguments");
+                        process::exit(1);
+                    }
+                    if qargs.prefix_length.is_none() {
+                        eprintln!("--multi requires --prefix-length argument");
+                        process::exit(1);
+                    }
+                    if qargs.constant_limit.is_none() {
+                        eprintln!("--multi requires --constant-limit argument");
+                        process::exit(1);
+                    }
+                    if qargs.total_per_sort.is_none() {
+                        eprintln!("--multi requires --total-per-sort argument");
+                        process::exit(1);
+                    }
+                    if qargs.exists_forall && !qargs.multi {
+                        eprintln!("--exists-forall requires --multi");
+                        process::exit(1);
+                    }
+
+                    // Validate sort names before creating config
+                    for s in &qargs.sort {
+                        if !m.signature.sorts.contains(s) {
+                            eprintln!("unknown sort '{}' in --sort argument", s);
+                            process::exit(1);
+                        }
+                    }
+
+                    let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
+
+                    // Check that qf_body is PDnf
+                    if !matches!(infer_cfg.qf_cfg.qf_body, QfBody::PDnf) {
+                        eprintln!("--multi currently only supports --qf pdnf");
+                        process::exit(1);
+                    }
+
+                    qalpha_multi_prefix(infer_cfg, &m, !args.no_print_nondet)
+                } else {
+                    let infer_cfg = Arc::new(qargs.to_cfg(&m, args.infer_cmd.file().to_string()));
+                    qalpha_dynamic(infer_cfg, &m, None, !args.no_print_nondet)
+                };
+
                 fixpoint.report(!args.no_print_nondet, true);
                 if args.time {
                     timing::report();
