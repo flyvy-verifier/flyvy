@@ -125,6 +125,7 @@ pub fn generate_literals<C: FromParallelIterator<Literal>, S: BasicSolver>(
     constants: Option<Vec<Vec<String>>>,
     fo: &FOModule,
     solver: &S,
+    remove_trivial_atoms: bool,
 ) -> C {
     let var_to_sort: HashMap<_, _> = quant_cfg
         .names
@@ -151,21 +152,24 @@ pub fn generate_literals<C: FromParallelIterator<Literal>, S: BasicSolver>(
         .filter_map(|a| {
             let mut vars = HashSet::default();
             add_variables(signature, &a, &mut vars);
-            let univ_a = quantify_forall(a.clone(), &vars, &var_to_sort);
-            let univ_not_a = quantify_forall(Term::not(&a), &vars, &var_to_sort);
-            if matches!(
-                fo.implication_cex(solver, &[], &univ_a, None, false),
-                CexResult::UnsatCore(_)
-            ) || matches!(
-                fo.implication_cex(solver, &[], &univ_not_a, None, false),
-                CexResult::UnsatCore(_)
-            ) {
-                None
-            } else {
-                let lit_pos = Literal(Arc::new(a), true);
-                let lit_neg = lit_pos.negate();
-                Some([lit_pos, lit_neg])
+            
+            if remove_trivial_atoms {
+                let univ_a = quantify_forall(a.clone(), &vars, &var_to_sort);
+                let univ_not_a = quantify_forall(Term::not(&a), &vars, &var_to_sort);
+                if matches!(
+                    fo.implication_cex(solver, &[], &univ_a, None, false),
+                    CexResult::UnsatCore(_)
+                ) || matches!(
+                    fo.implication_cex(solver, &[], &univ_not_a, None, false),
+                    CexResult::UnsatCore(_)
+                ) {
+                    return None;
+                }
             }
+            
+            let lit_pos = Literal(Arc::new(a), true);
+            let lit_neg = lit_pos.negate();
+            Some([lit_pos, lit_neg])
         })
         .flatten()
         .collect()

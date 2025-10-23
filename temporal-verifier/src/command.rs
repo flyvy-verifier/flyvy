@@ -236,6 +236,10 @@ struct QalphaArgs {
     /// Restrict prefixes to exists* forall* pattern in multi-prefix mode
     exists_forall: bool,
 
+    #[arg(long)]
+    /// Remove trivial atoms (that are always true or always false) using implication checks
+    remove_trivial_atoms: bool,
+
     /// File name for a .fly file containing the program to analyse
     file: String,
 }
@@ -290,6 +294,7 @@ impl QalphaArgs {
             seeds: self.smt_cfg.seeds,
             baseline: self.baseline,
             exists_forall_only: self.exists_forall,
+            remove_trivial_atoms: self.remove_trivial_atoms,
             multi_prefix_length: self.prefix_length,
             multi_constant_limit: self.constant_limit,
             multi_sort_order,
@@ -378,6 +383,7 @@ impl FbiiArgs {
                     seeds: self.qalpha_args.smt_cfg.seeds,
                     baseline: self.qalpha_args.baseline,
                     exists_forall_only: self.qalpha_args.exists_forall,
+                    remove_trivial_atoms: self.qalpha_args.remove_trivial_atoms,
                     multi_prefix_length: self.qalpha_args.prefix_length,
                     multi_constant_limit: self.qalpha_args.constant_limit,
                     multi_sort_order: multi_sort_order.clone(),

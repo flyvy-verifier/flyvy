@@ -747,6 +747,8 @@ pub struct QalphaConfig {
 
     pub exists_forall_only: bool,
 
+    pub remove_trivial_atoms: bool,
+
     // Multi-prefix configuration (only used when multi-prefix mode is enabled)
     pub multi_prefix_length: Option<usize>,
     pub multi_constant_limit: Option<usize>,

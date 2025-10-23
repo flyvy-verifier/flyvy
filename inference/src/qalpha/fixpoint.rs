@@ -382,6 +382,7 @@ pub fn qalpha_dynamic(
                 None,
                 &cfg.fo,
                 &solver,
+                cfg.remove_trivial_atoms,
             )
         });
         let non_universal_vars = cfg.quant_cfg.vars_after_first_exist();
@@ -567,6 +568,7 @@ pub fn qalpha_multi_prefix(
                     Some(constants),
                     &cfg.fo,
                     &solver,
+                    cfg.remove_trivial_atoms,
                 );
 
                 // Filter literals based on quantifier structure
