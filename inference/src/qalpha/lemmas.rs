@@ -9,7 +9,6 @@ use std::fmt::Debug;
 use std::iter::empty;
 use std::ops::AddAssign;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::{
     hashmap::HashMap,
@@ -27,14 +26,6 @@ use fly::{
     semantics::{Assignment, Model},
     syntax::{Quantifier, Term},
 };
-
-macro_rules! timed {
-    ($blk:block) => {{
-        let start = Instant::now();
-        $blk
-        start.elapsed()
-    }};
-}
 
 /// A compound key that uniquely identifies a formula across multiple WeakenLemmaSet instances.
 /// Contains the index of the set and the LemmaKey within that set.
@@ -266,17 +257,13 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
     }
 
     pub fn weaken(&mut self, cti: &ForwardCti) -> (Vec<LemmaKey>, Vec<LemmaKey>) {
-        let start_time = Instant::now();
         let empty_assigment = Assignment::new();
 
         let unsat;
         let mut removed: Vec<LemmaKey> = vec![];
         let mut added: Vec<LemmaKey> = vec![];
-        let mut total_added = 0_usize;
 
-        let unsat_time = timed!({
-            unsat = self.set.remove_unsat_cti(cti);
-        });
+        unsat = self.set.remove_unsat_cti(cti);
         for f in &unsat {
             removed.append(&mut self.remove(f));
         }
@@ -284,62 +271,28 @@ impl<L: BoundedLanguage> WeakenLemmaSet<L> {
         let ignore = |f: &L::Formula| !self.set.get_subsuming(f).is_empty();
 
         let mut weakenings: Vec<_>;
-        let weaken_time = timed!({
-            weakenings = unsat
-                .par_iter()
-                .flat_map_iter(|f| self.lang.weaken(f, &cti.post, &empty_assigment, ignore))
-                .collect::<Vec<_>>();
-        });
+        weakenings = unsat
+            .par_iter()
+            .flat_map_iter(|f| self.lang.weaken(f, &cti.post, &empty_assigment, ignore))
+            .collect::<Vec<_>>();
 
-        let minimization_time = timed!({ weakenings = L::minimize(empty(), weakenings) });
+        weakenings = L::minimize(empty(), weakenings);
 
-        let insertion_time = timed!({
-            for f in weakenings.into_iter().sorted() {
-                total_added += 1;
-                added.append(&mut self.insert(f));
-            }
-        });
+        for f in weakenings.into_iter().sorted() {
+            added.append(&mut self.insert(f));
+        }
 
         self.max_size = self.max_size.max(self.len());
-
-        if !unsat.is_empty() {
-            log::info!(
-                "[{} ~> {} | {}] Weakened: removed={}({}), added={}({}), total_time={}ms (unsat={}ms, weaken={}ms, min={}ms, insertion={}ms)",
-                self.len(),
-                self.simplified_len(),
-                self.max_size,
-                unsat.len(),
-                removed.len(),
-                total_added,
-                added.len(),
-                start_time.elapsed().as_millis(),
-                unsat_time.as_millis(),
-                weaken_time.as_millis(),
-                minimization_time.as_millis(),
-                insertion_time.as_millis(),
-            );
-        }
 
         (removed, added)
     }
 
     pub fn remove_unsat(&mut self, cti: &ForwardCti) -> Vec<LemmaKey> {
-        let start_time = Instant::now();
-
         let unsat = self.set.remove_unsat_cti(cti);
         let mut removed: Vec<LemmaKey> = vec![];
 
         for f in &unsat {
             removed.append(&mut self.remove(f));
-        }
-
-        if !removed.is_empty() {
-            log::info!(
-                "[{}] Removed UNSAT: removed={}, total_time={}ms",
-                self.len(),
-                unsat.len(),
-                start_time.elapsed().as_millis(),
-            );
         }
 
         removed
