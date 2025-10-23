@@ -12,7 +12,7 @@ use crate::{
 /// Iterates through parameter values from auto_min to auto_max, running the full FBII
 /// sequence for each parameter value. Accumulates axioms across all iterations within
 /// each parameter value. Stops when a safe fixpoint is found.
-/// 
+///
 /// For each parameter value, also iterates over all clause sizes (from min_clause_size to max_clause_size)
 /// and all cube numbers (from min_cubes to max_cubes).
 pub fn qalpha_fbii_auto(
@@ -36,6 +36,8 @@ pub fn qalpha_fbii_auto(
     let clause_size_max = max_clause_size.unwrap_or(min_clause_size);
     let cubes_max = max_cubes.unwrap_or(min_cubes);
 
+    let mut additional_axioms = vec![];
+
     for param_value in auto_min..=auto_max {
         for current_clause_size in min_clause_size..=clause_size_max {
             for current_cubes in min_cubes..=cubes_max {
@@ -47,8 +49,6 @@ pub fn qalpha_fbii_auto(
                     current_cubes,
                     elapsed.as_secs_f64()
                 );
-
-                let mut additional_axioms = vec![];
 
                 for (direction, cfg) in cfgs.iter() {
                     let mut cfg = (*cfg).clone();
