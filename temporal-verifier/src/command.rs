@@ -108,13 +108,13 @@ struct QuantifierFreeConfigArgs {
     /// The quantifier-free body of formulas in the first-order language (pdnf/cnf/dnf)
     qf: String,
 
-    #[arg(long)]
-    /// The maximal size of the pDNF clause, or of each CNF clause, depending on --qf
-    clause_size: Option<usize>,
+    #[arg(long, default_value_t = 3)]
+    /// The maximal size of the pDNF clause, or of each CNF clause, depending on --qf (default: 3)
+    clause_size: usize,
 
-    #[arg(long)]
-    ///The maximal number of cubes in k-pDNF or DNF; for k-pDNF, this refers to non-unit cubes, i.e., k - 1
-    cubes: Option<usize>,
+    #[arg(long, default_value_t = 0)]
+    /// The maximal number of cubes in k-pDNF or DNF; for k-pDNF, this refers to non-unit cubes, i.e., k - 1 (default: 0)
+    cubes: usize,
 
     #[arg(long)]
     /// The maximal nesting depth of atoms / terms in the vocabulary (unbounded if not provided);
@@ -233,6 +233,14 @@ struct QalphaArgs {
     auto_max: usize,
 
     #[arg(long)]
+    /// Maximum clause size for auto mode iteration (defaults to --clause-size if not specified)
+    max_clause_size: Option<usize>,
+
+    #[arg(long)]
+    /// Maximum number of cubes for auto mode iteration (defaults to --cubes if not specified)
+    max_cubes: Option<usize>,
+
+    #[arg(long)]
     /// Restrict prefixes to exists* forall* pattern in multi-prefix mode
     exists_forall: bool,
 
@@ -254,19 +262,20 @@ impl QalphaArgs {
         };
 
         // Parse sort order if in multi or auto mode
-        let (multi_sort_order, multi_total_per_sort) = if self.mode == Mode::Multi || self.mode == Mode::Auto {
-            let sort_order: Vec<Sort> = self
-                .sort
-                .iter()
-                .map(|s| Sort::Uninterpreted(s.clone()))
-                .collect();
-            // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
-            // For multi mode, it's required (validation handles this)
-            let total_per_sort = self.total_per_sort.map(|val| vec![val; sort_order.len()]);
-            (Some(sort_order), total_per_sort)
-        } else {
-            (None, None)
-        };
+        let (multi_sort_order, multi_total_per_sort) =
+            if self.mode == Mode::Multi || self.mode == Mode::Auto {
+                let sort_order: Vec<Sort> = self
+                    .sort
+                    .iter()
+                    .map(|s| Sort::Uninterpreted(s.clone()))
+                    .collect();
+                // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
+                // For multi mode, it's required (validation handles this)
+                let total_per_sort = self.total_per_sort.map(|val| vec![val; sort_order.len()]);
+                (Some(sort_order), total_per_sort)
+            } else {
+                (None, None)
+            };
 
         QalphaConfig {
             fname,
@@ -323,20 +332,24 @@ impl FbiiArgs {
         };
 
         // Parse sort order if in multi or auto mode
-        let (multi_sort_order, multi_total_per_sort) = if self.qalpha_args.mode == Mode::Multi || self.qalpha_args.mode == Mode::Auto {
-            let sort_order: Vec<Sort> = self
-                .qalpha_args
-                .sort
-                .iter()
-                .map(|s| Sort::Uninterpreted(s.clone()))
-                .collect();
-            // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
-            // For multi mode, it's required (validation handles this)
-            let total_per_sort = self.qalpha_args.total_per_sort.map(|val| vec![val; sort_order.len()]);
-            (Some(sort_order), total_per_sort)
-        } else {
-            (None, None)
-        };
+        let (multi_sort_order, multi_total_per_sort) =
+            if self.qalpha_args.mode == Mode::Multi || self.qalpha_args.mode == Mode::Auto {
+                let sort_order: Vec<Sort> = self
+                    .qalpha_args
+                    .sort
+                    .iter()
+                    .map(|s| Sort::Uninterpreted(s.clone()))
+                    .collect();
+                // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
+                // For multi mode, it's required (validation handles this)
+                let total_per_sort = self
+                    .qalpha_args
+                    .total_per_sort
+                    .map(|val| vec![val; sort_order.len()]);
+                (Some(sort_order), total_per_sort)
+            } else {
+                (None, None)
+            };
 
         let mut cfgs = vec![];
         let fo = FOModule::new(
@@ -773,7 +786,7 @@ impl App {
                 m.inline_defs();
                 let bwd_m = reverse_module(&m);
                 let cfgs = fbargs.to_cfgs(&m, args.infer_cmd.file().to_string());
-                
+
                 if fbargs.qalpha_args.mode == Mode::Auto {
                     // Validate auto-mode arguments
                     if fbargs.qalpha_args.sort.is_empty() {
@@ -798,6 +811,10 @@ impl App {
                         !args.no_print_nondet,
                         fbargs.qalpha_args.auto_min,
                         fbargs.qalpha_args.auto_max,
+                        fbargs.qalpha_args.qf_cfg.clause_size,
+                        fbargs.qalpha_args.max_clause_size,
+                        fbargs.qalpha_args.qf_cfg.cubes,
+                        fbargs.qalpha_args.max_cubes,
                     );
                 } else {
                     qalpha_fbii(

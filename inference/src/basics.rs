@@ -712,8 +712,8 @@ impl From<&str> for QfBody {
 #[derive(Clone)]
 pub struct QuantifierFreeConfig {
     pub qf_body: QfBody,
-    pub clause_size: Option<usize>,
-    pub cubes: Option<usize>,
+    pub clause_size: usize,
+    pub cubes: usize,
     pub nesting: Option<usize>,
 }
 

@@ -420,7 +420,7 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![baseline::quant_cnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.clause_size.unwrap(),
+                cfg.qf_cfg.clause_size,
                 literals,
             )],
             m,
@@ -430,7 +430,7 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![advanced::quant_cnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.clause_size.unwrap(),
+                cfg.qf_cfg.clause_size,
                 literals,
             )],
             m,
@@ -440,8 +440,8 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![baseline::quant_pdnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.clause_size.unwrap(),
-                cfg.qf_cfg.cubes.unwrap(),
+                cfg.qf_cfg.clause_size,
+                cfg.qf_cfg.cubes,
                 literals,
                 cube_literals,
             )],
@@ -452,8 +452,8 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![advanced::quant_pdnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.clause_size.unwrap(),
-                cfg.qf_cfg.cubes.unwrap(),
+                cfg.qf_cfg.clause_size,
+                cfg.qf_cfg.cubes,
                 literals,
                 cube_literals,
             )],
@@ -464,7 +464,7 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![baseline::quant_dnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.cubes.unwrap(),
+                cfg.qf_cfg.cubes,
                 literals,
             )],
             m,
@@ -474,7 +474,7 @@ pub fn qalpha_dynamic(
             cfg.clone(),
             vec![advanced::quant_dnf_language(
                 cfg.quant_cfg.clone(),
-                cfg.qf_cfg.cubes.unwrap(),
+                cfg.qf_cfg.cubes,
                 literals,
             )],
             m,
@@ -596,8 +596,8 @@ pub fn qalpha_multi_prefix(
                 // Create PDnf language
                 advanced::quant_pdnf_language(
                     Arc::new(quant_cfg),
-                    cfg.qf_cfg.clause_size.unwrap(),
-                    cfg.qf_cfg.cubes.unwrap(),
+                    cfg.qf_cfg.clause_size,
+                    cfg.qf_cfg.cubes,
                     filtered_literals,
                     cube_literals,
                 )
