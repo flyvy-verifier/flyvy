@@ -691,6 +691,7 @@ impl From<&str> for SmtTactic {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum QfBody {
     PDnf,
     Cnf,
@@ -708,6 +709,7 @@ impl From<&str> for QfBody {
     }
 }
 
+#[derive(Clone)]
 pub struct QuantifierFreeConfig {
     pub qf_body: QfBody,
     pub clause_size: Option<usize>,
@@ -724,6 +726,7 @@ pub struct SimulationConfig {
     pub dfs: bool,
 }
 
+#[derive(Clone)]
 pub struct QalphaConfig {
     pub fname: String,
     pub fo: FOModule,

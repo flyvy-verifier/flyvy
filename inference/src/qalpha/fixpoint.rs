@@ -111,6 +111,7 @@ impl ForwardCti {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Strategy {
     None,
     Houdini,

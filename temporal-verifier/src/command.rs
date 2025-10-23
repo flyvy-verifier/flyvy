@@ -53,6 +53,13 @@ enum ColorOutput {
     Always,
 }
 
+#[derive(clap::ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
+enum Mode {
+    Single,
+    Multi,
+    Auto,
+}
+
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
 struct SolverArgs {
     // --solver and --smt are global, meaning they are allowed even after
@@ -197,9 +204,9 @@ struct QalphaArgs {
     #[command(flatten)]
     smt_cfg: SmtOptimizationArgs,
 
-    #[arg(long)]
-    /// Use multi-prefix mode
-    multi: bool,
+    #[arg(value_enum, long, default_value_t = Mode::Single)]
+    /// Mode for quantifier prefix generation (single/multi/auto)
+    mode: Mode,
 
     #[arg(long)]
     /// Sort ordering for multi-prefix mode (repeatable)
@@ -216,6 +223,14 @@ struct QalphaArgs {
     #[arg(long)]
     /// Total atomic terms (vars + constants) per sort for multi-prefix mode (uniform across all sorts)
     total_per_sort: Option<usize>,
+
+    #[arg(long, default_value_t = 1)]
+    /// Minimum value for auto mode parameter iteration
+    auto_min: usize,
+
+    #[arg(long, default_value_t = 10)]
+    /// Maximum value for auto mode parameter iteration
+    auto_max: usize,
 
     #[arg(long)]
     /// Restrict prefixes to exists* forall* pattern in multi-prefix mode
@@ -234,15 +249,17 @@ impl QalphaArgs {
             m.signature.sorts.iter().map(|s| universe_map[s]).collect()
         };
 
-        // Parse sort order if in multi mode
-        let (multi_sort_order, multi_total_per_sort) = if self.multi {
+        // Parse sort order if in multi or auto mode
+        let (multi_sort_order, multi_total_per_sort) = if self.mode == Mode::Multi || self.mode == Mode::Auto {
             let sort_order: Vec<Sort> = self
                 .sort
                 .iter()
                 .map(|s| Sort::Uninterpreted(s.clone()))
                 .collect();
-            let total_per_sort = vec![self.total_per_sort.unwrap(); sort_order.len()];
-            (Some(sort_order), Some(total_per_sort))
+            // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
+            // For multi mode, it's required (validation handles this)
+            let total_per_sort = self.total_per_sort.map(|val| vec![val; sort_order.len()]);
+            (Some(sort_order), total_per_sort)
         } else {
             (None, None)
         };
@@ -300,16 +317,18 @@ impl FbiiArgs {
             m.signature.sorts.iter().map(|s| universe_map[s]).collect()
         };
 
-        // Parse sort order if in multi mode
-        let (multi_sort_order, multi_total_per_sort) = if self.qalpha_args.multi {
+        // Parse sort order if in multi or auto mode
+        let (multi_sort_order, multi_total_per_sort) = if self.qalpha_args.mode == Mode::Multi || self.qalpha_args.mode == Mode::Auto {
             let sort_order: Vec<Sort> = self
                 .qalpha_args
                 .sort
                 .iter()
                 .map(|s| Sort::Uninterpreted(s.clone()))
                 .collect();
-            let total_per_sort = vec![self.qalpha_args.total_per_sort.unwrap(); sort_order.len()];
-            (Some(sort_order), Some(total_per_sort))
+            // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
+            // For multi mode, it's required (validation handles this)
+            let total_per_sort = self.qalpha_args.total_per_sort.map(|val| vec![val; sort_order.len()]);
+            (Some(sort_order), total_per_sort)
         } else {
             (None, None)
         };
@@ -687,26 +706,28 @@ impl App {
             ) => {
                 m.inline_defs();
 
-                let fixpoint = if qargs.multi {
+                // Validate mode-specific requirements
+                if qargs.mode == Mode::Auto {
+                    eprintln!("auto mode is only supported for fbii command, not qalpha");
+                    process::exit(1);
+                }
+
+                let fixpoint = if qargs.mode == Mode::Multi {
                     // Validate multi-prefix arguments
                     if qargs.sort.is_empty() {
-                        eprintln!("--multi requires --sort arguments");
+                        eprintln!("--mode multi requires --sort arguments");
                         process::exit(1);
                     }
                     if qargs.prefix_length.is_none() {
-                        eprintln!("--multi requires --prefix-length argument");
+                        eprintln!("--mode multi requires --prefix-length argument");
                         process::exit(1);
                     }
                     if qargs.constant_limit.is_none() {
-                        eprintln!("--multi requires --constant-limit argument");
+                        eprintln!("--mode multi requires --constant-limit argument");
                         process::exit(1);
                     }
                     if qargs.total_per_sort.is_none() {
-                        eprintln!("--multi requires --total-per-sort argument");
-                        process::exit(1);
-                    }
-                    if qargs.exists_forall && !qargs.multi {
-                        eprintln!("--exists-forall requires --multi");
+                        eprintln!("--mode multi requires --total-per-sort argument");
                         process::exit(1);
                     }
 
@@ -722,7 +743,7 @@ impl App {
 
                     // Check that qf_body is PDnf
                     if !matches!(infer_cfg.qf_cfg.qf_body, QfBody::PDnf) {
-                        eprintln!("--multi currently only supports --qf pdnf");
+                        eprintln!("--mode multi currently only supports --qf pdnf");
                         process::exit(1);
                     }
 
@@ -746,14 +767,42 @@ impl App {
                 m.inline_defs();
                 let bwd_m = reverse_module(&m);
                 let cfgs = fbargs.to_cfgs(&m, args.infer_cmd.file().to_string());
-                qalpha_fbii(
-                    cfgs,
-                    &m,
-                    &bwd_m,
-                    !fbargs.qalpha_args.smt_cfg.no_disj,
-                    SmtTactic::from(fbargs.qalpha_args.smt_cfg.smt_tactic.as_str()),
-                    !args.no_print_nondet,
-                );
+                
+                if fbargs.qalpha_args.mode == Mode::Auto {
+                    // Validate auto-mode arguments
+                    if fbargs.qalpha_args.sort.is_empty() {
+                        eprintln!("--mode auto requires --sort arguments");
+                        process::exit(1);
+                    }
+
+                    // Validate sort names before creating config
+                    for s in &fbargs.qalpha_args.sort {
+                        if !m.signature.sorts.contains(s) {
+                            eprintln!("unknown sort '{}' in --sort argument", s);
+                            process::exit(1);
+                        }
+                    }
+
+                    inference::qalpha::fbii::qalpha_fbii_auto(
+                        &cfgs,
+                        &m,
+                        &bwd_m,
+                        !fbargs.qalpha_args.smt_cfg.no_disj,
+                        SmtTactic::from(fbargs.qalpha_args.smt_cfg.smt_tactic.as_str()),
+                        !args.no_print_nondet,
+                        fbargs.qalpha_args.auto_min,
+                        fbargs.qalpha_args.auto_max,
+                    );
+                } else {
+                    qalpha_fbii(
+                        cfgs,
+                        &m,
+                        &bwd_m,
+                        !fbargs.qalpha_args.smt_cfg.no_disj,
+                        SmtTactic::from(fbargs.qalpha_args.smt_cfg.smt_tactic.as_str()),
+                        !args.no_print_nondet,
+                    );
+                }
             }
             Command::Inline { .. } => {
                 let mut m = m;

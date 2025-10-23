@@ -518,7 +518,7 @@ impl<L: BoundedLanguage> MultiWeakenLemmaSet<L> {
 
     pub fn unsat(&self, model: &Model) -> bool {
         // Return true if any set has an unsat formula
-        self.sets.par_iter().any(|set| set.unsat(model))
+        self.sets.iter().any(|set| set.unsat(model))
     }
 }
 
