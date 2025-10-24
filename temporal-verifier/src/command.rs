@@ -269,6 +269,20 @@ impl QalphaArgs {
                     .iter()
                     .map(|s| Sort::Uninterpreted(s.clone()))
                     .collect();
+
+                // Validate that sort_order contains exactly all sorts from the signature
+                let sort_names: std::collections::HashSet<_> = self.sort.iter().cloned().collect();
+                let sig_sorts: std::collections::HashSet<_> =
+                    m.signature.sorts.iter().cloned().collect();
+                if sort_names != sig_sorts {
+                    eprintln!(
+                        "Error: --sort arguments must contain exactly all sorts from the signature"
+                    );
+                    eprintln!("  Provided sorts: {:?}", self.sort);
+                    eprintln!("  Signature sorts: {:?}", m.signature.sorts);
+                    process::exit(1);
+                }
+
                 // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
                 // For multi mode, it's required (validation handles this)
                 let total_per_sort = self.total_per_sort.map(|val| vec![val; sort_order.len()]);
@@ -340,6 +354,21 @@ impl FbiiArgs {
                     .iter()
                     .map(|s| Sort::Uninterpreted(s.clone()))
                     .collect();
+
+                // Validate that sort_order contains exactly all sorts from the signature
+                let sort_names: std::collections::HashSet<_> =
+                    self.qalpha_args.sort.iter().cloned().collect();
+                let sig_sorts: std::collections::HashSet<_> =
+                    m.signature.sorts.iter().cloned().collect();
+                if sort_names != sig_sorts {
+                    eprintln!(
+                        "Error: --sort arguments must contain exactly all sorts from the signature"
+                    );
+                    eprintln!("  Provided sorts: {:?}", self.qalpha_args.sort);
+                    eprintln!("  Signature sorts: {:?}", m.signature.sorts);
+                    process::exit(1);
+                }
+
                 // For auto mode, total_per_sort is optional (will be set by auto-tuning if not specified)
                 // For multi mode, it's required (validation handles this)
                 let total_per_sort = self
@@ -741,10 +770,7 @@ impl App {
                         eprintln!("--mode multi requires --prefix-length argument");
                         process::exit(1);
                     }
-                    if qargs.constant_limit.is_none() {
-                        eprintln!("--mode multi requires --constant-limit argument");
-                        process::exit(1);
-                    }
+                    // constant_limit is now optional - if None, unlimited constants are allowed
                     if qargs.total_per_sort.is_none() {
                         eprintln!("--mode multi requires --total-per-sort argument");
                         process::exit(1);

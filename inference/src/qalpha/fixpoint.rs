@@ -512,9 +512,7 @@ pub fn qalpha_multi_prefix(
     let prefix_length = cfg
         .multi_prefix_length
         .expect("multi_prefix_length must be set");
-    let constant_limit = cfg
-        .multi_constant_limit
-        .expect("multi_constant_limit must be set");
+    let constant_limit = cfg.multi_constant_limit; // Optional: None means unlimited
     let sort_order = cfg
         .multi_sort_order
         .as_ref()

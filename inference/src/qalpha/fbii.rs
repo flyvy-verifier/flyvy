@@ -60,9 +60,9 @@ pub fn qalpha_fbii_auto(
                     if cfg.multi_prefix_length.is_none() {
                         cfg.multi_prefix_length = Some(param_value);
                     }
-                    if cfg.multi_constant_limit.is_none() {
-                        cfg.multi_constant_limit = Some(param_value);
-                    }
+                    // constant_limit is NOT set by the iterative parameter - it remains fixed
+                    // to the user-specified value (or None for unlimited)
+
                     // If multi_total_per_sort is None, initialize it with param_value for all sorts
                     // If it's Some but contains zeros (indicating unspecified), set those to param_value
                     if cfg.multi_total_per_sort.is_none() {
@@ -76,9 +76,9 @@ pub fn qalpha_fbii_auto(
                     cfg.qf_cfg.cubes = current_cubes;
 
                     let prefix_info = format!(
-                        "multi-prefix (length={}, constant_limit={}, total_per_sort={:?}, exists_forall={}, clause_size={}, cubes={})",
+                        "multi-prefix (length={}, constant_limit={:?}, total_per_sort={:?}, exists_forall={}, clause_size={}, cubes={})",
                         cfg.multi_prefix_length.unwrap(),
-                        cfg.multi_constant_limit.unwrap(),
+                        cfg.multi_constant_limit,
                         cfg.multi_total_per_sort.as_ref().unwrap(),
                         cfg.exists_forall_only,
                         current_clause_size,
@@ -156,9 +156,9 @@ pub fn qalpha_fbii(
 
         let prefix_info = if cfg.multi_prefix_length.is_some() {
             format!(
-                "multi-prefix (length={}, constant_limit={}, total_per_sort={:?}, exists_forall={})",
+                "multi-prefix (length={}, constant_limit={:?}, total_per_sort={:?}, exists_forall={})",
                 cfg.multi_prefix_length.unwrap(),
-                cfg.multi_constant_limit.unwrap(),
+                cfg.multi_constant_limit,
                 cfg.multi_total_per_sort.as_ref().unwrap(),
                 cfg.exists_forall_only
             )

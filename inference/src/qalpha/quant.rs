@@ -767,7 +767,7 @@ pub fn ordered_prefixes_with_constants(
     signature: Arc<Signature>,
     sort_order: &[Sort],
     prefix_length: usize,
-    constant_limit: usize,
+    constant_limit: Option<usize>,
     total_per_sort: &[usize],
     exists_forall_only: bool,
 ) -> Vec<(QuantifierPrefix, Vec<Vec<String>>)> {
@@ -836,9 +836,12 @@ pub fn ordered_prefixes_with_constants(
                 .collect();
 
             // Calculate the maximum total constants we can have for this prefix
-            // It's the minimum of: sum of per-sort maximums, and constant_limit
+            // It's the minimum of: sum of per-sort maximums, and constant_limit (if specified)
             let total_max_constants: usize = max_constants_per_sort_order.iter().sum();
-            let max_constants_to_distribute = total_max_constants.min(constant_limit);
+            let max_constants_to_distribute = match constant_limit {
+                Some(limit) => total_max_constants.min(limit),
+                None => total_max_constants, // No limit - use all available constants
+            };
 
             // Use distribute to find all ways to distribute exactly max_constants_to_distribute constants
             // across the sorts, respecting the per-sort maximal limits
@@ -1100,7 +1103,7 @@ mutable c3: B
             signature.clone(),
             &sort_order,
             3,
-            100, // constant_limit: set high to not affect this test
+            None, // constant_limit: unlimited for this test
             &total_per_sort,
             false,
         );
@@ -1168,7 +1171,7 @@ mutable c3: B
             signature.clone(),
             &sort_order,
             3,
-            100,
+            None,
             &[1, 1, 1],
             false,
         );
@@ -1271,7 +1274,7 @@ mutable c2_B: B
         // - Each sort can have at most 2 total terms (vars + constants)
         // - We have 2 constants available per sort
         let results =
-            ordered_prefixes_with_constants(signature.clone(), &sort_order, 3, 100, &[2, 2], false);
+            ordered_prefixes_with_constants(signature.clone(), &sort_order, 3, None, &[2, 2], false);
 
         // Helper to check if a result matches a description
         let has_prefix_with = |num_a_vars: usize,
