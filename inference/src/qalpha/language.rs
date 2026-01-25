@@ -190,6 +190,7 @@ pub trait BoundedLanguage: Sync + Send {
             .1
             .par_iter()
             .flat_map_iter(|tinterp| self.weaken_tinterp(f, &tstruct.0, tinterp, &ignore))
+            .filter(|f| !ignore(f))
             .collect();
 
         Self::minimize(empty(), weakenings)
@@ -2400,6 +2401,9 @@ impl<S: FormulaSet> FormulaSet for QuantSet<S> {
     }
 
     fn get_unsat_ti(&self, prefix: &QuantifierPrefix, tinterp: &TInterp) -> Vec<FormulaId> {
+        if !self.sets.contains_key(&prefix.quantifiers) {
+            return vec![];
+        }
         let (body_set, map) = &self.sets[&prefix.quantifiers];
         body_set
             .get_unsat_ti(prefix, tinterp)
