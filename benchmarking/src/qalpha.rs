@@ -118,7 +118,7 @@ pub fn qalpha_benchmarks(
         },
         QalphaConfig {
             file: PathBuf::from("fol/sharded_kv_no_lost_keys.fly"),
-            quantifiers: "F key 1; E node 1; E value 1",
+            quantifiers: "F key 1; * node 1; * value 1",
             clause_size: 2,
             cubes: 0,
             nesting: None,
@@ -128,7 +128,7 @@ pub fn qalpha_benchmarks(
         },
         QalphaConfig {
             file: PathBuf::from("fol/toy_consensus_epr.fly"),
-            quantifiers: "F value 2; E quorum 1; F node 1",
+            quantifiers: "F value 2; * quorum 1; F node 1",
             clause_size: 3,
             cubes: 0,
             nesting: None,
@@ -138,7 +138,7 @@ pub fn qalpha_benchmarks(
         },
         QalphaConfig {
             file: PathBuf::from("fol/consensus_epr.fly"),
-            quantifiers: "E quorum 1; F node 3; F value 1",
+            quantifiers: "* quorum 1; F node 3; F value 1",
             clause_size: 3,
             cubes: 0,
             nesting: None,
@@ -148,7 +148,7 @@ pub fn qalpha_benchmarks(
         },
         QalphaConfig {
             file: PathBuf::from("fol/client_server_ae.fly"),
-            quantifiers: "F node 1; F response 1; E request 1",
+            quantifiers: "F node 1; F response 1; * request 1",
             clause_size: 1,
             cubes: 1,
             nesting: None,
