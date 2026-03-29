@@ -742,14 +742,17 @@ impl ImperativeChc {
                 }
             }
 
+            // Mine initializing assigments
             let mut substitution = NameSubstitution::new();
-            substitute_for_args(
-                &decl.args,
-                pred.1,
-                &mut substitution,
-                &mut HashMap::new(),
-                "",
-            );
+            let mut sorts = HashMap::new();
+            substitute_for_args(&decl.args, pred.1, &mut substitution, &mut sorts, "");
+            for v in &chc.variables {
+                sorts.insert(v.name.clone(), v.sort.clone());
+            }
+            let terms = chc.terms();
+            for t in terms.iter().map(|t| rename_symbols(t, &substitution)) {
+                assignments.extend(Assignment::in_term(&t, &sorts));
+            }
 
             for a in assignments.iter_mut() {
                 *a = a.rename_symbols(&substitution);
@@ -788,6 +791,12 @@ impl ImperativeChc {
     ) -> (Vec<Term>, Vec<(ArithExpr<usize>, (IntType, IntType))>) {
         let bools = vec![];
         let mut leqs = vec![];
+
+        // Ensure we have at least one quantified variable available.
+        assert!(
+            quantified.len() >= 1,
+            "need at least one quantified variable for mining"
+        );
 
         let mut leq_expr = |x: &Term, y: &Term| {
             if !x.ids().is_subset(allowed_ids) || !y.ids().is_subset(allowed_ids) {
@@ -992,16 +1001,31 @@ impl ImperativeChc {
                 predicate: _,
                 assertions,
                 vars,
-            } if vars.len() <= 1 => {
-                let mut substitution = NameSubstitution::new();
-                if vars.len() == 1 {
-                    substitution.insert(
-                        (vars[0].name.clone(), 0),
-                        Substitutable::name(&quantified[0]),
-                    );
-                }
+            } => {
+                // Build a set of variable IDs coming from the CHC for quick lookup
+                let var_names: HashSet<String> = vars.iter().map(|v| v.name.clone()).collect();
 
-                for lt in assertions {
+                // For each assertion, only process it if it contains at most one free variable.
+                // Use a fresh substitution for that assertion mapping that single variable to the
+                // first quantified variable. This allows handling queries with many variables
+                // by mining single-variable assertions inside them.
+                'assertion_loop: for lt in assertions {
+                    let ids_in_lt = lt.ids();
+                    let mut var_ids: Vec<String> =
+                        ids_in_lt.intersection(&var_names).cloned().collect();
+
+                    let mut substitution = NameSubstitution::new();
+
+                    match var_ids.len() {
+                        0 => (),
+                        1 => {
+                            let var_id = var_ids.remove(0);
+                            substitution
+                                .insert((var_id.clone(), 0), Substitutable::name(&quantified[0]));
+                        }
+                        _ => continue 'assertion_loop, // Skip assertions with multiple CHC vars for now
+                    }
+
                     let x = rename_symbols(&lt.x, &substitution);
                     let y = rename_symbols(&lt.y, &substitution);
                     let is_arith = is_only_arith(&x) && is_only_arith(&y);

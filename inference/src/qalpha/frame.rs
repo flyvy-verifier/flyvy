@@ -947,7 +947,7 @@ impl<'a, L: BoundedLanguage> InductionFrame<'a, L> {
     pub fn initial_samples(&mut self) -> Tasks<SamplePriority, Model> {
         let universes = if let Some(p) = self.sim_config.sum {
             (0..self.signature.sorts.len())
-                .map(|_| (1..=p))
+                .map(|_| 1..=p)
                 .multi_cartesian_product_fixed()
                 .filter(|v| v.iter().sum::<usize>() <= p)
                 .collect()

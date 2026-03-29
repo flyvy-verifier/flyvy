@@ -789,7 +789,7 @@ impl App {
                     1,
                     "curretly only supports one non-nullary predicate in LFP"
                 );
-                verify_via_lfp(&chc_sys, minimize, &[3, 4]);
+                verify_via_lfp(&chc_sys, minimize, &[3, 4, 5]);
             }
             _ => unimplemented!("command does not support this file format"),
         }

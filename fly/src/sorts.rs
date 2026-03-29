@@ -266,7 +266,7 @@ impl Scope<'_> {
     ///
     /// This function also checks that the signature is well formed in the sense that all the sorts
     /// mentioned by the relations exist.
-    pub fn new(signature: &Signature) -> Result<Scope, SortError> {
+    pub fn new(signature: &Signature) -> Result<Scope<'_>, SortError> {
         let mut sorts = HashSet::new();
         for sort in &signature.sorts {
             // This assert is guaranteed to pass by the parser, but we double check it here for the
@@ -535,7 +535,7 @@ impl InternalContext<'_> {
     }
 
     /// Create a new context for an inner scope.
-    fn new_inner_scope(&mut self) -> InternalContext {
+    fn new_inner_scope(&mut self) -> InternalContext<'_> {
         InternalContext {
             scope: self.scope.clone(),
             unification_table: self.unification_table,

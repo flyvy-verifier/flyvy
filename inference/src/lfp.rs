@@ -216,8 +216,8 @@ pub fn compute_lfp_single(
                     println!("{b}");
                 }
                 println!("--- ints ----------");
-                for t in &int_terms {
-                    println!("{t}");
+                for (i, t) in int_terms.iter().enumerate() {
+                    println!("x{} -> {t}", i);
                 }
                 println!("--- int exprs ----------");
                 for (e, r) in &int_templates.templates {

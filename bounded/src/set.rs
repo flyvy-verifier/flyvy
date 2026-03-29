@@ -99,7 +99,7 @@ impl BoundedState {
         let mut state = Self::ZERO;
 
         for (i, relation) in indices.signature.relations.iter().enumerate() {
-            let ranges = relation.args.iter().map(|s| (0..model.cardinality(s)));
+            let ranges = relation.args.iter().map(|s| 0..model.cardinality(s));
             for values in ranges.multi_cartesian_product_fixed() {
                 state.set(
                     indices.get(&relation.name, 0, &values),
